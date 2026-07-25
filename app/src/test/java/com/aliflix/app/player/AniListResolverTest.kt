@@ -11,8 +11,47 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.net.URI
 
 class AniListResolverTest {
+    @Test
+    fun tvPlaybackResolvesTheSelectedSeasonInsteadOfTrustingOneSeriesId() = runTest {
+        var networkCalls = 0
+        val resolver = AniListResolver {
+            networkCalls += 1
+            response(
+                candidate(
+                    id = 21,
+                    englishTitle = "One Piece",
+                    year = 1999,
+                    format = "TV",
+                    country = "JP",
+                ),
+            )
+        }
+        val selection = PlaybackSelection(
+            media = Media(
+                id = 37854,
+                type = MediaType.TV,
+                title = "One Piece",
+                year = "1999",
+                isJapaneseAnime = true,
+                // This could be a sequel identity attached by search. TV must
+                // resolve the selected season instead of trusting it.
+                aniListId = 999_999,
+            ),
+            seasonNumber = 1,
+            episodeNumber = 3,
+            source = PlaybackSource.miruro(),
+        )
+
+        assertEquals(
+            "https://www.miruro.tv/watch/21/one-piece?ep=3",
+            resolver.resolveWatchUrl(selection),
+        )
+        assertEquals(1, networkCalls)
+    }
+
     @Test
     fun japaneseCandidateIsSelectedOverNonJapaneseMatch() = runTest {
         val resolver = AniListResolver {
@@ -46,10 +85,14 @@ class AniListResolverTest {
             source = PlaybackSource.miruro(),
         )
 
+        val watchUrl = resolver.resolveWatchUrl(selection)
+
         assertEquals(
-            "https://www.miruro.tv/watch/21/one-piece/12",
-            resolver.resolveWatchUrl(selection),
+            "https://www.miruro.tv/watch/21/one-piece?ep=12",
+            watchUrl,
         )
+        assertEquals("/watch/21/one-piece", URI(watchUrl).path)
+        assertEquals("ep=12", URI(watchUrl).query)
     }
 
     @Test
@@ -88,7 +131,7 @@ class AniListResolverTest {
         )
 
         assertEquals(
-            "https://www.miruro.tv/watch/100166/my-hero-academia-season-3/4",
+            "https://www.miruro.tv/watch/100166/my-hero-academia-season-3?ep=4",
             resolver.resolveWatchUrl(selection),
         )
         assertEquals(

@@ -21,11 +21,14 @@ catalogue keeps the app usable if catalogue pages are temporarily unavailable.
   without extracting or relaying third-party video URLs.
 - Movies and shows can use either Ramoflix or 67 Movies. The default can be
   changed in My Space on both phone and TV.
-- Japanese anime is classified separately and always uses Miruro. Aliflix
-  resolves the title to its AniList ID before opening Miruro.
+- Japanese anime has a separate AniList-backed search. Ramoflix and 67 Movies
+  remain available, while Miruro appears as an optional per-title source.
+- Aliflix keeps both the TMDB ID used by the native catalogue/67 Movies and the
+  AniList ID used by Miruro, avoiding fuzzy player matches when possible.
 - The 67 Movies option opens its Vidlove player with the exact TMDB movie ID or
   TV season and episode, avoiding the outer website around the player.
-- Ramoflix's base URL can still be edited in the phone app if its domain changes.
+- Ramoflix and 67 Movies base URLs can be edited on phone and TV if a domain
+  changes.
 - Top-level navigation is restricted to the selected provider and confirmed
   playback hosts using exact, boundary-safe host checks.
 - New windows and pop-ups are rejected.
@@ -146,8 +149,8 @@ release if Android reports a signature conflict.
 
 - Home: cinematic hero, native category filters, content rails, and recently
   played.
-- Search: native search across the refreshed TMDB catalogue in a
-  native poster grid.
+- Search: a relevance-ranked Movies & TV search plus a separate
+  AniList-backed Japanese anime search in native poster grids.
 - Details: native metadata, My List, Play, cast, genres, and recommendations.
 - My Space: playback-source choice, GitHub update controls, My List, favorites,
   and recently played titles.

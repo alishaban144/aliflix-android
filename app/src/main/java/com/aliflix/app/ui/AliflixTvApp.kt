@@ -84,6 +84,7 @@ import com.aliflix.app.BuildConfig
 import com.aliflix.app.DetailUiState
 import com.aliflix.app.HomeUiState
 import com.aliflix.app.SearchUiState
+import com.aliflix.app.SearchScope
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
@@ -285,6 +286,8 @@ fun AliflixTvApp(
                 detail.item != null -> TvDetailScreen(
                     state = detail,
                     inMyList = detail.item?.let(viewModel::isInMyList) == true,
+                    generalProvider = playbackPreferences.safeGeneralProvider,
+                    playerVisible = playerVisible,
                     onBack = viewModel::closeDetails,
                     onPlay = ::playMedia,
                     onPlayEpisode = ::playEpisode,
@@ -304,6 +307,7 @@ fun AliflixTvApp(
                 destination == TvDestination.SEARCH -> TvSearchScreen(
                     state = search,
                     onQueryChange = viewModel::updateSearch,
+                    onScopeChange = viewModel::selectSearchScope,
                     onOpen = ::open,
                 )
 
@@ -685,6 +689,7 @@ private fun TvPosterCard(
 private fun TvSearchScreen(
     state: SearchUiState,
     onQueryChange: (String) -> Unit,
+    onScopeChange: (SearchScope) -> Unit,
     onOpen: (Media) -> Unit,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -695,12 +700,32 @@ private fun TvSearchScreen(
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         Text("Search", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TvTextButton(
+                label = "Movies & TV",
+                selected = state.scope == SearchScope.MOVIES_AND_TV,
+                onClick = { onScopeChange(SearchScope.MOVIES_AND_TV) },
+            )
+            TvTextButton(
+                label = "Anime · Miruro",
+                selected = state.scope == SearchScope.ANIME,
+                onClick = { onScopeChange(SearchScope.ANIME) },
+            )
+        }
         var searchFocused by remember { mutableStateOf(false) }
         TextField(
             value = state.query,
             onValueChange = onQueryChange,
             singleLine = true,
-            placeholder = { Text("Movies, shows, anime…") },
+            placeholder = {
+                Text(
+                    if (state.scope == SearchScope.ANIME) {
+                        "Search Japanese anime…"
+                    } else {
+                        "Movies and TV shows…"
+                    },
+                )
+            },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
@@ -730,7 +755,13 @@ private fun TvSearchScreen(
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = AliflixRed)
             }
-            state.query.isBlank() -> TvHint("Press OK on the search box to use the TV keyboard or voice input.")
+            state.query.isBlank() -> TvHint(
+                if (state.scope == SearchScope.ANIME) {
+                    "Search the dedicated anime catalogue. Miruro is an optional player."
+                } else {
+                    "Press OK on the search box to use the TV keyboard or voice input."
+                },
+            )
             state.results.isEmpty() -> TvHint(
                 state.error ?: "No matches for “${state.query}”.",
             )
@@ -851,7 +882,7 @@ private fun TvPlaybackProviderPanel(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "Used for movies and shows. Japanese anime always opens with Miruro.",
+                "Used by default. Verified anime also offers Miruro per title.",
                 color = AliflixMuted,
                 fontSize = 13.sp,
                 maxLines = 2,
@@ -999,6 +1030,8 @@ private fun TvUpdatePanel(
 private fun TvDetailScreen(
     state: DetailUiState,
     inMyList: Boolean,
+    generalProvider: PlaybackProviderId,
+    playerVisible: Boolean,
     onBack: () -> Unit,
     onPlay: (Media, PlaybackProviderId?) -> Unit,
     onPlayEpisode: (Media, Episode, PlaybackProviderId?) -> Unit,
@@ -1008,9 +1041,33 @@ private fun TvDetailScreen(
 ) {
     val item = state.item ?: return
     val detailFocus = remember(item.key) { FocusRequester() }
+    val primaryPlayFocus = remember(item.key) { FocusRequester() }
+    var restorePlayerFocus by remember(item.key) { mutableStateOf(false) }
+    val playbackProviders = buildList {
+        add(generalProvider)
+        add(PlaybackProviderId.RAMOFLIX)
+        add(PlaybackProviderId.MOVIES_67)
+        if (item.isJapaneseAnime && item.aniListId != null) {
+            add(PlaybackProviderId.MIRURO)
+        }
+    }.distinct()
+    var selectedProviderName by rememberSaveable(item.key) {
+        mutableStateOf(generalProvider.name)
+    }
+    val selectedProvider = PlaybackProviderId.fromStoredValue(selectedProviderName)
+        ?.takeIf { provider -> provider in playbackProviders }
+        ?: generalProvider
 
     LaunchedEffect(item.key) {
         detailFocus.requestFocus()
+    }
+    LaunchedEffect(playerVisible) {
+        if (playerVisible) {
+            restorePlayerFocus = true
+        } else if (restorePlayerFocus) {
+            restorePlayerFocus = false
+            primaryPlayFocus.requestFocus()
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -1082,66 +1139,46 @@ private fun TvDetailScreen(
                         maxLines = 5,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        if (item.isJapaneseAnime) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        items(
+                            items = playbackProviders,
+                            key = { provider -> provider.name },
+                        ) { provider ->
+                            val primary = provider == selectedProvider
                             TvActionButton(
-                                "Play with ${PlaybackProviderId.MIRURO.displayName}",
+                                "Play with ${provider.displayName}",
                                 Icons.Default.PlayArrow,
-                                primary = true,
-                                onClick = {
-                                    val episode = state.episodes.firstOrNull()
-                                    if (item.type == MediaType.TV && episode != null) {
-                                        onPlayEpisode(
-                                            item,
-                                            episode,
-                                            PlaybackProviderId.MIRURO,
-                                        )
-                                    } else {
-                                        onPlay(item, PlaybackProviderId.MIRURO)
-                                    }
+                                primary = primary,
+                                modifier = if (primary) {
+                                    Modifier.focusRequester(primaryPlayFocus)
+                                } else {
+                                    Modifier
                                 },
-                            )
-                        } else {
-                            TvActionButton(
-                                "Play with ${PlaybackProviderId.RAMOFLIX.displayName}",
-                                Icons.Default.PlayArrow,
-                                primary = true,
                                 onClick = {
+                                    selectedProviderName = provider.name
                                     val episode = state.episodes.firstOrNull()
                                     if (item.type == MediaType.TV && episode != null) {
                                         onPlayEpisode(
                                             item,
                                             episode,
-                                            PlaybackProviderId.RAMOFLIX,
+                                            provider,
                                         )
                                     } else {
-                                        onPlay(item, PlaybackProviderId.RAMOFLIX)
-                                    }
-                                },
-                            )
-                            TvActionButton(
-                                "Play with ${PlaybackProviderId.MOVIES_67.displayName}",
-                                Icons.Default.PlayArrow,
-                                onClick = {
-                                    val episode = state.episodes.firstOrNull()
-                                    if (item.type == MediaType.TV && episode != null) {
-                                        onPlayEpisode(
-                                            item,
-                                            episode,
-                                            PlaybackProviderId.MOVIES_67,
-                                        )
-                                    } else {
-                                        onPlay(item, PlaybackProviderId.MOVIES_67)
+                                        onPlay(item, provider)
                                     }
                                 },
                             )
                         }
-                        TvActionButton(
-                            if (inMyList) "In My List" else "My List",
-                            if (inMyList) Icons.Default.Check else Icons.Default.Add,
-                            onClick = { onToggleMyList(item) },
-                        )
                     }
+                    TvActionButton(
+                        if (inMyList) "In My List" else "My List",
+                        if (inMyList) Icons.Default.Check else Icons.Default.Add,
+                        onClick = { onToggleMyList(item) },
+                    )
                     if (state.loading) {
                         CircularProgressIndicator(
                             color = AliflixRed,
@@ -1194,7 +1231,9 @@ private fun TvDetailScreen(
                             items(state.episodes, key = { "${it.seasonNumber}:${it.number}" }) { episode ->
                                 TvEpisodeCard(
                                     episode = episode,
-                                    onClick = { onPlayEpisode(item, episode, null) },
+                                    onClick = {
+                                        onPlayEpisode(item, episode, selectedProvider)
+                                    },
                                 )
                             }
                         }
@@ -1267,10 +1306,10 @@ private fun TvEpisodeCard(
 private fun TvActionButton(
     label: String,
     icon: ImageVector,
-    primary: Boolean = false,
-    compact: Boolean = false,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    compact: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     Row(
@@ -1309,6 +1348,8 @@ private fun TvActionButton(
             color = if (focused) Color.Black else Color.White,
             fontWeight = FontWeight.Bold,
             fontSize = if (compact) 13.sp else 15.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

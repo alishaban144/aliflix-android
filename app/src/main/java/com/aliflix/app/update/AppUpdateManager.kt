@@ -5,6 +5,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.core.content.FileProvider
+import androidx.core.net.toUri
 import com.aliflix.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -153,7 +154,7 @@ class AppUpdateManager(
                 activity.startActivity(
                     Intent(
                         Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        android.net.Uri.parse("package:${activity.packageName}"),
+                        "package:${activity.packageName}".toUri(),
                     ),
                 )
             }.isSuccess

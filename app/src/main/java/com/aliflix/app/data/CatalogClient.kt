@@ -1,6 +1,7 @@
 package com.aliflix.app.data
 
 import com.aliflix.app.model.ContentRail
+import com.aliflix.app.model.ContentRailKind
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
@@ -11,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -31,14 +34,26 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class CatalogClient(
     private val jsonPoster: suspend (String, String) -> String = ::postJson,
+    private val animeCatalogClient: AniListCatalogClient = AniListCatalogClient(),
     private val pageLoader: suspend (String) -> String = ::downloadPage,
 ) {
     @Volatile
     private var catalogue: List<Media> = fallbackItems
     private val imdbRatingsCache = ConcurrentHashMap<String, Double>()
     private val rottenTomatoesRatingsCache = ConcurrentHashMap<String, Int>()
+    private val animeMappingCache = ConcurrentHashMap<Int, Media>().apply {
+        fallbackItems
+            .filter { item -> item.aniListId != null }
+            .forEach { item -> put(item.aniListId!!, item) }
+    }
+    private val animeLookupSemaphore = Semaphore(ANIME_LOOKUP_CONCURRENCY)
 
     suspend fun home(): HomeContent = supervisorScope {
+        val trendingAnimeRequest = async {
+            runCatching {
+                animeCatalogClient.trending().take(ANIME_HOME_LIMIT)
+            }.getOrDefault(emptyList())
+        }
         val freshRails = tmdbHomeRailSpecs.map { spec ->
             async {
                 runCatching {
@@ -47,7 +62,6 @@ class CatalogClient(
                         html = pageLoader(
                             "$TMDB_SITE_URL${spec.path}${separator}language=en-US",
                         ),
-                        japaneseAnime = spec.japaneseAnime,
                     )
                     ContentRail(
                         title = spec.title,
@@ -58,46 +72,40 @@ class CatalogClient(
         }.awaitAll().filterNotNull()
 
         val seenTitles = mutableSetOf<String>()
-        val liveRails = freshRails.ifEmpty { fallbackRails }
-        val sourceRails = if (
-            liveRails.any { rail -> rail.items.any(Media::isJapaneseAnime) }
-        ) {
-            liveRails
-        } else {
-            liveRails + fallbackRails
-                .first { rail -> rail.title == FALLBACK_ANIME_RAIL_TITLE }
-                .copy(title = JAPANESE_ANIME_RAIL_TITLE)
+        val liveGeneralRails = freshRails.ifEmpty {
+            fallbackRails.filter { rail -> rail.kind == ContentRailKind.GENERAL }
         }
-        val japaneseAnimeKeys = sourceRails
-            .flatMap(ContentRail::items)
-            .filter(Media::isJapaneseAnime)
-            .map(Media::key)
-            .toSet()
+        val animeRail = runCatching {
+            loadTrendingAnimeRail(
+                animeItems = trendingAnimeRequest.await(),
+                homeCandidates = liveGeneralRails.flatMap(ContentRail::items),
+            )
+        }.getOrDefault(fallbackAnimeRail)
+        // Anime identity comes from AniList and is mapped to a TMDB record for
+        // native details and the general playback providers. A verified
+        // fallback rail keeps the tab useful if either catalogue is offline.
+        val sourceRails = liveGeneralRails + animeRail
         val rails = sourceRails.mapNotNull { rail ->
-            val flaggedItems = rail.items
-                .map { item ->
-                    if (item.key in japaneseAnimeKeys && !item.isJapaneseAnime) {
-                        item.copy(isJapaneseAnime = true)
-                    } else {
-                        item
+            val uniqueItems = if (rail.kind == ContentRailKind.ANIME) {
+                rail.items
+                    .filter { item ->
+                        item.isJapaneseAnime && item.aniListId != null
                     }
-                }
-            val isAnimeRail = flaggedItems.any(Media::isJapaneseAnime) &&
-                rail.title.contains("Anime", ignoreCase = true)
-            val uniqueItems = if (isAnimeRail) {
-                flaggedItems.distinctBy { item ->
-                    "${item.type.routeName}:${normalizeText(item.title)}"
-                }
+                    .distinctBy { item ->
+                        "${item.type.routeName}:${normalizeText(item.title)}"
+                    }
             } else {
-                flaggedItems.filter { item ->
+                rail.items.filter { item ->
                     seenTitles.add("${item.type.routeName}:${normalizeText(item.title)}")
                 }
             }
             if (uniqueItems.isEmpty()) null else rail.copy(items = uniqueItems)
         }.ifEmpty { listOf(ContentRail("Featured", fallbackItems)) }
-        catalogue = rails.flatMap(ContentRail::items)
-            .distinctBy(Media::key)
-            .ifEmpty { fallbackItems }
+        catalogue = buildMap {
+            rails.flatMap(ContentRail::items).forEach { item ->
+                put(item.key, item)
+            }
+        }.values.toList().ifEmpty { fallbackItems }
 
         val hero = rails.firstNotNullOfOrNull { rail ->
             rail.items.firstOrNull { it.backdropPath != null }
@@ -110,38 +118,297 @@ class CatalogClient(
     suspend fun search(query: String): List<Media> = supervisorScope {
         val cleanQuery = query.trim()
         if (cleanQuery.isBlank()) return@supervisorScope emptyList()
-        val encoded = URLEncoder.encode(cleanQuery, StandardCharsets.UTF_8.toString())
-        val online = listOf("movie", "tv").map { type ->
-            async {
-                runCatching {
-                    parseSearchResults(
-                        pageLoader("$TMDB_SITE_URL/search/$type?query=$encoded&language=en-US"),
-                    )
-                }.getOrDefault(emptyList())
-            }
-        }.awaitAll().flatten().distinctBy(Media::key).map(::mergeKnownJapaneseAnime)
+        val online = searchTmdb(cleanQuery)
 
-        val source = online.ifEmpty { localSearch(cleanQuery) }
-        val normalized = cleanQuery.lowercase()
-        val sorted = source.sortedWith(
-            compareByDescending<Media> { it.title.lowercase() == normalized }
-                .thenByDescending { it.title.lowercase().startsWith(normalized) }
-                .thenByDescending { it.rating }
-                .thenBy(Media::title),
-        ).take(80)
+        val source = online
+            .ifEmpty { localSearch(cleanQuery) }
+            .filterNot { item ->
+                item.isJapaneseAnime && item.aniListId != null
+            }
+        val sorted = SearchRanker.rank(cleanQuery, source).take(80)
         if (online.isNotEmpty()) {
             catalogue = (online + catalogue).distinctBy(Media::key)
         }
         sorted
     }
 
+    /**
+     * Dedicated Japanese-anime search. AniList supplies the authoritative
+     * anime identity while TMDB supplies the existing native details/seasons
+     * ID needed by Ramoflix and 67 Movies.
+     */
+    suspend fun searchAnime(query: String): List<Media> = supervisorScope {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) return@supervisorScope emptyList()
+
+        val animeRequest = async {
+            animeCatalogClient.search(cleanQuery).take(ANIME_SEARCH_LIMIT)
+        }
+        val broadTmdbRequest = async { searchTmdb(cleanQuery) }
+        val animeItems = animeRequest.await()
+        if (animeItems.isEmpty()) return@supervisorScope emptyList()
+
+        val broadPool = (
+            broadTmdbRequest.await() +
+                animeMappingCache.values +
+                fallbackAnimeRail.items
+            ).distinctBy(Media::key)
+        val directMatches = mutableMapOf<Int, Media>()
+        animeItems.forEach { anime ->
+            val match = animeMappingCache[anime.aniListId]
+                ?: bestTmdbAnimeMatch(anime, broadPool)
+            match?.let {
+                directMatches[anime.aniListId] = match
+            }
+        }
+
+        val unresolved = animeItems
+            .filterNot { anime -> anime.aniListId in directMatches }
+            .take(ANIME_EXPANDED_LOOKUPS)
+        val expandedMatches = unresolved.map { anime ->
+            async {
+                animeLookupSemaphore.withPermit {
+                    val candidates = searchTmdb(
+                        query = anime.preferredTitle,
+                        types = anime.expectedMediaTypes()
+                            .map(MediaType::routeName),
+                    )
+                    anime.aniListId to bestTmdbAnimeMatch(
+                        anime = anime,
+                        candidates = candidates +
+                            animeMappingCache.values +
+                            fallbackAnimeRail.items,
+                    )
+                }
+            }
+        }.awaitAll().toMap()
+
+        val mapped = animeItems.mapNotNull { anime ->
+            val tmdb = directMatches[anime.aniListId]
+                ?: expandedMatches[anime.aniListId]
+                ?: return@mapNotNull null
+            tmdb.withVerifiedAnime(anime)
+        }.distinctBy(Media::key)
+
+        if (mapped.isNotEmpty()) {
+            mapped.forEach { item ->
+                item.aniListId?.let { id -> animeMappingCache[id] = item }
+            }
+            catalogue = buildMap {
+                catalogue.forEach { item -> put(item.key, item) }
+                mapped.forEach { item -> put(item.key, item) }
+            }.values.toList()
+        }
+        mapped
+    }
+
+    private suspend fun loadTrendingAnimeRail(
+        animeItems: List<AniListCatalogItem>,
+        homeCandidates: List<Media>,
+    ): ContentRail = supervisorScope {
+        if (animeItems.isEmpty()) return@supervisorScope fallbackAnimeRail
+
+        val candidatePool = (
+            homeCandidates +
+                animeMappingCache.values +
+                fallbackAnimeRail.items
+            ).distinctBy(Media::key)
+        val directMatches = mutableMapOf<Int, Media>()
+        animeItems.forEach { anime ->
+            val match = animeMappingCache[anime.aniListId]
+                ?: bestTmdbAnimeMatch(anime, candidatePool)
+            match?.let { directMatches[anime.aniListId] = it }
+        }
+
+        val expandedMatches = animeItems
+            .filterNot { anime -> anime.aniListId in directMatches }
+            .take(ANIME_HOME_EXPANDED_LOOKUPS)
+            .map { anime ->
+                async {
+                    animeLookupSemaphore.withPermit {
+                        val candidates = searchTmdb(
+                            query = anime.preferredTitle,
+                            types = anime.expectedMediaTypes()
+                                .map(MediaType::routeName),
+                        )
+                        anime.aniListId to bestTmdbAnimeMatch(
+                            anime = anime,
+                            candidates = candidates + candidatePool,
+                        )
+                    }
+                }
+            }
+            .awaitAll()
+            .toMap()
+
+        val mapped = animeItems.mapNotNull { anime ->
+            val tmdb = directMatches[anime.aniListId]
+                ?: expandedMatches[anime.aniListId]
+                ?: return@mapNotNull null
+            tmdb.withVerifiedAnime(anime)
+        }.distinctBy(Media::key)
+        mapped.forEach { item ->
+            item.aniListId?.let { id -> animeMappingCache[id] = item }
+        }
+
+        val items = (mapped + fallbackAnimeRail.items)
+            .distinctBy(Media::key)
+            .take(HOME_RAIL_LIMIT)
+        ContentRail(
+            title = JAPANESE_ANIME_RAIL_TITLE,
+            items = items,
+            kind = ContentRailKind.ANIME,
+        )
+    }
+
+    private suspend fun searchTmdb(
+        query: String,
+        types: List<String> = listOf("movie", "tv"),
+    ): List<Media> = supervisorScope {
+        val encoded = URLEncoder.encode(
+            query.trim(),
+            StandardCharsets.UTF_8.toString(),
+        )
+        val resultGroups = types.map { type ->
+            async {
+                runCatching {
+                    parseSearchResults(
+                        pageLoader(
+                            "$TMDB_SITE_URL/search/$type" +
+                                "?query=$encoded&language=en-US",
+                        ),
+                    )
+                }.getOrDefault(emptyList())
+            }
+        }.awaitAll()
+        val largestGroup = resultGroups.maxOfOrNull(List<Media>::size) ?: 0
+        (0 until largestGroup)
+            .flatMap { index ->
+                resultGroups.mapNotNull { results -> results.getOrNull(index) }
+            }
+            .distinctBy(Media::key)
+    }
+
+    private fun bestTmdbAnimeMatch(
+        anime: AniListCatalogItem,
+        candidates: List<Media>,
+    ): Media? {
+        val expectedTypes = anime.expectedMediaTypes()
+        val ranked = candidates
+            .asSequence()
+            .filter { media -> media.type in expectedTypes }
+            .map { media -> media to animeMatchScore(anime, media) }
+            .sortedByDescending { (_, score) -> score }
+            .toList()
+        val best = ranked.firstOrNull()
+            ?.takeIf { (_, score) -> score >= MIN_ANIME_MATCH_SCORE }
+            ?: return null
+        val runnerUp = ranked.getOrNull(1)
+        if (
+            runnerUp != null &&
+            best.second - runnerUp.second < MIN_ANIME_MATCH_MARGIN &&
+            best.first.id != runnerUp.first.id
+        ) {
+            return null
+        }
+        return best.first
+    }
+
+    private fun animeMatchScore(
+        anime: AniListCatalogItem,
+        media: Media,
+    ): Int {
+        val mediaTitle = normalizeAniListAlias(media.title)
+        val aliases = anime.normalizedAliases
+        val titleScore = aliases.maxOfOrNull { alias ->
+            when {
+                alias == mediaTitle -> 260
+                alias.length >= 5 &&
+                    (alias.startsWith(mediaTitle) || mediaTitle.startsWith(alias)) -> 195
+                alias.length >= 5 &&
+                    (alias.contains(mediaTitle) || mediaTitle.contains(alias)) -> 165
+                else -> {
+                    val aliasTokens = alias.split(' ').filter(String::isNotBlank).toSet()
+                    val mediaTokens = mediaTitle.split(' ').filter(String::isNotBlank).toSet()
+                    if (aliasTokens.isEmpty() || mediaTokens.isEmpty()) {
+                        0
+                    } else {
+                        val shared = aliasTokens.intersect(mediaTokens).size
+                        (shared * 145) / aliasTokens.union(mediaTokens).size
+                    }
+                }
+            }
+        } ?: 0
+        val animeYear = anime.year
+        val mediaYear = fourDigitYear.find(media.year)?.value?.toIntOrNull()
+        if (animeYear != null && mediaYear == null) {
+            return REJECTED_ANIME_MATCH_SCORE
+        }
+        val yearDelta = if (animeYear != null && mediaYear != null) {
+            kotlin.math.abs(animeYear - mediaYear)
+        } else {
+            null
+        }
+        val seasonalContinuation = anime.format in TV_ANIME_FORMATS &&
+            aliases.any { alias ->
+                alias != mediaTitle &&
+                    alias.contains(mediaTitle) &&
+                    SEASONAL_TITLE_MARKER.containsMatchIn(alias)
+            }
+        if (
+            yearDelta != null &&
+            yearDelta > 2 &&
+            !(seasonalContinuation && yearDelta <= MAX_SEASON_YEAR_DELTA)
+        ) {
+            return REJECTED_ANIME_MATCH_SCORE
+        }
+        val yearScore = when {
+            yearDelta == null -> 0
+            yearDelta == 0 -> 65
+            yearDelta <= 1 -> 25
+            yearDelta <= 2 -> 10
+            seasonalContinuation -> -20
+            else -> REJECTED_ANIME_MATCH_SCORE
+        }
+        return titleScore + yearScore
+    }
+
+    private fun AniListCatalogItem.expectedMediaTypes(): Set<MediaType> =
+        when (format) {
+            "MOVIE" -> setOf(MediaType.MOVIE)
+            in TV_ANIME_FORMATS -> setOf(MediaType.TV)
+            else -> setOf(MediaType.TV, MediaType.MOVIE)
+        }
+
+    private fun Media.withVerifiedAnime(anime: AniListCatalogItem): Media = copy(
+        overview = overview.ifBlank { anime.description },
+        posterPath = posterPath ?: anime.coverImageUrl,
+        backdropPath = backdropPath ?: anime.bannerImageUrl ?: anime.coverImageUrl,
+        year = year.ifBlank { anime.year?.toString().orEmpty() },
+        rating = if (rating > 0.0) {
+            rating
+        } else {
+            anime.averageScore?.div(10.0) ?: 0.0
+        },
+        genres = (genres + anime.genres + "Anime")
+            .filter(String::isNotBlank)
+            .distinct(),
+        isJapaneseAnime = true,
+        aniListId = anime.aniListId,
+    )
+
     suspend fun details(item: Media): Pair<Media, List<Media>> = supervisorScope {
         val catalogued = catalogue.firstOrNull { it.key == item.key }
         val current = when {
-            catalogued == null -> item
-            item.isJapaneseAnime && !catalogued.isJapaneseAnime ->
-                catalogued.copy(isJapaneseAnime = true)
-            else -> catalogued
+            item.aniListId != null -> (catalogued ?: item).copy(
+                isJapaneseAnime = true,
+                aniListId = item.aniListId,
+            )
+            catalogued != null -> catalogued.copy(
+                isJapaneseAnime = false,
+                aniListId = null,
+            )
+            else -> item.copy(isJapaneseAnime = false, aniListId = null)
         }
         val pageRequest = async {
             runCatching {
@@ -159,7 +426,7 @@ class CatalogClient(
         } ?: current
         val pageRecommendations = pageHtml?.let {
             runCatching { parseRelatedResults(it) }.getOrDefault(emptyList())
-        }.orEmpty().map(::mergeKnownJapaneseAnime)
+        }.orEmpty()
         val ratings = ratingsRequest.await()
         val enriched = metadata.copy(
             imdbRating = ratings.imdb ?: metadata.imdbRating,
@@ -260,10 +527,7 @@ class CatalogClient(
         )
     }
 
-    internal fun parseSearchResults(
-        html: String,
-        japaneseAnime: Boolean = false,
-    ): List<Media> {
+    internal fun parseSearchResults(html: String): List<Media> {
         val document = Jsoup.parse(html, TMDB_SITE_URL)
         return document.select("main div[data-object-id]").mapNotNull { card ->
             val titleLink = card.selectFirst("a[data-media-type][href] h2")?.parent()
@@ -285,7 +549,6 @@ class CatalogClient(
                 year = fourDigitYear.find(
                     card.selectFirst(".release_date")?.text().orEmpty(),
                 )?.value.orEmpty(),
-                isJapaneseAnime = japaneseAnime,
             )
         }.distinctBy(Media::key)
     }
@@ -378,21 +641,6 @@ class CatalogClient(
             .distinct()
             .take(6)
             .ifEmpty { fallback.genres }
-        val originalLanguage = findFactValue(
-            document = document,
-            labels = setOf("original language", "original languages"),
-        )
-        val originCountry = findFactValue(
-            document = document,
-            labels = setOf("country", "country of origin", "origin country"),
-        )
-        val animation = genres.any { genre ->
-            genre.equals("Animation", ignoreCase = true) ||
-                genre.equals("Anime", ignoreCase = true)
-        }
-        val japaneseOrigin = sequenceOf(originalLanguage, originCountry)
-            .filterNotNull()
-            .any(::isJapaneseOriginValue)
         val cast = document
             .select("main ol.people li.card p a[href^=/person/]")
             .map { it.text().trim() }
@@ -409,37 +657,8 @@ class CatalogClient(
             rating = score,
             genres = genres,
             cast = cast,
-            isJapaneseAnime = fallback.isJapaneseAnime || (animation && japaneseOrigin),
+            isJapaneseAnime = fallback.aniListId != null,
         )
-    }
-
-    private fun findFactValue(
-        document: Document,
-        labels: Set<String>,
-    ): String? {
-        val normalizedLabels = labels.map(::normalizeText).toSet()
-        return document.select("p").firstNotNullOfOrNull { paragraph ->
-            val label = paragraph.selectFirst("strong, bdi")
-                ?.text()
-                ?.let(::normalizeText)
-                ?: return@firstNotNullOfOrNull null
-            if (label !in normalizedLabels) return@firstNotNullOfOrNull null
-            paragraph.clone()
-                .also { clone -> clone.select("strong, bdi").remove() }
-                .text()
-                .trim()
-                .takeIf(String::isNotBlank)
-        }
-    }
-
-    private fun isJapaneseOriginValue(value: String): Boolean {
-        val normalized = normalizeText(value)
-        val tokens = normalized.split(' ').filter(String::isNotBlank).toSet()
-        return normalized == "ja" ||
-            normalized == "jp" ||
-            "japanese" in tokens ||
-            "japan" in tokens ||
-            value.contains("日本")
     }
 
     internal fun parseSeasons(html: String, mediaId: Int): List<Season> {
@@ -743,17 +962,6 @@ class CatalogClient(
         }
     }
 
-    private fun mergeKnownJapaneseAnime(item: Media): Media {
-        val knownJapaneseAnime = catalogue.any { known ->
-            known.key == item.key && known.isJapaneseAnime
-        }
-        return if (knownJapaneseAnime && !item.isJapaneseAnime) {
-            item.copy(isJapaneseAnime = true)
-        } else {
-            item
-        }
-    }
-
     data class ParsedPage(
         val hero: Media?,
         val rails: List<ContentRail>,
@@ -767,7 +975,6 @@ class CatalogClient(
     private data class TmdbHomeRailSpec(
         val path: String,
         val title: String,
-        val japaneseAnime: Boolean = false,
     )
 
     private companion object {
@@ -775,6 +982,20 @@ class CatalogClient(
         const val TMDB_SITE_URL = "https://www.themoviedb.org"
         const val ROTTEN_TOMATOES_URL = "https://www.rottentomatoes.com"
         const val HOME_RAIL_LIMIT = 20
+        const val ANIME_HOME_LIMIT = 12
+        const val ANIME_HOME_EXPANDED_LOOKUPS = 4
+        const val ANIME_SEARCH_LIMIT = 18
+        const val ANIME_EXPANDED_LOOKUPS = 6
+        const val ANIME_LOOKUP_CONCURRENCY = 4
+        const val MAX_SEASON_YEAR_DELTA = 10
+        const val MIN_ANIME_MATCH_SCORE = 160
+        const val MIN_ANIME_MATCH_MARGIN = 12
+        const val REJECTED_ANIME_MATCH_SCORE = -1_000_000
+        val TV_ANIME_FORMATS = setOf("TV", "TV_SHORT")
+        val SEASONAL_TITLE_MARKER = Regex(
+            """\b(?:season|part)\s*(?:\d+|[ivx]+)\b""",
+            RegexOption.IGNORE_CASE,
+        )
         val titleRoute = Regex("^/(movie|tv)/.*-(\\d+)$")
         val watchRoute = Regex("^/watch/(movie|tv)/(\\d+)$")
         val tmdbTitleRoute = Regex("^/(movie|tv)/(\\d+)(?:-|$)")
@@ -859,16 +1080,6 @@ class CatalogClient(
             TmdbHomeRailSpec(
                 "/discover/tv?with_genres=10765&sort_by=popularity.desc",
                 "Fantasy & Sci-Fi Worlds",
-            ),
-            TmdbHomeRailSpec(
-                "/discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc",
-                JAPANESE_ANIME_RAIL_TITLE,
-                japaneseAnime = true,
-            ),
-            TmdbHomeRailSpec(
-                "/discover/movie?with_genres=16&with_origin_country=JP&sort_by=popularity.desc",
-                "Japanese Anime Films · Miruro",
-                japaneseAnime = true,
             ),
         )
 
@@ -972,6 +1183,7 @@ class CatalogClient(
                 posterPath = "https://image.tmdb.org/t/p/w500/hTP1DtLGFamjfu8WqjnuQdP1n4i.jpg",
                 genres = listOf("Anime", "Action", "Drama"),
                 isJapaneseAnime = true,
+                aniListId = 16498,
             ),
             Media(
                 id = 85937,
@@ -980,6 +1192,7 @@ class CatalogClient(
                 posterPath = "https://image.tmdb.org/t/p/w500/xUfRZu2mi8jH6SzQEJGP6tjBuYj.jpg",
                 genres = listOf("Anime", "Action"),
                 isJapaneseAnime = true,
+                aniListId = 101922,
             ),
             Media(
                 id = 37854,
@@ -988,6 +1201,7 @@ class CatalogClient(
                 posterPath = "https://image.tmdb.org/t/p/w500/dB4EDhre2dsC2kxYDavyKWqLQwi.jpg",
                 genres = listOf("Anime", "Adventure"),
                 isJapaneseAnime = true,
+                aniListId = 21,
             ),
             Media(
                 id = 209867,
@@ -996,21 +1210,35 @@ class CatalogClient(
                 posterPath = "https://image.tmdb.org/t/p/w500/dqZENchTd7lp5zht7BdlqM7RBhD.jpg",
                 genres = listOf("Anime", "Fantasy", "Adventure"),
                 isJapaneseAnime = true,
+                aniListId = 154587,
             ),
         )
 
         val fallbackRails = listOf(
-            ContentRail("Trending Now", fallbackItems),
-            ContentRail("Popular Movies", fallbackItems.filter { it.type == MediaType.MOVIE }),
-            ContentRail("Popular TV Shows", fallbackItems.filter { it.type == MediaType.TV }),
+            ContentRail("Trending Now", fallbackItems.filterNot(Media::isJapaneseAnime)),
             ContentRail(
-                FALLBACK_ANIME_RAIL_TITLE,
+                "Popular Movies",
+                fallbackItems.filter {
+                    it.type == MediaType.MOVIE && !it.isJapaneseAnime
+                },
+            ),
+            ContentRail(
+                "Popular TV Shows",
+                fallbackItems.filter {
+                    it.type == MediaType.TV && !it.isJapaneseAnime
+                },
+            ),
+            ContentRail(
+                JAPANESE_ANIME_RAIL_TITLE,
                 fallbackItems.filter(Media::isJapaneseAnime),
+                kind = ContentRailKind.ANIME,
             ),
         )
 
-        const val FALLBACK_ANIME_RAIL_TITLE = "Anime"
         const val JAPANESE_ANIME_RAIL_TITLE = "Japanese Anime · Miruro"
+        val fallbackAnimeRail = fallbackRails.first { rail ->
+            rail.kind == ContentRailKind.ANIME
+        }
 
         suspend fun downloadPage(url: String): String = withContext(Dispatchers.IO) {
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {

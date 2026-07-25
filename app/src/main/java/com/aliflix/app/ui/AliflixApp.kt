@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -134,7 +135,9 @@ import com.aliflix.app.AliflixViewModel
 import com.aliflix.app.DetailUiState
 import com.aliflix.app.HomeUiState
 import com.aliflix.app.SearchUiState
+import com.aliflix.app.SearchScope
 import com.aliflix.app.model.ContentRail
+import com.aliflix.app.model.ContentRailKind
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
@@ -208,6 +211,7 @@ fun AliflixApp(
     val updateScope = rememberCoroutineScope()
     var updateUi by remember { mutableStateOf(MobileUpdateUiState()) }
     var urlDialogProvider by remember { mutableStateOf<PlaybackProviderId?>(null) }
+    var detailProviderName by rememberSaveable { mutableStateOf<String?>(null) }
 
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.HOME.name) }
     val selectedTab = AppTab.valueOf(selectedTabName)
@@ -223,15 +227,29 @@ fun AliflixApp(
     var libraryPage by rememberSaveable { mutableIntStateOf(0) }
     val launchVisible =
         selectedTab == AppTab.HOME && detail.item == null && home.loading && home.content == null
+    val requestedDetailProvider = PlaybackProviderId.fromStoredValue(detailProviderName)
+    val detailProvider = requestedDetailProvider?.takeIf { provider ->
+        detail.item?.let(provider::isAvailableFor) == true
+    } ?: playbackPreferences.safeGeneralProvider
+
+    LaunchedEffect(detail.item?.key) {
+        detailProviderName = null
+    }
 
     fun openDetails(item: Media) {
         viewModel.openDetails(item)
     }
 
-    fun playSelection(selection: PlaybackSelection) {
+    fun playSelection(
+        selection: PlaybackSelection,
+        requestedProvider: PlaybackProviderId? = null,
+    ) {
         viewModel.markPlayed(selection.media)
         playerSelection = selection.copy(
-            source = playbackPreferences.sourceFor(selection.media),
+            source = playbackPreferences.sourceFor(
+                media = selection.media,
+                requestedProvider = requestedProvider,
+            ),
         )
         playerVisible = true
     }
@@ -403,14 +421,31 @@ fun AliflixApp(
                         inMyList = detail.item?.let(viewModel::isInMyList) == true,
                         liked = detail.item?.let(viewModel::isLiked) == true,
                         onBack = viewModel::closeDetails,
-                        onPlay = ::playMedia,
-                        onPlayEpisode = ::playEpisode,
+                        onPlay = { item ->
+                            playSelection(
+                                PlaybackSelection(item),
+                                requestedProvider = detailProvider,
+                            )
+                        },
+                        onPlayEpisode = { item, episode ->
+                            playSelection(
+                                PlaybackSelection(
+                                    media = item,
+                                    seasonNumber = episode.seasonNumber,
+                                    episodeNumber = episode.number,
+                                    episodeTitle = episode.title,
+                                ),
+                                requestedProvider = detailProvider,
+                            )
+                        },
                         onSelectSeason = viewModel::selectSeason,
                         onToggleMyList = viewModel::toggleMyList,
                         onToggleLike = viewModel::toggleLike,
                         onOpen = ::openDetails,
-                        generalProvider = playbackPreferences.safeGeneralProvider,
-                        onSelectProvider = viewModel::selectGeneralPlaybackProvider,
+                        selectedProvider = detailProvider,
+                        onSelectProvider = { provider ->
+                            detailProviderName = provider.name
+                        },
                         personalMatch = detail.item?.let {
                             PersonalizationEngine.match(it, likes)
                         },
@@ -436,6 +471,7 @@ fun AliflixApp(
                     AppScreen.SEARCH -> SearchScreen(
                         state = search,
                         onQueryChange = viewModel::updateSearch,
+                        onScopeChange = viewModel::selectSearchScope,
                         onOpen = ::openDetails,
                         gridState = searchScrollState,
                         mediaFilter = searchMediaFilter,
@@ -682,24 +718,41 @@ private fun HomeFeed(
         derivedStateOf { listState.firstVisibleItemIndex > 0 }
     }
     val filteredRails = remember(content, selectedFilter, likes) {
-        val selectedRails = when (selectedFilter) {
+        val matchingRails = when (selectedFilter) {
             HomeFilter.FOR_YOU -> content.rails
-            HomeFilter.MOVIES -> content.rails.map { rail ->
-                rail.copy(items = rail.items.filter { it.type == MediaType.MOVIE })
-            }.filter { it.items.isNotEmpty() }
-            HomeFilter.TV -> content.rails.map { rail ->
-                rail.copy(items = rail.items.filter { it.type == MediaType.TV })
-            }.filter { it.items.isNotEmpty() }
-            HomeFilter.ANIME -> content.rails
-                .filter { rail -> rail.title.contains("Anime", ignoreCase = true) }
+            HomeFilter.MOVIES -> content.rails
+                .filter { rail -> rail.kind == ContentRailKind.GENERAL }
                 .map { rail ->
-                    rail.copy(items = rail.items.filter(Media::isJapaneseAnime))
+                    rail.copy(items = rail.items.filter { it.type == MediaType.MOVIE })
+                }
+                .filter { it.items.isNotEmpty() }
+            HomeFilter.TV -> content.rails
+                .filter { rail -> rail.kind == ContentRailKind.GENERAL }
+                .map { rail ->
+                    rail.copy(items = rail.items.filter { it.type == MediaType.TV })
+                }
+                .filter { it.items.isNotEmpty() }
+            HomeFilter.ANIME -> content.rails
+                .filter { rail -> rail.kind == ContentRailKind.ANIME }
+                .map { rail ->
+                    rail.copy(
+                        items = rail.items.filter { item ->
+                            item.isJapaneseAnime && item.aniListId != null
+                        },
+                    )
                 }
                 .filter { rail -> rail.items.isNotEmpty() }
             HomeFilter.NEW -> content.rails.filter {
                 "Now" in it.title || "Airing" in it.title || "Trending" in it.title
             }
-        }.ifEmpty { content.rails }
+        }
+        val selectedRails = if (
+            matchingRails.isEmpty() && selectedFilter != HomeFilter.ANIME
+        ) {
+            content.rails
+        } else {
+            matchingRails
+        }
         if (selectedFilter == HomeFilter.FOR_YOU && likes.isNotEmpty()) {
             selectedRails.map { rail ->
                 rail.copy(
@@ -714,7 +767,9 @@ private fun HomeFeed(
     }
     val hero = filteredRails.firstNotNullOfOrNull { rail ->
         rail.items.firstOrNull { it.backdropPath != null }
-    } ?: content.hero
+    }
+        ?: filteredRails.firstNotNullOfOrNull { rail -> rail.items.firstOrNull() }
+        ?: content.hero
 
     LazyColumn(
         state = listState,
@@ -895,13 +950,6 @@ private fun HeroBanner(
                         letterSpacing = 1.2.sp,
                     )
                 }
-                Text(
-                    text = "SELECTED FOR TONIGHT",
-                    color = Color.White.copy(alpha = 0.72f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.1.sp,
-                )
             }
             Text(
                 text = item.title,
@@ -1250,6 +1298,7 @@ private fun RecentRail(
 private fun SearchScreen(
     state: SearchUiState,
     onQueryChange: (String) -> Unit,
+    onScopeChange: (SearchScope) -> Unit,
     onOpen: (Media) -> Unit,
     gridState: LazyGridState,
     mediaFilter: String,
@@ -1273,10 +1322,11 @@ private fun SearchScreen(
             )
         }
     }
-    val visibleResults = remember(state.results, mediaFilter) {
-        when (mediaFilter) {
-            "Movies" -> state.results.filter { it.type == MediaType.MOVIE }
-            "Series" -> state.results.filter { it.type == MediaType.TV }
+    val visibleResults = remember(state.results, state.scope, mediaFilter) {
+        when {
+            state.scope == SearchScope.ANIME -> state.results
+            mediaFilter == "Movies" -> state.results.filter { it.type == MediaType.MOVIE }
+            mediaFilter == "Series" -> state.results.filter { it.type == MediaType.TV }
             else -> state.results
         }
     }
@@ -1289,6 +1339,7 @@ private fun SearchScreen(
                 ),
             )
             .windowInsetsPadding(WindowInsets.statusBars)
+            .imePadding()
             .padding(top = 12.dp),
     ) {
         Text(
@@ -1305,13 +1356,56 @@ private fun SearchScreen(
             fontWeight = FontWeight.ExtraBold,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.White.copy(alpha = 0.06f))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            listOf(
+                SearchScope.MOVIES_AND_TV to "Movies & TV",
+                SearchScope.ANIME to "Anime · Miruro",
+            ).forEach { (scope, label) ->
+                val selected = state.scope == scope
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(
+                            if (selected) AliflixRed else Color.Transparent,
+                        )
+                        .clickable { onScopeChange(scope) }
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
         TextField(
             value = queryValue,
             onValueChange = { updated ->
                 queryValue = updated
                 onQueryChange(updated.text)
             },
-            placeholder = { Text("Movies, series, anime…") },
+            placeholder = {
+                Text(
+                    if (state.scope == SearchScope.ANIME) {
+                        "Search Japanese anime…"
+                    } else {
+                        "Movies and TV shows…"
+                    },
+                )
+            },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             trailingIcon = {
                 if (state.query.isNotEmpty()) {
@@ -1348,12 +1442,24 @@ private fun SearchScreen(
                 message = state.error,
             )
             state.query.isBlank() -> EmptyMessage(
-                title = "Everything starts with a title",
-                message = "Search the complete movie and series catalogue.",
+                title = if (state.scope == SearchScope.ANIME) {
+                    "Dedicated anime search"
+                } else {
+                    "Everything starts with a title"
+                },
+                message = if (state.scope == SearchScope.ANIME) {
+                    "Search AniList’s Japanese anime catalogue. Miruro appears as an optional player."
+                } else {
+                    "Search the movie and series catalogue."
+                },
             )
             state.results.isEmpty() -> EmptyMessage(
                 title = "No matches",
-                message = "Try another title or keyword.",
+                message = if (state.scope == SearchScope.ANIME) {
+                    "Try the English, romaji, or Japanese anime title."
+                } else {
+                    "Try another title, year, or keyword."
+                },
             )
             else -> Column(Modifier.fillMaxSize()) {
                 Row(
@@ -1361,24 +1467,37 @@ private fun SearchScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    listOf("All", "Movies", "Series").forEach { option ->
-                        val active = mediaFilter == option
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(
-                                    if (active) Color.White else Color.White.copy(alpha = 0.06f),
+                    if (state.scope == SearchScope.MOVIES_AND_TV) {
+                        listOf("All", "Movies", "Series").forEach { option ->
+                            val active = mediaFilter == option
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (active) {
+                                            Color.White
+                                        } else {
+                                            Color.White.copy(alpha = 0.06f)
+                                        },
+                                    )
+                                    .clickable { onMediaFilterChange(option) }
+                                    .padding(horizontal = 13.dp, vertical = 8.dp),
+                            ) {
+                                Text(
+                                    text = option,
+                                    color = if (active) Color.Black else Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
                                 )
-                                .clickable { onMediaFilterChange(option) }
-                                .padding(horizontal = 13.dp, vertical = 8.dp),
-                        ) {
-                            Text(
-                                text = option,
-                                color = if (active) Color.Black else Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
+                            }
                         }
+                    } else {
+                        Text(
+                            text = "Japanese anime · native results",
+                            color = AliflixMuted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                     }
                     Spacer(Modifier.weight(1f))
                     Text(
@@ -1411,7 +1530,7 @@ private fun SearchScreen(
 @Composable
 private fun PlaybackProviderSelector(
     selectedProvider: PlaybackProviderId,
-    animeOnly: Boolean,
+    includeMiruro: Boolean,
     onSelectProvider: (PlaybackProviderId) -> Unit,
     modifier: Modifier = Modifier,
     onEditProviderUrl: ((PlaybackProviderId) -> Unit)? = null,
@@ -1438,8 +1557,8 @@ private fun PlaybackProviderSelector(
                     letterSpacing = 1.2.sp,
                 )
                 Text(
-                    text = if (animeOnly) {
-                        "Japanese anime always streams with Miruro"
+                    text = if (includeMiruro) {
+                        "Choose a source for this title. Miruro is optional."
                     } else {
                         "Choose the service used when you press Play"
                     },
@@ -1449,70 +1568,56 @@ private fun PlaybackProviderSelector(
             }
         }
 
-        if (animeOnly) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(13.dp))
-                    .background(AliflixRed.copy(alpha = 0.22f))
-                    .border(
-                        1.dp,
-                        AliflixRed.copy(alpha = 0.55f),
-                        RoundedCornerShape(13.dp),
-                    )
-                    .padding(horizontal = 13.dp, vertical = 10.dp),
-            ) {
-                Text(
-                    text = "Miruro · Japanese Anime",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                listOf(
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            buildList {
+                add(
                     PlaybackProviderId.RAMOFLIX,
+                )
+                add(
                     PlaybackProviderId.MOVIES_67,
-                ).forEach { provider ->
-                    val selected = selectedProvider == provider
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(13.dp))
-                            .background(
-                                if (selected) AliflixRed else Color.Black.copy(alpha = 0.22f),
-                            )
-                            .border(
-                                1.dp,
-                                if (selected) {
-                                    AliflixRed
-                                } else {
-                                    Color.White.copy(alpha = 0.10f)
-                                },
-                                RoundedCornerShape(13.dp),
-                            )
-                            .clickable { onSelectProvider(provider) }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = provider.displayName,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                )
+                if (includeMiruro) add(PlaybackProviderId.MIRURO)
+            }.forEach { provider ->
+                val selected = selectedProvider == provider
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(
+                            if (selected) AliflixRed else Color.Black.copy(alpha = 0.22f),
                         )
-                    }
+                        .border(
+                            1.dp,
+                            if (selected) {
+                                AliflixRed
+                            } else {
+                                Color.White.copy(alpha = 0.10f)
+                            },
+                            RoundedCornerShape(13.dp),
+                        )
+                        .clickable { onSelectProvider(provider) }
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = provider.displayName,
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
-            if (onEditProviderUrl != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
+        }
+        if (onEditProviderUrl != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
                     TextButton(
                         onClick = {
                             onEditProviderUrl(PlaybackProviderId.RAMOFLIX)
@@ -1537,7 +1642,6 @@ private fun PlaybackProviderSelector(
                             fontWeight = FontWeight.Bold,
                         )
                     }
-                }
             }
         }
     }
@@ -1733,7 +1837,7 @@ private fun MySpaceScreen(
         )
         PlaybackProviderSelector(
             selectedProvider = generalProvider,
-            animeOnly = false,
+            includeMiruro = false,
             onSelectProvider = onSelectProvider,
             onEditProviderUrl = onEditProviderUrl,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -2011,7 +2115,7 @@ private fun DetailScreen(
     onToggleMyList: (Media) -> Unit,
     onToggleLike: (Media) -> Unit,
     onOpen: (Media) -> Unit,
-    generalProvider: PlaybackProviderId,
+    selectedProvider: PlaybackProviderId,
     onSelectProvider: (PlaybackProviderId) -> Unit,
 ) {
     val item = state.item ?: return
@@ -2117,8 +2221,8 @@ private fun DetailScreen(
                 }
                 RatingsRow(item = item)
                 PlaybackProviderSelector(
-                    selectedProvider = generalProvider,
-                    animeOnly = item.isJapaneseAnime,
+                    selectedProvider = selectedProvider,
+                    includeMiruro = PlaybackProviderId.MIRURO.isAvailableFor(item),
                     onSelectProvider = onSelectProvider,
                 )
                 Row(
@@ -2153,24 +2257,23 @@ private fun DetailScreen(
                                 "Play S${state.selectedSeason} E${state.episodes.first().number}"
                             } else {
                                 "Play"
-                            } + " · " + if (item.isJapaneseAnime) {
-                                PlaybackProviderId.MIRURO.displayName
-                            } else {
-                                generalProvider.displayName
-                            },
+                            } + " · " + selectedProvider.displayName,
                             fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     OutlinedButton(
                         onClick = { onToggleMyList(item) },
                         modifier = Modifier
                             .height(54.dp)
-                            .width(112.dp),
+                            .width(124.dp),
                         shape = RoundedCornerShape(17.dp),
                         border = androidx.compose.foundation.BorderStroke(
                             1.dp,
                             Color.White.copy(alpha = 0.16f),
                         ),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
                     ) {
                         Icon(
                             if (inMyList) Icons.Filled.Check else Icons.Filled.Add,
@@ -2178,7 +2281,12 @@ private fun DetailScreen(
                             modifier = Modifier.size(19.dp),
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text(if (inMyList) "Saved" else "My List")
+                        Text(
+                            text = if (inMyList) "Saved" else "My List",
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     OutlinedButton(
                         onClick = { onToggleLike(item) },

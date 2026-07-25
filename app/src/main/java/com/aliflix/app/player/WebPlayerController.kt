@@ -59,6 +59,7 @@ class WebPlayerController(
     private val playerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val aniListResolver = AniListResolver()
     private var resolutionJob: Job? = null
+    private var miruroReadinessGeneration = 0
 
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -154,6 +155,7 @@ class WebPlayerController(
     fun destroy() {
         resolutionJob?.cancel()
         playerScope.cancel()
+        stopMiruroReadiness()
         hideCustomView()
         playerVisible = false
         setSystemBarsVisible(activity, true)
@@ -174,6 +176,7 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ) {
         resolutionJob?.cancel()
+        stopMiruroReadiness(view)
         _loading.value = true
         _error.value = null
         view.alpha = 0f
@@ -265,13 +268,13 @@ class WebPlayerController(
                 cacheMode = WebSettings.LOAD_DEFAULT
                 useWideViewPort = true
                 loadWithOverviewMode = true
-                userAgentString = if (BuildConfig.IS_TV) {
-                    "Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                val systemUserAgent = userAgentString.orEmpty()
+                val appToken = if (BuildConfig.IS_TV) {
+                    "AliflixTV"
                 } else {
-                    "Mozilla/5.0 (Linux; Android 16; A069P) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
+                    "AliflixAndroid"
                 }
+                userAgentString = "$systemUserAgent $appToken/${BuildConfig.VERSION_NAME}".trim()
             }
             cookieManager.setAcceptThirdPartyCookies(this, true)
 
@@ -292,6 +295,13 @@ class WebPlayerController(
                             isRamoflixSearchUrl(url, selection)
                         ) {
                             resolveRamoflixTitle(view, selection, attempt = 0)
+                            return
+                        }
+                        if (
+                            selection != null &&
+                            selection.source.provider == PlaybackProviderId.MIRURO
+                        ) {
+                            startMiruroReadiness(view, selection)
                             return
                         }
                         _error.value = null
@@ -376,6 +386,7 @@ class WebPlayerController(
                     error: WebResourceError?,
                 ) {
                     if (request?.isForMainFrame == true) {
+                        stopMiruroReadiness(view)
                         _loading.value = false
                         _error.value = error?.description?.toString()
                             ?: "The player could not be loaded."
@@ -386,6 +397,7 @@ class WebPlayerController(
                     view: WebView?,
                     detail: RenderProcessGoneDetail?,
                 ): Boolean {
+                    stopMiruroReadiness(view)
                     _loading.value = false
                     _error.value = "The web player stopped unexpectedly. Tap Retry."
                     if (webView === view) {
@@ -1011,6 +1023,109 @@ class WebPlayerController(
         }
     }
 
+    private fun startMiruroReadiness(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        val generation = ++miruroReadinessGeneration
+        _error.value = null
+        _loading.value = true
+        view.alpha = 0f
+        pollMiruroReadiness(
+            view = view,
+            selection = selection,
+            generation = generation,
+            attempt = 0,
+        )
+    }
+
+    private fun pollMiruroReadiness(
+        view: WebView,
+        selection: PlaybackSelection,
+        generation: Int,
+        attempt: Int,
+    ) {
+        if (
+            generation != miruroReadinessGeneration ||
+            !isActiveSelection(view, selection)
+        ) {
+            return
+        }
+        view.evaluateJavascript(MIRURO_READINESS_SCRIPT) { result ->
+            if (
+                generation != miruroReadinessGeneration ||
+                !isActiveSelection(view, selection)
+            ) {
+                return@evaluateJavascript
+            }
+            val payload = runCatching {
+                JSONTokener(result).nextValue() as? String
+            }.getOrNull().orEmpty()
+            val readiness = runCatching { JSONObject(payload) }.getOrNull()
+            when {
+                readiness?.optBoolean("ready") == true -> {
+                    stopMiruroReadiness(view)
+                    view.alpha = 1f
+                    _error.value = null
+                    _loading.value = false
+                    alignMiruroContent(view, selection)
+                    if (playerVisible) {
+                        view.requestFocus()
+                        view.postDelayed(
+                            { prepareTvWebFocus(view) },
+                            120L,
+                        )
+                    }
+                }
+                readiness?.optBoolean("unavailable") == true &&
+                    attempt >= MIRURO_UNAVAILABLE_CONFIRMATION_ATTEMPT -> {
+                    failMiruroReadiness(
+                        view = view,
+                        message = "Miruro reports no playable episode for this title. " +
+                            "Go back and choose Ramoflix or 67 Movies.",
+                    )
+                }
+                attempt >= MIRURO_READINESS_MAX_ATTEMPTS -> {
+                    failMiruroReadiness(
+                        view = view,
+                        message = "Miruro loaded, but its video player did not appear. " +
+                            "Tap Retry, or go back and choose Ramoflix or 67 Movies.",
+                    )
+                }
+                else -> {
+                    view.postDelayed(
+                        {
+                            pollMiruroReadiness(
+                                view = view,
+                                selection = selection,
+                                generation = generation,
+                                attempt = attempt + 1,
+                            )
+                        },
+                        MIRURO_READINESS_POLL_MS,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun failMiruroReadiness(
+        view: WebView,
+        message: String,
+    ) {
+        stopMiruroReadiness(view)
+        view.alpha = 1f
+        _loading.value = false
+        _error.value = message
+    }
+
+    private fun stopMiruroReadiness(view: WebView? = webView) {
+        miruroReadinessGeneration += 1
+        runCatching {
+            view?.evaluateJavascript(MIRURO_STOP_READINESS_SCRIPT, null)
+        }
+    }
+
     private fun alignProviderContent(
         view: WebView,
         selection: PlaybackSelection,
@@ -1259,5 +1374,98 @@ class WebPlayerController(
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
         }
+    }
+
+    private companion object {
+        const val MIRURO_READINESS_POLL_MS = 500L
+        const val MIRURO_READINESS_MAX_ATTEMPTS = 30
+        const val MIRURO_UNAVAILABLE_CONFIRMATION_ATTEMPT = 4
+
+        val MIRURO_READINESS_SCRIPT = """
+            (() => {
+              const stateKey = "__aliflixMiruroReadiness";
+              const state = window[stateKey] || {
+                ready: false,
+                unavailable: false,
+                observer: null
+              };
+              window[stateKey] = state;
+
+              const visible = (element) => {
+                if (!element) return false;
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                return rect.width >= 120 && rect.height >= 68 &&
+                  rect.bottom > -20 &&
+                  rect.top < Math.max(innerHeight * 1.5, 900) &&
+                  style.display !== "none" &&
+                  style.visibility !== "hidden" &&
+                  style.opacity !== "0";
+              };
+              const identity = (element) => [
+                element?.tagName,
+                element?.id,
+                typeof element?.className === "string" ? element.className : "",
+                element?.getAttribute?.("data-player"),
+                element?.parentElement?.id,
+                typeof element?.parentElement?.className === "string"
+                  ? element.parentElement.className
+                  : ""
+              ].filter(Boolean).join(" ").toLowerCase();
+              const isPlayer = (element) => {
+                if (!visible(element)) return false;
+                const tag = element.tagName;
+                const label = identity(element);
+                if (/skeleton|loading|placeholder|trailer/.test(label)) return false;
+                if (tag === "VIDEO") return true;
+                if (tag === "IFRAME") {
+                  const src = element.getAttribute("src") || "";
+                  return /^https:\/\//i.test(src);
+                }
+                if (!/player|video|embed/.test(label)) return false;
+                return Boolean(
+                  element.querySelector(
+                    "video, iframe[src], canvas, button, [role='button'], [role='slider']"
+                  )
+                );
+              };
+              const scan = () => {
+                const player = Array.from(document.querySelectorAll(
+                  "video, iframe[src], [data-player], " +
+                  "[class*='player' i], [id*='player' i], " +
+                  "[class*='video' i], [id*='video' i]"
+                )).find(isPlayer);
+                const bodyText = (document.body?.innerText || "").toLowerCase();
+                state.ready = Boolean(player);
+                state.unavailable =
+                  /no episodes found|no playable (?:episode|server)|episode (?:is )?unavailable/
+                    .test(bodyText);
+                return {
+                  ready: state.ready,
+                  unavailable: state.unavailable
+                };
+              };
+
+              if (!state.observer && document.documentElement) {
+                state.observer = new MutationObserver(scan);
+                state.observer.observe(document.documentElement, {
+                  childList: true,
+                  subtree: true,
+                  attributes: true,
+                  attributeFilter: ["class", "style", "src"]
+                });
+              }
+              return JSON.stringify(scan());
+            })();
+        """.trimIndent()
+
+        val MIRURO_STOP_READINESS_SCRIPT = """
+            (() => {
+              const state = window.__aliflixMiruroReadiness;
+              state?.observer?.disconnect();
+              delete window.__aliflixMiruroReadiness;
+              return true;
+            })();
+        """.trimIndent()
     }
 }

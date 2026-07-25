@@ -36,6 +36,8 @@ internal class AniListResolver(
             append(selection.media.title)
             append(':')
             append(selection.media.year)
+            append(":anilist:")
+            append(selection.media.aniListId ?: "none")
             append(":s")
             append(selection.seasonNumber ?: 1)
         }
@@ -45,11 +47,19 @@ internal class AniListResolver(
         val baseUrl = selection.source.baseUrl.trimEnd('/')
         val episode = selection.episodeNumber ?: 1
         val slug = normalize(resolved.title).replace(' ', '-')
-        return "$baseUrl/watch/${resolved.id}/$slug/$episode"
+        return "$baseUrl/watch/${resolved.id}/$slug?ep=$episode"
     }
 
     private suspend fun resolve(selection: PlaybackSelection): Resolution {
         val season = selection.seasonNumber ?: 1
+        selection.media.aniListId
+            ?.takeIf { selection.media.type == MediaType.MOVIE }
+            ?.let { aniListId ->
+                return Resolution(
+                    id = aniListId,
+                    title = selection.media.title,
+                )
+            }
         val searches = buildList {
             if (
                 selection.media.type == MediaType.TV &&
@@ -219,7 +229,7 @@ internal class AniListResolver(
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 setRequestProperty(
                     "User-Agent",
-                    "Aliflix-Android/2.0 (+https://github.com/alishaban144/aliflix-android)",
+                    "Aliflix-Android/2.3 (+https://github.com/alishaban144/aliflix-android)",
                 )
             }
             return try {

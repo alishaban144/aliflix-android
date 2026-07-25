@@ -24,6 +24,14 @@ enum class PlaybackProviderId(
         supportsGeneralPlayback = false,
     );
 
+    fun isAvailableFor(media: Media): Boolean =
+        supportsGeneralPlayback ||
+            (
+                this == MIRURO &&
+                    media.isJapaneseAnime &&
+                    media.aniListId != null
+                )
+
     companion object {
         fun fromStoredValue(value: String?): PlaybackProviderId? =
             entries.firstOrNull { provider ->
@@ -114,15 +122,13 @@ data class PlaybackPreferences(
         media: Media,
         requestedProvider: PlaybackProviderId? = null,
     ): PlaybackSource {
-        if (media.isJapaneseAnime) return PlaybackSource.miruro()
-
         val provider = requestedProvider
-            ?.takeIf(PlaybackProviderId::supportsGeneralPlayback)
+            ?.takeIf { candidate -> candidate.isAvailableFor(media) }
             ?: safeGeneralProvider
         return when (provider) {
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
             PlaybackProviderId.MOVIES_67 -> PlaybackSource.movies67(movies67BaseUrl)
-            PlaybackProviderId.MIRURO -> PlaybackSource.ramoflix(ramoflixConfig)
+            PlaybackProviderId.MIRURO -> PlaybackSource.miruro()
         }
     }
 }
