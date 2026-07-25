@@ -17,7 +17,7 @@ class MediaTest {
     }
 
     @Test
-    fun movies67BuildsDirectVidloveMovieUrl() {
+    fun movies67BuildsOfficialMovieWatchUrl() {
         val item = Media(id = 27205, type = MediaType.MOVIE, title = "Inception")
         val selection = PlaybackSelection(
             media = item,
@@ -25,17 +25,13 @@ class MediaTest {
         )
 
         assertEquals(
-            "https://player.vidlove.cc/embed/movie/27205" +
-                "?autoplay=true&poster=true&chromecast=true&servericon=true" +
-                "&setting=true&pip=true&font=Roboto&fontcolor=ffffff&fontsize=20" +
-                "&opacity=0.5&primarycolor=ffffff&secondarycolor=ffffff" +
-                "&iconcolor=ffffff&server=Dark",
+            "https://67movies.nl/watch/movie/27205",
             selection.entryUrl,
         )
     }
 
     @Test
-    fun movies67BuildsDirectVidloveTvSeasonEpisodeUrl() {
+    fun movies67BuildsOfficialTvSeasonEpisodeWatchUrl() {
         val item = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
         val selection = PlaybackSelection(
             media = item,
@@ -45,11 +41,7 @@ class MediaTest {
         )
 
         assertEquals(
-            "https://player.vidlove.cc/embed/tv/66732/2/3" +
-                "?autoplay=true&poster=true&chromecast=true&servericon=true" +
-                "&setting=true&pip=true&font=Roboto&fontcolor=ffffff&fontsize=20" +
-                "&opacity=0.5&primarycolor=ffffff&secondarycolor=ffffff" +
-                "&iconcolor=ffffff&server=Dark",
+            "https://67movies.nl/watch/tv/66732/2/3",
             selection.entryUrl,
         )
     }

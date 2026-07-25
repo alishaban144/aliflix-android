@@ -202,6 +202,9 @@ class WebPlayerController(
                         KeyEvent.KEYCODE_DPAD_UP,
                         KeyEvent.KEYCODE_DPAD_DOWN,
                         -> {
+                            if (isMovies67Wrapper(this)) {
+                                return super.dispatchKeyEvent(event)
+                            }
                             if (event.repeatCount == 0) {
                                 moveTvWebFocus(this, event.keyCode)
                             }
@@ -232,13 +235,7 @@ class WebPlayerController(
                 cacheMode = WebSettings.LOAD_DEFAULT
                 useWideViewPort = true
                 loadWithOverviewMode = true
-                val systemUserAgent = userAgentString.orEmpty()
-                val appToken = if (BuildConfig.IS_TV) {
-                    "AliflixTV"
-                } else {
-                    "AliflixAndroid"
-                }
-                userAgentString = "$systemUserAgent $appToken/${BuildConfig.VERSION_NAME}".trim()
+                userAgentString = browserCompatibleUserAgent(userAgentString.orEmpty())
             }
             cookieManager.setAcceptThirdPartyCookies(this, true)
 
@@ -409,6 +406,15 @@ class WebPlayerController(
 
     private fun customHostsForActiveSelection(): Set<String> =
         activeSelection?.source?.approvedTopLevelHosts.orEmpty()
+
+    private fun isMovies67Wrapper(view: WebView): Boolean {
+        val selection = activeSelection ?: return false
+        if (selection.source.provider != PlaybackProviderId.MOVIES_67) return false
+        val currentHost = runCatching {
+            URI(view.url.orEmpty()).host?.removePrefix("www.")
+        }.getOrNull()
+        return currentHost.equals(selection.source.cleanDomain, ignoreCase = true)
+    }
 
     private fun prepareTvWebFocus(view: WebView) {
         if (!BuildConfig.IS_TV) return
@@ -1011,6 +1017,16 @@ class WebPlayerController(
                     max-width: 100vw !important;
                     max-height: 100vh !important;
                   }
+                  iframe {
+                    position: fixed !important;
+                    inset: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    border: 0 !important;
+                  }
+                  a[aria-label="Back to home"] {
+                    display: none !important;
+                  }
                   button:focus, [role="button"]:focus, video:focus, select:focus {
                     outline: 4px solid #fff !important;
                     outline-offset: 2px !important;
@@ -1023,7 +1039,11 @@ class WebPlayerController(
                 video.setAttribute("tabindex", "0");
                 video.setAttribute("playsinline", "");
               }
+              const frame = document.querySelector('iframe[src*="vidlove"]') ||
+                document.querySelector("iframe");
+              if (frame) frame.setAttribute("tabindex", "0");
               const focusable = video ||
+                frame ||
                 document.querySelector('button[aria-label*="play" i], button[title*="play" i]') ||
                 document.querySelector("button, [role='button']");
               focusable?.focus({ preventScroll: true });
@@ -1171,5 +1191,12 @@ class WebPlayerController(
             controller.hide(WindowInsetsCompat.Type.systemBars())
         }
     }
-
 }
+
+internal fun browserCompatibleUserAgent(userAgent: String): String =
+    userAgent
+        .replace(Regex(""";\s*wv(?=\))""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s+Version/4\.0""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s+Aliflix(?:Android|TV)/[^\s]+""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s{2,}"""), " ")
+        .trim()

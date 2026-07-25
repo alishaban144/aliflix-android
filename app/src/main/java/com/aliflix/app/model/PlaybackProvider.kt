@@ -56,28 +56,12 @@ data class PlaybackSource(
             RamoflixConfig(baseUrl).buildWatchUrl(media.title)
 
         PlaybackProviderId.MOVIES_67 -> {
-            val defaultHost = URI(PlaybackProviderId.MOVIES_67.defaultBaseUrl)
-                .host
-                ?.removePrefix("www.")
-            if (cleanDomain.equals(defaultHost, ignoreCase = true)) {
-                val route = if (media.type == MediaType.TV) {
-                    "/embed/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
-                } else {
-                    "/embed/movie/${media.id}"
-                }
-                "https://player.vidlove.cc$route" +
-                    "?autoplay=true&poster=true&chromecast=true&servericon=true" +
-                    "&setting=true&pip=true&font=Roboto&fontcolor=ffffff&fontsize=20" +
-                    "&opacity=0.5&primarycolor=ffffff&secondarycolor=ffffff" +
-                    "&iconcolor=ffffff&server=Dark"
+            val route = if (media.type == MediaType.TV) {
+                "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
             } else {
-                val route = if (media.type == MediaType.TV) {
-                    "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
-                } else {
-                    "/watch/movie/${media.id}"
-                }
-                "${baseUrl.trimEnd('/')}$route"
+                "/watch/movie/${media.id}"
             }
+            "${baseUrl.trimEnd('/')}$route"
         }
     }
 

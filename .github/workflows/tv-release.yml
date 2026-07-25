@@ -60,7 +60,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Removes the dedicated anime and Miruro integration, adds predictive search, redesigns My Space and provider settings on phone and TV, improves TV remote focus, and keeps Ramoflix and 67 Movies playback reliable."
+            RELEASE_NOTES="Fixes 67 Movies playback on Android and Android TV by using its official watch pages, improves WebView compatibility, and preserves TV remote focus in the embedded player."
           fi
           mkdir -p dist
           cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/aliflix-mobile-release.apk
@@ -107,7 +107,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Removes the dedicated anime and Miruro integration, adds predictive search, redesigns My Space and provider settings on phone and TV, improves TV remote focus, and keeps Ramoflix and 67 Movies playback reliable."
+            RELEASE_NOTES="Fixes 67 Movies playback on Android and Android TV by using its official watch pages, improves WebView compatibility, and preserves TV remote focus in the embedded player."
           fi
           VERSION_NAME="$(jq -r '.versionName' dist/update-mobile.json)"
           gh release create "$RELEASE_TAG" \
