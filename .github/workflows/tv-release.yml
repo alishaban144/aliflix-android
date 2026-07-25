@@ -48,8 +48,8 @@ jobs:
             -Dorg.gradle.java.home="$JAVA_HOME" \
             -PALIFLIX_MOBILE_UPDATE_MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update-mobile.json" \
             -PALIFLIX_TV_UPDATE_MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update-tv.json" \
-            testMobileReleaseUnitTest testTvReleaseUnitTest \
-            lintMobileRelease lintTvRelease \
+            testMobileDebugUnitTest testTvDebugUnitTest \
+            lintMobileDebug lintTvDebug \
             assembleMobileRelease assembleTvRelease
 
       - name: Prepare release assets
