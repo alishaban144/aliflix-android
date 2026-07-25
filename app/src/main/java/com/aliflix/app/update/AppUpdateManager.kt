@@ -209,7 +209,11 @@ class AppUpdateManager(
         connection.readTimeout = 30_000
         connection.instanceFollowRedirects = true
         connection.setRequestProperty("Accept", "application/json, application/octet-stream")
-        connection.setRequestProperty("User-Agent", "Aliflix-TV/${BuildConfig.VERSION_NAME}")
+        val formFactor = if (BuildConfig.IS_TV) "TV" else "Mobile"
+        connection.setRequestProperty(
+            "User-Agent",
+            "Aliflix-$formFactor/${BuildConfig.VERSION_NAME}",
+        )
         connection.connect()
         check(connection.responseCode in 200..299) {
             "The update server returned HTTP ${connection.responseCode}."
@@ -219,7 +223,8 @@ class AppUpdateManager(
 
     private companion object {
         const val UPDATE_DIRECTORY = "updates"
-        const val UPDATE_FILE_NAME = "aliflix-tv-update.apk"
+        val UPDATE_FILE_NAME =
+            if (BuildConfig.IS_TV) "aliflix-tv-update.apk" else "aliflix-mobile-update.apk"
         const val MAX_MANIFEST_BYTES = 64 * 1024
     }
 }

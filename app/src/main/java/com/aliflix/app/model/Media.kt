@@ -1,6 +1,5 @@
 package com.aliflix.app.model
 
-import com.aliflix.app.data.RamoflixConfig
 import org.json.JSONObject
 
 enum class MediaType(val routeName: String) {
@@ -26,6 +25,7 @@ data class Media(
     val rottenTomatoesRating: Int? = null,
     val genres: List<String> = emptyList(),
     val cast: List<String> = emptyList(),
+    val isJapaneseAnime: Boolean = false,
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
@@ -46,6 +46,7 @@ data class Media(
         rottenTomatoesRating?.let { put("rottenTomatoesRating", it) }
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
+        put("isJapaneseAnime", isJapaneseAnime)
     }
 
     companion object {
@@ -82,6 +83,7 @@ data class Media(
                     array.optString(index).takeIf(String::isNotBlank)
                 }
             }.orEmpty(),
+            isJapaneseAnime = json.optBoolean("isJapaneseAnime", false),
         )
     }
 }
@@ -127,7 +129,7 @@ data class PlaybackSelection(
     val seasonNumber: Int? = null,
     val episodeNumber: Int? = null,
     val episodeTitle: String? = null,
-    val ramoflixConfig: RamoflixConfig = RamoflixConfig(),
+    val source: PlaybackSource = PlaybackSource.ramoflix(),
 ) {
     val key: String
         get() = buildString {
@@ -138,15 +140,18 @@ data class PlaybackSelection(
                 append(":e")
                 append(episodeNumber ?: 1)
             }
-            val cleanBaseUrl = ramoflixConfig.baseUrl.trimEnd('/')
-            if (cleanBaseUrl != RamoflixConfig.DEFAULT_URL.trimEnd('/')) {
-                append(":ramoflix@")
-                append(cleanBaseUrl)
-            }
+            append(":via:")
+            append(source.provider.name.lowercase())
+            append("@")
+            append(source.cleanDomain.lowercase())
         }
 
-    val watchUrl: String
-        get() = ramoflixConfig.buildWatchUrl(media.title)
+    val entryUrl: String?
+        get() = source.buildEntryUrl(
+            media = media,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+        )
 }
 
 data class ContentRail(

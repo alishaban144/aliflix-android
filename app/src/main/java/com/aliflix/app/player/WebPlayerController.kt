@@ -30,10 +30,18 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.json.JSONTokener
 
@@ -47,6 +55,9 @@ class WebPlayerController(
     private var customViewContainer: FrameLayout? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var playerVisible = false
+    private val playerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val aniListResolver = AniListResolver()
+    private var resolutionJob: Job? = null
 
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -65,19 +76,19 @@ class WebPlayerController(
             loadedKey = defaultKey
             _error.value = null
             view.stopLoading()
-            view.loadUrl(selection.watchUrl)
+            loadSelection(view, selection)
         }
         (view.parent as? ViewGroup)?.removeView(view)
         return view
     }
 
-    fun showRamoflixServers() {
+    fun showProviderOptions() {
         activeSelection ?: return
         webView?.evaluateJavascript(
             """
             (() => {
               const label = Array.from(document.querySelectorAll('p,h2,h3,div'))
-                .find((el) => el.textContent.trim() === "Choose server:");
+                .find((el) => /^(choose\s+)?server(s)?:?$/i.test(el.textContent.trim()));
               if (!label) return false;
               label.scrollIntoView({ behavior: "smooth", block: "start" });
               return true;
@@ -105,8 +116,10 @@ class WebPlayerController(
     fun reload() {
         _error.value = null
         val view = webView
-        if (view != null) {
-            view.reload()
+        val selection = activeSelection
+        if (view != null && selection != null) {
+            view.stopLoading()
+            loadSelection(view, selection)
         } else if (activeSelection != null) {
             _webViewGeneration.value += 1
         }
@@ -138,6 +151,8 @@ class WebPlayerController(
     }
 
     fun destroy() {
+        resolutionJob?.cancel()
+        playerScope.cancel()
         hideCustomView()
         playerVisible = false
         setSystemBarsVisible(activity, true)
@@ -149,6 +164,46 @@ class WebPlayerController(
             destroy()
         }
         webView = null
+        loadedKey = null
+        activeSelection = null
+    }
+
+    private fun loadSelection(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        resolutionJob?.cancel()
+        _loading.value = true
+        _error.value = null
+        view.alpha = 0f
+        if (selection.source.provider != PlaybackProviderId.MIRURO) {
+            val entryUrl = selection.entryUrl
+            if (entryUrl == null) {
+                _loading.value = false
+                _error.value = "This provider could not create a playback link."
+            } else {
+                view.loadUrl(entryUrl)
+            }
+            return
+        }
+
+        resolutionJob = playerScope.launch {
+            try {
+                val watchUrl = aniListResolver.resolveWatchUrl(selection)
+                if (isActiveSelection(view, selection)) {
+                    view.loadUrl(watchUrl)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (isActiveSelection(view, selection)) {
+                    view.alpha = 1f
+                    _loading.value = false
+                    _error.value = error.message
+                        ?: "Miruro could not resolve this anime."
+                }
+            }
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -232,7 +287,8 @@ class WebPlayerController(
                     if (view != null && url != null) {
                         if (
                             selection != null &&
-                            isRamoflixSearchUrl(url)
+                            selection.source.provider == PlaybackProviderId.RAMOFLIX &&
+                            isRamoflixSearchUrl(url, selection)
                         ) {
                             resolveRamoflixTitle(view, selection, attempt = 0)
                             return
@@ -259,7 +315,7 @@ class WebPlayerController(
                             view.postDelayed(
                                 {
                                     if (isActiveSelection(view, selection)) {
-                                        alignRamoflixContent(view, selection)
+                                        alignProviderContent(view, selection)
                                     }
                                 },
                                 350L,
@@ -267,11 +323,22 @@ class WebPlayerController(
                             view.postDelayed(
                                 {
                                     if (isActiveSelection(view, selection)) {
-                                        alignRamoflixContent(view, selection)
+                                        alignProviderContent(view, selection)
                                     }
                                 },
                                 1_400L,
                             )
+                            if (selection.source.provider != PlaybackProviderId.RAMOFLIX) {
+                                view.postDelayed(
+                                    {
+                                        if (isActiveSelection(view, selection)) {
+                                            alignProviderContent(view, selection)
+                                            if (playerVisible) prepareTvWebFocus(view)
+                                        }
+                                    },
+                                    3_000L,
+                                )
+                            }
                         }
                         return
                     }
@@ -285,12 +352,7 @@ class WebPlayerController(
                 ): Boolean {
                     if (request?.isForMainFrame != true) return false
                     val uri = request.url ?: return true
-                    val customHosts = activeSelection
-                        ?.ramoflixConfig
-                        ?.cleanDomain
-                        ?.takeIf(String::isNotBlank)
-                        ?.let(::setOf)
-                        .orEmpty()
+                    val customHosts = customHostsForActiveSelection()
                     if (
                         PlaybackNavigationPolicy.isAllowedTopLevel(
                             url = uri.toString(),
@@ -366,10 +428,19 @@ class WebPlayerController(
         }
     }
 
-    private fun isRamoflixSearchUrl(url: String): Boolean {
+    private fun isRamoflixSearchUrl(
+        url: String,
+        selection: PlaybackSelection,
+    ): Boolean {
         val uri = url.toUri()
-        return uri.getQueryParameter("s") != null
+        val cleanHost = uri.host?.removePrefix("www.")
+        return selection.source.provider == PlaybackProviderId.RAMOFLIX &&
+            cleanHost == selection.source.cleanDomain &&
+            uri.getQueryParameter("s") != null
     }
+
+    private fun customHostsForActiveSelection(): Set<String> =
+        activeSelection?.source?.approvedTopLevelHosts.orEmpty()
 
     private fun prepareTvWebFocus(view: WebView) {
         if (!BuildConfig.IS_TV) return
@@ -411,6 +482,28 @@ class WebPlayerController(
     }
 
     private fun moveTvWebFocus(view: WebView, keyCode: Int) {
+        if (activeSelection?.source?.provider == PlaybackProviderId.MOVIES_67) {
+            val action = when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> "video.currentTime = Math.max(0, video.currentTime - 10)"
+                KeyEvent.KEYCODE_DPAD_RIGHT ->
+                    "video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10)"
+                KeyEvent.KEYCODE_DPAD_UP -> "video.volume = Math.min(1, video.volume + 0.1)"
+                else -> "video.volume = Math.max(0, video.volume - 0.1)"
+            }
+            view.evaluateJavascript(
+                """
+                (() => {
+                  const video = document.querySelector("video");
+                  if (!video) return false;
+                  $action;
+                  video.focus({ preventScroll: true });
+                  return true;
+                })();
+                """.trimIndent(),
+                null,
+            )
+            return
+        }
         val direction = when (keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT -> "left"
             KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
@@ -616,13 +709,17 @@ class WebPlayerController(
                 return JSON.stringify({ action: "none" });
               }
               frame.focus({ preventScroll: true });
+              const rect = frame.getBoundingClientRect();
               if (frame.src?.startsWith("https://")) {
                 return JSON.stringify({
                   action: "promote",
-                  url: frame.src
+                  url: frame.src,
+                  x: rect.left + rect.width / 2,
+                  y: rect.top + rect.height / 2,
+                  viewportWidth: innerWidth,
+                  viewportHeight: innerHeight
                 });
               }
-              const rect = frame.getBoundingClientRect();
               return JSON.stringify({
                 action: "tap",
                 x: rect.left + rect.width / 2,
@@ -646,16 +743,23 @@ class WebPlayerController(
                 }
                 "promote" -> {
                     val target = value.optString("url")
-                    val customHosts = activeSelection
-                        ?.ramoflixConfig
-                        ?.cleanDomain
-                        ?.takeIf(String::isNotBlank)
-                        ?.let(::setOf)
-                        .orEmpty()
                     if (
-                        PlaybackNavigationPolicy.isAllowedTopLevel(target, customHosts)
+                        PlaybackNavigationPolicy.isAllowedTopLevel(
+                            target,
+                            customHostsForActiveSelection(),
+                        )
                     ) {
                         view.loadUrl(target)
+                    } else {
+                        view.post {
+                            dispatchWebViewTap(
+                                view = view,
+                                x = value.optDouble("x").toFloat(),
+                                y = value.optDouble("y").toFloat(),
+                                viewportWidth = value.optDouble("viewportWidth").toFloat(),
+                                viewportHeight = value.optDouble("viewportHeight").toFloat(),
+                            )
+                        }
                     }
                 }
                 "tap" -> {
@@ -704,15 +808,12 @@ class WebPlayerController(
             val target = runCatching {
                 JSONTokener(result).nextValue() as? String
             }.getOrNull().orEmpty()
-            val customHosts = activeSelection
-                ?.ramoflixConfig
-                ?.cleanDomain
-                ?.takeIf(String::isNotBlank)
-                ?.let(::setOf)
-                .orEmpty()
             if (
                 target.isNotBlank() &&
-                PlaybackNavigationPolicy.isAllowedTopLevel(target, customHosts)
+                PlaybackNavigationPolicy.isAllowedTopLevel(
+                    target,
+                    customHostsForActiveSelection(),
+                )
             ) {
                 view.loadUrl(target)
             } else if (attempt < 8) {
@@ -871,7 +972,7 @@ class WebPlayerController(
         ) { result ->
             if (
                 !isActiveSelection(view, selection) ||
-                !isRamoflixSearchUrl(view.url.orEmpty())
+                !isRamoflixSearchUrl(view.url.orEmpty(), selection)
             ) {
                 return@evaluateJavascript
             }
@@ -880,7 +981,7 @@ class WebPlayerController(
             }.getOrNull().orEmpty()
             val allowedTarget = PlaybackNavigationPolicy.isAllowedTopLevel(
                 url = target,
-                customHosts = setOf(selection.ramoflixConfig.cleanDomain),
+                customHosts = selection.source.approvedTopLevelHosts,
             )
             if (allowedTarget) {
                 _error.value = null
@@ -900,6 +1001,118 @@ class WebPlayerController(
                 _error.value = "This title could not be found on Ramoflix."
             }
         }
+    }
+
+    private fun alignProviderContent(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        when (selection.source.provider) {
+            PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
+            PlaybackProviderId.MOVIES_67 -> alignVidloveContent(view, selection)
+            PlaybackProviderId.MIRURO -> alignMiruroContent(view, selection)
+        }
+    }
+
+    private fun alignVidloveContent(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        if (!isActiveSelection(view, selection)) return
+        view.evaluateJavascript(
+            """
+            (() => {
+              if (!document.getElementById("aliflix-vidlove-style")) {
+                const style = document.createElement("style");
+                style.id = "aliflix-vidlove-style";
+                style.textContent = `
+                  html, body {
+                    width: 100% !important;
+                    height: 100% !important;
+                    margin: 0 !important;
+                    overflow: hidden !important;
+                    background: #000 !important;
+                  }
+                  video, .plyr, .plyr__video-wrapper, #player, [class*="player"] {
+                    max-width: 100vw !important;
+                    max-height: 100vh !important;
+                  }
+                  button:focus, [role="button"]:focus, video:focus, select:focus {
+                    outline: 4px solid #fff !important;
+                    outline-offset: 2px !important;
+                  }
+                `;
+                document.head.appendChild(style);
+              }
+              const video = document.querySelector("video");
+              if (video) {
+                video.setAttribute("tabindex", "0");
+                video.setAttribute("playsinline", "");
+              }
+              const focusable = video ||
+                document.querySelector('button[aria-label*="play" i], button[title*="play" i]') ||
+                document.querySelector("button, [role='button']");
+              focusable?.focus({ preventScroll: true });
+              return Boolean(focusable);
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
+    private fun alignMiruroContent(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        if (!isActiveSelection(view, selection)) return
+        view.evaluateJavascript(
+            """
+            (() => {
+              if (!document.getElementById("aliflix-miruro-style")) {
+                const style = document.createElement("style");
+                style.id = "aliflix-miruro-style";
+                style.textContent = `
+                  html, body { background: #06070a !important; }
+                  header, footer,
+                  [class*="navbar" i], [class*="site-header" i],
+                  [class*="site-footer" i] {
+                    display: none !important;
+                  }
+                  main { padding-top: 0 !important; margin-top: 0 !important; }
+                  button:focus, a:focus, [role="button"]:focus,
+                  video:focus, select:focus, input:focus {
+                    outline: 4px solid #fff !important;
+                    outline-offset: 3px !important;
+                  }
+                `;
+                document.head.appendChild(style);
+              }
+              const visible = (element) => {
+                if (!element) return false;
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                return rect.width > 80 && rect.height > 45 &&
+                  style.display !== "none" && style.visibility !== "hidden";
+              };
+              const players = Array.from(
+                document.querySelectorAll("video, iframe, [class*='player' i]")
+              ).filter(visible).sort((a, b) => {
+                const ar = a.getBoundingClientRect();
+                const br = b.getBoundingClientRect();
+                return (br.width * br.height) - (ar.width * ar.height);
+              });
+              const player = players[0];
+              player?.setAttribute("tabindex", "0");
+              player?.scrollIntoView({ block: "start", behavior: "smooth" });
+              const focusable = document.querySelector(
+                'button[aria-label*="play" i], button[title*="play" i], video, button, [role="button"]'
+              );
+              focusable?.focus({ preventScroll: true });
+              return Boolean(player || focusable);
+            })();
+            """.trimIndent(),
+            null,
+        )
     }
 
     private fun alignRamoflixContent(

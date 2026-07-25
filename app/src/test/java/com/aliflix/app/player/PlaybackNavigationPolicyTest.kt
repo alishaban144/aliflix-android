@@ -6,9 +6,12 @@ import org.junit.Test
 
 class PlaybackNavigationPolicyTest {
     @Test
-    fun allowsRamoflixAndItsPlayerHosts() {
+    fun allowsApprovedPlaybackHosts() {
         listOf(
             "https://ramoflix.net/inception/",
+            "https://67movies.nl/watch/movie/27205",
+            "https://player.vidlove.cc/embed/tv/66732/2/3",
+            "https://www.miruro.tv/watch/21?ep=1",
             "https://www.345movie.nl/watch/movie/27205",
             "https://345movie.nl/home",
             "https://456movie.nl/movie/watch/27205",
@@ -50,7 +53,6 @@ class PlaybackNavigationPolicyTest {
             "https://shuttletv.su/watch",
             "https://vidbox.vc/watch",
             "https://popcornmovies.io/watch",
-            "https://67movies.nl/watch",
             "https://bcine.ru/watch",
             "https://toustream.xyz/watch",
         ).forEach { url ->
@@ -69,7 +71,13 @@ class PlaybackNavigationPolicyTest {
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("https://vidlink.pro.example/ad"))
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("https://111movies.net.example/ad"))
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("https://nontongo.win.example/ad"))
+        assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("https://67movies.nl.evil.test/watch"))
+        assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("https://player.vidlove.cc.evil.test/embed"))
+        assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("https://miruro.tv.evil.test/watch"))
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("http://ramoflix.net/watch"))
+        assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("http://67movies.nl/watch"))
+        assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("http://player.vidlove.cc/embed"))
+        assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("http://miruro.tv/watch"))
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("http://345movie.nl/watch"))
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("intent://ad-app"))
     }

@@ -1,0 +1,8 @@
+{
+  "versionCode": 12,
+  "versionName": "2.1",
+  "apkUrl": "https://github.com/OWNER/REPOSITORY/releases/latest/download/aliflix-mobile-release.apk",
+  "sha256": "REPLACE_WITH_THE_64_CHARACTER_APK_SHA256",
+  "minimumSdk": 29,
+  "notes": "Describe the changes in this release."
+}

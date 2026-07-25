@@ -2,8 +2,8 @@
 
 Aliflix is a personal, phone-first Android catalogue with a native Kotlin and
 Jetpack Compose interface. Home, search, title details, My List, recently
-played, and recommendations are native. Only the dedicated playback surface
-uses a WebView to load the matching Ramoflix item or watch page.
+played, and recommendations are native. A WebView is created only after Play
+is selected.
 
 The project also includes a separate Android TV flavor for Android 11 and
 newer. It uses the same catalogue and library code behind a landscape 10-foot
@@ -19,14 +19,17 @@ catalogue keeps the app usable if catalogue pages are temporarily unavailable.
   fullscreen native black playback surface.
 - A native Cast button opens Android's Cast screen picker for device mirroring
   without extracting or relaying third-party video URLs.
-- Ramoflix is the only playback website. Its base URL can be edited in the app
-  in case the domain changes.
-- Movies and episodes first resolve the matching Ramoflix item, then TV playback
-  selects the requested season and episode on that page.
-- Top-level navigation is restricted to Ramoflix (or its edited replacement
-  domain), known playback hosts, and their real subdomains.
+- Movies and shows can use either Ramoflix or 67 Movies. The default can be
+  changed in My Space on both phone and TV.
+- Japanese anime is classified separately and always uses Miruro. Aliflix
+  resolves the title to its AniList ID before opening Miruro.
+- The 67 Movies option opens its Vidlove player with the exact TMDB movie ID or
+  TV season and episode, avoiding the outer website around the player.
+- Ramoflix's base URL can still be edited in the phone app if its domain changes.
+- Top-level navigation is restricted to the selected provider and confirmed
+  playback hosts using exact, boundary-safe host checks.
 - New windows and pop-ups are rejected.
-- Third-party iframe resources required by the Ramoflix player may load inside
+- Third-party iframe resources required by a selected provider may load inside
   the approved watch page, but cannot take over the top-level WebView.
 - Aliflix does not extract, relay, or store third-party video URLs.
 - Cookies persist normally. The active WebView is retained only for the current
@@ -84,6 +87,61 @@ The TV APK supports Android TV 11 / API 30 and newer. Search opens the TV's
 system keyboard, including voice entry when the device keyboard provides it.
 Playback accepts D-pad navigation, Back, and Play/Pause remote keys.
 
+## GitHub updates for phone and TV
+
+Both builds are preconfigured to read updates from this repository:
+
+- Phone: `update-mobile.json`
+- TV: `update-tv.json`
+
+The workflow at `.github/workflows/tv-release.yml` builds and publishes both
+signed APKs and both manifests. Aliflix verifies the APK SHA-256 before opening
+Android's installer.
+
+Set up GitHub once:
+
+1. Create one release keystore and keep it backed up. Every future update must
+   use this same keystore.
+
+```powershell
+keytool -genkeypair -v -keystore aliflix-release.jks -alias aliflix -keyalg RSA -keysize 2048 -validity 10000
+```
+
+2. In the GitHub repository, open **Settings → Secrets and variables → Actions**
+   and add:
+
+   - `ALIFLIX_KEYSTORE_BASE64`
+   - `ALIFLIX_KEYSTORE_PASSWORD`
+   - `ALIFLIX_KEY_ALIAS`
+   - `ALIFLIX_KEY_PASSWORD`
+
+   On Windows, copy the keystore value with:
+
+```powershell
+[Convert]::ToBase64String(
+  [IO.File]::ReadAllBytes("C:\path\to\aliflix-release.jks")
+) | Set-Clipboard
+```
+
+3. Push the source to `main`. In GitHub, open **Actions → Publish Aliflix
+   Android and TV → Run workflow**, enter a new tag such as `v2.1`, and add
+   release notes.
+4. For every later release, increase `versionCode` (and normally
+   `versionName`) in `app/build.gradle.kts`, push, and run the workflow again.
+
+The workflow uploads:
+
+- `aliflix-mobile-release.apk`
+- `aliflix-tv-release.apk`
+- `update-mobile.json`
+- `update-tv.json`
+
+Install the first release APK manually. After that, **My Space → Check for
+updates** downloads later releases. Android may ask once for permission to
+install updates from Aliflix. A debug APK cannot update a release APK signed
+with a different key; uninstall the debug build before installing the first
+release if Android reports a signature conflict.
+
 ## Native app structure
 
 - Home: cinematic hero, native category filters, content rails, and recently
@@ -91,6 +149,7 @@ Playback accepts D-pad navigation, Back, and Play/Pause remote keys.
 - Search: native search across the refreshed TMDB catalogue in a
   native poster grid.
 - Details: native metadata, My List, Play, cast, genres, and recommendations.
-- My Space: My List plus recently played titles.
+- My Space: playback-source choice, GitHub update controls, My List, favorites,
+  and recently played titles.
 - Player: isolated fullscreen WebView with strict top-level navigation and
   pop-up blocking.

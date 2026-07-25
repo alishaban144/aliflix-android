@@ -5,12 +5,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aliflix.app.data.CatalogClient
 import com.aliflix.app.data.LibraryStore
-import com.aliflix.app.data.RamoflixConfig
-import com.aliflix.app.data.RamoflixRepository
+import com.aliflix.app.data.PlaybackProviderRepository
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.PlaybackPreferences
+import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.Season
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
@@ -48,7 +49,7 @@ data class DetailUiState(
 class AliflixViewModel(application: Application) : AndroidViewModel(application) {
     private val client = CatalogClient()
     private val library = LibraryStore(application)
-    private val ramoflixRepository = RamoflixRepository(application)
+    private val playbackProviderRepository = PlaybackProviderRepository(application)
     private var searchJob: Job? = null
     private var detailJob: Job? = null
     private var episodeJob: Job? = null
@@ -68,11 +69,15 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     val recent = library.recent
     val likes = library.likes
 
-    val ramoflixConfig: StateFlow<RamoflixConfig> = ramoflixRepository.config
+    val playbackPreferences: StateFlow<PlaybackPreferences> =
+        playbackProviderRepository.preferences
 
-    fun updateRamoflixUrl(newUrl: String) = ramoflixRepository.updateUrl(newUrl)
+    fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
+        playbackProviderRepository.selectGeneralProvider(provider)
 
-    fun resetRamoflixUrl() = ramoflixRepository.resetUrl()
+    fun updateRamoflixUrl(newUrl: String) = playbackProviderRepository.updateUrl(newUrl)
+
+    fun resetRamoflixUrl() = playbackProviderRepository.resetUrl()
 
     init {
         refreshHome()

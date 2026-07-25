@@ -3,9 +3,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val updateManifestUrl = providers
-    .gradleProperty("ALIFLIX_UPDATE_MANIFEST_URL")
-    .orElse("")
+val githubReleaseBaseUrl =
+    "https://github.com/alishaban144/aliflix-android/releases/latest/download"
+val legacyUpdateManifestOverride = providers.gradleProperty("ALIFLIX_UPDATE_MANIFEST_URL")
+val mobileUpdateManifestUrl = providers
+    .gradleProperty("ALIFLIX_MOBILE_UPDATE_MANIFEST_URL")
+    .orElse(legacyUpdateManifestOverride)
+    .orElse("$githubReleaseBaseUrl/update-mobile.json")
+    .get()
+val tvUpdateManifestUrl = providers
+    .gradleProperty("ALIFLIX_TV_UPDATE_MANIFEST_URL")
+    .orElse(legacyUpdateManifestOverride)
+    .orElse("$githubReleaseBaseUrl/update-tv.json")
     .get()
 
 android {
@@ -16,15 +25,10 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 11
-        versionName = "2.0"
+        versionCode = 12
+        versionName = "2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField(
-            "String",
-            "UPDATE_MANIFEST_URL",
-            "\"${updateManifestUrl.replace("\"", "\\\"")}\"",
-        )
     }
 
     flavorDimensions += "formFactor"
@@ -32,6 +36,11 @@ android {
         create("mobile") {
             dimension = "formFactor"
             buildConfigField("boolean", "IS_TV", "false")
+            buildConfigField(
+                "String",
+                "UPDATE_MANIFEST_URL",
+                "\"${mobileUpdateManifestUrl.replace("\"", "\\\"")}\"",
+            )
         }
         create("tv") {
             dimension = "formFactor"
@@ -39,6 +48,11 @@ android {
             versionNameSuffix = "-tv"
             minSdk = 30
             buildConfigField("boolean", "IS_TV", "true")
+            buildConfigField(
+                "String",
+                "UPDATE_MANIFEST_URL",
+                "\"${tvUpdateManifestUrl.replace("\"", "\\\"")}\"",
+            )
         }
     }
 

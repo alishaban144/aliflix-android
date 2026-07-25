@@ -87,6 +87,7 @@ import com.aliflix.app.SearchUiState
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.player.WebPlayerScreen
@@ -131,7 +132,7 @@ fun AliflixTvApp(
     val myList by viewModel.myList.collectAsState()
     val recent by viewModel.recent.collectAsState()
     val likes by viewModel.likes.collectAsState()
-    val ramoflixConfig by viewModel.ramoflixConfig.collectAsState()
+    val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val activity = LocalActivity.current as ComponentActivity
     val updateManager = remember(activity) { AppUpdateManager(activity) }
     val updateScope = rememberCoroutineScope()
@@ -146,19 +147,38 @@ fun AliflixTvApp(
     }
 
     fun open(item: Media) = viewModel.openDetails(item)
-    fun play(selection: PlaybackSelection) {
+    fun play(
+        selection: PlaybackSelection,
+        requestedProvider: PlaybackProviderId? = null,
+    ) {
         viewModel.markPlayed(selection.media)
-        playerSelection = selection.copy(ramoflixConfig = ramoflixConfig)
+        playerSelection = selection.copy(
+            source = playbackPreferences.sourceFor(
+                media = selection.media,
+                requestedProvider = requestedProvider,
+            ),
+        )
         playerVisible = true
     }
-    fun playMedia(item: Media) = play(PlaybackSelection(item))
-    fun playEpisode(item: Media, episode: Episode) = play(
-        PlaybackSelection(
+    fun playMedia(
+        item: Media,
+        requestedProvider: PlaybackProviderId? = null,
+    ) = play(
+        selection = PlaybackSelection(item),
+        requestedProvider = requestedProvider,
+    )
+    fun playEpisode(
+        item: Media,
+        episode: Episode,
+        requestedProvider: PlaybackProviderId? = null,
+    ) = play(
+        selection = PlaybackSelection(
             media = item,
             seasonNumber = episode.seasonNumber,
             episodeNumber = episode.number,
             episodeTitle = episode.title,
         ),
+        requestedProvider = requestedProvider,
     )
     fun checkForUpdates() {
         if (updateUi.busy) return
@@ -277,7 +297,7 @@ fun AliflixTvApp(
                     recent = recent,
                     onRetry = viewModel::refreshHome,
                     onOpen = ::open,
-                    onPlay = ::playMedia,
+                    onPlay = { item -> playMedia(item) },
                 )
 
                 destination == TvDestination.SEARCH -> TvSearchScreen(
@@ -292,6 +312,8 @@ fun AliflixTvApp(
                     recent = recent,
                     onOpen = ::open,
                     updateUi = updateUi,
+                    generalProvider = playbackPreferences.safeGeneralProvider,
+                    onSelectGeneralProvider = viewModel::selectGeneralPlaybackProvider,
                     onCheckForUpdates = ::checkForUpdates,
                     onDownloadUpdate = ::downloadUpdate,
                     onInstallUpdate = ::installDownloadedUpdate,
@@ -696,6 +718,8 @@ private fun TvLibraryScreen(
     recent: List<Media>,
     onOpen: (Media) -> Unit,
     updateUi: TvUpdateUiState,
+    generalProvider: PlaybackProviderId,
+    onSelectGeneralProvider: (PlaybackProviderId) -> Unit,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
@@ -717,6 +741,10 @@ private fun TvLibraryScreen(
                     fontSize = 32.sp,
                     fontWeight = FontWeight.Black,
                 )
+                TvPlaybackProviderPanel(
+                    selectedProvider = generalProvider,
+                    onSelectProvider = onSelectGeneralProvider,
+                )
                 TvUpdatePanel(
                     state = updateUi,
                     onCheck = onCheckForUpdates,
@@ -733,6 +761,68 @@ private fun TvLibraryScreen(
         if (myList.isNotEmpty()) item { TvMediaRail("My List", myList, onOpen) }
         if (likes.isNotEmpty()) item { TvMediaRail("Favorites", likes, onOpen) }
         if (recent.isNotEmpty()) item { TvMediaRail("Recently played", recent, onOpen) }
+    }
+}
+
+@Composable
+private fun TvPlaybackProviderPanel(
+    selectedProvider: PlaybackProviderId,
+    onSelectProvider: (PlaybackProviderId) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AliflixSurfaceRaised)
+            .border(
+                1.dp,
+                Color.White.copy(alpha = 0.09f),
+                RoundedCornerShape(14.dp),
+            )
+            .padding(horizontal = 20.dp, vertical = 17.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Movie,
+            contentDescription = null,
+            tint = AliflixRed,
+            modifier = Modifier.size(32.dp),
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                "Default playback source",
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "Used for movies and shows. Japanese anime always opens with Miruro.",
+                color = AliflixMuted,
+                fontSize = 13.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TvTextButton(
+                label = PlaybackProviderId.RAMOFLIX.displayName,
+                selected = selectedProvider == PlaybackProviderId.RAMOFLIX,
+                onClick = {
+                    onSelectProvider(PlaybackProviderId.RAMOFLIX)
+                },
+            )
+            TvTextButton(
+                label = PlaybackProviderId.MOVIES_67.displayName,
+                selected = selectedProvider == PlaybackProviderId.MOVIES_67,
+                onClick = {
+                    onSelectProvider(PlaybackProviderId.MOVIES_67)
+                },
+            )
+        }
     }
 }
 
@@ -827,8 +917,8 @@ private fun TvDetailScreen(
     state: DetailUiState,
     inMyList: Boolean,
     onBack: () -> Unit,
-    onPlay: (Media) -> Unit,
-    onPlayEpisode: (Media, Episode) -> Unit,
+    onPlay: (Media, PlaybackProviderId?) -> Unit,
+    onPlayEpisode: (Media, Episode, PlaybackProviderId?) -> Unit,
     onSelectSeason: (Int) -> Unit,
     onToggleMyList: (Media) -> Unit,
     onOpen: (Media) -> Unit,
@@ -910,12 +1000,59 @@ private fun TvDetailScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        TvActionButton(
-                            "Play",
-                            Icons.Default.PlayArrow,
-                            primary = true,
-                            onClick = { onPlay(item) },
-                        )
+                        if (item.isJapaneseAnime) {
+                            TvActionButton(
+                                "Play with ${PlaybackProviderId.MIRURO.displayName}",
+                                Icons.Default.PlayArrow,
+                                primary = true,
+                                onClick = {
+                                    val episode = state.episodes.firstOrNull()
+                                    if (item.type == MediaType.TV && episode != null) {
+                                        onPlayEpisode(
+                                            item,
+                                            episode,
+                                            PlaybackProviderId.MIRURO,
+                                        )
+                                    } else {
+                                        onPlay(item, PlaybackProviderId.MIRURO)
+                                    }
+                                },
+                            )
+                        } else {
+                            TvActionButton(
+                                "Play with ${PlaybackProviderId.RAMOFLIX.displayName}",
+                                Icons.Default.PlayArrow,
+                                primary = true,
+                                onClick = {
+                                    val episode = state.episodes.firstOrNull()
+                                    if (item.type == MediaType.TV && episode != null) {
+                                        onPlayEpisode(
+                                            item,
+                                            episode,
+                                            PlaybackProviderId.RAMOFLIX,
+                                        )
+                                    } else {
+                                        onPlay(item, PlaybackProviderId.RAMOFLIX)
+                                    }
+                                },
+                            )
+                            TvActionButton(
+                                "Play with ${PlaybackProviderId.MOVIES_67.displayName}",
+                                Icons.Default.PlayArrow,
+                                onClick = {
+                                    val episode = state.episodes.firstOrNull()
+                                    if (item.type == MediaType.TV && episode != null) {
+                                        onPlayEpisode(
+                                            item,
+                                            episode,
+                                            PlaybackProviderId.MOVIES_67,
+                                        )
+                                    } else {
+                                        onPlay(item, PlaybackProviderId.MOVIES_67)
+                                    }
+                                },
+                            )
+                        }
                         TvActionButton(
                             if (inMyList) "In My List" else "My List",
                             if (inMyList) Icons.Default.Check else Icons.Default.Add,
@@ -974,7 +1111,7 @@ private fun TvDetailScreen(
                             items(state.episodes, key = { "${it.seasonNumber}:${it.number}" }) { episode ->
                                 TvEpisodeCard(
                                     episode = episode,
-                                    onClick = { onPlayEpisode(item, episode) },
+                                    onClick = { onPlayEpisode(item, episode, null) },
                                 )
                             }
                         }

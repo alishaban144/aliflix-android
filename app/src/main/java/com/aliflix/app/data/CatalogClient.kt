@@ -44,9 +44,10 @@ class CatalogClient(
                 runCatching {
                     val separator = if ("?" in spec.path) "&" else "?"
                     val items = parseSearchResults(
-                        pageLoader(
+                        html = pageLoader(
                             "$TMDB_SITE_URL${spec.path}${separator}language=en-US",
                         ),
+                        japaneseAnime = spec.japaneseAnime,
                     )
                     ContentRail(
                         title = spec.title,
@@ -58,10 +59,23 @@ class CatalogClient(
 
         val seenTitles = mutableSetOf<String>()
         val sourceRails = freshRails.ifEmpty { fallbackRails }
+        val japaneseAnimeKeys = sourceRails
+            .flatMap(ContentRail::items)
+            .filter(Media::isJapaneseAnime)
+            .map(Media::key)
+            .toSet()
         val rails = sourceRails.mapNotNull { rail ->
-            val uniqueItems = rail.items.filter { item ->
-                seenTitles.add("${item.type.routeName}:${normalizeText(item.title)}")
-            }
+            val uniqueItems = rail.items
+                .map { item ->
+                    if (item.key in japaneseAnimeKeys && !item.isJapaneseAnime) {
+                        item.copy(isJapaneseAnime = true)
+                    } else {
+                        item
+                    }
+                }
+                .filter { item ->
+                    seenTitles.add("${item.type.routeName}:${normalizeText(item.title)}")
+                }
             if (uniqueItems.isEmpty()) null else rail.copy(items = uniqueItems)
         }.ifEmpty { listOf(ContentRail("Featured", fallbackItems)) }
         catalogue = rails.flatMap(ContentRail::items)
@@ -88,7 +102,7 @@ class CatalogClient(
                     )
                 }.getOrDefault(emptyList())
             }
-        }.awaitAll().flatten().distinctBy(Media::key)
+        }.awaitAll().flatten().distinctBy(Media::key).map(::mergeKnownJapaneseAnime)
 
         val source = online.ifEmpty { localSearch(cleanQuery) }
         val normalized = cleanQuery.lowercase()
@@ -105,7 +119,13 @@ class CatalogClient(
     }
 
     suspend fun details(item: Media): Pair<Media, List<Media>> = supervisorScope {
-        val current = catalogue.firstOrNull { it.key == item.key } ?: item
+        val catalogued = catalogue.firstOrNull { it.key == item.key }
+        val current = when {
+            catalogued == null -> item
+            item.isJapaneseAnime && !catalogued.isJapaneseAnime ->
+                catalogued.copy(isJapaneseAnime = true)
+            else -> catalogued
+        }
         val pageRequest = async {
             runCatching {
                 pageLoader(
@@ -122,7 +142,7 @@ class CatalogClient(
         } ?: current
         val pageRecommendations = pageHtml?.let {
             runCatching { parseRelatedResults(it) }.getOrDefault(emptyList())
-        }.orEmpty()
+        }.orEmpty().map(::mergeKnownJapaneseAnime)
         val ratings = ratingsRequest.await()
         val enriched = metadata.copy(
             imdbRating = ratings.imdb ?: metadata.imdbRating,
@@ -223,7 +243,10 @@ class CatalogClient(
         )
     }
 
-    internal fun parseSearchResults(html: String): List<Media> {
+    internal fun parseSearchResults(
+        html: String,
+        japaneseAnime: Boolean = false,
+    ): List<Media> {
         val document = Jsoup.parse(html, TMDB_SITE_URL)
         return document.select("main div[data-object-id]").mapNotNull { card ->
             val titleLink = card.selectFirst("a[data-media-type][href] h2")?.parent()
@@ -245,6 +268,7 @@ class CatalogClient(
                 year = fourDigitYear.find(
                     card.selectFirst(".release_date")?.text().orEmpty(),
                 )?.value.orEmpty(),
+                isJapaneseAnime = japaneseAnime,
             )
         }.distinctBy(Media::key)
     }
@@ -337,6 +361,21 @@ class CatalogClient(
             .distinct()
             .take(6)
             .ifEmpty { fallback.genres }
+        val originalLanguage = findFactValue(
+            document = document,
+            labels = setOf("original language", "original languages"),
+        )
+        val originCountry = findFactValue(
+            document = document,
+            labels = setOf("country", "country of origin", "origin country"),
+        )
+        val animation = genres.any { genre ->
+            genre.equals("Animation", ignoreCase = true) ||
+                genre.equals("Anime", ignoreCase = true)
+        }
+        val japaneseOrigin = sequenceOf(originalLanguage, originCountry)
+            .filterNotNull()
+            .any(::isJapaneseOriginValue)
         val cast = document
             .select("main ol.people li.card p a[href^=/person/]")
             .map { it.text().trim() }
@@ -353,7 +392,37 @@ class CatalogClient(
             rating = score,
             genres = genres,
             cast = cast,
+            isJapaneseAnime = fallback.isJapaneseAnime || (animation && japaneseOrigin),
         )
+    }
+
+    private fun findFactValue(
+        document: Document,
+        labels: Set<String>,
+    ): String? {
+        val normalizedLabels = labels.map(::normalizeText).toSet()
+        return document.select("p").firstNotNullOfOrNull { paragraph ->
+            val label = paragraph.selectFirst("strong, bdi")
+                ?.text()
+                ?.let(::normalizeText)
+                ?: return@firstNotNullOfOrNull null
+            if (label !in normalizedLabels) return@firstNotNullOfOrNull null
+            paragraph.clone()
+                .also { clone -> clone.select("strong, bdi").remove() }
+                .text()
+                .trim()
+                .takeIf(String::isNotBlank)
+        }
+    }
+
+    private fun isJapaneseOriginValue(value: String): Boolean {
+        val normalized = normalizeText(value)
+        val tokens = normalized.split(' ').filter(String::isNotBlank).toSet()
+        return normalized == "ja" ||
+            normalized == "jp" ||
+            "japanese" in tokens ||
+            "japan" in tokens ||
+            value.contains("日本")
     }
 
     internal fun parseSeasons(html: String, mediaId: Int): List<Season> {
@@ -657,6 +726,17 @@ class CatalogClient(
         }
     }
 
+    private fun mergeKnownJapaneseAnime(item: Media): Media {
+        val knownJapaneseAnime = catalogue.any { known ->
+            known.key == item.key && known.isJapaneseAnime
+        }
+        return if (knownJapaneseAnime && !item.isJapaneseAnime) {
+            item.copy(isJapaneseAnime = true)
+        } else {
+            item
+        }
+    }
+
     data class ParsedPage(
         val hero: Media?,
         val rails: List<ContentRail>,
@@ -670,6 +750,7 @@ class CatalogClient(
     private data class TmdbHomeRailSpec(
         val path: String,
         val title: String,
+        val japaneseAnime: Boolean = false,
     )
 
     private companion object {
@@ -765,10 +846,12 @@ class CatalogClient(
             TmdbHomeRailSpec(
                 "/discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc",
                 "Trending Japanese Anime",
+                japaneseAnime = true,
             ),
             TmdbHomeRailSpec(
                 "/discover/movie?with_genres=16&with_origin_country=JP&sort_by=popularity.desc",
                 "Japanese Anime Films",
+                japaneseAnime = true,
             ),
         )
 
@@ -871,6 +954,7 @@ class CatalogClient(
                 title = "Attack on Titan",
                 posterPath = "https://image.tmdb.org/t/p/w500/hTP1DtLGFamjfu8WqjnuQdP1n4i.jpg",
                 genres = listOf("Anime", "Action", "Drama"),
+                isJapaneseAnime = true,
             ),
             Media(
                 id = 85937,
@@ -878,6 +962,7 @@ class CatalogClient(
                 title = "Demon Slayer: Kimetsu no Yaiba",
                 posterPath = "https://image.tmdb.org/t/p/w500/xUfRZu2mi8jH6SzQEJGP6tjBuYj.jpg",
                 genres = listOf("Anime", "Action"),
+                isJapaneseAnime = true,
             ),
             Media(
                 id = 37854,
@@ -885,6 +970,7 @@ class CatalogClient(
                 title = "One Piece",
                 posterPath = "https://image.tmdb.org/t/p/w500/dB4EDhre2dsC2kxYDavyKWqLQwi.jpg",
                 genres = listOf("Anime", "Adventure"),
+                isJapaneseAnime = true,
             ),
             Media(
                 id = 209867,
@@ -892,6 +978,7 @@ class CatalogClient(
                 title = "Frieren: Beyond Journey's End",
                 posterPath = "https://image.tmdb.org/t/p/w500/dqZENchTd7lp5zht7BdlqM7RBhD.jpg",
                 genres = listOf("Anime", "Fantasy", "Adventure"),
+                isJapaneseAnime = true,
             ),
         )
 

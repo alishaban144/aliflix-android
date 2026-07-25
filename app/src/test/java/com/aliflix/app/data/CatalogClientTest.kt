@@ -2,7 +2,9 @@ package com.aliflix.app.data
 
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.Media
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -270,5 +272,113 @@ class CatalogClientTest {
         )
 
         assertEquals("Stranger Things", result.title)
+    }
+
+    @Test
+    fun classifiesOnlyJapaneseAnimationAsJapaneseAnime() {
+        fun detailsHtml(originalLanguage: String) = """
+            <main>
+              <section class="header">
+                <h2><a href="/movie/1-animated-title">Animated Title</a></h2>
+                <a href="/genre/16-animation/movie">Animation</a>
+                <div class="facts">
+                  <p>
+                    <strong><bdi>Original Language</bdi></strong>
+                    $originalLanguage
+                  </p>
+                </div>
+              </section>
+            </main>
+        """.trimIndent()
+        val fallback = Media(id = 1, type = MediaType.MOVIE, title = "Animated Title")
+
+        val japanese = client.parseTitleDetails(detailsHtml("Japanese"), fallback)
+        val western = client.parseTitleDetails(detailsHtml("English"), fallback)
+
+        assertTrue(japanese.isJapaneseAnime)
+        assertFalse(western.isJapaneseAnime)
+    }
+
+    @Test
+    fun titleDetailsPreserveKnownJapaneseAnimeFlag() {
+        val result = client.parseTitleDetails(
+            html = """
+                <main>
+                  <section class="header">
+                    <h2><a href="/tv/1429-attack-on-titan">Attack on Titan</a></h2>
+                    <a href="/genre/18-drama/tv">Drama</a>
+                  </section>
+                </main>
+            """.trimIndent(),
+            fallback = Media(
+                id = 1429,
+                type = MediaType.TV,
+                title = "Attack on Titan",
+                isJapaneseAnime = true,
+            ),
+        )
+
+        assertTrue(result.isJapaneseAnime)
+    }
+
+    @Test
+    fun detailsMergeCallerAnimeFlagWithExistingCatalogueMetadata() = runTest {
+        val mergingClient = CatalogClient(
+            jsonPoster = { _, _ -> "{}" },
+            pageLoader = { "<main></main>" },
+        )
+        val cataloguedAsGeneralContent = Media(
+            id = 94605,
+            type = MediaType.TV,
+            title = "Arcane",
+        )
+        val callerKnowsItIsJapaneseAnime = cataloguedAsGeneralContent.copy(
+            isJapaneseAnime = true,
+        )
+
+        val details = mergingClient.details(callerKnowsItIsJapaneseAnime).first
+
+        assertTrue(details.isJapaneseAnime)
+    }
+
+    @Test
+    fun japaneseAnimeRailFlagSurvivesHomeDeduplicationAndSearch() = runTest {
+        val attackOnTitanCard = """
+            <main>
+              <div data-object-id="tv-1429">
+                <a data-media-type="tv" href="/tv/1429-attack-on-titan">
+                  <img class="poster" alt="Attack on Titan"
+                    src="https://media.themoviedb.org/t/p/w94_and_h141_face/aot.jpg" />
+                </a>
+                <a data-media-type="tv" href="/tv/1429-attack-on-titan">
+                  <h2>Attack on Titan</h2>
+                </a>
+                <span class="release_date">April 7, 2013</span>
+              </div>
+            </main>
+        """.trimIndent()
+        val emptyPage = "<main></main>"
+        val mergingClient = CatalogClient(
+            jsonPoster = { _, _ -> error("Ratings must not be requested") },
+            pageLoader = { url ->
+                when {
+                    "/discover/tv?with_genres=16&with_origin_country=JP" in url ->
+                        attackOnTitanCard
+                    url.endsWith("/tv?language=en-US") ->
+                        attackOnTitanCard
+                    "/search/tv?" in url ->
+                        attackOnTitanCard
+                    else ->
+                        emptyPage
+                }
+            },
+        )
+
+        val home = mergingClient.home()
+        val search = mergingClient.search("Attack on Titan")
+
+        assertTrue(home.hero.isJapaneseAnime)
+        assertTrue(home.rails.flatMap { it.items }.single().isJapaneseAnime)
+        assertTrue(search.single().isJapaneseAnime)
     }
 }

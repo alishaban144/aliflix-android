@@ -2,7 +2,9 @@
 
 package com.aliflix.app.ui
 
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -79,6 +81,8 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -102,6 +106,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -135,11 +140,16 @@ import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.player.WebPlayerScreen
 import com.aliflix.app.recommendation.PersonalMatch
 import com.aliflix.app.recommendation.PersonalizationEngine
+import com.aliflix.app.update.AppUpdateManager
+import com.aliflix.app.update.InstallLaunchResult
+import com.aliflix.app.update.UpdateCheckResult
+import com.aliflix.app.update.UpdateInfo
 import com.aliflix.app.ui.theme.AliflixBlack
 import com.aliflix.app.ui.theme.AliflixGreen
 import com.aliflix.app.ui.theme.AliflixIce
@@ -147,6 +157,8 @@ import com.aliflix.app.ui.theme.AliflixMuted
 import com.aliflix.app.ui.theme.AliflixRed
 import com.aliflix.app.ui.theme.AliflixSurface
 import com.aliflix.app.ui.theme.AliflixSurfaceRaised
+import kotlinx.coroutines.launch
+import java.io.File
 
 private enum class AppTab(val label: String) {
     HOME("Home"),
@@ -169,6 +181,14 @@ private enum class HomeFilter(val label: String) {
     NEW("New & Popular"),
 }
 
+private data class MobileUpdateUiState(
+    val busy: Boolean = false,
+    val message: String = "",
+    val progress: Int? = null,
+    val available: UpdateInfo? = null,
+    val downloadedApk: File? = null,
+)
+
 @Composable
 fun AliflixApp(
     viewModel: AliflixViewModel,
@@ -181,7 +201,12 @@ fun AliflixApp(
     val recent by viewModel.recent.collectAsState()
     val likes by viewModel.likes.collectAsState()
 
-    val ramoflixConfig by viewModel.ramoflixConfig.collectAsState()
+    val playbackPreferences by viewModel.playbackPreferences.collectAsState()
+    val ramoflixConfig = playbackPreferences.ramoflixConfig
+    val activity = LocalActivity.current as ComponentActivity
+    val updateManager = remember(activity) { AppUpdateManager(activity) }
+    val updateScope = rememberCoroutineScope()
+    var updateUi by remember { mutableStateOf(MobileUpdateUiState()) }
     var showRamoflixUrlDialog by remember { mutableStateOf(false) }
 
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.HOME.name) }
@@ -205,7 +230,9 @@ fun AliflixApp(
 
     fun playSelection(selection: PlaybackSelection) {
         viewModel.markPlayed(selection.media)
-        playerSelection = selection.copy(ramoflixConfig = ramoflixConfig)
+        playerSelection = selection.copy(
+            source = playbackPreferences.sourceFor(selection.media),
+        )
         playerVisible = true
     }
 
@@ -219,6 +246,77 @@ fun AliflixApp(
             episodeTitle = episode.title,
         ),
     )
+
+    fun checkForUpdates() {
+        if (updateUi.busy) return
+        updateUi = updateUi.copy(
+            busy = true,
+            message = "Checking GitHub for updates...",
+            progress = null,
+        )
+        updateScope.launch {
+            updateUi = when (val result = updateManager.checkForUpdate()) {
+                is UpdateCheckResult.Available -> MobileUpdateUiState(
+                    message = "Version ${result.info.versionName} is available.",
+                    available = result.info,
+                )
+                is UpdateCheckResult.UpToDate -> MobileUpdateUiState(
+                    message = "Aliflix ${result.versionName} is up to date.",
+                )
+                is UpdateCheckResult.Error -> MobileUpdateUiState(
+                    message = result.message,
+                )
+            }
+        }
+    }
+
+    fun installDownloadedUpdate() {
+        val apk = updateUi.downloadedApk ?: return
+        val message = when (updateManager.launchInstaller(apk)) {
+            InstallLaunchResult.INSTALLER_OPENED ->
+                "Confirm the update in Android's installer."
+            InstallLaunchResult.PERMISSION_REQUIRED ->
+                "Allow installs from Aliflix, then return and tap Install update."
+            InstallLaunchResult.FAILED ->
+                "Android could not open the update installer."
+        }
+        updateUi = updateUi.copy(message = message)
+    }
+
+    fun downloadUpdate() {
+        val info = updateUi.available ?: return
+        if (updateUi.busy) return
+        updateUi = updateUi.copy(
+            busy = true,
+            progress = 0,
+            message = "Downloading ${info.versionName}...",
+        )
+        updateScope.launch {
+            updateManager.download(info) { progress ->
+                updateUi = updateUi.copy(
+                    progress = progress,
+                    message = "Downloading ${info.versionName}... $progress%",
+                )
+            }.fold(
+                onSuccess = { apk ->
+                    updateUi = updateUi.copy(
+                        busy = false,
+                        progress = 100,
+                        downloadedApk = apk,
+                        message = "Download verified. Ready to install.",
+                    )
+                    installDownloadedUpdate()
+                },
+                onFailure = { error ->
+                    updateUi = updateUi.copy(
+                        busy = false,
+                        progress = null,
+                        message = error.message ?: "The update download failed.",
+                    )
+                },
+            )
+        }
+    }
 
     BackHandler(enabled = detail.item != null && !playerVisible) {
         viewModel.closeDetails()
@@ -311,6 +409,8 @@ fun AliflixApp(
                         onToggleMyList = viewModel::toggleMyList,
                         onToggleLike = viewModel::toggleLike,
                         onOpen = ::openDetails,
+                        generalProvider = playbackPreferences.safeGeneralProvider,
+                        onSelectProvider = viewModel::selectGeneralPlaybackProvider,
                         personalMatch = detail.item?.let {
                             PersonalizationEngine.match(it, likes)
                         },
@@ -353,6 +453,13 @@ fun AliflixApp(
                         historyGridState = historyScrollState,
                         page = libraryPage,
                         onPageChange = { libraryPage = it },
+                        generalProvider = playbackPreferences.safeGeneralProvider,
+                        onSelectProvider = viewModel::selectGeneralPlaybackProvider,
+                        onEditRamoflixUrl = { showRamoflixUrlDialog = true },
+                        updateUi = updateUi,
+                        onCheckForUpdates = ::checkForUpdates,
+                        onDownloadUpdate = ::downloadUpdate,
+                        onInstallUpdate = ::installDownloadedUpdate,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
                 }
@@ -1276,6 +1383,208 @@ private fun SearchScreen(
 }
 
 @Composable
+private fun PlaybackProviderSelector(
+    selectedProvider: PlaybackProviderId,
+    animeOnly: Boolean,
+    onSelectProvider: (PlaybackProviderId) -> Unit,
+    modifier: Modifier = Modifier,
+    onEditRamoflixUrl: (() -> Unit)? = null,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White.copy(alpha = 0.055f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "PLAYBACK SOURCE",
+                    color = AliflixRed,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.2.sp,
+                )
+                Text(
+                    text = if (animeOnly) {
+                        "Japanese anime always streams with Miruro"
+                    } else {
+                        "Choose the service used when you press Play"
+                    },
+                    color = AliflixMuted,
+                    fontSize = 11.sp,
+                )
+            }
+            if (onEditRamoflixUrl != null) {
+                TextButton(onClick = onEditRamoflixUrl) {
+                    Text(
+                        text = "Ramoflix URL",
+                        color = AliflixIce,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+
+        if (animeOnly) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(AliflixRed.copy(alpha = 0.22f))
+                    .border(
+                        1.dp,
+                        AliflixRed.copy(alpha = 0.55f),
+                        RoundedCornerShape(13.dp),
+                    )
+                    .padding(horizontal = 13.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    text = "Miruro · Anime",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(
+                    PlaybackProviderId.RAMOFLIX,
+                    PlaybackProviderId.MOVIES_67,
+                ).forEach { provider ->
+                    val selected = selectedProvider == provider
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(
+                                if (selected) AliflixRed else Color.Black.copy(alpha = 0.22f),
+                            )
+                            .border(
+                                1.dp,
+                                if (selected) {
+                                    AliflixRed
+                                } else {
+                                    Color.White.copy(alpha = 0.10f)
+                                },
+                                RoundedCornerShape(13.dp),
+                            )
+                            .clickable { onSelectProvider(provider) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = provider.displayName,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileUpdatePanel(
+    state: MobileUpdateUiState,
+    onCheck: () -> Unit,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White.copy(alpha = 0.055f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(AliflixRed.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.SystemUpdate,
+                contentDescription = null,
+                tint = AliflixRed,
+                modifier = Modifier.size(21.dp),
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                text = "App updates",
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = state.message.ifBlank {
+                    "Check the Aliflix GitHub release for a newer version."
+                },
+                color = AliflixMuted,
+                fontSize = 10.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        when {
+            state.busy -> CircularProgressIndicator(
+                color = AliflixRed,
+                strokeWidth = 3.dp,
+                modifier = Modifier.size(25.dp),
+            )
+            state.downloadedApk != null -> Button(
+                onClick = onInstall,
+                contentPadding = PaddingValues(horizontal = 13.dp, vertical = 7.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AliflixRed),
+            ) {
+                Text("Install", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            state.available != null -> Button(
+                onClick = onDownload,
+                contentPadding = PaddingValues(horizontal = 13.dp, vertical = 7.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AliflixRed),
+            ) {
+                Text("Download", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            else -> OutlinedButton(
+                onClick = onCheck,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+            ) {
+                Icon(
+                    Icons.Rounded.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(5.dp))
+                Text("Check", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
 private fun MySpaceScreen(
     myList: List<Media>,
     likes: List<Media>,
@@ -1288,6 +1597,13 @@ private fun MySpaceScreen(
     historyGridState: LazyGridState,
     page: Int,
     onPageChange: (Int) -> Unit,
+    generalProvider: PlaybackProviderId,
+    onSelectProvider: (PlaybackProviderId) -> Unit,
+    onEditRamoflixUrl: () -> Unit,
+    updateUi: MobileUpdateUiState,
+    onCheckForUpdates: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val pagerState = rememberPagerState(
@@ -1367,6 +1683,20 @@ private fun MySpaceScreen(
             style = MaterialTheme.typography.headlineLarge,
             fontWeight = FontWeight.ExtraBold,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        PlaybackProviderSelector(
+            selectedProvider = generalProvider,
+            animeOnly = false,
+            onSelectProvider = onSelectProvider,
+            onEditRamoflixUrl = onEditRamoflixUrl,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+        MobileUpdatePanel(
+            state = updateUi,
+            onCheck = onCheckForUpdates,
+            onDownload = onDownloadUpdate,
+            onInstall = onInstallUpdate,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
         )
         Row(
             modifier = Modifier
@@ -1634,6 +1964,8 @@ private fun DetailScreen(
     onToggleMyList: (Media) -> Unit,
     onToggleLike: (Media) -> Unit,
     onOpen: (Media) -> Unit,
+    generalProvider: PlaybackProviderId,
+    onSelectProvider: (PlaybackProviderId) -> Unit,
 ) {
     val item = state.item ?: return
     LazyColumn(
@@ -1737,6 +2069,11 @@ private fun DetailScreen(
                     }
                 }
                 RatingsRow(item = item)
+                PlaybackProviderSelector(
+                    selectedProvider = generalProvider,
+                    animeOnly = item.isJapaneseAnime,
+                    onSelectProvider = onSelectProvider,
+                )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1762,10 +2099,17 @@ private fun DetailScreen(
                         Icon(Icons.Filled.PlayArrow, contentDescription = null)
                         Spacer(Modifier.width(7.dp))
                         Text(
-                            if (item.type == MediaType.TV && state.episodes.isNotEmpty()) {
+                            text = if (
+                                item.type == MediaType.TV &&
+                                state.episodes.isNotEmpty()
+                            ) {
                                 "Play S${state.selectedSeason} E${state.episodes.first().number}"
                             } else {
                                 "Play"
+                            } + " · " + if (item.isJapaneseAnime) {
+                                PlaybackProviderId.MIRURO.displayName
+                            } else {
+                                generalProvider.displayName
                             },
                             fontWeight = FontWeight.Bold,
                         )

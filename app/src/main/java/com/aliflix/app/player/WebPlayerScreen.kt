@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.aliflix.app.BuildConfig
+import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.ui.theme.AliflixBlack
 import com.aliflix.app.ui.theme.AliflixMuted
@@ -205,8 +206,9 @@ fun WebPlayerScreen(
                 .align(Alignment.TopCenter)
                 .padding(top = 44.dp),
         ) {
+            if (selection.source.provider == PlaybackProviderId.RAMOFLIX) {
             androidx.compose.material3.Button(
-                onClick = controller::showRamoflixServers,
+                onClick = controller::showProviderOptions,
                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                     containerColor = Color.Black.copy(alpha = 0.72f),
                     contentColor = Color.White,
@@ -217,6 +219,22 @@ fun WebPlayerScreen(
                     text = "Ramoflix · Servers",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
+                )
+            }
+            } else {
+                Text(
+                    text = if (selection.source.provider == PlaybackProviderId.MIRURO) {
+                        "Miruro · Japanese Anime"
+                    } else {
+                        "67 Movies"
+                    },
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .padding(horizontal = 18.dp, vertical = 11.dp),
                 )
             }
         }
