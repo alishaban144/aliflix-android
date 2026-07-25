@@ -134,7 +134,6 @@ import com.aliflix.app.AliflixViewModel
 import com.aliflix.app.DetailUiState
 import com.aliflix.app.HomeUiState
 import com.aliflix.app.SearchUiState
-import com.aliflix.app.data.RamoflixConfig
 import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
@@ -203,11 +202,12 @@ fun AliflixApp(
 
     val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val ramoflixConfig = playbackPreferences.ramoflixConfig
+    val movies67BaseUrl = playbackPreferences.movies67BaseUrl
     val activity = LocalActivity.current as ComponentActivity
     val updateManager = remember(activity) { AppUpdateManager(activity) }
     val updateScope = rememberCoroutineScope()
     var updateUi by remember { mutableStateOf(MobileUpdateUiState()) }
-    var showRamoflixUrlDialog by remember { mutableStateOf(false) }
+    var urlDialogProvider by remember { mutableStateOf<PlaybackProviderId?>(null) }
 
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.HOME.name) }
     val selectedTab = AppTab.valueOf(selectedTabName)
@@ -424,7 +424,9 @@ fun AliflixApp(
                         onOpen = ::openDetails,
                         onPlay = ::playMedia,
                         onSearch = { selectedTabName = AppTab.SEARCH.name },
-                        onEditRamoflixUrl = { showRamoflixUrlDialog = true },
+                        onEditProviderUrl = {
+                            urlDialogProvider = playbackPreferences.safeGeneralProvider
+                        },
                         listState = homeScrollState,
                         selectedFilter = HomeFilter.valueOf(homeFilterName),
                         onSelectFilter = { homeFilterName = it.name },
@@ -455,7 +457,9 @@ fun AliflixApp(
                         onPageChange = { libraryPage = it },
                         generalProvider = playbackPreferences.safeGeneralProvider,
                         onSelectProvider = viewModel::selectGeneralPlaybackProvider,
-                        onEditRamoflixUrl = { showRamoflixUrlDialog = true },
+                        onEditProviderUrl = { provider ->
+                            urlDialogProvider = provider
+                        },
                         updateUi = updateUi,
                         onCheckForUpdates = ::checkForUpdates,
                         onDownloadUpdate = ::downloadUpdate,
@@ -488,19 +492,39 @@ fun AliflixApp(
             }
         }
 
-        if (showRamoflixUrlDialog) {
-            RamoflixUrlDialog(
-                currentUrl = ramoflixConfig.baseUrl,
-                defaultUrl = RamoflixConfig.DEFAULT_URL,
+        urlDialogProvider?.let { provider ->
+            val isRamoflix = provider == PlaybackProviderId.RAMOFLIX
+            ProviderUrlDialog(
+                providerName = provider.displayName,
+                description = if (isRamoflix) {
+                    "Change this address only if the Ramoflix domain moves."
+                } else {
+                    "Change this address if 67 Movies moves to a new domain. " +
+                        "The default domain uses the optimized direct player."
+                },
+                currentUrl = if (isRamoflix) {
+                    ramoflixConfig.baseUrl
+                } else {
+                    movies67BaseUrl
+                },
+                defaultUrl = provider.defaultBaseUrl,
                 onSave = {
-                    viewModel.updateRamoflixUrl(it)
-                    showRamoflixUrlDialog = false
+                    if (isRamoflix) {
+                        viewModel.updateRamoflixUrl(it)
+                    } else {
+                        viewModel.updateMovies67Url(it)
+                    }
+                    urlDialogProvider = null
                 },
                 onReset = {
-                    viewModel.resetRamoflixUrl()
-                    showRamoflixUrlDialog = false
+                    if (isRamoflix) {
+                        viewModel.resetRamoflixUrl()
+                    } else {
+                        viewModel.resetMovies67Url()
+                    }
+                    urlDialogProvider = null
                 },
-                onDismiss = { showRamoflixUrlDialog = false },
+                onDismiss = { urlDialogProvider = null },
             )
         }
     }
@@ -611,7 +635,7 @@ private fun HomeScreen(
     onOpen: (Media) -> Unit,
     onPlay: (Media) -> Unit,
     onSearch: () -> Unit,
-    onEditRamoflixUrl: () -> Unit,
+    onEditProviderUrl: () -> Unit,
     listState: LazyListState,
     selectedFilter: HomeFilter,
     onSelectFilter: (HomeFilter) -> Unit,
@@ -631,7 +655,7 @@ private fun HomeScreen(
             onOpen = onOpen,
             onPlay = onPlay,
             onSearch = onSearch,
-            onEditRamoflixUrl = onEditRamoflixUrl,
+            onEditProviderUrl = onEditProviderUrl,
             listState = listState,
             selectedFilter = selectedFilter,
             onSelectFilter = onSelectFilter,
@@ -648,7 +672,7 @@ private fun HomeFeed(
     onOpen: (Media) -> Unit,
     onPlay: (Media) -> Unit,
     onSearch: () -> Unit,
-    onEditRamoflixUrl: () -> Unit,
+    onEditProviderUrl: () -> Unit,
     listState: LazyListState,
     selectedFilter: HomeFilter,
     onSelectFilter: (HomeFilter) -> Unit,
@@ -666,10 +690,12 @@ private fun HomeFeed(
             HomeFilter.TV -> content.rails.map { rail ->
                 rail.copy(items = rail.items.filter { it.type == MediaType.TV })
             }.filter { it.items.isNotEmpty() }
-            HomeFilter.ANIME -> content.rails.filter { rail ->
-                "Anime" in rail.title ||
-                    rail.items.any { item -> item.genres.any { it == "Anime" } }
-            }
+            HomeFilter.ANIME -> content.rails
+                .filter { rail -> rail.title.contains("Anime", ignoreCase = true) }
+                .map { rail ->
+                    rail.copy(items = rail.items.filter(Media::isJapaneseAnime))
+                }
+                .filter { rail -> rail.items.isNotEmpty() }
             HomeFilter.NEW -> content.rails.filter {
                 "Now" in it.title || "Airing" in it.title || "Trending" in it.title
             }
@@ -705,7 +731,7 @@ private fun HomeFeed(
                 )
                 HomeHeader(
                     onSearch = onSearch,
-                    onEditRamoflixUrl = onEditRamoflixUrl,
+                    onEditProviderUrl = onEditProviderUrl,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .windowInsetsPadding(WindowInsets.statusBars),
@@ -743,7 +769,7 @@ private fun HomeFeed(
 @Composable
 private fun HomeHeader(
     onSearch: () -> Unit,
-    onEditRamoflixUrl: () -> Unit,
+    onEditProviderUrl: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -762,7 +788,7 @@ private fun HomeHeader(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onEditRamoflixUrl)
+                .clickable(onClick = onEditProviderUrl)
                 .padding(vertical = 4.dp, horizontal = 4.dp),
         ) {
             Box(
@@ -1388,7 +1414,7 @@ private fun PlaybackProviderSelector(
     animeOnly: Boolean,
     onSelectProvider: (PlaybackProviderId) -> Unit,
     modifier: Modifier = Modifier,
-    onEditRamoflixUrl: (() -> Unit)? = null,
+    onEditProviderUrl: ((PlaybackProviderId) -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -1421,16 +1447,6 @@ private fun PlaybackProviderSelector(
                     fontSize = 11.sp,
                 )
             }
-            if (onEditRamoflixUrl != null) {
-                TextButton(onClick = onEditRamoflixUrl) {
-                    Text(
-                        text = "Ramoflix URL",
-                        color = AliflixIce,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-            }
         }
 
         if (animeOnly) {
@@ -1447,7 +1463,7 @@ private fun PlaybackProviderSelector(
                     .padding(horizontal = 13.dp, vertical = 10.dp),
             ) {
                 Text(
-                    text = "Miruro · Anime",
+                    text = "Miruro · Japanese Anime",
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -1487,6 +1503,37 @@ private fun PlaybackProviderSelector(
                             text = provider.displayName,
                             color = Color.White,
                             fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+            if (onEditProviderUrl != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(
+                        onClick = {
+                            onEditProviderUrl(PlaybackProviderId.RAMOFLIX)
+                        },
+                    ) {
+                        Text(
+                            text = "Edit Ramoflix URL",
+                            color = AliflixIce,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            onEditProviderUrl(PlaybackProviderId.MOVIES_67)
+                        },
+                    ) {
+                        Text(
+                            text = "Edit 67 URL",
+                            color = AliflixIce,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                         )
                     }
@@ -1599,7 +1646,7 @@ private fun MySpaceScreen(
     onPageChange: (Int) -> Unit,
     generalProvider: PlaybackProviderId,
     onSelectProvider: (PlaybackProviderId) -> Unit,
-    onEditRamoflixUrl: () -> Unit,
+    onEditProviderUrl: (PlaybackProviderId) -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -1688,7 +1735,7 @@ private fun MySpaceScreen(
             selectedProvider = generalProvider,
             animeOnly = false,
             onSelectProvider = onSelectProvider,
-            onEditRamoflixUrl = onEditRamoflixUrl,
+            onEditProviderUrl = onEditProviderUrl,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         MobileUpdatePanel(

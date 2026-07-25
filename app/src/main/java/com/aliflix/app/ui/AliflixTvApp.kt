@@ -142,6 +142,7 @@ fun AliflixTvApp(
     var playerSelection by remember { mutableStateOf<PlaybackSelection?>(null) }
     var playerVisible by remember { mutableStateOf(false) }
     var updateUi by remember { mutableStateOf(TvUpdateUiState()) }
+    var urlDialogProvider by remember { mutableStateOf<PlaybackProviderId?>(null) }
     val navFocusRequesters = remember {
         TvDestination.entries.associateWith { FocusRequester() }
     }
@@ -313,7 +314,12 @@ fun AliflixTvApp(
                     onOpen = ::open,
                     updateUi = updateUi,
                     generalProvider = playbackPreferences.safeGeneralProvider,
+                    ramoflixUrl = playbackPreferences.ramoflixConfig.baseUrl,
+                    movies67Url = playbackPreferences.movies67BaseUrl,
                     onSelectGeneralProvider = viewModel::selectGeneralPlaybackProvider,
+                    onEditProviderUrl = { provider ->
+                        urlDialogProvider = provider
+                    },
                     onCheckForUpdates = ::checkForUpdates,
                     onDownloadUpdate = ::downloadUpdate,
                     onInstallUpdate = ::installDownloadedUpdate,
@@ -337,6 +343,42 @@ fun AliflixTvApp(
                     onClose = { playerVisible = false },
                 )
             }
+        }
+
+        urlDialogProvider?.let { provider ->
+            val isRamoflix = provider == PlaybackProviderId.RAMOFLIX
+            ProviderUrlDialog(
+                providerName = provider.displayName,
+                description = if (isRamoflix) {
+                    "Change this address only if the Ramoflix domain moves."
+                } else {
+                    "Change this address if 67 Movies moves to a new domain. " +
+                        "The default domain uses the optimized direct TV player."
+                },
+                currentUrl = if (isRamoflix) {
+                    playbackPreferences.ramoflixConfig.baseUrl
+                } else {
+                    playbackPreferences.movies67BaseUrl
+                },
+                defaultUrl = provider.defaultBaseUrl,
+                onSave = { newUrl ->
+                    if (isRamoflix) {
+                        viewModel.updateRamoflixUrl(newUrl)
+                    } else {
+                        viewModel.updateMovies67Url(newUrl)
+                    }
+                    urlDialogProvider = null
+                },
+                onReset = {
+                    if (isRamoflix) {
+                        viewModel.resetRamoflixUrl()
+                    } else {
+                        viewModel.resetMovies67Url()
+                    }
+                    urlDialogProvider = null
+                },
+                onDismiss = { urlDialogProvider = null },
+            )
         }
     }
 }
@@ -719,7 +761,10 @@ private fun TvLibraryScreen(
     onOpen: (Media) -> Unit,
     updateUi: TvUpdateUiState,
     generalProvider: PlaybackProviderId,
+    ramoflixUrl: String,
+    movies67Url: String,
     onSelectGeneralProvider: (PlaybackProviderId) -> Unit,
+    onEditProviderUrl: (PlaybackProviderId) -> Unit,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
@@ -743,7 +788,10 @@ private fun TvLibraryScreen(
                 )
                 TvPlaybackProviderPanel(
                     selectedProvider = generalProvider,
+                    ramoflixUrl = ramoflixUrl,
+                    movies67Url = movies67Url,
                     onSelectProvider = onSelectGeneralProvider,
+                    onEditProviderUrl = onEditProviderUrl,
                 )
                 TvUpdatePanel(
                     state = updateUi,
@@ -767,7 +815,10 @@ private fun TvLibraryScreen(
 @Composable
 private fun TvPlaybackProviderPanel(
     selectedProvider: PlaybackProviderId,
+    ramoflixUrl: String,
+    movies67Url: String,
     onSelectProvider: (PlaybackProviderId) -> Unit,
+    onEditProviderUrl: (PlaybackProviderId) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -807,20 +858,52 @@ private fun TvPlaybackProviderPanel(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TvTextButton(
-                label = PlaybackProviderId.RAMOFLIX.displayName,
-                selected = selectedProvider == PlaybackProviderId.RAMOFLIX,
-                onClick = {
-                    onSelectProvider(PlaybackProviderId.RAMOFLIX)
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvTextButton(
+                    label = PlaybackProviderId.RAMOFLIX.displayName,
+                    selected = selectedProvider == PlaybackProviderId.RAMOFLIX,
+                    onClick = {
+                        onSelectProvider(PlaybackProviderId.RAMOFLIX)
+                    },
+                )
+                TvTextButton(
+                    label = PlaybackProviderId.MOVIES_67.displayName,
+                    selected = selectedProvider == PlaybackProviderId.MOVIES_67,
+                    onClick = {
+                        onSelectProvider(PlaybackProviderId.MOVIES_67)
+                    },
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvTextButton(
+                    label = "Edit Ramoflix URL",
+                    selected = false,
+                    onClick = {
+                        onEditProviderUrl(PlaybackProviderId.RAMOFLIX)
+                    },
+                )
+                TvTextButton(
+                    label = "Edit 67 URL",
+                    selected = false,
+                    onClick = {
+                        onEditProviderUrl(PlaybackProviderId.MOVIES_67)
+                    },
+                )
+            }
+            Text(
+                text = if (selectedProvider == PlaybackProviderId.RAMOFLIX) {
+                    ramoflixUrl
+                } else {
+                    movies67Url
                 },
-            )
-            TvTextButton(
-                label = PlaybackProviderId.MOVIES_67.displayName,
-                selected = selectedProvider == PlaybackProviderId.MOVIES_67,
-                onClick = {
-                    onSelectProvider(PlaybackProviderId.MOVIES_67)
-                },
+                color = AliflixMuted,
+                fontSize = 10.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

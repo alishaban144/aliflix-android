@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.net.URI
 
 class WebPlayerController(
     private val activity: ComponentActivity,
@@ -482,7 +483,14 @@ class WebPlayerController(
     }
 
     private fun moveTvWebFocus(view: WebView, keyCode: Int) {
-        if (activeSelection?.source?.provider == PlaybackProviderId.MOVIES_67) {
+        if (
+            activeSelection?.source?.provider == PlaybackProviderId.MOVIES_67 &&
+            runCatching {
+                URI(view.url.orEmpty()).host
+                    ?.removePrefix("www.")
+                    .equals("player.vidlove.cc", ignoreCase = true)
+            }.getOrDefault(false)
+        ) {
             val action = when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> "video.currentTime = Math.max(0, video.currentTime - 10)"
                 KeyEvent.KEYCODE_DPAD_RIGHT ->

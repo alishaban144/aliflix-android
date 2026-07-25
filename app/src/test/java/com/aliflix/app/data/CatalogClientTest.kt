@@ -378,7 +378,14 @@ class CatalogClientTest {
         val search = mergingClient.search("Attack on Titan")
 
         assertTrue(home.hero.isJapaneseAnime)
-        assertTrue(home.rails.flatMap { it.items }.single().isJapaneseAnime)
+        assertTrue(
+            home.rails
+                .first { it.title.contains("Anime") }
+                .items
+                .single()
+                .isJapaneseAnime,
+        )
+        assertTrue(home.rails.size >= 2)
         assertTrue(search.single().isJapaneseAnime)
     }
 }

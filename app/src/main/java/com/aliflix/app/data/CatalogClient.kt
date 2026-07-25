@@ -58,14 +58,23 @@ class CatalogClient(
         }.awaitAll().filterNotNull()
 
         val seenTitles = mutableSetOf<String>()
-        val sourceRails = freshRails.ifEmpty { fallbackRails }
+        val liveRails = freshRails.ifEmpty { fallbackRails }
+        val sourceRails = if (
+            liveRails.any { rail -> rail.items.any(Media::isJapaneseAnime) }
+        ) {
+            liveRails
+        } else {
+            liveRails + fallbackRails
+                .first { rail -> rail.title == FALLBACK_ANIME_RAIL_TITLE }
+                .copy(title = JAPANESE_ANIME_RAIL_TITLE)
+        }
         val japaneseAnimeKeys = sourceRails
             .flatMap(ContentRail::items)
             .filter(Media::isJapaneseAnime)
             .map(Media::key)
             .toSet()
         val rails = sourceRails.mapNotNull { rail ->
-            val uniqueItems = rail.items
+            val flaggedItems = rail.items
                 .map { item ->
                     if (item.key in japaneseAnimeKeys && !item.isJapaneseAnime) {
                         item.copy(isJapaneseAnime = true)
@@ -73,9 +82,17 @@ class CatalogClient(
                         item
                     }
                 }
-                .filter { item ->
+            val isAnimeRail = flaggedItems.any(Media::isJapaneseAnime) &&
+                rail.title.contains("Anime", ignoreCase = true)
+            val uniqueItems = if (isAnimeRail) {
+                flaggedItems.distinctBy { item ->
+                    "${item.type.routeName}:${normalizeText(item.title)}"
+                }
+            } else {
+                flaggedItems.filter { item ->
                     seenTitles.add("${item.type.routeName}:${normalizeText(item.title)}")
                 }
+            }
             if (uniqueItems.isEmpty()) null else rail.copy(items = uniqueItems)
         }.ifEmpty { listOf(ContentRail("Featured", fallbackItems)) }
         catalogue = rails.flatMap(ContentRail::items)
@@ -845,12 +862,12 @@ class CatalogClient(
             ),
             TmdbHomeRailSpec(
                 "/discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc",
-                "Trending Japanese Anime",
+                JAPANESE_ANIME_RAIL_TITLE,
                 japaneseAnime = true,
             ),
             TmdbHomeRailSpec(
                 "/discover/movie?with_genres=16&with_origin_country=JP&sort_by=popularity.desc",
-                "Japanese Anime Films",
+                "Japanese Anime Films · Miruro",
                 japaneseAnime = true,
             ),
         )
@@ -986,8 +1003,14 @@ class CatalogClient(
             ContentRail("Trending Now", fallbackItems),
             ContentRail("Popular Movies", fallbackItems.filter { it.type == MediaType.MOVIE }),
             ContentRail("Popular TV Shows", fallbackItems.filter { it.type == MediaType.TV }),
-            ContentRail("Anime", fallbackItems.filter { "Anime" in it.genres }),
+            ContentRail(
+                FALLBACK_ANIME_RAIL_TITLE,
+                fallbackItems.filter(Media::isJapaneseAnime),
+            ),
         )
+
+        const val FALLBACK_ANIME_RAIL_TITLE = "Anime"
+        const val JAPANESE_ANIME_RAIL_TITLE = "Japanese Anime · Miruro"
 
         suspend fun downloadPage(url: String): String = withContext(Dispatchers.IO) {
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {

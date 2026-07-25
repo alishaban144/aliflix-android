@@ -47,7 +47,7 @@ class AniListResolverTest {
         )
 
         assertEquals(
-            "https://www.miruro.tv/watch/21?ep=12",
+            "https://www.miruro.tv/watch/21/one-piece/12",
             resolver.resolveWatchUrl(selection),
         )
     }
@@ -88,7 +88,7 @@ class AniListResolverTest {
         )
 
         assertEquals(
-            "https://www.miruro.tv/watch/100166?ep=4",
+            "https://www.miruro.tv/watch/100166/my-hero-academia-season-3/4",
             resolver.resolveWatchUrl(selection),
         )
         assertEquals(

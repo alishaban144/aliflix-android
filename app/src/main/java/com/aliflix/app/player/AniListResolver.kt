@@ -1,6 +1,8 @@
 package com.aliflix.app.player
 
+import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.PlaybackSource
 import com.aliflix.app.model.PlaybackSelection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,6 +19,16 @@ internal class AniListResolver(
 ) {
     private val cache = ConcurrentHashMap<String, Resolution>()
 
+    suspend fun matchesJapaneseAnime(media: Media): Boolean =
+        runCatching {
+            resolve(
+                PlaybackSelection(
+                    media = media,
+                    source = PlaybackSource.miruro(),
+                ),
+            )
+        }.isSuccess
+
     suspend fun resolveWatchUrl(selection: PlaybackSelection): String {
         val cacheKey = buildString {
             append(selection.media.key)
@@ -32,7 +44,8 @@ internal class AniListResolver(
         }
         val baseUrl = selection.source.baseUrl.trimEnd('/')
         val episode = selection.episodeNumber ?: 1
-        return "$baseUrl/watch/${resolved.id}?ep=$episode"
+        val slug = normalize(resolved.title).replace(' ', '-')
+        return "$baseUrl/watch/${resolved.id}/$slug/$episode"
     }
 
     private suspend fun resolve(selection: PlaybackSelection): Resolution {

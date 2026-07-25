@@ -62,16 +62,28 @@ data class PlaybackSource(
             RamoflixConfig(baseUrl).buildWatchUrl(media.title)
 
         PlaybackProviderId.MOVIES_67 -> {
-            val route = if (media.type == MediaType.TV) {
-                "/embed/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
+            val defaultHost = URI(PlaybackProviderId.MOVIES_67.defaultBaseUrl)
+                .host
+                ?.removePrefix("www.")
+            if (cleanDomain.equals(defaultHost, ignoreCase = true)) {
+                val route = if (media.type == MediaType.TV) {
+                    "/embed/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
+                } else {
+                    "/embed/movie/${media.id}"
+                }
+                "https://player.vidlove.cc$route" +
+                    "?autoplay=true&poster=true&chromecast=true&servericon=true" +
+                    "&setting=true&pip=true&font=Roboto&fontcolor=ffffff&fontsize=20" +
+                    "&opacity=0.5&primarycolor=ffffff&secondarycolor=ffffff" +
+                    "&iconcolor=ffffff&server=Dark"
             } else {
-                "/embed/movie/${media.id}"
+                val route = if (media.type == MediaType.TV) {
+                    "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
+                } else {
+                    "/watch/movie/${media.id}"
+                }
+                "${baseUrl.trimEnd('/')}$route"
             }
-            "https://player.vidlove.cc$route" +
-                "?autoplay=true&poster=true&chromecast=true&servericon=true" +
-                "&setting=true&pip=true&font=Roboto&fontcolor=ffffff&fontsize=20" +
-                "&opacity=0.5&primarycolor=ffffff&secondarycolor=ffffff" +
-                "&iconcolor=ffffff&server=Dark"
         }
 
         PlaybackProviderId.MIRURO -> null
@@ -81,7 +93,9 @@ data class PlaybackSource(
         fun ramoflix(config: RamoflixConfig = RamoflixConfig()) =
             PlaybackSource(PlaybackProviderId.RAMOFLIX, config.baseUrl)
 
-        fun movies67() = PlaybackSource(PlaybackProviderId.MOVIES_67)
+        fun movies67(
+            baseUrl: String = PlaybackProviderId.MOVIES_67.defaultBaseUrl,
+        ) = PlaybackSource(PlaybackProviderId.MOVIES_67, baseUrl)
 
         fun miruro() = PlaybackSource(PlaybackProviderId.MIRURO)
     }
@@ -90,6 +104,7 @@ data class PlaybackSource(
 data class PlaybackPreferences(
     val generalProvider: PlaybackProviderId = PlaybackProviderId.RAMOFLIX,
     val ramoflixConfig: RamoflixConfig = RamoflixConfig(),
+    val movies67BaseUrl: String = PlaybackProviderId.MOVIES_67.defaultBaseUrl,
 ) {
     val safeGeneralProvider: PlaybackProviderId
         get() = generalProvider.takeIf(PlaybackProviderId::supportsGeneralPlayback)
@@ -106,7 +121,7 @@ data class PlaybackPreferences(
             ?: safeGeneralProvider
         return when (provider) {
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
-            PlaybackProviderId.MOVIES_67 -> PlaybackSource.movies67()
+            PlaybackProviderId.MOVIES_67 -> PlaybackSource.movies67(movies67BaseUrl)
             PlaybackProviderId.MIRURO -> PlaybackSource.ramoflix(ramoflixConfig)
         }
     }

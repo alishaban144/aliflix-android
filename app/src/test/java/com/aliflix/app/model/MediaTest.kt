@@ -94,6 +94,30 @@ class MediaTest {
     }
 
     @Test
+    fun customMovies67DomainBuildsMirrorWatchUrl() {
+        val item = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
+        val preferences = PlaybackPreferences(
+            generalProvider = PlaybackProviderId.MOVIES_67,
+            movies67BaseUrl = "https://67-mirror.example/",
+        )
+        val selection = PlaybackSelection(
+            media = item,
+            seasonNumber = 2,
+            episodeNumber = 3,
+            source = preferences.sourceFor(item),
+        )
+
+        assertEquals(
+            "https://67-mirror.example/watch/tv/66732/2/3",
+            selection.entryUrl,
+        )
+        assertEquals(
+            "tv:66732:s2:e3:via:movies_67@67-mirror.example",
+            selection.key,
+        )
+    }
+
+    @Test
     fun japaneseAnimeAlwaysUsesMiruro() {
         val anime = Media(
             id = 37854,

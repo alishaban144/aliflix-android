@@ -20,7 +20,9 @@ import androidx.compose.ui.unit.dp
 import com.aliflix.app.data.RamoflixConfig
 
 @Composable
-fun RamoflixUrlDialog(
+fun ProviderUrlDialog(
+    providerName: String,
+    description: String,
     currentUrl: String,
     defaultUrl: String,
     onSave: (String) -> Unit,
@@ -34,12 +36,10 @@ fun RamoflixUrlDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Ramoflix URL") },
+        title = { Text("$providerName URL") },
         text = {
             Column {
-                Text(
-                    "Playback always opens Ramoflix. Change this address only if its domain moves.",
-                )
+                Text(description)
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = url,

@@ -13,6 +13,7 @@ import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.Season
+import com.aliflix.app.player.AniListResolver
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -50,6 +51,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private val client = CatalogClient()
     private val library = LibraryStore(application)
     private val playbackProviderRepository = PlaybackProviderRepository(application)
+    private val animeResolver = AniListResolver()
     private var searchJob: Job? = null
     private var detailJob: Job? = null
     private var episodeJob: Job? = null
@@ -75,9 +77,15 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
         playbackProviderRepository.selectGeneralProvider(provider)
 
-    fun updateRamoflixUrl(newUrl: String) = playbackProviderRepository.updateUrl(newUrl)
+    fun updateRamoflixUrl(newUrl: String) =
+        playbackProviderRepository.updateRamoflixUrl(newUrl)
 
-    fun resetRamoflixUrl() = playbackProviderRepository.resetUrl()
+    fun resetRamoflixUrl() = playbackProviderRepository.resetRamoflixUrl()
+
+    fun updateMovies67Url(newUrl: String) =
+        playbackProviderRepository.updateMovies67Url(newUrl)
+
+    fun resetMovies67Url() = playbackProviderRepository.resetMovies67Url()
 
     init {
         refreshHome()
@@ -168,7 +176,21 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 val seasonsRequest = async {
                     if (item.type == MediaType.TV) client.seasons(item) else emptyList()
                 }
-                val (details, recommendations) = detailsRequest.await()
+                val (catalogDetails, recommendations) = detailsRequest.await()
+                val details = if (
+                    !catalogDetails.isJapaneseAnime &&
+                    catalogDetails.genres.any { genre ->
+                        genre.equals("Animation", ignoreCase = true) ||
+                            genre.equals("Anime", ignoreCase = true)
+                    } &&
+                    runCatching {
+                        animeResolver.matchesJapaneseAnime(catalogDetails)
+                    }.getOrDefault(false)
+                ) {
+                    catalogDetails.copy(isJapaneseAnime = true)
+                } else {
+                    catalogDetails
+                }
                 library.refreshMetadata(details)
                 val seasons = seasonsRequest.await()
                 val selectedSeason = seasons.firstOrNull()?.number ?: 1
