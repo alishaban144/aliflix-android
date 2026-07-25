@@ -1,0 +1,8 @@
+{
+  "versionCode": 12,
+  "versionName": "2.1-tv",
+  "apkUrl": "https://github.com/OWNER/REPOSITORY/releases/latest/download/aliflix-tv-release.apk",
+  "sha256": "REPLACE_WITH_THE_64_CHARACTER_APK_SHA256",
+  "minimumSdk": 30,
+  "notes": "Describe the changes in this release."
+}

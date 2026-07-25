@@ -1,0 +1,1042 @@
+package com.aliflix.app.player
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.graphics.Color
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.Toast
+import android.provider.Settings
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import androidx.activity.ComponentActivity
+import androidx.core.net.toUri
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.aliflix.app.BuildConfig
+import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.PlaybackSelection
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
+import org.json.JSONTokener
+
+class WebPlayerController(
+    private val activity: ComponentActivity,
+) {
+    private var webView: WebView? = null
+    private var loadedKey: String? = null
+    private var activeSelection: PlaybackSelection? = null
+    private var customView: View? = null
+    private var customViewContainer: FrameLayout? = null
+    private var customViewCallback: WebChromeClient.CustomViewCallback? = null
+    private var playerVisible = false
+
+    private val _loading = MutableStateFlow(false)
+    val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    private val _webViewGeneration = MutableStateFlow(0)
+    val webViewGeneration: StateFlow<Int> = _webViewGeneration.asStateFlow()
+
+    fun viewFor(selection: PlaybackSelection): WebView {
+        val view = webView ?: createWebView().also { webView = it }
+        activeSelection = selection
+        val defaultKey = selection.key
+        if (loadedKey != defaultKey) {
+            loadedKey = defaultKey
+            _error.value = null
+            view.stopLoading()
+            view.loadUrl(selection.watchUrl)
+        }
+        (view.parent as? ViewGroup)?.removeView(view)
+        return view
+    }
+
+    fun showRamoflixServers() {
+        activeSelection ?: return
+        webView?.evaluateJavascript(
+            """
+            (() => {
+              const label = Array.from(document.querySelectorAll('p,h2,h3,div'))
+                .find((el) => el.textContent.trim() === "Choose server:");
+              if (!label) return false;
+              label.scrollIntoView({ behavior: "smooth", block: "start" });
+              return true;
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
+    fun setVisible(visible: Boolean) {
+        playerVisible = visible
+        setSystemBarsVisible(activity, !visible)
+        webView?.let {
+            it.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+            if (visible) {
+                it.onResume()
+                it.resumeTimers()
+                it.requestFocus()
+            } else {
+                it.onPause()
+            }
+        }
+    }
+
+    fun reload() {
+        _error.value = null
+        val view = webView
+        if (view != null) {
+            view.reload()
+        } else if (activeSelection != null) {
+            _webViewGeneration.value += 1
+        }
+    }
+
+    fun openCastPicker() {
+        val opened = runCatching {
+            activity.startActivity(
+                Intent(Settings.ACTION_CAST_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+        }.isSuccess
+        if (!opened) {
+            Toast.makeText(
+                activity,
+                "Cast settings are unavailable on this device",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    fun handleBack(): Boolean {
+        if (customView != null) {
+            hideCustomView()
+            return true
+        }
+        return false
+    }
+
+    fun destroy() {
+        hideCustomView()
+        playerVisible = false
+        setSystemBarsVisible(activity, true)
+        webView?.apply {
+            stopLoading()
+            loadUrl("about:blank")
+            clearHistory()
+            (parent as? ViewGroup)?.removeView(this)
+            destroy()
+        }
+        webView = null
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun createWebView(): WebView {
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+        val cookieManager = CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+        }
+        return object : WebView(activity) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                if (BuildConfig.IS_TV && event.action == KeyEvent.ACTION_DOWN) {
+                    when (event.keyCode) {
+                        KeyEvent.KEYCODE_DPAD_CENTER,
+                        KeyEvent.KEYCODE_ENTER,
+                        KeyEvent.KEYCODE_NUMPAD_ENTER,
+                        KeyEvent.KEYCODE_BUTTON_A,
+                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                        KeyEvent.KEYCODE_MEDIA_PLAY,
+                        KeyEvent.KEYCODE_MEDIA_PAUSE,
+                        -> {
+                            if (event.repeatCount == 0) {
+                                activateTvPlayerSelection(this)
+                            }
+                            return true
+                        }
+                        KeyEvent.KEYCODE_DPAD_LEFT,
+                        KeyEvent.KEYCODE_DPAD_RIGHT,
+                        KeyEvent.KEYCODE_DPAD_UP,
+                        KeyEvent.KEYCODE_DPAD_DOWN,
+                        -> {
+                            if (event.repeatCount == 0) {
+                                moveTvWebFocus(this, event.keyCode)
+                            }
+                            return true
+                        }
+                    }
+                }
+                return super.dispatchKeyEvent(event)
+            }
+        }.apply {
+            setBackgroundColor(Color.BLACK)
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isFocusable = true
+            isFocusableInTouchMode = true
+            isLongClickable = false
+            setOnLongClickListener { true }
+            settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                mediaPlaybackRequiresUserGesture = false
+                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                allowFileAccess = false
+                allowContentAccess = false
+                setSupportMultipleWindows(false)
+                javaScriptCanOpenWindowsAutomatically = false
+                cacheMode = WebSettings.LOAD_DEFAULT
+                useWideViewPort = true
+                loadWithOverviewMode = true
+                userAgentString = if (BuildConfig.IS_TV) {
+                    "Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                } else {
+                    "Mozilla/5.0 (Linux; Android 16; A069P) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
+                }
+            }
+            cookieManager.setAcceptThirdPartyCookies(this, true)
+
+            webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                    _loading.value = true
+                    _error.value = null
+                    view?.alpha = 0f
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    CookieManager.getInstance().flush()
+                    val selection = activeSelection
+                    if (view != null && url != null) {
+                        if (
+                            selection != null &&
+                            isRamoflixSearchUrl(url)
+                        ) {
+                            resolveRamoflixTitle(view, selection, attempt = 0)
+                            return
+                        }
+                        _error.value = null
+                        view.alpha = 1f
+                        _loading.value = false
+                        if (playerVisible) {
+                            view.requestFocus()
+                            prepareTvWebFocus(view)
+                        }
+                        if (
+                            BuildConfig.IS_TV &&
+                            url.toUri().host
+                                ?.removePrefix("www.")
+                                ?.let { it == "soap2night.cc" || it.endsWith(".soap2night.cc") } == true
+                        ) {
+                            view.postDelayed(
+                                { promoteTvPlayerFrame(view, attempt = 0) },
+                                900L,
+                            )
+                        }
+                        if (selection != null) {
+                            view.postDelayed(
+                                {
+                                    if (isActiveSelection(view, selection)) {
+                                        alignRamoflixContent(view, selection)
+                                    }
+                                },
+                                350L,
+                            )
+                            view.postDelayed(
+                                {
+                                    if (isActiveSelection(view, selection)) {
+                                        alignRamoflixContent(view, selection)
+                                    }
+                                },
+                                1_400L,
+                            )
+                        }
+                        return
+                    }
+                    view?.alpha = 1f
+                    _loading.value = false
+                }
+
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                ): Boolean {
+                    if (request?.isForMainFrame != true) return false
+                    val uri = request.url ?: return true
+                    val customHosts = activeSelection
+                        ?.ramoflixConfig
+                        ?.cleanDomain
+                        ?.takeIf(String::isNotBlank)
+                        ?.let(::setOf)
+                        .orEmpty()
+                    if (
+                        PlaybackNavigationPolicy.isAllowedTopLevel(
+                            url = uri.toString(),
+                            customHosts = customHosts,
+                        )
+                    ) {
+                        return false
+                    }
+                    Toast.makeText(
+                        activity,
+                        "External navigation blocked",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    return true
+                }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    error: WebResourceError?,
+                ) {
+                    if (request?.isForMainFrame == true) {
+                        _loading.value = false
+                        _error.value = error?.description?.toString()
+                            ?: "The player could not be loaded."
+                    }
+                }
+
+                override fun onRenderProcessGone(
+                    view: WebView?,
+                    detail: RenderProcessGoneDetail?,
+                ): Boolean {
+                    _loading.value = false
+                    _error.value = "The web player stopped unexpectedly. Tap Retry."
+                    if (webView === view) {
+                        (view?.parent as? ViewGroup)?.removeView(view)
+                        view?.destroy()
+                        webView = null
+                        loadedKey = null
+                    }
+                    return true
+                }
+            }
+
+            webChromeClient = object : WebChromeClient() {
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: android.os.Message?,
+                ): Boolean {
+                    Toast.makeText(
+                        activity,
+                        "Pop-up blocked",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    return false
+                }
+
+                override fun onShowCustomView(
+                    view: View?,
+                    callback: CustomViewCallback?,
+                ) {
+                    if (view == null) return
+                    showCustomView(view, callback)
+                }
+
+                override fun onHideCustomView() {
+                    hideCustomView()
+                }
+            }
+
+        }
+    }
+
+    private fun isRamoflixSearchUrl(url: String): Boolean {
+        val uri = url.toUri()
+        return uri.getQueryParameter("s") != null
+    }
+
+    private fun prepareTvWebFocus(view: WebView) {
+        if (!BuildConfig.IS_TV) return
+        view.evaluateJavascript(
+            """
+            (() => {
+              const visible = (element) => {
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                return rect.width > 8 && rect.height > 8 &&
+                  style.display !== "none" && style.visibility !== "hidden";
+              };
+              const frames = Array.from(document.querySelectorAll("iframe"))
+                .filter(visible)
+                .sort((a, b) => {
+                  const ar = a.getBoundingClientRect();
+                  const br = b.getBoundingClientRect();
+                  return (br.width * br.height) - (ar.width * ar.height);
+                });
+              frames.forEach((frame) => frame.tabIndex = 0);
+              const play = Array.from(
+                document.querySelectorAll(
+                  "#pl_but, #pl_but_background, #play, .btn-watchnow"
+                )
+              ).find(visible);
+              if (play) {
+                play.tabIndex = 0;
+                play.setAttribute("role", "button");
+                play.setAttribute("aria-label", "Play video");
+                play.focus({ preventScroll: true });
+              } else {
+                frames[0]?.focus({ preventScroll: true });
+              }
+              return frames.length + (play ? 1 : 0);
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
+    private fun moveTvWebFocus(view: WebView, keyCode: Int) {
+        val direction = when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+            KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+            KeyEvent.KEYCODE_DPAD_UP -> "up"
+            else -> "down"
+        }
+        view.evaluateJavascript(
+            """
+            (() => {
+              const direction = "$direction";
+              const visible = (element) => {
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                return rect.width > 8 && rect.height > 8 &&
+                  style.display !== "none" && style.visibility !== "hidden" &&
+                  style.opacity !== "0";
+              };
+              const candidates = Array.from(document.querySelectorAll(
+                'iframe, #pl_but, #pl_but_background, #play, .btn-watchnow, ' +
+                'a[href], button, input, select, ' +
+                '[role="button"], [onclick], [tabindex]'
+              )).filter((element, index, all) =>
+                visible(element) && !element.disabled && all.indexOf(element) === index
+              );
+              candidates.forEach((element) => {
+                if (element.tabIndex < 0) element.tabIndex = 0;
+              });
+              if (!candidates.length) return false;
+
+              let current = document.activeElement;
+              if (!candidates.includes(current)) {
+                current = candidates
+                  .filter((element) => element.tagName === "IFRAME")
+                  .sort((a, b) => {
+                    const ar = a.getBoundingClientRect();
+                    const br = b.getBoundingClientRect();
+                    return (br.width * br.height) - (ar.width * ar.height);
+                  })[0] || candidates[0];
+                current.focus({ preventScroll: true });
+                return true;
+              }
+
+              const source = current.getBoundingClientRect();
+              const sx = source.left + source.width / 2;
+              const sy = source.top + source.height / 2;
+              const directional = candidates
+                .filter((candidate) => candidate !== current)
+                .map((candidate) => {
+                  const rect = candidate.getBoundingClientRect();
+                  const x = rect.left + rect.width / 2;
+                  const y = rect.top + rect.height / 2;
+                  const dx = x - sx;
+                  const dy = y - sy;
+                  const allowed =
+                    (direction === "left" && dx < -4) ||
+                    (direction === "right" && dx > 4) ||
+                    (direction === "up" && dy < -4) ||
+                    (direction === "down" && dy > 4);
+                  if (!allowed) return null;
+                  const primary = direction === "left" || direction === "right"
+                    ? Math.abs(dx) : Math.abs(dy);
+                  const secondary = direction === "left" || direction === "right"
+                    ? Math.abs(dy) : Math.abs(dx);
+                  return { candidate, score: primary + secondary * 2.4 };
+                })
+                .filter(Boolean)
+                .sort((a, b) => a.score - b.score);
+              const next = directional[0]?.candidate;
+              if (!next) return false;
+              next.focus({ preventScroll: true });
+              next.scrollIntoView({ block: "nearest", inline: "nearest" });
+              return true;
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
+    private fun activateTvPlayerSelection(view: WebView) {
+        view.evaluateJavascript(
+            """
+            (() => {
+              const visible = (element) => {
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                return rect.width > 8 && rect.height > 8 &&
+                  style.display !== "none" && style.visibility !== "hidden";
+              };
+              const active = document.activeElement;
+              if (
+                active &&
+                active !== document.body &&
+                active !== document.documentElement &&
+                active.tagName !== "IFRAME"
+              ) {
+                const isPlayerBootstrap = active.matches(
+                  "#play, .btn-watchnow"
+                );
+                active.click();
+                if (isPlayerBootstrap) {
+                  window.setTimeout(() => {
+                    const frame = Array.from(document.querySelectorAll("iframe"))
+                      .filter((candidate) => {
+                        const rect = candidate.getBoundingClientRect();
+                        return rect.width > 100 && rect.height > 100 &&
+                          candidate.src && candidate.src !== "about:blank";
+                      })
+                      .sort((a, b) => {
+                        const ar = a.getBoundingClientRect();
+                        const br = b.getBoundingClientRect();
+                        return (br.width * br.height) - (ar.width * ar.height);
+                      })[0];
+                    if (frame?.src?.startsWith("https://")) {
+                      location.assign(frame.src);
+                    }
+                  }, 700);
+                }
+                return JSON.stringify({
+                  action: isPlayerBootstrap ? "clicked-play" : "clicked"
+                });
+              }
+              const directPlay = Array.from(
+                document.querySelectorAll(
+                  "#pl_but, #pl_but_background, #play, .btn-watchnow"
+                )
+              ).find(visible);
+              if (directPlay) {
+                directPlay.click();
+                window.setTimeout(() => {
+                  const frame = Array.from(document.querySelectorAll("iframe"))
+                    .filter((candidate) => {
+                      const rect = candidate.getBoundingClientRect();
+                      return rect.width > 100 && rect.height > 100 &&
+                        candidate.src && candidate.src !== "about:blank";
+                    })
+                    .sort((a, b) => {
+                      const ar = a.getBoundingClientRect();
+                      const br = b.getBoundingClientRect();
+                      return (br.width * br.height) - (ar.width * ar.height);
+                    })[0];
+                  if (frame?.src?.startsWith("https://")) {
+                    location.assign(frame.src);
+                  }
+                }, 700);
+                return JSON.stringify({ action: "clicked-play" });
+              }
+              const clickNestedPlayer = (root, depth = 0) => {
+                if (depth > 3) return false;
+                for (const nestedFrame of root.querySelectorAll("iframe")) {
+                  try {
+                    const nestedDocument = nestedFrame.contentDocument;
+                    if (!nestedDocument) continue;
+                    const nestedControl = Array.from(
+                      nestedDocument.querySelectorAll(
+                        "#pl_but, #pl_but_background, #play, .btn-watchnow"
+                      )
+                    ).find((element) => {
+                      const rect = element.getBoundingClientRect();
+                      const style = element.ownerDocument.defaultView
+                        .getComputedStyle(element);
+                      return rect.width > 8 && rect.height > 8 &&
+                        style.display !== "none" &&
+                        style.visibility !== "hidden";
+                    });
+                    if (nestedControl) {
+                      nestedControl.click();
+                      return true;
+                    }
+                    const nestedVideo = nestedDocument.querySelector("video");
+                    if (nestedVideo) {
+                      if (nestedVideo.paused) nestedVideo.play();
+                      else nestedVideo.pause();
+                      return true;
+                    }
+                    if (clickNestedPlayer(nestedDocument, depth + 1)) {
+                      return true;
+                    }
+                  } catch (_) {
+                    // Cross-origin frames are handled by the approved-host fallback.
+                  }
+                }
+                return false;
+              };
+              if (clickNestedPlayer(document)) {
+                return JSON.stringify({ action: "nested-player" });
+              }
+              const frames = Array.from(document.querySelectorAll("iframe"))
+                .filter(visible)
+                .sort((a, b) => {
+                  const ar = a.getBoundingClientRect();
+                  const br = b.getBoundingClientRect();
+                  return (br.width * br.height) - (ar.width * ar.height);
+                });
+              const frame = active?.tagName === "IFRAME" && visible(active)
+                ? active
+                : frames[0];
+              if (!frame) {
+                const video = document.querySelector("video");
+                if (video) {
+                  if (video.paused) video.play(); else video.pause();
+                  return JSON.stringify({ action: "video" });
+                }
+                return JSON.stringify({ action: "none" });
+              }
+              frame.focus({ preventScroll: true });
+              if (frame.src?.startsWith("https://")) {
+                return JSON.stringify({
+                  action: "promote",
+                  url: frame.src
+                });
+              }
+              const rect = frame.getBoundingClientRect();
+              return JSON.stringify({
+                action: "tap",
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+                viewportWidth: innerWidth,
+                viewportHeight: innerHeight
+              });
+            })();
+            """.trimIndent(),
+        ) { result ->
+            val payload = runCatching {
+                JSONTokener(result).nextValue() as? String
+            }.getOrNull().orEmpty()
+            val value = runCatching { JSONObject(payload) }.getOrNull() ?: return@evaluateJavascript
+            when (value.optString("action")) {
+                "clicked-play" -> {
+                    view.postDelayed(
+                        { promoteTvPlayerFrame(view, attempt = 0) },
+                        700L,
+                    )
+                }
+                "promote" -> {
+                    val target = value.optString("url")
+                    val customHosts = activeSelection
+                        ?.ramoflixConfig
+                        ?.cleanDomain
+                        ?.takeIf(String::isNotBlank)
+                        ?.let(::setOf)
+                        .orEmpty()
+                    if (
+                        PlaybackNavigationPolicy.isAllowedTopLevel(target, customHosts)
+                    ) {
+                        view.loadUrl(target)
+                    }
+                }
+                "tap" -> {
+                    view.post {
+                        if (!clickTvPlayerAccessibilityNode(view)) {
+                            dispatchWebViewTap(
+                                view = view,
+                                x = value.optDouble("x").toFloat(),
+                                y = value.optDouble("y").toFloat(),
+                                viewportWidth = value.optDouble("viewportWidth").toFloat(),
+                                viewportHeight = value.optDouble("viewportHeight").toFloat(),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun promoteTvPlayerFrame(view: WebView, attempt: Int) {
+        if (!BuildConfig.IS_TV || attempt > 8 || webView !== view) return
+        view.evaluateJavascript(
+            """
+            (() => {
+              const usable = (frame) => {
+                const rect = frame.getBoundingClientRect();
+                const style = getComputedStyle(frame);
+                return frame.src && frame.src !== "about:blank" &&
+                  style.display !== "none" && style.visibility !== "hidden" &&
+                  (rect.width > 100 || rect.height > 100);
+              };
+              const frame = Array.from(document.querySelectorAll("iframe"))
+                .filter((candidate) =>
+                  usable(candidate)
+                )
+                .sort((a, b) => {
+                  const ar = a.getBoundingClientRect();
+                  const br = b.getBoundingClientRect();
+                  return (br.width * br.height) - (ar.width * ar.height);
+                })[0];
+              return frame?.src || "";
+            })();
+            """.trimIndent(),
+        ) { result ->
+            if (webView !== view) return@evaluateJavascript
+            val target = runCatching {
+                JSONTokener(result).nextValue() as? String
+            }.getOrNull().orEmpty()
+            val customHosts = activeSelection
+                ?.ramoflixConfig
+                ?.cleanDomain
+                ?.takeIf(String::isNotBlank)
+                ?.let(::setOf)
+                .orEmpty()
+            if (
+                target.isNotBlank() &&
+                PlaybackNavigationPolicy.isAllowedTopLevel(target, customHosts)
+            ) {
+                view.loadUrl(target)
+            } else if (attempt < 8) {
+                view.postDelayed(
+                    { promoteTvPlayerFrame(view, attempt + 1) },
+                    450L,
+                )
+            }
+        }
+    }
+
+    private fun clickTvPlayerAccessibilityNode(view: WebView): Boolean {
+        val root = view.createAccessibilityNodeInfo() ?: return false
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var bestNode: AccessibilityNodeInfo? = null
+        var bestScore = 0
+        var visited = 0
+
+        while (queue.isNotEmpty() && visited < 500) {
+            val node = queue.removeFirst()
+            visited += 1
+            val id = node.viewIdResourceName
+                ?.substringAfterLast('/')
+                ?.lowercase()
+                .orEmpty()
+            val score = when {
+                id == "pl_but" -> 100
+                id == "pl_but_background" -> 90
+                id == "play" -> 80
+                id.contains("play") && node.isClickable -> 50
+                else -> 0
+            }
+            if (node.isVisibleToUser && node.isEnabled && node.isClickable && score > bestScore) {
+                bestNode = node
+                bestScore = score
+            }
+            for (index in 0 until node.childCount) {
+                node.getChild(index)?.let(queue::addLast)
+            }
+        }
+        return bestNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+    }
+
+    private fun dispatchWebViewTap(
+        view: WebView,
+        x: Float,
+        y: Float,
+        viewportWidth: Float,
+        viewportHeight: Float,
+    ) {
+        if (
+            !x.isFinite() ||
+            !y.isFinite() ||
+            viewportWidth <= 0f ||
+            viewportHeight <= 0f
+        ) {
+            return
+        }
+        val viewX = x * (view.width / viewportWidth)
+        val viewY = y * (view.height / viewportHeight)
+        val downTime = SystemClock.uptimeMillis()
+        val down = MotionEvent.obtain(
+            downTime,
+            downTime,
+            MotionEvent.ACTION_DOWN,
+            viewX,
+            viewY,
+            0,
+        ).apply {
+            source = InputDevice.SOURCE_TOUCHSCREEN
+        }
+        view.dispatchTouchEvent(down)
+        down.recycle()
+        view.postDelayed(
+            {
+                val upTime = SystemClock.uptimeMillis()
+                val up = MotionEvent.obtain(
+                    downTime,
+                    upTime,
+                    MotionEvent.ACTION_UP,
+                    viewX,
+                    viewY,
+                    0,
+                ).apply {
+                    source = InputDevice.SOURCE_TOUCHSCREEN
+                }
+                view.dispatchTouchEvent(up)
+                up.recycle()
+            },
+            70L,
+        )
+    }
+
+    private fun resolveRamoflixTitle(
+        view: WebView,
+        selection: PlaybackSelection,
+        attempt: Int,
+    ) {
+        val quotedTitle = JSONObject.quote(selection.media.title)
+        val currentUri = view.url.orEmpty().toUri()
+        val host = currentUri.host?.removePrefix("www.").orEmpty()
+        val quotedHost = JSONObject.quote(host)
+        view.evaluateJavascript(
+            """
+            (() => {
+              const desired = $quotedTitle;
+              const host = $quotedHost;
+              const normalize = (value) => value
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, " ")
+                .trim();
+              const wanted = normalize(desired);
+              const links = Array.from(document.querySelectorAll('a[href]'))
+                .filter((link) => {
+                  const href = link.href || "";
+                  let linkHost = "";
+                  try {
+                    linkHost = new URL(href).hostname.replace(/^www\./, "");
+                  } catch (_) {
+                    return false;
+                  }
+                  return (
+                    host === "" ||
+                    linkHost === host ||
+                    linkHost.endsWith("." + host)
+                  ) &&
+                    !href.includes("/category/") &&
+                    !href.includes("/genre/") &&
+                    !href.includes("/page/") &&
+                    !href.includes("/dmca") &&
+                    !href.includes("/settings") &&
+                    !href.includes("/privacy") &&
+                    !href.includes("/login") &&
+                    !href.includes("/register");
+                });
+              const exact = links.find((link) => {
+                const pathName = new URL(link.href).pathname
+                  .split("/")
+                  .filter(Boolean)
+                  .pop() || "";
+                return normalize(link.textContent) === wanted ||
+                  normalize(pathName.replace(/[-_]+/g, " ")) === wanted;
+              });
+              const close = links.find((link) => {
+                const value = normalize(link.textContent);
+                const pathName = normalize(new URL(link.href).pathname.replace(/[-_]+/g, " "));
+                return (value && (value.includes(wanted) || wanted.includes(value))) ||
+                  (pathName && (pathName.includes(wanted) || wanted.includes(pathName)));
+              });
+              return (exact || close || null)?.href || "";
+            })();
+            """.trimIndent(),
+        ) { result ->
+            if (
+                !isActiveSelection(view, selection) ||
+                !isRamoflixSearchUrl(view.url.orEmpty())
+            ) {
+                return@evaluateJavascript
+            }
+            val target = runCatching {
+                JSONTokener(result).nextValue() as? String
+            }.getOrNull().orEmpty()
+            val allowedTarget = PlaybackNavigationPolicy.isAllowedTopLevel(
+                url = target,
+                customHosts = setOf(selection.ramoflixConfig.cleanDomain),
+            )
+            if (allowedTarget) {
+                _error.value = null
+                view.loadUrl(target)
+            } else if (attempt < 6) {
+                view.postDelayed(
+                    {
+                        if (isActiveSelection(view, selection)) {
+                            resolveRamoflixTitle(view, selection, attempt + 1)
+                        }
+                    },
+                    700L + (attempt * 250L),
+                )
+            } else {
+                view.alpha = 1f
+                _loading.value = false
+                _error.value = "This title could not be found on Ramoflix."
+            }
+        }
+    }
+
+    private fun alignRamoflixContent(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        if (!isActiveSelection(view, selection)) return
+        val isTv = selection.media.type == MediaType.TV
+        val season = selection.seasonNumber ?: 1
+        val episode = selection.episodeNumber ?: 1
+        view.evaluateJavascript(
+            """
+            (() => {
+              if (!document.getElementById("aliflix-player-style")) {
+                const style = document.createElement("style");
+                style.id = "aliflix-player-style";
+                style.textContent = `
+                  header, footer, .site-header, #masthead, nav[data-app-nav="true"], footer.footer-fade-in { display: none !important; }
+                  html, body { background: #06070a !important; }
+                  body { padding-top: 0px !important; }
+                  main {
+                    background: #06070a !important;
+                    margin-top: 0 !important;
+                  }
+                  #the_frame, #player_iframe {
+                    position: fixed !important;
+                    inset: 0 !important;
+                    width: 100vw !important;
+                    height: 56.25vw !important;
+                    min-height: 56.25vw !important;
+                    margin: 0 !important;
+                  }
+                  a:focus, button:focus, [role="button"]:focus, video:focus,
+                  input:focus, select:focus, #play:focus, .btn-watchnow:focus,
+                  #pl_but:focus, #pl_but_background:focus, li:focus {
+                    outline: 4px solid #ffffff !important;
+                    outline-offset: 4px !important;
+                  }
+                `;
+                document.head.appendChild(style);
+              }
+              const isTv = $isTv;
+              if (!isTv) {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+                return;
+              }
+              const desiredSeason = "Season $season";
+              const desiredEpisode = "Episode $episode";
+              const isVisible = (el) => {
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.display !== "none" && style.visibility !== "hidden" &&
+                  rect.width > 0 && rect.height > 0;
+              };
+              const links = Array.from(document.querySelectorAll('a'));
+              const seasonLink = links.find(
+                (el) => isVisible(el) && el.textContent.trim() === desiredSeason
+              );
+              const chooseEpisode = () => {
+                const episodeLink = Array.from(document.querySelectorAll('a')).find((el) => {
+                  const text = el.textContent.trim();
+                  return isVisible(el) && (
+                    text === desiredEpisode ||
+                    text.startsWith(desiredEpisode + " ")
+                  );
+                });
+                episodeLink?.click();
+                window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 180);
+              };
+              seasonLink?.click();
+              window.setTimeout(chooseEpisode, 420);
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
+    private fun isActiveSelection(
+        view: WebView,
+        selection: PlaybackSelection,
+    ): Boolean = webView === view && activeSelection?.key == selection.key
+
+    private fun showCustomView(
+        view: View,
+        callback: WebChromeClient.CustomViewCallback?,
+    ) {
+        if (customView != null) {
+            callback?.onCustomViewHidden()
+            return
+        }
+        customView = view
+        customViewCallback = callback
+        val decor = activity.window.decorView as FrameLayout
+        val container = FrameLayout(activity).apply {
+            setBackgroundColor(Color.BLACK)
+            addView(
+                view,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        customViewContainer = container
+        decor.addView(
+            container,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        setSystemBarsVisible(activity, false)
+    }
+
+    private fun hideCustomView() {
+        val view = customView ?: return
+        (view.parent as? ViewGroup)?.removeView(view)
+        customViewContainer?.let { container ->
+            (container.parent as? ViewGroup)?.removeView(container)
+        }
+        customView = null
+        customViewContainer = null
+        customViewCallback?.onCustomViewHidden()
+        customViewCallback = null
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        setSystemBarsVisible(activity, !playerVisible)
+    }
+
+    private fun setSystemBarsVisible(activity: Activity, visible: Boolean) {
+        val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        if (visible) {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+}
