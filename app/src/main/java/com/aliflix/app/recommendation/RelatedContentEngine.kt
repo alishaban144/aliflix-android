@@ -74,11 +74,11 @@ object RelatedContentEngine {
             0.0
         }
 
-        val sourceAnime = sourceGenres.any { it == "anime" || it == "animation" }
-        val candidateAnime = candidateGenres.any { it == "anime" || it == "animation" }
+        val sourceAnimation = sourceGenres.any { it == "animation" }
+        val candidateAnimation = candidateGenres.any { it == "animation" }
         val formatScore = when {
-            sourceAnime && candidateAnime -> 14.0
-            sourceAnime != candidateAnime -> -18.0
+            sourceAnimation && candidateAnimation -> 14.0
+            sourceAnimation != candidateAnimation -> -18.0
             else -> 0.0
         }
 

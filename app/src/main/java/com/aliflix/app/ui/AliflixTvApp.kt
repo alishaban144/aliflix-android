@@ -9,7 +9,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,9 +20,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -40,13 +41,17 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -74,9 +79,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.aliflix.app.AliflixViewModel
@@ -84,7 +92,7 @@ import com.aliflix.app.BuildConfig
 import com.aliflix.app.DetailUiState
 import com.aliflix.app.HomeUiState
 import com.aliflix.app.SearchUiState
-import com.aliflix.app.SearchScope
+import com.aliflix.app.data.RamoflixConfig
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
@@ -107,7 +115,7 @@ import java.io.File
 private enum class TvDestination(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Default.Home),
     SEARCH("Search", Icons.Default.Search),
-    MY_ALIFLIX("My Space", Icons.Rounded.Favorite),
+    MY_SPACE("My Space", Icons.Rounded.Favorite),
 }
 
 private data class TvUpdateUiState(
@@ -117,6 +125,28 @@ private data class TvUpdateUiState(
     val available: UpdateInfo? = null,
     val downloadedApk: File? = null,
 )
+
+private enum class TvLibraryCollection(
+    val title: String,
+    val emptyMessage: String,
+    val icon: ImageVector,
+) {
+    MY_LIST(
+        title = "My List",
+        emptyMessage = "Save titles from a details screen to build your list.",
+        icon = Icons.Rounded.Bookmark,
+    ),
+    FAVORITES(
+        title = "Favorites",
+        emptyMessage = "Mark titles as favorites from a details screen.",
+        icon = Icons.Rounded.Favorite,
+    ),
+    HISTORY(
+        title = "Watch history",
+        emptyMessage = "Titles you play will appear here.",
+        icon = Icons.Rounded.History,
+    ),
+}
 
 /**
  * Dedicated 10-foot interface for the TV flavor. Every interactive surface has
@@ -139,11 +169,14 @@ fun AliflixTvApp(
     val updateScope = rememberCoroutineScope()
 
     var destinationName by rememberSaveable { mutableStateOf(TvDestination.HOME.name) }
-    val destination = TvDestination.valueOf(destinationName)
+    val destination = TvDestination.entries.firstOrNull { item ->
+        item.name == destinationName
+    } ?: TvDestination.HOME
     var playerSelection by remember { mutableStateOf<PlaybackSelection?>(null) }
     var playerVisible by remember { mutableStateOf(false) }
     var updateUi by remember { mutableStateOf(TvUpdateUiState()) }
     var urlDialogProvider by remember { mutableStateOf<PlaybackProviderId?>(null) }
+    var expandedLibraryName by rememberSaveable { mutableStateOf<String?>(null) }
     val navFocusRequesters = remember {
         TvDestination.entries.associateWith { FocusRequester() }
     }
@@ -286,6 +319,7 @@ fun AliflixTvApp(
                 detail.item != null -> TvDetailScreen(
                     state = detail,
                     inMyList = detail.item?.let(viewModel::isInMyList) == true,
+                    isFavorite = detail.item?.let(viewModel::isLiked) == true,
                     generalProvider = playbackPreferences.safeGeneralProvider,
                     playerVisible = playerVisible,
                     onBack = viewModel::closeDetails,
@@ -293,6 +327,7 @@ fun AliflixTvApp(
                     onPlayEpisode = ::playEpisode,
                     onSelectSeason = viewModel::selectSeason,
                     onToggleMyList = viewModel::toggleMyList,
+                    onToggleFavorite = viewModel::toggleLike,
                     onOpen = ::open,
                 )
 
@@ -307,7 +342,6 @@ fun AliflixTvApp(
                 destination == TvDestination.SEARCH -> TvSearchScreen(
                     state = search,
                     onQueryChange = viewModel::updateSearch,
-                    onScopeChange = viewModel::selectSearchScope,
                     onOpen = ::open,
                 )
 
@@ -327,6 +361,21 @@ fun AliflixTvApp(
                     onCheckForUpdates = ::checkForUpdates,
                     onDownloadUpdate = ::downloadUpdate,
                     onInstallUpdate = ::installDownloadedUpdate,
+                    expandedCollection = expandedLibraryName
+                        ?.let { savedName ->
+                            TvLibraryCollection.entries.firstOrNull {
+                                it.name == savedName
+                            }
+                        },
+                    onExpandCollection = { collection ->
+                        expandedLibraryName = collection.name
+                    },
+                    onCollapseCollection = {
+                        expandedLibraryName = null
+                    },
+                    fallbackFocusRequester = navFocusRequesters.getValue(
+                        TvDestination.MY_SPACE,
+                    ),
                 )
             }
         }
@@ -351,7 +400,7 @@ fun AliflixTvApp(
 
         urlDialogProvider?.let { provider ->
             val isRamoflix = provider == PlaybackProviderId.RAMOFLIX
-            ProviderUrlDialog(
+            TvProviderUrlDialog(
                 providerName = provider.displayName,
                 description = if (isRamoflix) {
                     "Change this address only if the Ramoflix domain moves."
@@ -689,7 +738,6 @@ private fun TvPosterCard(
 private fun TvSearchScreen(
     state: SearchUiState,
     onQueryChange: (String) -> Unit,
-    onScopeChange: (SearchScope) -> Unit,
     onOpen: (Media) -> Unit,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -699,17 +747,17 @@ private fun TvSearchScreen(
             .padding(horizontal = 46.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
-        Text("Search", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            TvTextButton(
-                label = "Movies & TV",
-                selected = state.scope == SearchScope.MOVIES_AND_TV,
-                onClick = { onScopeChange(SearchScope.MOVIES_AND_TV) },
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(
+                "Search",
+                color = Color.White,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Black,
             )
-            TvTextButton(
-                label = "Anime · Miruro",
-                selected = state.scope == SearchScope.ANIME,
-                onClick = { onScopeChange(SearchScope.ANIME) },
+            Text(
+                "Find movies and TV shows by title, release year, or a few remembered words.",
+                color = AliflixMuted,
+                fontSize = 14.sp,
             )
         }
         var searchFocused by remember { mutableStateOf(false) }
@@ -718,13 +766,7 @@ private fun TvSearchScreen(
             onValueChange = onQueryChange,
             singleLine = true,
             placeholder = {
-                Text(
-                    if (state.scope == SearchScope.ANIME) {
-                        "Search Japanese anime…"
-                    } else {
-                        "Movies and TV shows…"
-                    },
-                )
+                Text("Try a title, year, or keyword")
             },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -743,7 +785,7 @@ private fun TvSearchScreen(
             ),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
-                .fillMaxWidth(0.62f)
+                .fillMaxWidth(0.7f)
                 .onFocusChanged { searchFocused = it.isFocused }
                 .border(
                     if (searchFocused) 3.dp else 0.dp,
@@ -756,28 +798,35 @@ private fun TvSearchScreen(
                 CircularProgressIndicator(color = AliflixRed)
             }
             state.query.isBlank() -> TvHint(
-                if (state.scope == SearchScope.ANIME) {
-                    "Search the dedicated anime catalogue. Miruro is an optional player."
-                } else {
-                    "Press OK on the search box to use the TV keyboard or voice input."
-                },
+                "Press OK on the search box to use the TV keyboard or voice input.",
             )
             state.results.isEmpty() -> TvHint(
-                state.error ?: "No matches for “${state.query}”.",
+                state.error
+                    ?: "No matches for \"${state.query}\". Try a shorter title, another spelling, or add the release year.",
             )
-            else -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(148.dp),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 40.dp),
-                horizontalArrangement = Arrangement.spacedBy(18.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+            else -> Column(
                 modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(state.results, key = { it.key }) { item ->
-                    TvPosterCard(
-                        item = item,
-                        onClick = { onOpen(item) },
-                        modifier = Modifier.animateItem(),
-                    )
+                Text(
+                    text = "${state.results.size} result${if (state.results.size == 1) "" else "s"}",
+                    color = AliflixMuted,
+                    fontSize = 13.sp,
+                )
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(148.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 40.dp),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(state.results, key = { it.key }) { item ->
+                        TvPosterCard(
+                            item = item,
+                            onClick = { onOpen(item) },
+                            modifier = Modifier.animateItem(),
+                        )
+                    }
                 }
             }
         }
@@ -799,8 +848,49 @@ private fun TvLibraryScreen(
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
+    expandedCollection: TvLibraryCollection?,
+    onExpandCollection: (TvLibraryCollection) -> Unit,
+    onCollapseCollection: () -> Unit,
+    fallbackFocusRequester: FocusRequester,
 ) {
-    val hasContent = myList.isNotEmpty() || likes.isNotEmpty() || recent.isNotEmpty()
+    var restoreCollectionFocus by remember {
+        mutableStateOf<TvLibraryCollection?>(null)
+    }
+
+    fun itemsFor(collection: TvLibraryCollection): List<Media> = when (collection) {
+        TvLibraryCollection.MY_LIST -> myList
+        TvLibraryCollection.FAVORITES -> likes
+        TvLibraryCollection.HISTORY -> recent
+    }
+
+    fun collapseCollection() {
+        restoreCollectionFocus = expandedCollection
+        onCollapseCollection()
+    }
+
+    BackHandler(enabled = expandedCollection != null) {
+        collapseCollection()
+    }
+
+    LaunchedEffect(expandedCollection, restoreCollectionFocus) {
+        if (expandedCollection == null) {
+            restoreCollectionFocus?.let {
+                fallbackFocusRequester.requestFocus()
+                restoreCollectionFocus = null
+            }
+        }
+    }
+
+    if (expandedCollection != null) {
+        TvExpandedLibrary(
+            collection = expandedCollection,
+            items = itemsFor(expandedCollection),
+            onBack = ::collapseCollection,
+            onOpen = onOpen,
+        )
+        return
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp),
@@ -817,6 +907,43 @@ private fun TvLibraryScreen(
                     fontSize = 32.sp,
                     fontWeight = FontWeight.Black,
                 )
+                Text(
+                    "Your saved titles, favorites, and watch history.",
+                    color = AliflixMuted,
+                    fontSize = 14.sp,
+                )
+            }
+        }
+
+        TvLibraryCollection.entries.forEach { collection ->
+            item(key = collection.name) {
+                TvLibraryRail(
+                    collection = collection,
+                    items = itemsFor(collection),
+                    onOpen = onOpen,
+                    onViewAll = { onExpandCollection(collection) },
+                )
+            }
+        }
+
+        item {
+            Column(
+                modifier = Modifier.padding(horizontal = 46.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "Playback & app",
+                        color = Color.White,
+                        fontSize = 23.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "Playback sources and software updates.",
+                        color = AliflixMuted,
+                        fontSize = 13.sp,
+                    )
+                }
                 TvPlaybackProviderPanel(
                     selectedProvider = generalProvider,
                     ramoflixUrl = ramoflixUrl,
@@ -832,14 +959,174 @@ private fun TvLibraryScreen(
                 )
             }
         }
-        if (!hasContent) {
-            item {
-                TvHint("Your library is empty. Add titles to My List from a details screen.")
+    }
+}
+
+@Composable
+private fun TvLibraryRail(
+    collection: TvLibraryCollection,
+    items: List<Media>,
+    onOpen: (Media) -> Unit,
+    onViewAll: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 46.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = collection.icon,
+                contentDescription = null,
+                tint = AliflixRed,
+                modifier = Modifier.size(22.dp),
+            )
+            Text(
+                text = collection.title,
+                color = Color.White,
+                fontSize = 21.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = items.size.toString(),
+                color = AliflixMuted,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.weight(1f))
+            if (items.isNotEmpty()) {
+                TvTextButton(
+                    label = "View all",
+                    selected = false,
+                    onClick = onViewAll,
+                )
+            } else {
+                Text(
+                    "Empty",
+                    color = AliflixMuted.copy(alpha = 0.72f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
-        if (myList.isNotEmpty()) item { TvMediaRail("My List", myList, onOpen) }
-        if (likes.isNotEmpty()) item { TvMediaRail("Favorites", likes, onOpen) }
-        if (recent.isNotEmpty()) item { TvMediaRail("Recently played", recent, onOpen) }
+        if (items.isEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(86.dp)
+                    .padding(horizontal = 46.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AliflixSurfaceRaised.copy(alpha = 0.72f))
+                    .border(
+                        1.dp,
+                        Color.White.copy(alpha = 0.07f),
+                        RoundedCornerShape(12.dp),
+                    )
+                    .padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(13.dp),
+            ) {
+                Icon(
+                    imageVector = collection.icon,
+                    contentDescription = null,
+                    tint = AliflixMuted,
+                    modifier = Modifier.size(24.dp),
+                )
+                Text(
+                    text = collection.emptyMessage,
+                    color = AliflixMuted,
+                    fontSize = 14.sp,
+                )
+            }
+        } else {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 46.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(items, key = { it.key }) { item ->
+                    TvPosterCard(item = item, onClick = { onOpen(item) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvExpandedLibrary(
+    collection: TvLibraryCollection,
+    items: List<Media>,
+    onBack: () -> Unit,
+    onOpen: (Media) -> Unit,
+) {
+    val backFocusRequester = remember(collection) { FocusRequester() }
+
+    LaunchedEffect(collection) {
+        backFocusRequester.requestFocus()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 46.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            TvActionButton(
+                label = "Back",
+                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                compact = true,
+                onClick = onBack,
+                modifier = Modifier.focusRequester(backFocusRequester),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    collection.title,
+                    color = Color.White,
+                    fontSize = 29.sp,
+                    fontWeight = FontWeight.Black,
+                )
+                Text(
+                    "${items.size} title${if (items.size == 1) "" else "s"}",
+                    color = AliflixMuted,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+        if (items.isEmpty()) {
+            TvHint(
+                message = collection.emptyMessage,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(148.dp),
+                contentPadding = PaddingValues(
+                    start = 46.dp,
+                    end = 46.dp,
+                    top = 8.dp,
+                    bottom = 44.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                items(items, key = { it.key }) { item ->
+                    TvPosterCard(
+                        item = item,
+                        onClick = { onOpen(item) },
+                        modifier = Modifier.animateItem(),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -851,7 +1138,7 @@ private fun TvPlaybackProviderPanel(
     onSelectProvider: (PlaybackProviderId) -> Unit,
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
@@ -862,80 +1149,280 @@ private fun TvPlaybackProviderPanel(
                 RoundedCornerShape(14.dp),
             )
             .padding(horizontal = 20.dp, vertical = 17.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Icon(
-            imageVector = Icons.Rounded.Movie,
-            contentDescription = null,
-            tint = AliflixRed,
-            modifier = Modifier.size(32.dp),
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
         ) {
-            Text(
-                "Default playback source",
-                color = Color.White,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
+            Icon(
+                imageVector = Icons.Rounded.Movie,
+                contentDescription = null,
+                tint = AliflixRed,
+                modifier = Modifier.size(29.dp),
             )
-            Text(
-                "Used by default. Verified anime also offers Miruro per title.",
-                color = AliflixMuted,
-                fontSize = 13.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    "Default playback source",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "Used by Play. You can switch source from any title.",
+                    color = AliflixMuted,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            TvProviderOption(
+                provider = PlaybackProviderId.RAMOFLIX,
+                selected = selectedProvider == PlaybackProviderId.RAMOFLIX,
+                url = ramoflixUrl,
+                onSelect = {
+                    onSelectProvider(PlaybackProviderId.RAMOFLIX)
+                },
+                onEdit = {
+                    onEditProviderUrl(PlaybackProviderId.RAMOFLIX)
+                },
+                modifier = Modifier.weight(1f),
+            )
+            TvProviderOption(
+                provider = PlaybackProviderId.MOVIES_67,
+                selected = selectedProvider == PlaybackProviderId.MOVIES_67,
+                url = movies67Url,
+                onSelect = {
+                    onSelectProvider(PlaybackProviderId.MOVIES_67)
+                },
+                onEdit = {
+                    onEditProviderUrl(PlaybackProviderId.MOVIES_67)
+                },
+                modifier = Modifier.weight(1f),
             )
         }
-        Column(
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+    }
+}
+
+@Composable
+private fun TvProviderOption(
+    provider: PlaybackProviderId,
+    selected: Boolean,
+    url: String,
+    onSelect: () -> Unit,
+    onEdit: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        var focused by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 66.dp)
+                .onFocusChanged { focused = it.isFocused }
+                .clip(RoundedCornerShape(11.dp))
+                .background(
+                    when {
+                        focused -> Color.White
+                        selected -> AliflixRed.copy(alpha = 0.24f)
+                        else -> Color.Black.copy(alpha = 0.25f)
+                    },
+                )
+                .border(
+                    width = when {
+                        focused -> 3.dp
+                        selected -> 2.dp
+                        else -> 1.dp
+                    },
+                    color = when {
+                        focused -> Color.White
+                        selected -> AliflixRed
+                        else -> Color.White.copy(alpha = 0.08f)
+                    },
+                    shape = RoundedCornerShape(11.dp),
+                )
+                .clickable(onClick = onSelect)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(11.dp),
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TvTextButton(
-                    label = PlaybackProviderId.RAMOFLIX.displayName,
-                    selected = selectedProvider == PlaybackProviderId.RAMOFLIX,
-                    onClick = {
-                        onSelectProvider(PlaybackProviderId.RAMOFLIX)
-                    },
-                )
-                TvTextButton(
-                    label = PlaybackProviderId.MOVIES_67.displayName,
-                    selected = selectedProvider == PlaybackProviderId.MOVIES_67,
-                    onClick = {
-                        onSelectProvider(PlaybackProviderId.MOVIES_67)
-                    },
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TvTextButton(
-                    label = "Edit Ramoflix URL",
-                    selected = false,
-                    onClick = {
-                        onEditProviderUrl(PlaybackProviderId.RAMOFLIX)
-                    },
-                )
-                TvTextButton(
-                    label = "Edit 67 URL",
-                    selected = false,
-                    onClick = {
-                        onEditProviderUrl(PlaybackProviderId.MOVIES_67)
-                    },
-                )
-            }
-            Text(
-                text = if (selectedProvider == PlaybackProviderId.RAMOFLIX) {
-                    ramoflixUrl
-                } else {
-                    movies67Url
-                },
-                color = AliflixMuted,
-                fontSize = 10.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Icon(
+                imageVector = if (selected) Icons.Default.Check else Icons.Rounded.Movie,
+                contentDescription = null,
+                tint = if (focused) Color.Black else if (selected) AliflixRed else AliflixMuted,
+                modifier = Modifier.size(20.dp),
             )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = provider.displayName,
+                    color = if (focused) Color.Black else Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+                Text(
+                    text = url
+                        .removePrefix("https://")
+                        .removePrefix("http://")
+                        .trimEnd('/'),
+                    color = if (focused) Color.DarkGray else AliflixMuted,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        TvActionButton(
+            label = "Edit",
+            icon = Icons.Rounded.Edit,
+            compact = true,
+            onClick = onEdit,
+        )
+    }
+}
+
+@Composable
+private fun TvProviderUrlDialog(
+    providerName: String,
+    description: String,
+    currentUrl: String,
+    defaultUrl: String,
+    onSave: (String) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var url by remember(currentUrl) { mutableStateOf(currentUrl) }
+    var fieldFocused by remember { mutableStateOf(false) }
+    val inputFocusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val normalizedUrl = RamoflixConfig.normalizeBaseUrl(url)
+    val invalidUrl = url.isNotBlank() && normalizedUrl == null
+    val isCustomUrl = currentUrl.trimEnd('/') != defaultUrl.trimEnd('/')
+
+    LaunchedEffect(providerName) {
+        inputFocusRequester.requestFocus()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false,
+        ),
+    ) {
+        Surface(
+            modifier = Modifier
+                .widthIn(max = 620.dp)
+                .fillMaxWidth(0.72f),
+            shape = RoundedCornerShape(18.dp),
+            color = AliflixSurfaceRaised,
+            shadowElevation = 24.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 26.dp, vertical = 23.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(
+                        "$providerName website",
+                        color = Color.White,
+                        fontSize = 23.sp,
+                        fontWeight = FontWeight.Black,
+                    )
+                    Text(
+                        description,
+                        color = AliflixMuted,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                TextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    singleLine = true,
+                    label = { Text("Website URL") },
+                    placeholder = { Text(defaultUrl) },
+                    isError = invalidUrl,
+                    supportingText = if (invalidUrl) {
+                        { Text("Enter a complete HTTPS website address.") }
+                    } else {
+                        null
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { keyboard?.hide() },
+                    ),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White.copy(alpha = 0.08f),
+                        focusedTextColor = Color.Black,
+                        unfocusedTextColor = Color.White,
+                        focusedLabelColor = Color.DarkGray,
+                        unfocusedLabelColor = AliflixMuted,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        errorIndicatorColor = AliflixRed,
+                    ),
+                    shape = RoundedCornerShape(11.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(inputFocusRequester)
+                        .onFocusChanged { fieldFocused = it.isFocused }
+                        .border(
+                            width = if (fieldFocused) 3.dp else 1.dp,
+                            color = if (fieldFocused) {
+                                AliflixRed
+                            } else {
+                                Color.White.copy(alpha = 0.08f)
+                            },
+                            shape = RoundedCornerShape(11.dp),
+                        ),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (isCustomUrl) {
+                        TvTextButton(
+                            label = "Reset default",
+                            selected = false,
+                            onClick = onReset,
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TvTextButton(
+                        label = "Cancel",
+                        selected = false,
+                        onClick = onDismiss,
+                    )
+                    TvActionButton(
+                        label = "Save",
+                        icon = Icons.Default.Check,
+                        primary = true,
+                        enabled = normalizedUrl != null,
+                        onClick = {
+                            normalizedUrl?.let(onSave)
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -998,12 +1485,20 @@ private fun TvUpdatePanel(
         }
         when {
             state.busy -> {
-                CircularProgressIndicator(
-                    progress = { (state.progress ?: 0) / 100f },
-                    color = AliflixRed,
-                    trackColor = Color.White.copy(alpha = 0.12f),
-                    modifier = Modifier.size(38.dp),
-                )
+                if (state.progress == null) {
+                    CircularProgressIndicator(
+                        color = AliflixRed,
+                        trackColor = Color.White.copy(alpha = 0.12f),
+                        modifier = Modifier.size(38.dp),
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        progress = { state.progress / 100f },
+                        color = AliflixRed,
+                        trackColor = Color.White.copy(alpha = 0.12f),
+                        modifier = Modifier.size(38.dp),
+                    )
+                }
             }
             state.downloadedApk != null -> TvActionButton(
                 "Install update",
@@ -1030,6 +1525,7 @@ private fun TvUpdatePanel(
 private fun TvDetailScreen(
     state: DetailUiState,
     inMyList: Boolean,
+    isFavorite: Boolean,
     generalProvider: PlaybackProviderId,
     playerVisible: Boolean,
     onBack: () -> Unit,
@@ -1037,29 +1533,29 @@ private fun TvDetailScreen(
     onPlayEpisode: (Media, Episode, PlaybackProviderId?) -> Unit,
     onSelectSeason: (Int) -> Unit,
     onToggleMyList: (Media) -> Unit,
+    onToggleFavorite: (Media) -> Unit,
     onOpen: (Media) -> Unit,
 ) {
     val item = state.item ?: return
-    val detailFocus = remember(item.key) { FocusRequester() }
     val primaryPlayFocus = remember(item.key) { FocusRequester() }
     var restorePlayerFocus by remember(item.key) { mutableStateOf(false) }
-    val playbackProviders = buildList {
-        add(generalProvider)
-        add(PlaybackProviderId.RAMOFLIX)
-        add(PlaybackProviderId.MOVIES_67)
-        if (item.isJapaneseAnime && item.aniListId != null) {
-            add(PlaybackProviderId.MIRURO)
-        }
-    }.distinct()
+    val playbackProviders = remember {
+        listOf(
+            PlaybackProviderId.RAMOFLIX,
+            PlaybackProviderId.MOVIES_67,
+        )
+    }
+    val initialProvider = generalProvider.takeIf { it in playbackProviders }
+        ?: PlaybackProviderId.RAMOFLIX
     var selectedProviderName by rememberSaveable(item.key) {
-        mutableStateOf(generalProvider.name)
+        mutableStateOf(initialProvider.name)
     }
     val selectedProvider = PlaybackProviderId.fromStoredValue(selectedProviderName)
         ?.takeIf { provider -> provider in playbackProviders }
-        ?: generalProvider
+        ?: initialProvider
 
     LaunchedEffect(item.key) {
-        detailFocus.requestFocus()
+        primaryPlayFocus.requestFocus()
     }
     LaunchedEffect(playerVisible) {
         if (playerVisible) {
@@ -1114,7 +1610,6 @@ private fun TvDetailScreen(
                         icon = Icons.AutoMirrored.Rounded.ArrowBack,
                         compact = true,
                         onClick = onBack,
-                        modifier = Modifier.focusRequester(detailFocus),
                     )
                     Spacer(Modifier.height(18.dp))
                     Text(
@@ -1131,54 +1626,92 @@ private fun TvDetailScreen(
                         if (item.rating > 0) TvMeta("★ %.1f".format(item.rating))
                         item.genres.take(2).forEach { TvMeta(it) }
                     }
+                    if (item.overview.isNotBlank()) {
+                        Text(
+                            item.overview,
+                            color = Color.White.copy(alpha = 0.86f),
+                            fontSize = 16.sp,
+                            lineHeight = 23.sp,
+                            maxLines = 5,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
-                        item.overview,
-                        color = Color.White.copy(alpha = 0.86f),
-                        fontSize = 16.sp,
-                        lineHeight = 23.sp,
-                        maxLines = 5,
-                        overflow = TextOverflow.Ellipsis,
+                        "Playback source",
+                        color = AliflixMuted,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
                     )
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         items(
                             items = playbackProviders,
                             key = { provider -> provider.name },
                         ) { provider ->
-                            val primary = provider == selectedProvider
-                            TvActionButton(
-                                "Play with ${provider.displayName}",
-                                Icons.Default.PlayArrow,
-                                primary = primary,
-                                modifier = if (primary) {
-                                    Modifier.focusRequester(primaryPlayFocus)
-                                } else {
-                                    Modifier
-                                },
+                            TvTextButton(
+                                label = provider.displayName,
+                                selected = provider == selectedProvider,
                                 onClick = {
                                     selectedProviderName = provider.name
+                                },
+                            )
+                        }
+                    }
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        item {
+                            TvActionButton(
+                                label = "Play",
+                                icon = Icons.Default.PlayArrow,
+                                primary = true,
+                                modifier = Modifier.focusRequester(primaryPlayFocus),
+                                onClick = {
                                     val episode = state.episodes.firstOrNull()
                                     if (item.type == MediaType.TV && episode != null) {
                                         onPlayEpisode(
                                             item,
                                             episode,
-                                            provider,
+                                            selectedProvider,
                                         )
                                     } else {
-                                        onPlay(item, provider)
+                                        onPlay(item, selectedProvider)
                                     }
                                 },
                             )
                         }
+                        item {
+                            TvActionButton(
+                                label = if (inMyList) {
+                                    "Remove from My List"
+                                } else {
+                                    "Add to My List"
+                                },
+                                icon = if (inMyList) Icons.Default.Check else Icons.Default.Add,
+                                onClick = { onToggleMyList(item) },
+                            )
+                        }
+                        item {
+                            TvActionButton(
+                                label = if (isFavorite) {
+                                    "Remove favorite"
+                                } else {
+                                    "Add favorite"
+                                },
+                                icon = if (isFavorite) {
+                                    Icons.Rounded.Favorite
+                                } else {
+                                    Icons.Rounded.FavoriteBorder
+                                },
+                                onClick = { onToggleFavorite(item) },
+                            )
+                        }
                     }
-                    TvActionButton(
-                        if (inMyList) "In My List" else "My List",
-                        if (inMyList) Icons.Default.Check else Icons.Default.Add,
-                        onClick = { onToggleMyList(item) },
-                    )
                     if (state.loading) {
                         CircularProgressIndicator(
                             color = AliflixRed,
@@ -1223,7 +1756,7 @@ private fun TvDetailScreen(
                         ) {
                             CircularProgressIndicator(color = AliflixRed)
                         }
-                    } else {
+                    } else if (state.episodes.isNotEmpty()) {
                         LazyRow(
                             contentPadding = PaddingValues(horizontal = 46.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -1236,6 +1769,23 @@ private fun TvDetailScreen(
                                     },
                                 )
                             }
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(112.dp)
+                                .padding(horizontal = 46.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(AliflixSurfaceRaised.copy(alpha = 0.74f)),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            Text(
+                                "No episodes are available for this season.",
+                                color = AliflixMuted,
+                                fontSize = 14.sp,
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                            )
                         }
                     }
                 }
@@ -1310,16 +1860,19 @@ private fun TvActionButton(
     modifier: Modifier = Modifier,
     primary: Boolean = false,
     compact: Boolean = false,
+    enabled: Boolean = true,
 ) {
     var focused by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
-            .scale(if (focused) 1.06f else 1f)
+            .onFocusChanged { focused = enabled && it.isFocused }
+            .scale(if (focused && enabled) 1.06f else 1f)
+            .heightIn(min = if (compact) 38.dp else 44.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(
                 when {
                     focused -> Color.White
+                    !enabled -> Color.White.copy(alpha = 0.06f)
                     primary -> AliflixRed
                     else -> Color.White.copy(alpha = 0.16f)
                 },
@@ -1329,7 +1882,7 @@ private fun TvActionButton(
                 if (focused) AliflixRed else Color.Transparent,
                 RoundedCornerShape(10.dp),
             )
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(
                 horizontal = if (compact) 14.dp else 20.dp,
                 vertical = if (compact) 9.dp else 12.dp,
@@ -1340,12 +1893,20 @@ private fun TvActionButton(
         Icon(
             icon,
             contentDescription = null,
-            tint = if (focused) Color.Black else Color.White,
+            tint = when {
+                focused -> Color.Black
+                enabled -> Color.White
+                else -> AliflixMuted.copy(alpha = 0.55f)
+            },
             modifier = Modifier.size(if (compact) 17.dp else 20.dp),
         )
         Text(
             label,
-            color = if (focused) Color.Black else Color.White,
+            color = when {
+                focused -> Color.Black
+                enabled -> Color.White
+                else -> AliflixMuted.copy(alpha = 0.55f)
+            },
             fontWeight = FontWeight.Bold,
             fontSize = if (compact) 13.sp else 15.sp,
             maxLines = 1,
@@ -1359,24 +1920,34 @@ private fun TvTextButton(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     var focused by remember { mutableStateOf(false) }
     Text(
         text = label,
-        color = if (focused) Color.Black else Color.White,
+        color = when {
+            focused -> Color.Black
+            enabled -> Color.White
+            else -> AliflixMuted.copy(alpha = 0.5f)
+        },
         fontSize = 14.sp,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier
-            .onFocusChanged { focused = it.isFocused }
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier
+            .onFocusChanged { focused = enabled && it.isFocused }
+            .heightIn(min = 40.dp)
             .clip(RoundedCornerShape(9.dp))
             .background(
                 when {
                     focused -> Color.White
+                    !enabled -> Color.White.copy(alpha = 0.05f)
                     selected -> AliflixRed
                     else -> AliflixSurfaceRaised
                 },
             )
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
     )
 }

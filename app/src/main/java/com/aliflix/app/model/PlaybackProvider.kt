@@ -17,20 +17,10 @@ enum class PlaybackProviderId(
         displayName = "67 Movies",
         defaultBaseUrl = "https://67movies.nl/",
         supportsGeneralPlayback = true,
-    ),
-    MIRURO(
-        displayName = "Miruro",
-        defaultBaseUrl = "https://www.miruro.tv/",
-        supportsGeneralPlayback = false,
     );
 
-    fun isAvailableFor(media: Media): Boolean =
-        supportsGeneralPlayback ||
-            (
-                this == MIRURO &&
-                    media.isJapaneseAnime &&
-                    media.aniListId != null
-                )
+    fun isAvailableFor(@Suppress("UNUSED_PARAMETER") media: Media): Boolean =
+        supportsGeneralPlayback
 
     companion object {
         fun fromStoredValue(value: String?): PlaybackProviderId? =
@@ -57,10 +47,6 @@ data class PlaybackSource(
     val approvedTopLevelHosts: Set<String>
         get() = setOf(cleanDomain).filter(String::isNotBlank).toSet()
 
-    /**
-     * Miruro uses AniList IDs rather than TMDB IDs, so its URL is resolved
-     * asynchronously by the player controller.
-     */
     fun buildEntryUrl(
         media: Media,
         seasonNumber: Int? = null,
@@ -93,8 +79,6 @@ data class PlaybackSource(
                 "${baseUrl.trimEnd('/')}$route"
             }
         }
-
-        PlaybackProviderId.MIRURO -> null
     }
 
     companion object {
@@ -104,8 +88,6 @@ data class PlaybackSource(
         fun movies67(
             baseUrl: String = PlaybackProviderId.MOVIES_67.defaultBaseUrl,
         ) = PlaybackSource(PlaybackProviderId.MOVIES_67, baseUrl)
-
-        fun miruro() = PlaybackSource(PlaybackProviderId.MIRURO)
     }
 }
 
@@ -128,7 +110,6 @@ data class PlaybackPreferences(
         return when (provider) {
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
             PlaybackProviderId.MOVIES_67 -> PlaybackSource.movies67(movies67BaseUrl)
-            PlaybackProviderId.MIRURO -> PlaybackSource.miruro()
         }
     }
 }

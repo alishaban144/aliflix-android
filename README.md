@@ -1,9 +1,9 @@
 # Aliflix
 
-Aliflix is a personal, phone-first Android catalogue with a native Kotlin and
-Jetpack Compose interface. Home, search, title details, My List, recently
-played, and recommendations are native. A WebView is created only after Play
-is selected.
+Aliflix is a personal Android and Android TV catalogue with native Kotlin and
+Jetpack Compose interfaces. Home, search, title details, My Space, history,
+and recommendations are native. A WebView is created only after Play is
+selected.
 
 The project also includes a separate Android TV flavor for Android 11 and
 newer. It uses the same catalogue and library code behind a landscape 10-foot
@@ -21,10 +21,9 @@ catalogue keeps the app usable if catalogue pages are temporarily unavailable.
   without extracting or relaying third-party video URLs.
 - Movies and shows can use either Ramoflix or 67 Movies. The default can be
   changed in My Space on both phone and TV.
-- Japanese anime has a separate AniList-backed search. Ramoflix and 67 Movies
-  remain available, while Miruro appears as an optional per-title source.
-- Aliflix keeps both the TMDB ID used by the native catalogue/67 Movies and the
-  AniList ID used by Miruro, avoiding fuzzy player matches when possible.
+- Search understands partial titles, misspellings, acronyms, release years,
+  movie/series qualifiers, punctuation, and Roman numerals. A public title
+  suggestion source corrects weak queries before retrying the catalogue.
 - The 67 Movies option opens its Vidlove player with the exact TMDB movie ID or
   TV season and episode, avoiding the outer website around the player.
 - Ramoflix and 67 Movies base URLs can be edited on phone and TV if a domain
@@ -149,8 +148,8 @@ release if Android reports a signature conflict.
 
 - Home: cinematic hero, native category filters, content rails, and recently
   played.
-- Search: a relevance-ranked Movies & TV search plus a separate
-  AniList-backed Japanese anime search in native poster grids.
+- Search: predictive, relevance-ranked Movies & TV results in a native poster
+  grid, with typo correction and optional year/type qualifiers.
 - Details: native metadata, My List, Play, cast, genres, and recommendations.
 - My Space: playback-source choice, GitHub update controls, My List, favorites,
   and recently played titles.

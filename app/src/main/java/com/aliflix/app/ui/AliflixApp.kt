@@ -29,6 +29,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -41,12 +44,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -65,6 +70,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -81,6 +87,9 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SystemUpdate
@@ -94,7 +103,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -123,21 +134,24 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.aliflix.app.AliflixViewModel
 import com.aliflix.app.DetailUiState
 import com.aliflix.app.HomeUiState
 import com.aliflix.app.SearchUiState
-import com.aliflix.app.SearchScope
+import com.aliflix.app.data.RamoflixConfig
 import com.aliflix.app.model.ContentRail
-import com.aliflix.app.model.ContentRailKind
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
@@ -179,7 +193,6 @@ private enum class HomeFilter(val label: String) {
     FOR_YOU("For You"),
     MOVIES("Movies"),
     TV("TV Shows"),
-    ANIME("Anime"),
     NEW("New & Popular"),
 }
 
@@ -214,7 +227,9 @@ fun AliflixApp(
     var detailProviderName by rememberSaveable { mutableStateOf<String?>(null) }
 
     var selectedTabName by rememberSaveable { mutableStateOf(AppTab.HOME.name) }
-    val selectedTab = AppTab.valueOf(selectedTabName)
+    val selectedTab = AppTab.entries.firstOrNull { tab ->
+        tab.name == selectedTabName
+    } ?: AppTab.HOME
     var playerSelection by remember { mutableStateOf<PlaybackSelection?>(null) }
     var playerVisible by remember { mutableStateOf(false) }
     val homeScrollState = rememberLazyListState()
@@ -459,11 +474,10 @@ fun AliflixApp(
                         onOpen = ::openDetails,
                         onPlay = ::playMedia,
                         onSearch = { selectedTabName = AppTab.SEARCH.name },
-                        onEditProviderUrl = {
-                            urlDialogProvider = playbackPreferences.safeGeneralProvider
-                        },
                         listState = homeScrollState,
-                        selectedFilter = HomeFilter.valueOf(homeFilterName),
+                        selectedFilter = HomeFilter.entries.firstOrNull { filter ->
+                            filter.name == homeFilterName
+                        } ?: HomeFilter.FOR_YOU,
                         onSelectFilter = { homeFilterName = it.name },
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
@@ -471,7 +485,6 @@ fun AliflixApp(
                     AppScreen.SEARCH -> SearchScreen(
                         state = search,
                         onQueryChange = viewModel::updateSearch,
-                        onScopeChange = viewModel::selectSearchScope,
                         onOpen = ::openDetails,
                         gridState = searchScrollState,
                         mediaFilter = searchMediaFilter,
@@ -530,13 +543,12 @@ fun AliflixApp(
 
         urlDialogProvider?.let { provider ->
             val isRamoflix = provider == PlaybackProviderId.RAMOFLIX
-            ProviderUrlDialog(
+            MobileProviderUrlDialog(
                 providerName = provider.displayName,
                 description = if (isRamoflix) {
-                    "Change this address only if the Ramoflix domain moves."
+                    "Only change this if the Ramoflix website moves."
                 } else {
-                    "Change this address if 67 Movies moves to a new domain. " +
-                        "The default domain uses the optimized direct player."
+                    "Only change this if 67 Movies moves to a new address."
                 },
                 currentUrl = if (isRamoflix) {
                     ramoflixConfig.baseUrl
@@ -615,7 +627,8 @@ private fun AliflixBottomBar(
                                 )
                             },
                         )
-                        .clickable(
+                        .selectable(
+                            selected = isSelected,
                             interactionSource = interactionSource,
                             indication = null,
                         ) { onSelect(tab) },
@@ -671,7 +684,6 @@ private fun HomeScreen(
     onOpen: (Media) -> Unit,
     onPlay: (Media) -> Unit,
     onSearch: () -> Unit,
-    onEditProviderUrl: () -> Unit,
     listState: LazyListState,
     selectedFilter: HomeFilter,
     onSelectFilter: (HomeFilter) -> Unit,
@@ -691,7 +703,6 @@ private fun HomeScreen(
             onOpen = onOpen,
             onPlay = onPlay,
             onSearch = onSearch,
-            onEditProviderUrl = onEditProviderUrl,
             listState = listState,
             selectedFilter = selectedFilter,
             onSelectFilter = onSelectFilter,
@@ -708,7 +719,6 @@ private fun HomeFeed(
     onOpen: (Media) -> Unit,
     onPlay: (Media) -> Unit,
     onSearch: () -> Unit,
-    onEditProviderUrl: () -> Unit,
     listState: LazyListState,
     selectedFilter: HomeFilter,
     onSelectFilter: (HomeFilter) -> Unit,
@@ -721,34 +731,20 @@ private fun HomeFeed(
         val matchingRails = when (selectedFilter) {
             HomeFilter.FOR_YOU -> content.rails
             HomeFilter.MOVIES -> content.rails
-                .filter { rail -> rail.kind == ContentRailKind.GENERAL }
                 .map { rail ->
                     rail.copy(items = rail.items.filter { it.type == MediaType.MOVIE })
                 }
                 .filter { it.items.isNotEmpty() }
             HomeFilter.TV -> content.rails
-                .filter { rail -> rail.kind == ContentRailKind.GENERAL }
                 .map { rail ->
                     rail.copy(items = rail.items.filter { it.type == MediaType.TV })
                 }
                 .filter { it.items.isNotEmpty() }
-            HomeFilter.ANIME -> content.rails
-                .filter { rail -> rail.kind == ContentRailKind.ANIME }
-                .map { rail ->
-                    rail.copy(
-                        items = rail.items.filter { item ->
-                            item.isJapaneseAnime && item.aniListId != null
-                        },
-                    )
-                }
-                .filter { rail -> rail.items.isNotEmpty() }
             HomeFilter.NEW -> content.rails.filter {
                 "Now" in it.title || "Airing" in it.title || "Trending" in it.title
             }
         }
-        val selectedRails = if (
-            matchingRails.isEmpty() && selectedFilter != HomeFilter.ANIME
-        ) {
+        val selectedRails = if (matchingRails.isEmpty()) {
             content.rails
         } else {
             matchingRails
@@ -786,7 +782,6 @@ private fun HomeFeed(
                 )
                 HomeHeader(
                     onSearch = onSearch,
-                    onEditProviderUrl = onEditProviderUrl,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .windowInsetsPadding(WindowInsets.statusBars),
@@ -824,7 +819,6 @@ private fun HomeFeed(
 @Composable
 private fun HomeHeader(
     onSearch: () -> Unit,
-    onEditProviderUrl: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -841,10 +835,7 @@ private fun HomeHeader(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onEditProviderUrl)
-                .padding(vertical = 4.dp, horizontal = 4.dp),
+            modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
         ) {
             Box(
                 modifier = Modifier
@@ -1047,7 +1038,10 @@ private fun FilterBar(
                         if (active) Color.White else Color.White.copy(alpha = 0.10f),
                         CircleShape,
                     )
-                    .clickable { onSelect(filter) }
+                    .selectable(
+                        selected = active,
+                        onClick = { onSelect(filter) },
+                    )
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 Text(
@@ -1175,9 +1169,12 @@ private fun MediaPoster(
             text = item.title,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
+            lineHeight = 17.sp,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = if (rank == null) 0.dp else 20.dp),
+            modifier = Modifier
+                .padding(start = if (rank == null) 0.dp else 20.dp)
+                .height(34.dp),
         )
         if (item.year.isNotBlank()) {
             Text(
@@ -1298,7 +1295,6 @@ private fun RecentRail(
 private fun SearchScreen(
     state: SearchUiState,
     onQueryChange: (String) -> Unit,
-    onScopeChange: (SearchScope) -> Unit,
     onOpen: (Media) -> Unit,
     gridState: LazyGridState,
     mediaFilter: String,
@@ -1322,9 +1318,11 @@ private fun SearchScreen(
             )
         }
     }
-    val visibleResults = remember(state.results, state.scope, mediaFilter) {
+    LaunchedEffect(state.query, mediaFilter) {
+        gridState.scrollToItem(0)
+    }
+    val visibleResults = remember(state.results, mediaFilter) {
         when {
-            state.scope == SearchScope.ANIME -> state.results
             mediaFilter == "Movies" -> state.results.filter { it.type == MediaType.MOVIE }
             mediaFilter == "Series" -> state.results.filter { it.type == MediaType.TV }
             else -> state.results
@@ -1351,46 +1349,11 @@ private fun SearchScreen(
             modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp),
         )
         Text(
-            text = "Find your next story",
+            text = "Search movies & shows",
             style = MaterialTheme.typography.headlineLarge,
             fontWeight = FontWeight.ExtraBold,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color.White.copy(alpha = 0.06f))
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            listOf(
-                SearchScope.MOVIES_AND_TV to "Movies & TV",
-                SearchScope.ANIME to "Anime · Miruro",
-            ).forEach { (scope, label) ->
-                val selected = state.scope == scope
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(13.dp))
-                        .background(
-                            if (selected) AliflixRed else Color.Transparent,
-                        )
-                        .clickable { onScopeChange(scope) }
-                        .padding(horizontal = 10.dp, vertical = 10.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = label,
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
         TextField(
             value = queryValue,
             onValueChange = { updated ->
@@ -1398,13 +1361,7 @@ private fun SearchScreen(
                 onQueryChange(updated.text)
             },
             placeholder = {
-                Text(
-                    if (state.scope == SearchScope.ANIME) {
-                        "Search Japanese anime…"
-                    } else {
-                        "Movies and TV shows…"
-                    },
-                )
+                Text("Title, year, or words you remember…")
             },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             trailingIcon = {
@@ -1420,6 +1377,7 @@ private fun SearchScreen(
                 }
             },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = Color.White.copy(alpha = 0.10f),
@@ -1430,96 +1388,103 @@ private fun SearchScreen(
             shape = RoundedCornerShape(18.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
         )
 
         when {
-            state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            state.loading -> Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
                 CircularProgressIndicator(color = AliflixRed)
             }
             state.error != null -> EmptyMessage(
                 title = "Search unavailable",
                 message = state.error,
+                modifier = Modifier.weight(1f),
             )
             state.query.isBlank() -> EmptyMessage(
-                title = if (state.scope == SearchScope.ANIME) {
-                    "Dedicated anime search"
-                } else {
-                    "Everything starts with a title"
-                },
-                message = if (state.scope == SearchScope.ANIME) {
-                    "Search AniList’s Japanese anime catalogue. Miruro appears as an optional player."
-                } else {
-                    "Search the movie and series catalogue."
-                },
+                title = "What do you want to watch?",
+                message = "Search with a title, release year, or a few words you remember.",
+                modifier = Modifier.weight(1f),
             )
             state.results.isEmpty() -> EmptyMessage(
                 title = "No matches",
-                message = if (state.scope == SearchScope.ANIME) {
-                    "Try the English, romaji, or Japanese anime title."
-                } else {
-                    "Try another title, year, or keyword."
-                },
+                message = "Check the spelling, remove extra words, or try the release year.",
+                modifier = Modifier.weight(1f),
             )
             else -> Column(Modifier.fillMaxSize()) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (state.scope == SearchScope.MOVIES_AND_TV) {
-                        listOf("All", "Movies", "Series").forEach { option ->
-                            val active = mediaFilter == option
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (active) {
-                                            Color.White
-                                        } else {
-                                            Color.White.copy(alpha = 0.06f)
-                                        },
-                                    )
-                                    .clickable { onMediaFilterChange(option) }
-                                    .padding(horizontal = 13.dp, vertical = 8.dp),
-                            ) {
-                                Text(
-                                    text = option,
-                                    color = if (active) Color.Black else Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
+                    listOf("All", "Movies", "Series").forEach { option ->
+                        val active = mediaFilter == option
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(
+                                    if (active) {
+                                        Color.White
+                                    } else {
+                                        Color.White.copy(alpha = 0.06f)
+                                    },
                                 )
-                            }
+                                .selectable(
+                                    selected = active,
+                                    onClick = { onMediaFilterChange(option) },
+                                )
+                                .padding(horizontal = 13.dp, vertical = 9.dp),
+                        ) {
+                            Text(
+                                text = option,
+                                color = if (active) Color.Black else Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
                         }
-                    } else {
-                        Text(
-                            text = "Japanese anime · native results",
-                            color = AliflixMuted,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
                     }
                     Spacer(Modifier.weight(1f))
                     Text(
-                        text = "${visibleResults.size}",
+                        text = "${visibleResults.size} found",
                         color = AliflixMuted,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
+                        maxLines = 1,
                     )
                 }
-                LazyVerticalGrid(
-                    state = gridState,
-                    columns = GridCells.Adaptive(108.dp),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    items(visibleResults, key = { it.key }) { item ->
-                        MediaPoster(
-                            item = item,
-                            width = 108.dp,
-                            onClick = { onOpen(item) },
-                        )
+                if (visibleResults.isEmpty()) {
+                    EmptyMessage(
+                        title = "No $mediaFilter here",
+                        message = "Switch the filter to see the other matching titles.",
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Adaptive(118.dp),
+                        contentPadding = PaddingValues(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = 4.dp,
+                            bottom = 24.dp,
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(20.dp),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        items(visibleResults, key = { it.key }) { item ->
+                            MediaPoster(
+                                item = item,
+                                width = 118.dp,
+                                onClick = { onOpen(item) },
+                            )
+                        }
                     }
                 }
             }
@@ -1530,7 +1495,6 @@ private fun SearchScreen(
 @Composable
 private fun PlaybackProviderSelector(
     selectedProvider: PlaybackProviderId,
-    includeMiruro: Boolean,
     onSelectProvider: (PlaybackProviderId) -> Unit,
     modifier: Modifier = Modifier,
     onEditProviderUrl: ((PlaybackProviderId) -> Unit)? = null,
@@ -1557,11 +1521,7 @@ private fun PlaybackProviderSelector(
                     letterSpacing = 1.2.sp,
                 )
                 Text(
-                    text = if (includeMiruro) {
-                        "Choose a source for this title. Miruro is optional."
-                    } else {
-                        "Choose the service used when you press Play"
-                    },
+                    text = "Choose where Aliflix opens playback",
                     color = AliflixMuted,
                     fontSize = 11.sp,
                 )
@@ -1572,19 +1532,15 @@ private fun PlaybackProviderSelector(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            buildList {
-                add(
-                    PlaybackProviderId.RAMOFLIX,
-                )
-                add(
-                    PlaybackProviderId.MOVIES_67,
-                )
-                if (includeMiruro) add(PlaybackProviderId.MIRURO)
-            }.forEach { provider ->
+            listOf(
+                PlaybackProviderId.RAMOFLIX,
+                PlaybackProviderId.MOVIES_67,
+            ).forEach { provider ->
                 val selected = selectedProvider == provider
-                Box(
+                Row(
                     modifier = Modifier
                         .weight(1f)
+                        .height(48.dp)
                         .clip(RoundedCornerShape(13.dp))
                         .background(
                             if (selected) AliflixRed else Color.Black.copy(alpha = 0.22f),
@@ -1598,9 +1554,13 @@ private fun PlaybackProviderSelector(
                             },
                             RoundedCornerShape(13.dp),
                         )
-                        .clickable { onSelectProvider(provider) }
-                        .padding(horizontal = 8.dp, vertical = 10.dp),
-                    contentAlignment = Alignment.Center,
+                        .selectable(
+                            selected = selected,
+                            onClick = { onSelectProvider(provider) },
+                        )
+                        .padding(horizontal = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
                 ) {
                     Text(
                         text = provider.displayName,
@@ -1610,38 +1570,169 @@ private fun PlaybackProviderSelector(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (selected) {
+                        Spacer(Modifier.width(5.dp))
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = "Selected",
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
         }
         if (onEditProviderUrl != null) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                    TextButton(
-                        onClick = {
-                            onEditProviderUrl(PlaybackProviderId.RAMOFLIX)
-                        },
-                    ) {
-                        Text(
-                            text = "Edit Ramoflix URL",
-                            color = AliflixIce,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
+                ProviderUrlButton(
+                    label = "Ramoflix URL",
+                    onClick = { onEditProviderUrl(PlaybackProviderId.RAMOFLIX) },
+                    modifier = Modifier.weight(1f),
+                )
+                ProviderUrlButton(
+                    label = "67 Movies URL",
+                    onClick = { onEditProviderUrl(PlaybackProviderId.MOVIES_67) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderUrlButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.height(44.dp),
+        shape = RoundedCornerShape(13.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            Color.White.copy(alpha = 0.12f),
+        ),
+        contentPadding = PaddingValues(horizontal = 8.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Edit,
+            contentDescription = null,
+            modifier = Modifier.size(15.dp),
+            tint = AliflixIce,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            color = AliflixIce,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun MobileProviderUrlDialog(
+    providerName: String,
+    description: String,
+    currentUrl: String,
+    defaultUrl: String,
+    onSave: (String) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var url by remember(currentUrl) { mutableStateOf(currentUrl) }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val normalizedUrl = RamoflixConfig.normalizeBaseUrl(url)
+    val invalidUrl = url.isNotBlank() && normalizedUrl == null
+    val isCustomUrl = currentUrl.trimEnd('/') != defaultUrl.trimEnd('/')
+    val saveUrl = {
+        normalizedUrl?.let {
+            keyboard?.hide()
+            onSave(it)
+        }
+        Unit
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 360.dp)
+                .fillMaxWidth(),
+            color = AliflixSurfaceRaised,
+            contentColor = Color.White,
+            shape = RoundedCornerShape(22.dp),
+            tonalElevation = 6.dp,
+            shadowElevation = 18.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "$providerName address",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                    Text(
+                        text = description,
+                        color = AliflixMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                    )
+                }
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it.trimStart() },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Website URL") },
+                    placeholder = { Text(defaultUrl, maxLines = 1) },
+                    singleLine = true,
+                    isError = invalidUrl,
+                    supportingText = if (invalidUrl) {
+                        { Text("Enter a valid HTTPS website address.") }
+                    } else {
+                        null
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { saveUrl() }),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (isCustomUrl) {
+                        TextButton(onClick = onReset) {
+                            Text("Use default", color = AliflixMuted)
+                        }
                     }
-                    TextButton(
-                        onClick = {
-                            onEditProviderUrl(PlaybackProviderId.MOVIES_67)
-                        },
-                    ) {
-                        Text(
-                            text = "Edit 67 URL",
-                            color = AliflixIce,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel")
                     }
+                    Spacer(Modifier.width(4.dp))
+                    Button(
+                        onClick = saveUrl,
+                        enabled = normalizedUrl != null,
+                        colors = ButtonDefaults.buttonColors(containerColor = AliflixRed),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Text("Save", fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
     }
@@ -1762,6 +1853,7 @@ private fun MySpaceScreen(
         pageCount = { 3 },
     )
     var showClearConfirmation by remember { mutableStateOf(false) }
+    var settingsExpanded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(page) {
         if (pagerState.settledPage != page) {
@@ -1815,43 +1907,100 @@ private fun MySpaceScreen(
                 ),
             )
             .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(top = 12.dp),
+            .padding(top = 8.dp),
     ) {
-        Text(
-            text = "MY SPACE",
-            color = AliflixRed,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Black,
-            letterSpacing = 1.7.sp,
-            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp),
-        )
-        Text(
-            text = when (pagerState.currentPage) {
-                0 -> "Curated by genre"
-                1 -> "Your favorites"
-                else -> "Viewing history"
-            },
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        )
-        PlaybackProviderSelector(
-            selectedProvider = generalProvider,
-            includeMiruro = false,
-            onSelectProvider = onSelectProvider,
-            onEditProviderUrl = onEditProviderUrl,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        )
-        MobileUpdatePanel(
-            state = updateUi,
-            onCheck = onCheckForUpdates,
-            onDownload = onDownloadUpdate,
-            onInstall = onInstallUpdate,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "MY SPACE",
+                    color = AliflixRed,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.7.sp,
+                )
+                Text(
+                    text = "Your library",
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+            }
+            OutlinedButton(
+                onClick = { settingsExpanded = !settingsExpanded },
+                modifier = Modifier.height(44.dp),
+                shape = RoundedCornerShape(14.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (settingsExpanded) {
+                        AliflixRed.copy(alpha = 0.65f)
+                    } else {
+                        Color.White.copy(alpha = 0.13f)
+                    },
+                ),
+                contentPadding = PaddingValues(horizontal = 11.dp),
+            ) {
+                Text(
+                    text = "Settings",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    imageVector = if (settingsExpanded) {
+                        Icons.Rounded.ExpandLess
+                    } else {
+                        Icons.Rounded.ExpandMore
+                    },
+                    contentDescription = if (settingsExpanded) {
+                        "Hide playback and update settings"
+                    } else {
+                        "Show playback and update settings"
+                    },
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = settingsExpanded,
+            enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { -it / 5 },
+            exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { -it / 5 },
+        ) {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 240.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PlaybackProviderSelector(
+                    selectedProvider = generalProvider,
+                    onSelectProvider = onSelectProvider,
+                    onEditProviderUrl = onEditProviderUrl,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                MobileUpdatePanel(
+                    state = updateUi,
+                    onCheck = onCheckForUpdates,
+                    onDownload = onDownloadUpdate,
+                    onInstall = onInstallUpdate,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+        }
+        val libraryTabs = listOf(
+            "My List" to myList.size,
+            "Favorites" to likes.size,
+            "History" to recent.size,
         )
         Row(
             modifier = Modifier
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
                 .background(Color.White.copy(alpha = 0.06f))
@@ -1859,9 +2008,9 @@ private fun MySpaceScreen(
                 .padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            listOf("My List", "Favorites", "History").forEachIndexed { index, label ->
+            libraryTabs.forEachIndexed { index, (label, count) ->
                 val selected = pagerState.currentPage == index
-                Box(
+                Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
@@ -1879,25 +2028,34 @@ private fun MySpaceScreen(
                                 )
                             },
                         )
-                        .clickable { onPageChange(index) }
-                        .padding(vertical = 11.dp),
-                    contentAlignment = Alignment.Center,
+                        .selectable(
+                            selected = selected,
+                            onClick = { onPageChange(index) },
+                        )
+                        .padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
                     Text(
                         text = label,
                         color = if (selected) Color.White else AliflixMuted,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = count.toString(),
+                        color = if (selected) {
+                            Color.White.copy(alpha = 0.72f)
+                        } else {
+                            AliflixMuted.copy(alpha = 0.76f)
+                        },
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
         }
-        Text(
-            text = "Swipe left or right to switch",
-            color = AliflixMuted.copy(alpha = 0.72f),
-            fontSize = 10.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
-        )
 
         HorizontalPager(
             state = pagerState,
@@ -1964,10 +2122,10 @@ private fun GenreOrganizedList(
     }
     LazyVerticalGrid(
         state = gridState,
-        columns = GridCells.Adaptive(108.dp),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        columns = GridCells.Adaptive(132.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 28.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
         genreGroups.forEach { (genre, genreItems) ->
@@ -2011,7 +2169,7 @@ private fun GenreOrganizedList(
             items(genreItems, key = { "saved:${it.key}" }) { item ->
                 MediaPoster(
                     item = item,
-                    width = 108.dp,
+                    width = 132.dp,
                     onClick = { onOpen(item) },
                 )
             }
@@ -2068,17 +2226,17 @@ private fun HistoryCollection(
         }
         LazyVerticalGrid(
             state = gridState,
-            columns = GridCells.Adaptive(108.dp),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            columns = GridCells.Adaptive(132.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp),
             modifier = Modifier.weight(1f),
         ) {
             items(items, key = { "history:${it.key}" }) { item ->
                 Box {
                     MediaPoster(
                         item = item,
-                        width = 108.dp,
+                        width = 132.dp,
                         onClick = { onOpen(item) },
                     )
                     IconButton(
@@ -2222,7 +2380,6 @@ private fun DetailScreen(
                 RatingsRow(item = item)
                 PlaybackProviderSelector(
                     selectedProvider = selectedProvider,
-                    includeMiruro = PlaybackProviderId.MIRURO.isAvailableFor(item),
                     onSelectProvider = onSelectProvider,
                 )
                 Row(
@@ -2864,9 +3021,10 @@ private fun ConfigurationError(
 private fun EmptyMessage(
     title: String,
     message: String,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .padding(36.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

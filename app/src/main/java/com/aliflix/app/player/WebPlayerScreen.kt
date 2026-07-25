@@ -223,11 +223,7 @@ fun WebPlayerScreen(
             }
             } else {
                 Text(
-                    text = if (selection.source.provider == PlaybackProviderId.MIRURO) {
-                        "Miruro · Japanese Anime"
-                    } else {
-                        "67 Movies"
-                    },
+                    text = selection.source.provider.displayName,
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,

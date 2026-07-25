@@ -25,8 +25,6 @@ data class Media(
     val rottenTomatoesRating: Int? = null,
     val genres: List<String> = emptyList(),
     val cast: List<String> = emptyList(),
-    val isJapaneseAnime: Boolean = false,
-    val aniListId: Int? = null,
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
@@ -47,11 +45,6 @@ data class Media(
         rottenTomatoesRating?.let { put("rottenTomatoesRating", it) }
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
-        aniListId?.let { put("aniListId", it) }
-        // A legacy release inferred anime from a redirected TMDB rail. Persist
-        // the classification only when it is backed by an AniList identity so
-        // previously contaminated My List/history entries repair themselves.
-        put("isJapaneseAnime", isJapaneseAnime && aniListId != null)
     }
 
     companion object {
@@ -64,8 +57,6 @@ data class Media(
         }
 
         fun fromJson(json: JSONObject): Media {
-            val aniListId = json.optInt("aniListId")
-                .takeIf { json.has("aniListId") && it > 0 }
             return Media(
                 id = json.getInt("id"),
                 type = MediaType.from(json.optString("type")),
@@ -93,9 +84,6 @@ data class Media(
                         array.optString(index).takeIf(String::isNotBlank)
                     }
                 }.orEmpty(),
-                isJapaneseAnime =
-                    aniListId != null && json.optBoolean("isJapaneseAnime", true),
-                aniListId = aniListId,
             )
         }
     }
@@ -167,15 +155,9 @@ data class PlaybackSelection(
         )
 }
 
-enum class ContentRailKind {
-    GENERAL,
-    ANIME,
-}
-
 data class ContentRail(
     val title: String,
     val items: List<Media>,
-    val kind: ContentRailKind = ContentRailKind.GENERAL,
 )
 
 data class HomeContent(

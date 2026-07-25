@@ -2,7 +2,6 @@ package com.aliflix.app.model
 
 import com.aliflix.app.data.RamoflixConfig
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
@@ -119,40 +118,7 @@ class MediaTest {
     }
 
     @Test
-    fun japaneseAnimeUsesSavedGeneralProviderUntilMiruroIsExplicitlyRequested() {
-        val anime = Media(
-            id = 37854,
-            type = MediaType.TV,
-            title = "One Piece",
-            isJapaneseAnime = true,
-            aniListId = 21,
-        )
-        val preferences = PlaybackPreferences(
-            generalProvider = PlaybackProviderId.MOVIES_67,
-        )
-
-        assertEquals(
-            PlaybackProviderId.MOVIES_67,
-            preferences.sourceFor(anime).provider,
-        )
-        assertEquals(
-            PlaybackProviderId.RAMOFLIX,
-            preferences.sourceFor(
-                media = anime,
-                requestedProvider = PlaybackProviderId.RAMOFLIX,
-            ).provider,
-        )
-        assertEquals(
-            PlaybackProviderId.MIRURO,
-            preferences.sourceFor(
-                media = anime,
-                requestedProvider = PlaybackProviderId.MIRURO,
-            ).provider,
-        )
-    }
-
-    @Test
-    fun nonAnimeUsesSavedMovies67Choice() {
+    fun savedMovies67ChoiceIsUsedForPlayback() {
         val item = Media(id = 27205, type = MediaType.MOVIE, title = "Inception")
         val preferences = PlaybackPreferences(
             generalProvider = PlaybackProviderId.MOVIES_67,
@@ -162,73 +128,5 @@ class MediaTest {
             PlaybackProviderId.MOVIES_67,
             preferences.sourceFor(item).provider,
         )
-    }
-
-    @Test
-    fun miruroIsRejectedAsGeneralProviderRequest() {
-        val item = Media(id = 27205, type = MediaType.MOVIE, title = "Inception")
-        val preferences = PlaybackPreferences()
-
-        assertEquals(
-            PlaybackProviderId.RAMOFLIX,
-            preferences.sourceFor(
-                media = item,
-                requestedProvider = PlaybackProviderId.MIRURO,
-            ).provider,
-        )
-    }
-
-    @Test
-    fun unverifiedAnimeFlagCannotExposeMiruro() {
-        val item = Media(
-            id = 1,
-            type = MediaType.TV,
-            title = "Unverified animation",
-            isJapaneseAnime = true,
-        )
-        val preferences = PlaybackPreferences()
-
-        assertEquals(
-            PlaybackProviderId.RAMOFLIX,
-            preferences.sourceFor(
-                media = item,
-                requestedProvider = PlaybackProviderId.MIRURO,
-            ).provider,
-        )
-    }
-
-    @Test
-    fun japaneseAnimeFlagSurvivesJsonRoundTrip() {
-        val anime = Media(
-            id = 21,
-            type = MediaType.TV,
-            title = "One Piece",
-            year = "1999",
-            genres = listOf("Animation", "Action & Adventure"),
-            isJapaneseAnime = true,
-            aniListId = 21,
-        )
-
-        val restored = Media.fromJson(anime.toJson())
-
-        assertEquals(anime, restored)
-        assertEquals(true, restored.isJapaneseAnime)
-    }
-
-    @Test
-    fun legacyAnimeFlagWithoutAniListIdentityIsCleared() {
-        val legacyJson = Media(
-            id = 94605,
-            type = MediaType.TV,
-            title = "Arcane",
-        ).toJson().apply {
-            put("isJapaneseAnime", true)
-            remove("aniListId")
-        }
-
-        val restored = Media.fromJson(legacyJson)
-
-        assertFalse(restored.isJapaneseAnime)
-        assertEquals(null, restored.aniListId)
     }
 }

@@ -3,8 +3,6 @@ package com.aliflix.app.data
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.Media
 import kotlinx.coroutines.test.runTest
-import org.json.JSONArray
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -277,389 +275,199 @@ class CatalogClientTest {
     }
 
     @Test
-    fun titleMetadataNeverClassifiesAnimeWithoutVerifiedAniListIdentity() {
-        fun detailsHtml(originalLanguage: String) = """
-            <main>
-              <section class="header">
-                <h2><a href="/movie/1-animated-title">Animated Title</a></h2>
-                <a href="/genre/16-animation/movie">Animation</a>
-                <div class="facts">
-                  <p>
-                    <strong><bdi>Original Language</bdi></strong>
-                    $originalLanguage
-                  </p>
-                </div>
-              </section>
-            </main>
-        """.trimIndent()
-        val fallback = Media(id = 1, type = MediaType.MOVIE, title = "Animated Title")
-
-        val japanese = client.parseTitleDetails(detailsHtml("Japanese"), fallback)
-        val western = client.parseTitleDetails(detailsHtml("English"), fallback)
-
-        assertFalse(japanese.isJapaneseAnime)
-        assertFalse(western.isJapaneseAnime)
-    }
-
-    @Test
-    fun titleDetailsPreserveKnownJapaneseAnimeFlag() {
-        val result = client.parseTitleDetails(
-            html = """
-                <main>
-                  <section class="header">
-                    <h2><a href="/tv/1429-attack-on-titan">Attack on Titan</a></h2>
-                    <a href="/genre/18-drama/tv">Drama</a>
-                  </section>
-                </main>
-            """.trimIndent(),
-            fallback = Media(
-                id = 1429,
-                type = MediaType.TV,
-                title = "Attack on Titan",
-                isJapaneseAnime = true,
-                aniListId = 16498,
-            ),
-        )
-
-        assertTrue(result.isJapaneseAnime)
-        assertEquals(16498, result.aniListId)
-    }
-
-    @Test
-    fun detailsDiscardUnverifiedLegacyAnimeFlag() = runTest {
-        val mergingClient = CatalogClient(
-            jsonPoster = { _, _ -> "{}" },
-            pageLoader = { "<main></main>" },
-        )
-        val cataloguedAsGeneralContent = Media(
-            id = 94605,
-            type = MediaType.TV,
-            title = "Arcane",
-        )
-        val callerKnowsItIsJapaneseAnime = cataloguedAsGeneralContent.copy(
-            isJapaneseAnime = true,
-        )
-
-        val details = mergingClient.details(callerKnowsItIsJapaneseAnime).first
-
-        assertFalse(details.isJapaneseAnime)
-    }
-
-    @Test
-    fun animeRailNeverContaminatesGeneralHomeOrSearchResults() = runTest {
-        val attackOnTitanCard = """
-            <main>
-              <div data-object-id="tv-1429">
-                <a data-media-type="tv" href="/tv/1429-attack-on-titan">
-                  <img class="poster" alt="Attack on Titan"
-                    src="https://media.themoviedb.org/t/p/w94_and_h141_face/aot.jpg" />
-                </a>
-                <a data-media-type="tv" href="/tv/1429-attack-on-titan">
-                  <h2>Attack on Titan</h2>
-                </a>
-                <span class="release_date">April 7, 2013</span>
-              </div>
-            </main>
-        """.trimIndent()
-        val emptyPage = "<main></main>"
-        val mergingClient = CatalogClient(
-            jsonPoster = { _, _ -> error("Ratings must not be requested") },
-            animeCatalogClient = AniListCatalogClient {
-                emptyAnimeCatalogResponse()
-            },
+    fun searchRemovesTrailingTypeAndYearBeforeQueryingOnlyTheRequestedMediaType() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = CatalogClient(
             pageLoader = { url ->
+                requestedUrls += url
                 when {
-                    url.endsWith("/tv?language=en-US") ->
-                        attackOnTitanCard
-                    "/search/tv?" in url ->
-                        attackOnTitanCard
-                    else ->
-                        emptyPage
+                    "/search/tv?" in url -> tmdbSearchHtml(
+                        id = 438631,
+                        type = "tv",
+                        title = "Dune",
+                        year = "2021",
+                    )
+
+                    "media-imdb.com/suggestion/" in url -> """{"d":[]}"""
+                    else -> error("Unexpected request: $url")
                 }
             },
         )
 
-        val home = mergingClient.home()
-        val search = mergingClient.search("Attack on Titan")
-        val generalItem = home.rails
-            .first { it.title == "Trending Series" }
-            .items
-            .single()
-        val generalDetails = mergingClient.details(generalItem).first
+        val results = client.search("Dune TV 2021")
 
-        assertFalse(home.hero.isJapaneseAnime)
-        assertFalse(
-            home.rails
-                .first { it.title == "Trending Series" }
-                .items
-                .single()
-                .isJapaneseAnime,
+        assertEquals(listOf("Dune"), results.map(Media::title))
+        assertTrue(
+            requestedUrls.any {
+                it.contains("/search/tv?query=Dune&language=en-US")
+            },
+        )
+        assertFalse(requestedUrls.any { "/search/movie?" in it })
+        assertFalse(requestedUrls.any { "media-imdb.com/suggestion/" in it })
+    }
+
+    @Test
+    fun searchUsesImdbSuggestionToCorrectATypoAndRetryTmdb() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = CatalogClient(
+            pageLoader = { url ->
+                requestedUrls += url
+                when {
+                    "media-imdb.com/suggestion/" in url -> """
+                        {
+                          "d": [
+                            {
+                              "id": "tt0816692",
+                              "l": "Interstellar",
+                              "q": "feature",
+                              "y": 2014
+                            }
+                          ]
+                        }
+                    """.trimIndent()
+
+                    "query=Interstellar" in url && "/search/movie?" in url ->
+                        tmdbSearchHtml(
+                            id = 157336,
+                            type = "movie",
+                            title = "Interstellar",
+                            year = "2014",
+                        )
+
+                    "/search/" in url -> "<main></main>"
+                    else -> error("Unexpected request: $url")
+                }
+            },
+        )
+
+        val results = client.search("Intersteller")
+
+        assertEquals("Interstellar", results.firstOrNull()?.title)
+        assertTrue(
+            requestedUrls.any {
+                it.contains("/search/movie?query=Interstellar&language=en-US")
+            },
         )
         assertTrue(
-            home.rails
-                .first { it.kind == com.aliflix.app.model.ContentRailKind.ANIME }
-                .items
-                .first { it.id == 1429 }
-                .isJapaneseAnime,
+            requestedUrls.any {
+                it.contains("/search/tv?query=Interstellar&language=en-US")
+            },
         )
-        assertTrue(home.rails.size >= 2)
-        assertFalse(search.single().isJapaneseAnime)
-        assertFalse(generalDetails.isJapaneseAnime)
-        assertEquals(null, generalDetails.aniListId)
     }
 
     @Test
-    fun dedicatedAnimeSearchUsesAniListYearToAvoidLiveActionTitleCollision() = runTest {
-        val onePieceResults = """
-            <main>
-              <div data-object-id="tv-111110">
-                <a data-media-type="tv" href="/tv/111110-one-piece">
-                  <img class="poster" alt="One Piece"
-                    src="https://media.themoviedb.org/t/p/w94_and_h141_face/live.jpg" />
-                </a>
-                <a data-media-type="tv" href="/tv/111110-one-piece"><h2>One Piece</h2></a>
-                <span class="release_date">August 31, 2023</span>
-              </div>
-              <div data-object-id="tv-37854">
-                <a data-media-type="tv" href="/tv/37854-one-piece">
-                  <img class="poster" alt="One Piece"
-                    src="https://media.themoviedb.org/t/p/w94_and_h141_face/anime.jpg" />
-                </a>
-                <a data-media-type="tv" href="/tv/37854-one-piece"><h2>One Piece</h2></a>
-                <span class="release_date">October 20, 1999</span>
-              </div>
-            </main>
-        """.trimIndent()
-        val animeClient = AniListCatalogClient {
-            """
-                {
-                  "data": {
-                    "Page": {
-                      "media": [{
-                        "id": 21,
-                        "isAdult": false,
-                        "format": "TV",
-                        "countryOfOrigin": "JP",
-                        "startDate": {"year": 1999},
-                        "episodes": null,
-                        "title": {
-                          "english": "One Piece",
-                          "romaji": "One Piece",
-                          "native": "ONE PIECE"
-                        },
-                        "synonyms": [],
-                        "description": "Monkey D. Luffy searches for the legendary treasure.",
-                        "coverImage": {"extraLarge": null, "large": null},
-                        "bannerImage": null,
-                        "genres": ["Action", "Adventure"],
-                        "averageScore": 88
-                      }]
-                    }
-                  }
+    fun strongDirectSearchMatchDoesNotTriggerACorrectedTmdbLookup() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = CatalogClient(
+            pageLoader = { url ->
+                requestedUrls += url
+                when {
+                    "media-imdb.com/suggestion/" in url -> """
+                        {
+                          "d": [
+                            {
+                              "id": "tt15239678",
+                              "l": "Dune: Part Two",
+                              "q": "feature",
+                              "y": 2024
+                            }
+                          ]
+                        }
+                    """.trimIndent()
+
+                    "/search/movie?query=Dune&" in url -> tmdbSearchHtml(
+                        id = 438631,
+                        type = "movie",
+                        title = "Dune",
+                        year = "2021",
+                    )
+
+                    "/search/tv?query=Dune&" in url -> "<main></main>"
+                    else -> error("Unexpected request: $url")
                 }
-            """.trimIndent()
-        }
-        val animeSearchClient = CatalogClient(
-            jsonPoster = { _, _ -> "{}" },
-            animeCatalogClient = animeClient,
-            pageLoader = { url ->
-                if ("/search/tv?" in url) onePieceResults else "<main></main>"
             },
         )
 
-        val result = animeSearchClient.searchAnime("One Piece").single()
+        val results = client.search("Dune")
 
-        assertEquals(37854, result.id)
-        assertEquals(21, result.aniListId)
-        assertTrue(result.isJapaneseAnime)
+        assertEquals("Dune", results.firstOrNull()?.title)
+        assertEquals(
+            2,
+            requestedUrls.count { "/search/" in it },
+        )
+        assertFalse(
+            requestedUrls.any {
+                "/search/" in it && "query=Dune%3A+Part+Two" in it
+            },
+        )
+        assertFalse(requestedUrls.any { "media-imdb.com/suggestion/" in it })
     }
 
     @Test
-    fun dedicatedAnimeSearchRejectsAnExactTitleWithWrongReleaseYear() = runTest {
-        val wrongYearMonster = """
-            <main>
-              <div data-object-id="tv-999">
-                <a data-media-type="tv" href="/tv/999-monster">
-                  <img class="poster" alt="Monster"
-                    src="https://media.themoviedb.org/t/p/w94_and_h141_face/monster.jpg" />
-                </a>
-                <a data-media-type="tv" href="/tv/999-monster"><h2>Monster</h2></a>
-                <span class="release_date">January 1, 2022</span>
-              </div>
-            </main>
-        """.trimIndent()
-        val animeSearchClient = CatalogClient(
-            jsonPoster = { _, _ -> "{}" },
-            animeCatalogClient = AniListCatalogClient {
-                animeCatalogResponse(
-                    id = 19,
-                    title = "Monster",
-                    year = 2004,
-                )
-            },
+    fun exactLocalFallbackAvoidsSuggestionWhenTmdbIsUnavailable() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = CatalogClient(
             pageLoader = { url ->
-                if ("/search/tv?" in url) wrongYearMonster else "<main></main>"
+                requestedUrls += url
+                if ("/search/" in url) {
+                    "<main></main>"
+                } else {
+                    error("An exact local title must not need suggestions: $url")
+                }
             },
         )
 
-        assertTrue(animeSearchClient.searchAnime("Monster").isEmpty())
+        val results = client.search("Inception")
+
+        assertEquals("Inception", results.firstOrNull()?.title)
+        assertFalse(requestedUrls.any { "media-imdb.com/suggestion/" in it })
     }
 
     @Test
-    fun dedicatedAnimeSearchMapsASeasonContinuationToItsBaseTmdbSeries() = runTest {
-        val baseSeries = """
-            <main>
-              <div data-object-id="tv-65930">
-                <a data-media-type="tv" href="/tv/65930-my-hero-academia">
-                  <img class="poster" alt="My Hero Academia"
-                    src="https://media.themoviedb.org/t/p/w94_and_h141_face/mha.jpg" />
-                </a>
-                <a data-media-type="tv" href="/tv/65930-my-hero-academia">
-                  <h2>My Hero Academia</h2>
-                </a>
-                <span class="release_date">April 3, 2016</span>
-              </div>
-            </main>
-        """.trimIndent()
-        val animeSearchClient = CatalogClient(
-            jsonPoster = { _, _ -> "{}" },
-            animeCatalogClient = AniListCatalogClient {
-                animeCatalogResponse(
-                    id = 117193,
-                    title = "My Hero Academia Season 5",
-                    year = 2021,
-                )
-            },
+    fun explicitTvQualifierDoesNotLeakALocalMovieFallback() = runTest {
+        val client = CatalogClient(
             pageLoader = { url ->
-                if ("/search/tv?" in url) baseSeries else "<main></main>"
+                when {
+                    "/search/tv?" in url -> "<main></main>"
+                    "media-imdb.com/suggestion/" in url -> """{"d":[]}"""
+                    else -> error("Unexpected request: $url")
+                }
             },
         )
 
-        val result = animeSearchClient.searchAnime("My Hero Academia Season 5").single()
-
-        assertEquals(65930, result.id)
-        assertEquals(117193, result.aniListId)
+        assertTrue(client.search("Inception TV").isEmpty())
     }
 
     @Test
-    fun ambiguousOvaFormatCanMapToATmdbMovie() = runTest {
-        val movieCard = """
-            <main>
-              <div data-object-id="movie-777">
-                <a data-media-type="movie" href="/movie/777-test-ova">
-                  <img class="poster" alt="Test OVA"
-                    src="https://media.themoviedb.org/t/p/w94_and_h141_face/ova.jpg" />
-                </a>
-                <a data-media-type="movie" href="/movie/777-test-ova">
-                  <h2>Test OVA</h2>
-                </a>
-                <span class="release_date">January 1, 1995</span>
-              </div>
-            </main>
-        """.trimIndent()
-        val animeSearchClient = CatalogClient(
-            jsonPoster = { _, _ -> "{}" },
-            animeCatalogClient = AniListCatalogClient {
-                animeCatalogResponse(
-                    id = 888,
-                    title = "Test OVA",
-                    year = 1995,
-                    format = "OVA",
-                )
-            },
-            pageLoader = { url ->
-                if ("/search/movie?" in url) movieCard else "<main></main>"
-            },
+    fun offlineHomeKeepsSeparateTrendingMovieAndTvRails() = runTest {
+        val client = CatalogClient(
+            pageLoader = { error("Catalogue unavailable") },
         )
 
-        val result = animeSearchClient.searchAnime("Test OVA").single()
+        val home = client.home()
 
-        assertEquals(MediaType.MOVIE, result.type)
-        assertEquals(888, result.aniListId)
-    }
-
-    @Test
-    fun homeAnimeRailUsesLiveAniListTrendingAndVerifiedTmdbMapping() = runTest {
-        val deathNoteCard = """
-            <main>
-              <div data-object-id="tv-13916">
-                <a data-media-type="tv" href="/tv/13916-death-note">
-                  <img class="poster" alt="Death Note"
-                    src="https://media.themoviedb.org/t/p/w94_and_h141_face/death-note.jpg" />
-                </a>
-                <a data-media-type="tv" href="/tv/13916-death-note"><h2>Death Note</h2></a>
-                <span class="release_date">October 4, 2006</span>
-              </div>
-            </main>
-        """.trimIndent()
-        val animeHomeClient = CatalogClient(
-            jsonPoster = { _, _ -> "{}" },
-            animeCatalogClient = AniListCatalogClient {
-                animeCatalogResponse(
-                    id = 1535,
-                    title = "Death Note",
-                    year = 2006,
-                )
-            },
-            pageLoader = { url ->
-                if ("/search/tv?" in url) deathNoteCard else "<main></main>"
-            },
+        assertEquals(
+            listOf("Trending Now", "Popular Movies", "Popular TV Shows"),
+            home.rails.map { it.title },
         )
-
-        val animeRail = animeHomeClient.home().rails.first {
-            it.kind == com.aliflix.app.model.ContentRailKind.ANIME
-        }
-
-        assertEquals(13916, animeRail.items.first().id)
-        assertEquals(1535, animeRail.items.first().aniListId)
-        assertTrue(animeRail.items.first().isJapaneseAnime)
+        assertTrue(home.rails.all { it.items.isNotEmpty() })
     }
 
-    private fun emptyAnimeCatalogResponse(): String =
-        JSONObject()
-            .put(
-                "data",
-                JSONObject().put(
-                    "Page",
-                    JSONObject().put("media", JSONArray()),
-                ),
-            )
-            .toString()
-
-    private fun animeCatalogResponse(
+    private fun tmdbSearchHtml(
         id: Int,
+        type: String,
         title: String,
-        year: Int,
-        format: String = "TV",
-    ): String {
-        val item = JSONObject()
-            .put("id", id)
-            .put("isAdult", false)
-            .put("format", format)
-            .put("countryOfOrigin", "JP")
-            .put("startDate", JSONObject().put("year", year))
-            .put("episodes", 12)
-            .put(
-                "title",
-                JSONObject()
-                    .put("english", title)
-                    .put("romaji", title)
-                    .put("native", title),
-            )
-            .put("synonyms", JSONArray())
-            .put("description", "$title description")
-            .put("coverImage", JSONObject())
-            .put("bannerImage", JSONObject.NULL)
-            .put("genres", JSONArray().put("Animation"))
-            .put("averageScore", 80)
-        return JSONObject()
-            .put(
-                "data",
-                JSONObject().put(
-                    "Page",
-                    JSONObject().put("media", JSONArray().put(item)),
-                ),
-            )
-            .toString()
-    }
+        year: String,
+    ): String = """
+        <main>
+          <div data-object-id="$type-$id">
+            <a data-media-type="$type" href="/$type/$id-test-title">
+              <img class="poster" alt="$title"
+                src="https://media.themoviedb.org/t/p/w94_and_h141_face/poster.jpg" />
+              <h2>$title</h2>
+            </a>
+            <span class="release_date">January 1, $year</span>
+          </div>
+        </main>
+    """.trimIndent()
 }
