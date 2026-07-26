@@ -9,7 +9,7 @@ class PlaybackNavigationPolicyTest {
     fun allowsApprovedPlaybackHosts() {
         listOf(
             "https://ramoflix.net/inception/",
-            "https://www.rivestream.app/detail?type=movie&id=1273221",
+            "https://bcine.ru/movie/1083381",
             "https://67movies.nl/watch/movie/27205",
             "https://player.vidlove.cc/embed/tv/66732/2/3",
             "https://www.345movie.nl/watch/movie/27205",
@@ -54,7 +54,6 @@ class PlaybackNavigationPolicyTest {
             "https://shuttletv.su/watch",
             "https://vidbox.vc/watch",
             "https://popcornmovies.io/watch",
-            "https://bcine.ru/watch",
             "https://toustream.xyz/watch",
         ).forEach { url ->
             assertFalse(url, PlaybackNavigationPolicy.isAllowedTopLevel(url))

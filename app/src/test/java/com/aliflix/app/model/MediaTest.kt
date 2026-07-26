@@ -17,32 +17,28 @@ class MediaTest {
     }
 
     @Test
-    fun movies67BuildsOfficialMovieWatchUrl() {
-        val item = Media(id = 27205, type = MediaType.MOVIE, title = "Inception")
-        val selection = PlaybackSelection(
-            media = item,
-            source = PlaybackSource.movies67(),
+    fun bcineBuildsOfficialMovieAndTvWatchUrl() {
+        val movie = Media(id = 1083381, type = MediaType.MOVIE, title = "Inception")
+        val movieSelection = PlaybackSelection(
+            media = movie,
+            source = PlaybackSource.bcine(),
         )
 
-        assertEquals(
-            "https://67movies.nl/watch/movie/27205",
-            selection.entryUrl,
-        )
-    }
-
-    @Test
-    fun movies67BuildsOfficialTvSeasonEpisodeWatchUrl() {
-        val item = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
-        val selection = PlaybackSelection(
-            media = item,
+        val tv = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
+        val tvSelection = PlaybackSelection(
+            media = tv,
             seasonNumber = 2,
             episodeNumber = 3,
-            source = PlaybackSource.movies67(),
+            source = PlaybackSource.bcine(),
         )
 
         assertEquals(
-            "https://67movies.nl/watch/tv/66732/2/3",
-            selection.entryUrl,
+            "https://bcine.ru/movie/1083381",
+            movieSelection.entryUrl,
+        )
+        assertEquals(
+            "https://bcine.ru/tv/66732/2/3",
+            tvSelection.entryUrl,
         )
     }
 
@@ -53,14 +49,14 @@ class MediaTest {
             media = item,
             source = PlaybackSource.ramoflix(),
         )
-        val movies67 = PlaybackSelection(
+        val bcine = PlaybackSelection(
             media = item,
-            source = PlaybackSource.movies67(),
+            source = PlaybackSource.bcine(),
         )
 
-        assertNotEquals(ramoflix.key, movies67.key)
+        assertNotEquals(ramoflix.key, bcine.key)
         assertEquals("movie:27205:via:ramoflix@ramoflix.net", ramoflix.key)
-        assertEquals("movie:27205:via:movies_67@67movies.nl", movies67.key)
+        assertEquals("movie:27205:via:bcine@bcine.ru", bcine.key)
     }
 
     @Test
@@ -86,11 +82,11 @@ class MediaTest {
     }
 
     @Test
-    fun customMovies67DomainBuildsMirrorWatchUrl() {
+    fun customBcineDomainBuildsMirrorWatchUrl() {
         val item = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
         val preferences = PlaybackPreferences(
-            generalProvider = PlaybackProviderId.MOVIES_67,
-            movies67BaseUrl = "https://67-mirror.example/",
+            generalProvider = PlaybackProviderId.BCINE,
+            bcineBaseUrl = "https://bcine-mirror.example/",
         )
         val selection = PlaybackSelection(
             media = item,
@@ -100,51 +96,25 @@ class MediaTest {
         )
 
         assertEquals(
-            "https://67-mirror.example/watch/tv/66732/2/3",
+            "https://bcine-mirror.example/tv/66732/2/3",
             selection.entryUrl,
         )
         assertEquals(
-            "tv:66732:s2:e3:via:movies_67@67-mirror.example",
+            "tv:66732:s2:e3:via:bcine@bcine-mirror.example",
             selection.key,
         )
     }
 
     @Test
-    fun savedMovies67ChoiceIsUsedForPlayback() {
+    fun savedBcineChoiceIsUsedForPlayback() {
         val item = Media(id = 27205, type = MediaType.MOVIE, title = "Inception")
         val preferences = PlaybackPreferences(
-            generalProvider = PlaybackProviderId.MOVIES_67,
+            generalProvider = PlaybackProviderId.BCINE,
         )
 
         assertEquals(
-            PlaybackProviderId.MOVIES_67,
+            PlaybackProviderId.BCINE,
             preferences.sourceFor(item).provider,
-        )
-    }
-
-    @Test
-    fun rivestreamBuildsDetailUrlForMovieAndTv() {
-        val movie = Media(id = 1273221, type = MediaType.MOVIE, title = "Example Movie")
-        val tv = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
-
-        val movieSelection = PlaybackSelection(
-            media = movie,
-            source = PlaybackSource.rivestream(),
-        )
-        val tvSelection = PlaybackSelection(
-            media = tv,
-            seasonNumber = 2,
-            episodeNumber = 3,
-            source = PlaybackSource.rivestream(),
-        )
-
-        assertEquals(
-            "https://www.rivestream.app/detail?type=movie&id=1273221",
-            movieSelection.entryUrl,
-        )
-        assertEquals(
-            "https://www.rivestream.app/detail?type=tv&id=66732&season=2&episode=3",
-            tvSelection.entryUrl,
         )
     }
 }

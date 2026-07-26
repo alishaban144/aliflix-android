@@ -220,8 +220,7 @@ fun AliflixApp(
 
     val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val ramoflixConfig = playbackPreferences.ramoflixConfig
-    val rivestreamBaseUrl = playbackPreferences.rivestreamBaseUrl
-    val movies67BaseUrl = playbackPreferences.movies67BaseUrl
+    val bcineBaseUrl = playbackPreferences.bcineBaseUrl
     val activity = LocalActivity.current as ComponentActivity
     val updateManager = remember(activity) { AppUpdateManager(activity) }
     val updateScope = rememberCoroutineScope()
@@ -547,8 +546,7 @@ fun AliflixApp(
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
-                PlaybackProviderId.RIVESTREAM -> rivestreamBaseUrl
-                PlaybackProviderId.MOVIES_67 -> movies67BaseUrl
+                PlaybackProviderId.BCINE -> bcineBaseUrl
             }
             MobileProviderUrlDialog(
                 providerName = provider.displayName,
@@ -558,16 +556,14 @@ fun AliflixApp(
                 onSave = {
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(it)
-                        PlaybackProviderId.RIVESTREAM -> viewModel.updateRivestreamUrl(it)
-                        PlaybackProviderId.MOVIES_67 -> viewModel.updateMovies67Url(it)
+                        PlaybackProviderId.BCINE -> viewModel.updateBcineUrl(it)
                     }
                     urlDialogProvider = null
                 },
                 onReset = {
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
-                        PlaybackProviderId.RIVESTREAM -> viewModel.resetRivestreamUrl()
-                        PlaybackProviderId.MOVIES_67 -> viewModel.resetMovies67Url()
+                        PlaybackProviderId.BCINE -> viewModel.resetBcineUrl()
                     }
                     urlDialogProvider = null
                 },
@@ -1532,9 +1528,8 @@ private fun PlaybackProviderSelector(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             listOf(
-                PlaybackProviderId.RIVESTREAM,
+                PlaybackProviderId.BCINE,
                 PlaybackProviderId.RAMOFLIX,
-                PlaybackProviderId.MOVIES_67,
             ).forEach { provider ->
                 val selected = selectedProvider == provider
                 Row(
@@ -1592,8 +1587,8 @@ private fun PlaybackProviderSelector(
                     modifier = Modifier.weight(1f),
                 )
                 ProviderUrlButton(
-                    label = "67 Movies URL",
-                    onClick = { onEditProviderUrl(PlaybackProviderId.MOVIES_67) },
+                    label = "Bcine URL",
+                    onClick = { onEditProviderUrl(PlaybackProviderId.BCINE) },
                     modifier = Modifier.weight(1f),
                 )
             }

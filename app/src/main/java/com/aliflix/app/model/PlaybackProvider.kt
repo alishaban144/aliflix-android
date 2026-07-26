@@ -13,14 +13,9 @@ enum class PlaybackProviderId(
         defaultBaseUrl = RamoflixConfig.DEFAULT_URL,
         supportsGeneralPlayback = true,
     ),
-    RIVESTREAM(
-        displayName = "Rivestream",
-        defaultBaseUrl = "https://www.rivestream.app/",
-        supportsGeneralPlayback = true,
-    ),
-    MOVIES_67(
-        displayName = "67 Movies",
-        defaultBaseUrl = "https://67movies.nl/",
+    BCINE(
+        displayName = "Bcine",
+        defaultBaseUrl = "https://bcine.ru/",
         supportsGeneralPlayback = true,
     );
 
@@ -33,12 +28,8 @@ enum class PlaybackProviderId(
                 provider.name.equals(value, ignoreCase = true) ||
                     provider.displayName.equals(value, ignoreCase = true) ||
                     (
-                        provider == RIVESTREAM &&
-                            value.equals("rivestream", ignoreCase = true)
-                        ) ||
-                    (
-                        provider == MOVIES_67 &&
-                            value.equals("67movies", ignoreCase = true)
+                        provider == BCINE &&
+                            value.equals("bcine", ignoreCase = true)
                         )
             }
     }
@@ -64,24 +55,16 @@ data class PlaybackSource(
         PlaybackProviderId.RAMOFLIX ->
             RamoflixConfig(baseUrl).buildWatchUrl(media.title)
 
-        PlaybackProviderId.RIVESTREAM -> {
+        PlaybackProviderId.BCINE -> {
             val base = baseUrl.trimEnd('/')
-            if (media.type == MediaType.TV) {
+            val route = if (media.type == MediaType.TV) {
                 val s = seasonNumber ?: 1
                 val e = episodeNumber ?: 1
-                "$base/detail?type=tv&id=${media.id}&season=$s&episode=$e"
+                "/tv/${media.id}/$s/$e"
             } else {
-                "$base/detail?type=movie&id=${media.id}"
+                "/movie/${media.id}"
             }
-        }
-
-        PlaybackProviderId.MOVIES_67 -> {
-            val route = if (media.type == MediaType.TV) {
-                "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
-            } else {
-                "/watch/movie/${media.id}"
-            }
-            "${baseUrl.trimEnd('/')}$route"
+            "$base$route"
         }
     }
 
@@ -89,25 +72,20 @@ data class PlaybackSource(
         fun ramoflix(config: RamoflixConfig = RamoflixConfig()) =
             PlaybackSource(PlaybackProviderId.RAMOFLIX, config.baseUrl)
 
-        fun rivestream(
-            baseUrl: String = PlaybackProviderId.RIVESTREAM.defaultBaseUrl,
-        ) = PlaybackSource(PlaybackProviderId.RIVESTREAM, baseUrl)
-
-        fun movies67(
-            baseUrl: String = PlaybackProviderId.MOVIES_67.defaultBaseUrl,
-        ) = PlaybackSource(PlaybackProviderId.MOVIES_67, baseUrl)
+        fun bcine(
+            baseUrl: String = PlaybackProviderId.BCINE.defaultBaseUrl,
+        ) = PlaybackSource(PlaybackProviderId.BCINE, baseUrl)
     }
 }
 
 data class PlaybackPreferences(
-    val generalProvider: PlaybackProviderId = PlaybackProviderId.RIVESTREAM,
+    val generalProvider: PlaybackProviderId = PlaybackProviderId.BCINE,
     val ramoflixConfig: RamoflixConfig = RamoflixConfig(),
-    val rivestreamBaseUrl: String = PlaybackProviderId.RIVESTREAM.defaultBaseUrl,
-    val movies67BaseUrl: String = PlaybackProviderId.MOVIES_67.defaultBaseUrl,
+    val bcineBaseUrl: String = PlaybackProviderId.BCINE.defaultBaseUrl,
 ) {
     val safeGeneralProvider: PlaybackProviderId
         get() = generalProvider.takeIf(PlaybackProviderId::supportsGeneralPlayback)
-            ?: PlaybackProviderId.RIVESTREAM
+            ?: PlaybackProviderId.BCINE
 
     fun sourceFor(
         media: Media,
@@ -118,8 +96,7 @@ data class PlaybackPreferences(
             ?: safeGeneralProvider
         return when (provider) {
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
-            PlaybackProviderId.RIVESTREAM -> PlaybackSource.rivestream(rivestreamBaseUrl)
-            PlaybackProviderId.MOVIES_67 -> PlaybackSource.movies67(movies67BaseUrl)
+            PlaybackProviderId.BCINE -> PlaybackSource.bcine(bcineBaseUrl)
         }
     }
 }

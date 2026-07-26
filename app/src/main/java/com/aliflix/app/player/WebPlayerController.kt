@@ -412,7 +412,7 @@ class WebPlayerController(
 
     private fun isMovies67Wrapper(view: WebView): Boolean {
         val selection = activeSelection ?: return false
-        if (selection.source.provider != PlaybackProviderId.MOVIES_67) return false
+        if (selection.source.provider != PlaybackProviderId.BCINE) return false
         val currentHost = runCatching {
             URI(view.url.orEmpty()).host?.removePrefix("www.")
         }.getOrNull()
@@ -459,35 +459,6 @@ class WebPlayerController(
     }
 
     private fun moveTvWebFocus(view: WebView, keyCode: Int) {
-        if (
-            activeSelection?.source?.provider == PlaybackProviderId.MOVIES_67 &&
-            runCatching {
-                URI(view.url.orEmpty()).host
-                    ?.removePrefix("www.")
-                    .equals("player.vidlove.cc", ignoreCase = true)
-            }.getOrDefault(false)
-        ) {
-            val action = when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_LEFT -> "video.currentTime = Math.max(0, video.currentTime - 10)"
-                KeyEvent.KEYCODE_DPAD_RIGHT ->
-                    "video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10)"
-                KeyEvent.KEYCODE_DPAD_UP -> "video.volume = Math.min(1, video.volume + 0.1)"
-                else -> "video.volume = Math.max(0, video.volume - 0.1)"
-            }
-            view.evaluateJavascript(
-                """
-                (() => {
-                  const video = document.querySelector("video");
-                  if (!video) return false;
-                  $action;
-                  video.focus({ preventScroll: true });
-                  return true;
-                })();
-                """.trimIndent(),
-                null,
-            )
-            return
-        }
         val direction = when (keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT -> "left"
             KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
@@ -993,8 +964,7 @@ class WebPlayerController(
     ) {
         when (selection.source.provider) {
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
-            PlaybackProviderId.RIVESTREAM -> { /* Rivestream detail page loads directly */ }
-            PlaybackProviderId.MOVIES_67 -> alignVidloveContent(view, selection)
+            PlaybackProviderId.BCINE -> { /* Bcine movie/tv page loads directly */ }
         }
     }
 

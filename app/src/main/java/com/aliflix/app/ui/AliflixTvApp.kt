@@ -353,8 +353,7 @@ fun AliflixTvApp(
                     updateUi = updateUi,
                     generalProvider = playbackPreferences.safeGeneralProvider,
                     ramoflixUrl = playbackPreferences.ramoflixConfig.baseUrl,
-                    rivestreamUrl = playbackPreferences.rivestreamBaseUrl,
-                    movies67Url = playbackPreferences.movies67BaseUrl,
+                    bcineUrl = playbackPreferences.bcineBaseUrl,
                     onSelectGeneralProvider = viewModel::selectGeneralPlaybackProvider,
                     onEditProviderUrl = { provider ->
                         urlDialogProvider = provider
@@ -402,8 +401,7 @@ fun AliflixTvApp(
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
                 PlaybackProviderId.RAMOFLIX -> playbackPreferences.ramoflixConfig.baseUrl
-                PlaybackProviderId.RIVESTREAM -> playbackPreferences.rivestreamBaseUrl
-                PlaybackProviderId.MOVIES_67 -> playbackPreferences.movies67BaseUrl
+                PlaybackProviderId.BCINE -> playbackPreferences.bcineBaseUrl
             }
             TvProviderUrlDialog(
                 providerName = provider.displayName,
@@ -413,16 +411,14 @@ fun AliflixTvApp(
                 onSave = { newUrl ->
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
-                        PlaybackProviderId.RIVESTREAM -> viewModel.updateRivestreamUrl(newUrl)
-                        PlaybackProviderId.MOVIES_67 -> viewModel.updateMovies67Url(newUrl)
+                        PlaybackProviderId.BCINE -> viewModel.updateBcineUrl(newUrl)
                     }
                     urlDialogProvider = null
                 },
                 onReset = {
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
-                        PlaybackProviderId.RIVESTREAM -> viewModel.resetRivestreamUrl()
-                        PlaybackProviderId.MOVIES_67 -> viewModel.resetMovies67Url()
+                        PlaybackProviderId.BCINE -> viewModel.resetBcineUrl()
                     }
                     urlDialogProvider = null
                 },
@@ -838,8 +834,7 @@ private fun TvLibraryScreen(
     updateUi: TvUpdateUiState,
     generalProvider: PlaybackProviderId,
     ramoflixUrl: String,
-    rivestreamUrl: String,
-    movies67Url: String,
+    bcineUrl: String,
     onSelectGeneralProvider: (PlaybackProviderId) -> Unit,
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     onCheckForUpdates: () -> Unit,
@@ -944,8 +939,7 @@ private fun TvLibraryScreen(
                 TvPlaybackProviderPanel(
                     selectedProvider = generalProvider,
                     ramoflixUrl = ramoflixUrl,
-                    rivestreamUrl = rivestreamUrl,
-                    movies67Url = movies67Url,
+                    bcineUrl = bcineUrl,
                     onSelectProvider = onSelectGeneralProvider,
                     onEditProviderUrl = onEditProviderUrl,
                 )
@@ -1132,8 +1126,7 @@ private fun TvExpandedLibrary(
 private fun TvPlaybackProviderPanel(
     selectedProvider: PlaybackProviderId,
     ramoflixUrl: String,
-    rivestreamUrl: String,
-    movies67Url: String,
+    bcineUrl: String,
     onSelectProvider: (PlaybackProviderId) -> Unit,
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
 ) {
@@ -1179,14 +1172,14 @@ private fun TvPlaybackProviderPanel(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             TvProviderOption(
-                provider = PlaybackProviderId.RIVESTREAM,
-                selected = selectedProvider == PlaybackProviderId.RIVESTREAM,
-                url = rivestreamUrl,
+                provider = PlaybackProviderId.BCINE,
+                selected = selectedProvider == PlaybackProviderId.BCINE,
+                url = bcineUrl,
                 onSelect = {
-                    onSelectProvider(PlaybackProviderId.RIVESTREAM)
+                    onSelectProvider(PlaybackProviderId.BCINE)
                 },
                 onEdit = {
-                    onEditProviderUrl(PlaybackProviderId.RIVESTREAM)
+                    onEditProviderUrl(PlaybackProviderId.BCINE)
                 },
                 modifier = Modifier.weight(1f),
             )
@@ -1199,18 +1192,6 @@ private fun TvPlaybackProviderPanel(
                 },
                 onEdit = {
                     onEditProviderUrl(PlaybackProviderId.RAMOFLIX)
-                },
-                modifier = Modifier.weight(1f),
-            )
-            TvProviderOption(
-                provider = PlaybackProviderId.MOVIES_67,
-                selected = selectedProvider == PlaybackProviderId.MOVIES_67,
-                url = movies67Url,
-                onSelect = {
-                    onSelectProvider(PlaybackProviderId.MOVIES_67)
-                },
-                onEdit = {
-                    onEditProviderUrl(PlaybackProviderId.MOVIES_67)
                 },
                 modifier = Modifier.weight(1f),
             )
@@ -1552,13 +1533,12 @@ private fun TvDetailScreen(
     var restorePlayerFocus by remember(item.key) { mutableStateOf(false) }
     val playbackProviders = remember {
         listOf(
-            PlaybackProviderId.RIVESTREAM,
+            PlaybackProviderId.BCINE,
             PlaybackProviderId.RAMOFLIX,
-            PlaybackProviderId.MOVIES_67,
         )
     }
     val initialProvider = generalProvider.takeIf { it in playbackProviders }
-        ?: PlaybackProviderId.RIVESTREAM
+        ?: PlaybackProviderId.BCINE
     var selectedProviderName by rememberSaveable(item.key) {
         mutableStateOf(initialProvider.name)
     }

@@ -39,29 +39,16 @@ class PlaybackProviderRepository(context: Context) {
         )
     }
 
-    fun updateRivestreamUrl(newUrl: String) {
+    fun updateBcineUrl(newUrl: String) {
         val normalized = RamoflixConfig.normalizeBaseUrl(newUrl) ?: return
-        prefs.edit { putString(KEY_CUSTOM_RIVESTREAM_URL, normalized) }
-        _preferences.value = _preferences.value.copy(rivestreamBaseUrl = normalized)
+        prefs.edit { putString(KEY_CUSTOM_BCINE_URL, normalized) }
+        _preferences.value = _preferences.value.copy(bcineBaseUrl = normalized)
     }
 
-    fun resetRivestreamUrl() {
-        prefs.edit { remove(KEY_CUSTOM_RIVESTREAM_URL) }
+    fun resetBcineUrl() {
+        prefs.edit { remove(KEY_CUSTOM_BCINE_URL) }
         _preferences.value = _preferences.value.copy(
-            rivestreamBaseUrl = PlaybackProviderId.RIVESTREAM.defaultBaseUrl,
-        )
-    }
-
-    fun updateMovies67Url(newUrl: String) {
-        val normalized = RamoflixConfig.normalizeBaseUrl(newUrl) ?: return
-        prefs.edit { putString(KEY_CUSTOM_MOVIES_67_URL, normalized) }
-        _preferences.value = _preferences.value.copy(movies67BaseUrl = normalized)
-    }
-
-    fun resetMovies67Url() {
-        prefs.edit { remove(KEY_CUSTOM_MOVIES_67_URL) }
-        _preferences.value = _preferences.value.copy(
-            movies67BaseUrl = PlaybackProviderId.MOVIES_67.defaultBaseUrl,
+            bcineBaseUrl = PlaybackProviderId.BCINE.defaultBaseUrl,
         )
     }
 
@@ -72,23 +59,17 @@ class PlaybackProviderRepository(context: Context) {
         if (savedRamoflixUrl != null && normalizedRamoflixUrl == null) {
             prefs.edit { remove(KEY_CUSTOM_RAMOFLIX_URL) }
         }
-        val savedRivestreamUrl = prefs.getString(KEY_CUSTOM_RIVESTREAM_URL, null)
-        val normalizedRivestreamUrl =
-            savedRivestreamUrl?.let(RamoflixConfig::normalizeBaseUrl)
-        if (savedRivestreamUrl != null && normalizedRivestreamUrl == null) {
-            prefs.edit { remove(KEY_CUSTOM_RIVESTREAM_URL) }
-        }
-        val savedMovies67Url = prefs.getString(KEY_CUSTOM_MOVIES_67_URL, null)
-        val normalizedMovies67Url =
-            savedMovies67Url?.let(RamoflixConfig::normalizeBaseUrl)
-        if (savedMovies67Url != null && normalizedMovies67Url == null) {
-            prefs.edit { remove(KEY_CUSTOM_MOVIES_67_URL) }
+        val savedBcineUrl = prefs.getString(KEY_CUSTOM_BCINE_URL, null)
+        val normalizedBcineUrl =
+            savedBcineUrl?.let(RamoflixConfig::normalizeBaseUrl)
+        if (savedBcineUrl != null && normalizedBcineUrl == null) {
+            prefs.edit { remove(KEY_CUSTOM_BCINE_URL) }
         }
         val storedProvider = prefs.getString(KEY_GENERAL_PROVIDER_ID, null)
             ?: prefs.getString(KEY_LEGACY_ACTIVE_SOURCE_ID, null)
         val generalProvider = PlaybackProviderId.fromStoredValue(storedProvider)
             ?.takeIf(PlaybackProviderId::supportsGeneralPlayback)
-            ?: PlaybackProviderId.RIVESTREAM
+            ?: PlaybackProviderId.BCINE
         if (storedProvider != null) {
             prefs.edit {
                 putString(KEY_GENERAL_PROVIDER_ID, generalProvider.name)
@@ -100,18 +81,15 @@ class PlaybackProviderRepository(context: Context) {
             ramoflixConfig = RamoflixConfig(
                 normalizedRamoflixUrl ?: RamoflixConfig.DEFAULT_URL,
             ),
-            rivestreamBaseUrl = normalizedRivestreamUrl
-                ?: PlaybackProviderId.RIVESTREAM.defaultBaseUrl,
-            movies67BaseUrl = normalizedMovies67Url
-                ?: PlaybackProviderId.MOVIES_67.defaultBaseUrl,
+            bcineBaseUrl = normalizedBcineUrl
+                ?: PlaybackProviderId.BCINE.defaultBaseUrl,
         )
     }
 
     private companion object {
         const val PREFS_NAME = "aliflix_streaming_sources_prefs"
         const val KEY_CUSTOM_RAMOFLIX_URL = "custom_url_ramoflix"
-        const val KEY_CUSTOM_RIVESTREAM_URL = "custom_url_rivestream"
-        const val KEY_CUSTOM_MOVIES_67_URL = "custom_url_movies_67"
+        const val KEY_CUSTOM_BCINE_URL = "custom_url_bcine"
         const val KEY_GENERAL_PROVIDER_ID = "general_provider_id"
         const val KEY_LEGACY_ACTIVE_SOURCE_ID = "active_source_id"
     }
