@@ -973,24 +973,47 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ) {
         if (!isActiveSelection(view, selection)) return
-        if (selection.media.type == MediaType.MOVIE) {
-            view.evaluateJavascript(
-                """
-                (() => {
-                    const player = document.querySelector('iframe') || 
-                                   document.querySelector('#player') || 
-                                   document.querySelector('.player') ||
-                                   document.querySelector('[class*="player"]');
-                    if (player) {
-                        player.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    } else {
-                        window.scrollTo(0, 500);
+        view.evaluateJavascript(
+            """
+            (function() {
+                function doAlign() {
+                    const playSelectors = [
+                        '.play-btn', '.btn-play', '.play-button', '#play-btn',
+                        '[class*="play-btn"]', '[class*="play_btn"]', '[class*="playButton"]',
+                        'button[class*="play"]', 'a[class*="play"]', '.poster-play',
+                        '.player-play', '.vjs-big-play-button', '.play_icon'
+                    ];
+                    for (const sel of playSelectors) {
+                        const btn = document.querySelector(sel);
+                        if (btn && btn.offsetWidth > 0 && btn.offsetHeight > 0) {
+                            try { btn.click(); } catch(e) {}
+                            break;
+                        }
                     }
-                })();
-                """.trimIndent(),
-                null,
-            )
-        }
+
+                    const player = document.querySelector('iframe') ||
+                                   document.querySelector('#player') ||
+                                   document.querySelector('.player') ||
+                                   document.querySelector('[class*="player"]') ||
+                                   document.querySelector('[id*="player"]');
+                    if (player) {
+                        player.scrollIntoView({ behavior: 'auto', block: 'start' });
+                    } else {
+                        window.scrollTo(0, 480);
+                    }
+                }
+
+                doAlign();
+                let count = 0;
+                const timer = setInterval(() => {
+                    count++;
+                    doAlign();
+                    if (count >= 12) clearInterval(timer);
+                }, 350);
+            })();
+            """.trimIndent(),
+            null,
+        )
     }
 
     private fun alignVidloveContent(
