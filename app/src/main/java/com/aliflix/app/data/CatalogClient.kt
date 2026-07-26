@@ -846,16 +846,16 @@ class CatalogClient(
                 "Action Hits",
             ),
             TmdbHomeRailSpec(
+                "/discover/movie?with_genres=16&sort_by=popularity.desc",
+                "Animation & Animated Worlds",
+            ),
+            TmdbHomeRailSpec(
                 "/discover/movie?with_genres=35&sort_by=popularity.desc",
                 "Comedy Picks",
             ),
             TmdbHomeRailSpec(
-                "/discover/movie?with_genres=878&sort_by=popularity.desc",
-                "Science Fiction",
-            ),
-            TmdbHomeRailSpec(
-                "/discover/movie?with_genres=53&sort_by=popularity.desc",
-                "Edge-of-Your-Seat Thrillers",
+                "/discover/movie?with_genres=18&sort_by=popularity.desc",
+                "Gripping Dramas",
             ),
             TmdbHomeRailSpec(
                 "/discover/movie?with_genres=27&sort_by=popularity.desc",
@@ -863,15 +863,39 @@ class CatalogClient(
             ),
             TmdbHomeRailSpec(
                 "/discover/movie?with_genres=10749&sort_by=popularity.desc",
-                "Romance",
+                "Romance & Love Stories",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=878&sort_by=popularity.desc",
+                "Sci-Fi & Cyberpunk Worlds",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=53&sort_by=popularity.desc",
+                "Edge-of-Your-Seat Thrillers",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/tv?with_genres=10759&sort_by=popularity.desc",
+                "Action & Adventure Series",
             ),
             TmdbHomeRailSpec(
                 "/discover/tv?with_genres=80&sort_by=popularity.desc",
-                "Crime Series",
+                "Crime & Mystery Series",
             ),
             TmdbHomeRailSpec(
                 "/discover/tv?with_genres=10765&sort_by=popularity.desc",
                 "Fantasy & Sci-Fi Worlds",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=9648&sort_by=popularity.desc",
+                "Mystery & Whodunit",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=10751&sort_by=popularity.desc",
+                "Family Movie Night",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=16&with_original_language=ja&sort_by=popularity.desc",
+                "Anime Favorites",
             ),
         )
 

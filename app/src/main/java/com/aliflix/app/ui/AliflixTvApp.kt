@@ -1179,18 +1179,6 @@ private fun TvPlaybackProviderPanel(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             TvProviderOption(
-                provider = PlaybackProviderId.BCINE,
-                selected = selectedProvider == PlaybackProviderId.BCINE,
-                url = bcineUrl,
-                onSelect = {
-                    onSelectProvider(PlaybackProviderId.BCINE)
-                },
-                onEdit = {
-                    onEditProviderUrl(PlaybackProviderId.BCINE)
-                },
-                modifier = Modifier.weight(1f),
-            )
-            TvProviderOption(
                 provider = PlaybackProviderId.RAMOFLIX,
                 selected = selectedProvider == PlaybackProviderId.RAMOFLIX,
                 url = ramoflixUrl,
@@ -1211,6 +1199,18 @@ private fun TvPlaybackProviderPanel(
                 },
                 onEdit = {
                     onEditProviderUrl(PlaybackProviderId.DORABY)
+                },
+                modifier = Modifier.weight(1f),
+            )
+            TvProviderOption(
+                provider = PlaybackProviderId.BCINE,
+                selected = selectedProvider == PlaybackProviderId.BCINE,
+                url = bcineUrl,
+                onSelect = {
+                    onSelectProvider(PlaybackProviderId.BCINE)
+                },
+                onEdit = {
+                    onEditProviderUrl(PlaybackProviderId.BCINE)
                 },
                 modifier = Modifier.weight(1f),
             )
@@ -1552,13 +1552,13 @@ private fun TvDetailScreen(
     var restorePlayerFocus by remember(item.key) { mutableStateOf(false) }
     val playbackProviders = remember {
         listOf(
-            PlaybackProviderId.BCINE,
             PlaybackProviderId.RAMOFLIX,
             PlaybackProviderId.DORABY,
+            PlaybackProviderId.BCINE,
         )
     }
     val initialProvider = generalProvider.takeIf { it in playbackProviders }
-        ?: PlaybackProviderId.BCINE
+        ?: PlaybackProviderId.RAMOFLIX
     var selectedProviderName by rememberSaveable(item.key) {
         mutableStateOf(initialProvider.name)
     }

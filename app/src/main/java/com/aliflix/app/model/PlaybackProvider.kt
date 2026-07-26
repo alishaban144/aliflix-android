@@ -13,14 +13,14 @@ enum class PlaybackProviderId(
         defaultBaseUrl = RamoflixConfig.DEFAULT_URL,
         supportsGeneralPlayback = true,
     ),
-    BCINE(
-        displayName = "Bcine",
-        defaultBaseUrl = "https://bcine.ru/",
-        supportsGeneralPlayback = true,
-    ),
     DORABY(
         displayName = "Doraby",
         defaultBaseUrl = "https://doraby.com/",
+        supportsGeneralPlayback = true,
+    ),
+    BCINE(
+        displayName = "Bcine",
+        defaultBaseUrl = "https://bcine.ru/",
         supportsGeneralPlayback = true,
     );
 
@@ -101,14 +101,14 @@ data class PlaybackSource(
 }
 
 data class PlaybackPreferences(
-    val generalProvider: PlaybackProviderId = PlaybackProviderId.BCINE,
+    val generalProvider: PlaybackProviderId = PlaybackProviderId.RAMOFLIX,
     val ramoflixConfig: RamoflixConfig = RamoflixConfig(),
     val bcineBaseUrl: String = PlaybackProviderId.BCINE.defaultBaseUrl,
     val dorabyBaseUrl: String = PlaybackProviderId.DORABY.defaultBaseUrl,
 ) {
     val safeGeneralProvider: PlaybackProviderId
         get() = generalProvider.takeIf(PlaybackProviderId::supportsGeneralPlayback)
-            ?: PlaybackProviderId.BCINE
+            ?: PlaybackProviderId.RAMOFLIX
 
     fun sourceFor(
         media: Media,

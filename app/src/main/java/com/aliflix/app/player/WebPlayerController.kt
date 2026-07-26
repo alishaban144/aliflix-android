@@ -976,12 +976,29 @@ class WebPlayerController(
         view.evaluateJavascript(
             """
             (function() {
+                if (!document.getElementById("aliflix-bcine-style")) {
+                    const style = document.createElement("style");
+                    style.id = "aliflix-bcine-style";
+                    style.textContent = `
+                        iframe, #player, .player, [class*="player-container"], [id*="player"] {
+                            position: fixed !important;
+                            top: 0 !important;
+                            left: 0 !important;
+                            width: 100vw !important;
+                            height: 100vh !important;
+                            z-index: 999999 !important;
+                            background: #000 !important;
+                        }
+                    `;
+                    (document.head || document.documentElement).appendChild(style);
+                }
+
                 function doAlign() {
                     const playSelectors = [
                         '.play-btn', '.btn-play', '.play-button', '#play-btn',
                         '[class*="play-btn"]', '[class*="play_btn"]', '[class*="playButton"]',
                         'button[class*="play"]', 'a[class*="play"]', '.poster-play',
-                        '.player-play', '.vjs-big-play-button', '.play_icon'
+                        '.player-play', '.vjs-big-play-button', '.play_icon', '.play'
                     ];
                     for (const sel of playSelectors) {
                         const btn = document.querySelector(sel);
@@ -994,8 +1011,7 @@ class WebPlayerController(
                     const player = document.querySelector('iframe') ||
                                    document.querySelector('#player') ||
                                    document.querySelector('.player') ||
-                                   document.querySelector('[class*="player"]') ||
-                                   document.querySelector('[id*="player"]');
+                                   document.querySelector('[class*="player"]');
                     if (player) {
                         player.scrollIntoView({ behavior: 'auto', block: 'start' });
                     } else {
@@ -1008,8 +1024,8 @@ class WebPlayerController(
                 const timer = setInterval(() => {
                     count++;
                     doAlign();
-                    if (count >= 12) clearInterval(timer);
-                }, 350);
+                    if (count >= 15) clearInterval(timer);
+                }, 300);
             })();
             """.trimIndent(),
             null,

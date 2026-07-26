@@ -88,7 +88,7 @@ class PlaybackProviderRepository(context: Context) {
             ?: prefs.getString(KEY_LEGACY_ACTIVE_SOURCE_ID, null)
         val generalProvider = PlaybackProviderId.fromStoredValue(storedProvider)
             ?.takeIf(PlaybackProviderId::supportsGeneralPlayback)
-            ?: PlaybackProviderId.BCINE
+            ?: PlaybackProviderId.RAMOFLIX
         if (storedProvider != null) {
             prefs.edit {
                 putString(KEY_GENERAL_PROVIDER_ID, generalProvider.name)
