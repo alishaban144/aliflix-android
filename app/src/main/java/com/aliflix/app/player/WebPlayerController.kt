@@ -163,10 +163,9 @@ class WebPlayerController(
     ) {
         _loading.value = true
         _error.value = null
-        view.alpha = 0f
+        view.alpha = 1f
         val entryUrl = selection.entryUrl
         if (entryUrl == null) {
-            view.alpha = 1f
             _loading.value = false
             _error.value = "This provider could not create a playback link."
         } else {
@@ -243,7 +242,7 @@ class WebPlayerController(
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                     _loading.value = true
                     _error.value = null
-                    view?.alpha = 0f
+                    view?.alpha = 1f
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
