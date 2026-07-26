@@ -15,6 +15,8 @@ class PlaybackNavigationPolicyTest {
             "https://345movie.nl/home",
             "https://456movie.nl/movie/watch/27205",
             "https://player.456movie.nl/tv/watch/66732",
+            "https://67movies.nl/watch/movie/27205",
+            "https://www.67movie.nl/watch",
             "https://player.videasy.to/tv/66732/2/3",
             "https://vidlink.pro/tv/66732/2/3",
             "https://111movies.net/tv/66732/2/3",

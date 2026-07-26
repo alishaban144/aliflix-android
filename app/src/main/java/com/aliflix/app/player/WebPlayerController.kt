@@ -326,6 +326,8 @@ class WebPlayerController(
                     ) {
                         return false
                     }
+                    view?.alpha = 1f
+                    _loading.value = false
                     Toast.makeText(
                         activity,
                         "External navigation blocked",
@@ -341,6 +343,7 @@ class WebPlayerController(
                 ) {
                     if (request?.isForMainFrame == true) {
                         _loading.value = false
+                        view?.alpha = 1f
                         _error.value = error?.description?.toString()
                             ?: "The player could not be loaded."
                     }

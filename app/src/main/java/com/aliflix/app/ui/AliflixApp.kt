@@ -92,6 +92,8 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -1827,6 +1829,221 @@ private fun MobileUpdatePanel(
 }
 
 @Composable
+private fun MobileSettingsDialog(
+    generalProvider: PlaybackProviderId,
+    onSelectProvider: (PlaybackProviderId) -> Unit,
+    onEditProviderUrl: (PlaybackProviderId) -> Unit,
+    updateUi: MobileUpdateUiState,
+    onCheckForUpdates: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
+    onClearRecent: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var showClearConfirmation by remember { mutableStateOf(false) }
+
+    if (showClearConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirmation = false },
+            title = { Text("Clear viewing history?") },
+            text = {
+                Text(
+                    "This removes every title from History and resets the history part " +
+                        "of your personalized match scores. My List is not affected.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearConfirmation = false
+                        onClearRecent()
+                    },
+                ) {
+                    Text("Clear all", color = AliflixRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirmation = false }) {
+                    Text("Cancel")
+                }
+            },
+            containerColor = AliflixSurfaceRaised,
+            titleContentColor = Color.White,
+            textContentColor = AliflixMuted,
+            shape = RoundedCornerShape(24.dp),
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .padding(horizontal = 20.dp, vertical = 24.dp)
+                .widthIn(max = 440.dp)
+                .fillMaxWidth(),
+            color = Color(0xFF161A22),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(28.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+            tonalElevation = 10.dp,
+            shadowElevation = 24.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(AliflixRed.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Settings,
+                                contentDescription = null,
+                                tint = AliflixRed,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Settings",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White,
+                            )
+                            Text(
+                                text = "Playback, providers & system",
+                                fontSize = 11.sp,
+                                color = AliflixMuted,
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(Color.White.copy(alpha = 0.08f), CircleShape),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Close settings",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "PLAYBACK SOURCE",
+                        color = AliflixRed,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.2.sp,
+                    )
+                    PlaybackProviderSelector(
+                        selectedProvider = generalProvider,
+                        onSelectProvider = onSelectProvider,
+                        onEditProviderUrl = onEditProviderUrl,
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "UPDATES & VERSION",
+                        color = AliflixRed,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.2.sp,
+                    )
+                    MobileUpdatePanel(
+                        state = updateUi,
+                        onCheck = onCheckForUpdates,
+                        onDownload = onDownloadUpdate,
+                        onInstall = onInstallUpdate,
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "DATA & HISTORY",
+                        color = AliflixRed,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.2.sp,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(Color.White.copy(alpha = 0.055f))
+                            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+                            .clickable { showClearConfirmation = true }
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFFF4444).copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.DeleteSweep,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFF6B6B),
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Clear watch history",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = "Removes items from history tab",
+                                    color = AliflixMuted,
+                                    fontSize = 10.sp,
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Clear",
+                            color = Color(0xFFFF6B6B),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun MySpaceScreen(
     myList: List<Media>,
     likes: List<Media>,
@@ -1852,8 +2069,8 @@ private fun MySpaceScreen(
         initialPage = page.coerceIn(0, 2),
         pageCount = { 3 },
     )
+    var showSettingsWindow by rememberSaveable { mutableStateOf(false) }
     var showClearConfirmation by remember { mutableStateOf(false) }
-    var settingsExpanded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(page) {
         if (pagerState.settledPage != page) {
@@ -1898,6 +2115,20 @@ private fun MySpaceScreen(
         )
     }
 
+    if (showSettingsWindow) {
+        MobileSettingsDialog(
+            generalProvider = generalProvider,
+            onSelectProvider = onSelectProvider,
+            onEditProviderUrl = onEditProviderUrl,
+            updateUi = updateUi,
+            onCheckForUpdates = onCheckForUpdates,
+            onDownloadUpdate = onDownloadUpdate,
+            onInstallUpdate = onInstallUpdate,
+            onClearRecent = onClearRecent,
+            onDismiss = { showSettingsWindow = false },
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1933,63 +2164,27 @@ private fun MySpaceScreen(
                 )
             }
             OutlinedButton(
-                onClick = { settingsExpanded = !settingsExpanded },
-                modifier = Modifier.height(44.dp),
+                onClick = { showSettingsWindow = true },
+                modifier = Modifier.height(42.dp),
                 shape = RoundedCornerShape(14.dp),
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
-                    if (settingsExpanded) {
-                        AliflixRed.copy(alpha = 0.65f)
-                    } else {
-                        Color.White.copy(alpha = 0.13f)
-                    },
+                    Color.White.copy(alpha = 0.15f),
                 ),
-                contentPadding = PaddingValues(horizontal = 11.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp),
             ) {
+                Icon(
+                    imageVector = Icons.Rounded.Settings,
+                    contentDescription = "Open Settings",
+                    tint = Color.White,
+                    modifier = Modifier.size(17.dp),
+                )
+                Spacer(Modifier.width(6.dp))
                 Text(
                     text = "Settings",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.width(4.dp))
-                Icon(
-                    imageVector = if (settingsExpanded) {
-                        Icons.Rounded.ExpandLess
-                    } else {
-                        Icons.Rounded.ExpandMore
-                    },
-                    contentDescription = if (settingsExpanded) {
-                        "Hide playback and update settings"
-                    } else {
-                        "Show playback and update settings"
-                    },
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-        AnimatedVisibility(
-            visible = settingsExpanded,
-            enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { -it / 5 },
-            exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { -it / 5 },
-        ) {
-            Column(
-                modifier = Modifier
-                    .heightIn(max = 240.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                PlaybackProviderSelector(
-                    selectedProvider = generalProvider,
-                    onSelectProvider = onSelectProvider,
-                    onEditProviderUrl = onEditProviderUrl,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-                MobileUpdatePanel(
-                    state = updateUi,
-                    onCheck = onCheckForUpdates,
-                    onDownload = onDownloadUpdate,
-                    onInstall = onInstallUpdate,
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = Color.White,
                 )
             }
         }
