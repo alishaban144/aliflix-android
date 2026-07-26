@@ -6,6 +6,7 @@ object PlaybackNavigationPolicy {
     private val defaultApprovedPlaybackHosts = setOf(
         "ramoflix.net",
         "bcine.ru",
+        "doraby.com",
         "player.vidlove.cc",
         "345movie.nl",
         "456movie.nl",

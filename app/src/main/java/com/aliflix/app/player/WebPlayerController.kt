@@ -964,6 +964,7 @@ class WebPlayerController(
         when (selection.source.provider) {
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.BCINE -> { /* Bcine movie/tv page loads directly */ }
+            PlaybackProviderId.DORABY -> { /* Doraby movie/tv page loads directly */ }
         }
     }
 

@@ -10,6 +10,7 @@ class PlaybackNavigationPolicyTest {
         listOf(
             "https://ramoflix.net/inception/",
             "https://bcine.ru/movie/1083381",
+            "https://doraby.com/movie/1083381",
             "https://67movies.nl/watch/movie/27205",
             "https://player.vidlove.cc/embed/tv/66732/2/3",
             "https://www.345movie.nl/watch/movie/27205",

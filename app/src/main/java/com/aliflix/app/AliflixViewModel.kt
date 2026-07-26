@@ -85,6 +85,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun resetBcineUrl() = playbackProviderRepository.resetBcineUrl()
 
+    fun updateDorabyUrl(newUrl: String) =
+        playbackProviderRepository.updateDorabyUrl(newUrl)
+
+    fun resetDorabyUrl() = playbackProviderRepository.resetDorabyUrl()
+
     init {
         refreshHome()
         viewModelScope.launch {

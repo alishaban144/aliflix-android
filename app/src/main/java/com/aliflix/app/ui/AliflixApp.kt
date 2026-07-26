@@ -221,6 +221,7 @@ fun AliflixApp(
     val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val ramoflixConfig = playbackPreferences.ramoflixConfig
     val bcineBaseUrl = playbackPreferences.bcineBaseUrl
+    val dorabyBaseUrl = playbackPreferences.dorabyBaseUrl
     val activity = LocalActivity.current as ComponentActivity
     val updateManager = remember(activity) { AppUpdateManager(activity) }
     val updateScope = rememberCoroutineScope()
@@ -547,6 +548,7 @@ fun AliflixApp(
             val currentUrl = when (provider) {
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
                 PlaybackProviderId.BCINE -> bcineBaseUrl
+                PlaybackProviderId.DORABY -> dorabyBaseUrl
             }
             MobileProviderUrlDialog(
                 providerName = provider.displayName,
@@ -557,6 +559,7 @@ fun AliflixApp(
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(it)
                         PlaybackProviderId.BCINE -> viewModel.updateBcineUrl(it)
+                        PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(it)
                     }
                     urlDialogProvider = null
                 },
@@ -564,6 +567,7 @@ fun AliflixApp(
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
                         PlaybackProviderId.BCINE -> viewModel.resetBcineUrl()
+                        PlaybackProviderId.DORABY -> viewModel.resetDorabyUrl()
                     }
                     urlDialogProvider = null
                 },
@@ -1530,6 +1534,7 @@ private fun PlaybackProviderSelector(
             listOf(
                 PlaybackProviderId.BCINE,
                 PlaybackProviderId.RAMOFLIX,
+                PlaybackProviderId.DORABY,
             ).forEach { provider ->
                 val selected = selectedProvider == provider
                 Row(
@@ -1553,44 +1558,45 @@ private fun PlaybackProviderSelector(
                             selected = selected,
                             onClick = { onSelectProvider(provider) },
                         )
-                        .padding(horizontal = 11.dp),
+                        .padding(start = 10.dp, end = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text(
-                        text = provider.displayName,
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (selected) {
-                        Spacer(Modifier.width(5.dp))
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = "Selected",
-                            modifier = Modifier.size(16.dp),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f, fill = false),
+                    ) {
+                        Text(
+                            text = provider.displayName,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
+                        if (selected) {
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = "Selected",
+                                modifier = Modifier.size(15.dp),
+                            )
+                        }
+                    }
+                    if (onEditProviderUrl != null) {
+                        IconButton(
+                            onClick = { onEditProviderUrl(provider) },
+                            modifier = Modifier.size(24.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Edit,
+                                contentDescription = "Edit ${provider.displayName} URL",
+                                tint = Color.White.copy(alpha = 0.82f),
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
                     }
                 }
-            }
-        }
-        if (onEditProviderUrl != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ProviderUrlButton(
-                    label = "Ramoflix URL",
-                    onClick = { onEditProviderUrl(PlaybackProviderId.RAMOFLIX) },
-                    modifier = Modifier.weight(1f),
-                )
-                ProviderUrlButton(
-                    label = "Bcine URL",
-                    onClick = { onEditProviderUrl(PlaybackProviderId.BCINE) },
-                    modifier = Modifier.weight(1f),
-                )
             }
         }
     }

@@ -117,4 +117,30 @@ class MediaTest {
             preferences.sourceFor(item).provider,
         )
     }
+
+    @Test
+    fun dorabyBuildsMovieAndTvWatchUrl() {
+        val movie = Media(id = 1083381, type = MediaType.MOVIE, title = "Inception")
+        val movieSelection = PlaybackSelection(
+            media = movie,
+            source = PlaybackSource.doraby(),
+        )
+
+        val tv = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
+        val tvSelection = PlaybackSelection(
+            media = tv,
+            seasonNumber = 2,
+            episodeNumber = 3,
+            source = PlaybackSource.doraby(),
+        )
+
+        assertEquals(
+            "https://doraby.com/movie/1083381",
+            movieSelection.entryUrl,
+        )
+        assertEquals(
+            "https://doraby.com/tv/66732/2/3",
+            tvSelection.entryUrl,
+        )
+    }
 }

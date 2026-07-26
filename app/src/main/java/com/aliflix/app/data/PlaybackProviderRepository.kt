@@ -52,6 +52,19 @@ class PlaybackProviderRepository(context: Context) {
         )
     }
 
+    fun updateDorabyUrl(newUrl: String) {
+        val normalized = RamoflixConfig.normalizeBaseUrl(newUrl) ?: return
+        prefs.edit { putString(KEY_CUSTOM_DORABY_URL, normalized) }
+        _preferences.value = _preferences.value.copy(dorabyBaseUrl = normalized)
+    }
+
+    fun resetDorabyUrl() {
+        prefs.edit { remove(KEY_CUSTOM_DORABY_URL) }
+        _preferences.value = _preferences.value.copy(
+            dorabyBaseUrl = PlaybackProviderId.DORABY.defaultBaseUrl,
+        )
+    }
+
     private fun loadPreferences(): PlaybackPreferences {
         val savedRamoflixUrl = prefs.getString(KEY_CUSTOM_RAMOFLIX_URL, null)
         val normalizedRamoflixUrl =
@@ -64,6 +77,12 @@ class PlaybackProviderRepository(context: Context) {
             savedBcineUrl?.let(RamoflixConfig::normalizeBaseUrl)
         if (savedBcineUrl != null && normalizedBcineUrl == null) {
             prefs.edit { remove(KEY_CUSTOM_BCINE_URL) }
+        }
+        val savedDorabyUrl = prefs.getString(KEY_CUSTOM_DORABY_URL, null)
+        val normalizedDorabyUrl =
+            savedDorabyUrl?.let(RamoflixConfig::normalizeBaseUrl)
+        if (savedDorabyUrl != null && normalizedDorabyUrl == null) {
+            prefs.edit { remove(KEY_CUSTOM_DORABY_URL) }
         }
         val storedProvider = prefs.getString(KEY_GENERAL_PROVIDER_ID, null)
             ?: prefs.getString(KEY_LEGACY_ACTIVE_SOURCE_ID, null)
@@ -83,6 +102,8 @@ class PlaybackProviderRepository(context: Context) {
             ),
             bcineBaseUrl = normalizedBcineUrl
                 ?: PlaybackProviderId.BCINE.defaultBaseUrl,
+            dorabyBaseUrl = normalizedDorabyUrl
+                ?: PlaybackProviderId.DORABY.defaultBaseUrl,
         )
     }
 
@@ -90,6 +111,7 @@ class PlaybackProviderRepository(context: Context) {
         const val PREFS_NAME = "aliflix_streaming_sources_prefs"
         const val KEY_CUSTOM_RAMOFLIX_URL = "custom_url_ramoflix"
         const val KEY_CUSTOM_BCINE_URL = "custom_url_bcine"
+        const val KEY_CUSTOM_DORABY_URL = "custom_url_doraby"
         const val KEY_GENERAL_PROVIDER_ID = "general_provider_id"
         const val KEY_LEGACY_ACTIVE_SOURCE_ID = "active_source_id"
     }

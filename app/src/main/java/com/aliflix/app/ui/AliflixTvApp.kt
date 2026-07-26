@@ -354,6 +354,7 @@ fun AliflixTvApp(
                     generalProvider = playbackPreferences.safeGeneralProvider,
                     ramoflixUrl = playbackPreferences.ramoflixConfig.baseUrl,
                     bcineUrl = playbackPreferences.bcineBaseUrl,
+                    dorabyUrl = playbackPreferences.dorabyBaseUrl,
                     onSelectGeneralProvider = viewModel::selectGeneralPlaybackProvider,
                     onEditProviderUrl = { provider ->
                         urlDialogProvider = provider
@@ -402,6 +403,7 @@ fun AliflixTvApp(
             val currentUrl = when (provider) {
                 PlaybackProviderId.RAMOFLIX -> playbackPreferences.ramoflixConfig.baseUrl
                 PlaybackProviderId.BCINE -> playbackPreferences.bcineBaseUrl
+                PlaybackProviderId.DORABY -> playbackPreferences.dorabyBaseUrl
             }
             TvProviderUrlDialog(
                 providerName = provider.displayName,
@@ -412,6 +414,7 @@ fun AliflixTvApp(
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
                         PlaybackProviderId.BCINE -> viewModel.updateBcineUrl(newUrl)
+                        PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(newUrl)
                     }
                     urlDialogProvider = null
                 },
@@ -419,6 +422,7 @@ fun AliflixTvApp(
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
                         PlaybackProviderId.BCINE -> viewModel.resetBcineUrl()
+                        PlaybackProviderId.DORABY -> viewModel.resetDorabyUrl()
                     }
                     urlDialogProvider = null
                 },
@@ -835,6 +839,7 @@ private fun TvLibraryScreen(
     generalProvider: PlaybackProviderId,
     ramoflixUrl: String,
     bcineUrl: String,
+    dorabyUrl: String,
     onSelectGeneralProvider: (PlaybackProviderId) -> Unit,
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     onCheckForUpdates: () -> Unit,
@@ -940,6 +945,7 @@ private fun TvLibraryScreen(
                     selectedProvider = generalProvider,
                     ramoflixUrl = ramoflixUrl,
                     bcineUrl = bcineUrl,
+                    dorabyUrl = dorabyUrl,
                     onSelectProvider = onSelectGeneralProvider,
                     onEditProviderUrl = onEditProviderUrl,
                 )
@@ -1127,6 +1133,7 @@ private fun TvPlaybackProviderPanel(
     selectedProvider: PlaybackProviderId,
     ramoflixUrl: String,
     bcineUrl: String,
+    dorabyUrl: String,
     onSelectProvider: (PlaybackProviderId) -> Unit,
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
 ) {
@@ -1192,6 +1199,18 @@ private fun TvPlaybackProviderPanel(
                 },
                 onEdit = {
                     onEditProviderUrl(PlaybackProviderId.RAMOFLIX)
+                },
+                modifier = Modifier.weight(1f),
+            )
+            TvProviderOption(
+                provider = PlaybackProviderId.DORABY,
+                selected = selectedProvider == PlaybackProviderId.DORABY,
+                url = dorabyUrl,
+                onSelect = {
+                    onSelectProvider(PlaybackProviderId.DORABY)
+                },
+                onEdit = {
+                    onEditProviderUrl(PlaybackProviderId.DORABY)
                 },
                 modifier = Modifier.weight(1f),
             )
@@ -1535,6 +1554,7 @@ private fun TvDetailScreen(
         listOf(
             PlaybackProviderId.BCINE,
             PlaybackProviderId.RAMOFLIX,
+            PlaybackProviderId.DORABY,
         )
     }
     val initialProvider = generalProvider.takeIf { it in playbackProviders }
