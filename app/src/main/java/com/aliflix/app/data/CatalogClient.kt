@@ -59,12 +59,8 @@ class CatalogClient(
         val rails = if (freshRails.isEmpty()) {
             fallbackRails
         } else {
-            val seenTitles = mutableSetOf<String>()
-            freshRails.mapNotNull { rail ->
-                val uniqueItems = rail.items.filter { item ->
-                    seenTitles.add("${item.type.routeName}:${normalizeText(item.title)}")
-                }
-                if (uniqueItems.isEmpty()) null else rail.copy(items = uniqueItems)
+            freshRails.map { rail ->
+                rail.copy(items = rail.items.distinctBy(Media::key))
             }
         }.ifEmpty { listOf(ContentRail("Featured", fallbackItems)) }
         catalogue = buildMap {
@@ -125,6 +121,117 @@ class CatalogClient(
             catalogue = (online + catalogue).distinctBy(Media::key)
         }
         sorted
+    }
+
+    /**
+     * Finds likely titles from a natural-language plot description.
+     *
+     * Public search results are used only to discover candidate titles. Every
+     * candidate is then resolved back through the native TMDB catalogue and
+     * ranked locally against its synopsis, genres, cast, and rating.
+     */
+    suspend fun searchByPlot(description: String): List<Media> = supervisorScope {
+        val cleanDescription = description.trim()
+        if (cleanDescription.isBlank()) return@supervisorScope emptyList()
+        val intent = SearchRanker.parseIntent(cleanDescription)
+        val requestedTypes: List<MediaType> =
+            intent.type?.let { listOf(it) } ?: MediaType.entries.toList()
+        val routeNames = requestedTypes.map(MediaType::routeName)
+
+        val suggestedTitles = (
+            duckDuckGoPlotSuggestions(cleanDescription) +
+                wikipediaPlotSuggestions(cleanDescription)
+            )
+            .distinct()
+            .take(PLOT_TITLE_SUGGESTION_LIMIT)
+
+        val titleMatches = suggestedTitles.map { title ->
+            async {
+                runCatching { searchTmdb(title, routeNames).take(4) }
+                    .getOrDefault(emptyList())
+            }
+        }.awaitAll().flatten()
+
+        val candidates = (titleMatches + catalogue)
+            .filter { item -> intent.type == null || item.type == intent.type }
+            .distinctBy(Media::key)
+        val ranked = PlotSearchRanker.rank(cleanDescription, candidates)
+            .take(PLOT_RESULT_LIMIT)
+
+        if (titleMatches.isNotEmpty()) {
+            catalogue = (titleMatches + catalogue).distinctBy(Media::key)
+        }
+        ranked
+    }
+
+    private suspend fun wikipediaPlotSuggestions(description: String): List<String> =
+        runCatching {
+            val query = URLEncoder.encode(
+                "film television $description",
+                StandardCharsets.UTF_8.toString(),
+            )
+            val payload = JSONObject(
+                pageLoader(
+                    "$WIKIPEDIA_SEARCH_URL?action=query&list=search&format=json" +
+                        "&utf8=1&srlimit=18&srsearch=$query",
+                ),
+            )
+            val results = payload.optJSONObject("query")
+                ?.optJSONArray("search")
+                ?: return@runCatching emptyList()
+            (0 until results.length())
+                .mapNotNull { index -> results.optJSONObject(index)?.optString("title") }
+                .map(::cleanCandidateTitle)
+                .filter { title ->
+                    title.isNotBlank() &&
+                        !title.startsWith("List of ", ignoreCase = true) &&
+                        !title.startsWith("Category:", ignoreCase = true)
+                }
+                .distinct()
+        }.getOrDefault(emptyList())
+
+    private suspend fun duckDuckGoPlotSuggestions(description: String): List<String> =
+        runCatching {
+            val query = URLEncoder.encode(
+                "movie or tv show where $description",
+                StandardCharsets.UTF_8.toString(),
+            )
+            Jsoup.parse(
+                pageLoader("$DUCKDUCKGO_HTML_URL/?q=$query"),
+                DUCKDUCKGO_HTML_URL,
+            )
+                .select("a.result__a")
+                .map { result -> cleanCandidateTitle(result.text()) }
+                .filter { title ->
+                    title.isNotBlank() &&
+                        genericWebResultTerms.none { term ->
+                            title.contains(term, ignoreCase = true)
+                        }
+                }
+                .distinct()
+                .take(14)
+        }.getOrDefault(emptyList())
+
+    private fun cleanCandidateTitle(value: String): String {
+        val quoted = Regex("""["']([^"']{2,60})["']""")
+            .find(value)
+            ?.groupValues
+            ?.getOrNull(1)
+        val candidate = quoted ?: value
+            .substringBefore(" - Wikipedia")
+            .substringBefore(" - IMDb")
+            .substringBefore(" | ")
+            .substringBefore(" - Rotten Tomatoes")
+        return candidate
+            .replace(
+                Regex(
+                    """\s*\((?:\d{4}\s+)?(?:film|TV series|television series|miniseries)\)\s*$""",
+                    RegexOption.IGNORE_CASE,
+                ),
+                "",
+            )
+            .replace(Regex("""\s*\(\d{4}\)\s*$"""), "")
+            .trim(' ', '-', ':', '"', '\'')
     }
 
     private suspend fun searchTmdb(
@@ -786,8 +893,24 @@ class CatalogClient(
         const val TMDB_SITE_URL = "https://www.themoviedb.org"
         const val IMDB_SUGGESTION_URL =
             "https://v3.sg.media-imdb.com/suggestion/x"
+        const val WIKIPEDIA_SEARCH_URL = "https://en.wikipedia.org/w/api.php"
+        const val DUCKDUCKGO_HTML_URL = "https://html.duckduckgo.com/html"
         const val ROTTEN_TOMATOES_URL = "https://www.rottentomatoes.com"
         const val HOME_RAIL_LIMIT = 20
+        const val PLOT_TITLE_SUGGESTION_LIMIT = 10
+        const val PLOT_RESULT_LIMIT = 80
+        val genericWebResultTerms = listOf(
+            "best movies",
+            "movies where",
+            "movies about",
+            "films about",
+            "ranked",
+            "find that movie",
+            "what is that movie",
+            "top 10",
+            "top 20",
+            "list of",
+        )
         val titleRoute = Regex("^/(movie|tv)/.*-(\\d+)$")
         val watchRoute = Regex("^/watch/(movie|tv)/(\\d+)$")
         val tmdbTitleRoute = Regex("^/(movie|tv)/(\\d+)(?:-|$)")
@@ -894,8 +1017,92 @@ class CatalogClient(
                 "Family Movie Night",
             ),
             TmdbHomeRailSpec(
-                "/discover/movie?with_genres=16&with_original_language=ja&sort_by=popularity.desc",
-                "Anime Favorites",
+                "/discover/movie?with_genres=12&sort_by=popularity.desc&page=2",
+                "Epic Adventures",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=80&sort_by=vote_average.desc&vote_count.gte=200",
+                "Crime Essentials",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=99&sort_by=popularity.desc",
+                "Powerful Documentaries",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=14&sort_by=popularity.desc&page=2",
+                "Fantasy Realms",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=36&sort_by=vote_average.desc&vote_count.gte=100",
+                "History on Screen",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=10402&sort_by=popularity.desc",
+                "Music & Performance",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=10752&sort_by=vote_average.desc&vote_count.gte=100",
+                "War Stories",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=37&sort_by=popularity.desc",
+                "Westerns",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=28,53&sort_by=popularity.desc&page=2",
+                "Action Thrillers",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=12,878&sort_by=popularity.desc&page=2",
+                "Sci-Fi Adventures",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=35,10749&sort_by=popularity.desc",
+                "Romantic Comedies",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=80,53&sort_by=vote_average.desc&vote_count.gte=100",
+                "Crime Thrillers",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=18,36&sort_by=popularity.desc",
+                "Historical Dramas",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=16,10751&sort_by=popularity.desc&page=2",
+                "Animated Family Adventures",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/movie?with_genres=27,35&sort_by=popularity.desc",
+                "Horror Comedies",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/tv?with_genres=35&sort_by=popularity.desc&page=2",
+                "Comedy Series",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/tv?with_genres=18&sort_by=vote_average.desc&vote_count.gte=100",
+                "Acclaimed TV Dramas",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/tv?with_genres=99&sort_by=popularity.desc",
+                "Documentary Series",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/tv?with_genres=10762&sort_by=popularity.desc",
+                "Kids & Family Series",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/tv?with_genres=10764&sort_by=popularity.desc",
+                "Reality Favorites",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/tv?with_genres=18,80&sort_by=popularity.desc&page=2",
+                "Crime Dramas",
+            ),
+            TmdbHomeRailSpec(
+                "/discover/tv?with_genres=18,9648&sort_by=vote_average.desc&vote_count.gte=100",
+                "Mystery Dramas",
             ),
         )
 

@@ -155,6 +155,7 @@ import coil.compose.AsyncImage
 import com.aliflix.app.AliflixViewModel
 import com.aliflix.app.DetailUiState
 import com.aliflix.app.HomeUiState
+import com.aliflix.app.SearchMode
 import com.aliflix.app.SearchUiState
 import com.aliflix.app.data.RamoflixConfig
 import com.aliflix.app.model.ContentRail
@@ -524,6 +525,7 @@ fun AliflixApp(
                     AppScreen.SEARCH -> SearchScreen(
                         state = search,
                         onQueryChange = viewModel::updateSearch,
+                        onModeChange = viewModel::selectSearchMode,
                         onOpen = ::openDetails,
                         gridState = searchScrollState,
                         mediaFilter = searchMediaFilter,
@@ -1330,6 +1332,7 @@ private fun RecentRail(
 private fun SearchScreen(
     state: SearchUiState,
     onQueryChange: (String) -> Unit,
+    onModeChange: (SearchMode) -> Unit,
     onOpen: (Media) -> Unit,
     gridState: LazyGridState,
     mediaFilter: String,
@@ -1353,7 +1356,7 @@ private fun SearchScreen(
             )
         }
     }
-    LaunchedEffect(state.query, mediaFilter) {
+    LaunchedEffect(state.query, state.mode, mediaFilter) {
         gridState.scrollToItem(0)
     }
     val visibleResults = remember(state.results, mediaFilter) {
@@ -1384,11 +1387,94 @@ private fun SearchScreen(
             modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp),
         )
         Text(
-            text = "Search movies & shows",
+            text = if (state.mode == SearchMode.TITLE) {
+                "Search movies & shows"
+            } else {
+                "What was that movie?"
+            },
             style = MaterialTheme.typography.headlineLarge,
             fontWeight = FontWeight.ExtraBold,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.White.copy(alpha = 0.055f))
+                .border(
+                    1.dp,
+                    Color.White.copy(alpha = 0.09f),
+                    RoundedCornerShape(16.dp),
+                )
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            listOf(
+                SearchMode.TITLE to "Title search",
+                SearchMode.PLOT to "Describe plot",
+            ).forEach { (mode, label) ->
+                val selected = state.mode == mode
+                val tabColor by animateColorAsState(
+                    targetValue = if (selected) AliflixRed else Color.Transparent,
+                    animationSpec = tween(280, easing = FastOutSlowInEasing),
+                    label = "search-mode-color",
+                )
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(tabColor)
+                        .selectable(
+                            selected = selected,
+                            onClick = { onModeChange(mode) },
+                        ),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = label,
+                        color = if (selected) Color.White else AliflixMuted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                    if (mode == SearchMode.PLOT) {
+                        Spacer(Modifier.width(5.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(
+                                    if (selected) {
+                                        Color.White.copy(alpha = 0.20f)
+                                    } else {
+                                        AliflixRed.copy(alpha = 0.18f)
+                                    },
+                                )
+                                .padding(horizontal = 5.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = "BETA",
+                                color = if (selected) Color.White else AliflixRed,
+                                fontSize = 7.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 0.5.sp,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (state.mode == SearchMode.PLOT) {
+            Text(
+                text = "Tell us anything you remember: characters, setting, a scene, or the ending.",
+                color = AliflixMuted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
+            )
+        }
         TextField(
             value = queryValue,
             onValueChange = { updated ->
@@ -1411,7 +1497,9 @@ private fun SearchScreen(
                     }
                 }
             },
-            singleLine = true,
+            singleLine = state.mode == SearchMode.TITLE,
+            minLines = if (state.mode == SearchMode.PLOT) 3 else 1,
+            maxLines = if (state.mode == SearchMode.PLOT) 5 else 1,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
             colors = TextFieldDefaults.colors(
@@ -1441,13 +1529,29 @@ private fun SearchScreen(
                 modifier = Modifier.weight(1f),
             )
             state.query.isBlank() -> EmptyMessage(
-                title = "What do you want to watch?",
-                message = "Search with a title, release year, or a few words you remember.",
+                title = if (state.mode == SearchMode.PLOT) {
+                    "Describe the story"
+                } else {
+                    "What do you want to watch?"
+                },
+                message = if (state.mode == SearchMode.PLOT) {
+                    "Write a sentence or two. Aliflix will estimate the closest movies and series."
+                } else {
+                    "Search with a title, release year, or a few words you remember."
+                },
                 modifier = Modifier.weight(1f),
             )
             state.results.isEmpty() -> EmptyMessage(
-                title = "No matches",
-                message = "Check the spelling, remove extra words, or try the release year.",
+                title = if (state.mode == SearchMode.PLOT) {
+                    "No confident estimate"
+                } else {
+                    "No matches"
+                },
+                message = if (state.mode == SearchMode.PLOT) {
+                    "Add a distinctive scene, place, character, or time period and try again."
+                } else {
+                    "Check the spelling, remove extra words, or try the release year."
+                },
                 modifier = Modifier.weight(1f),
             )
             else -> Column(Modifier.fillMaxSize()) {

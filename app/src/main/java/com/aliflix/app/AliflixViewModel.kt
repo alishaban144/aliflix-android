@@ -28,8 +28,14 @@ data class HomeUiState(
     val error: String? = null,
 )
 
+enum class SearchMode {
+    TITLE,
+    PLOT,
+}
+
 data class SearchUiState(
     val query: String = "",
+    val mode: SearchMode = SearchMode.TITLE,
     val loading: Boolean = false,
     val results: List<Media> = emptyList(),
     val error: String? = null,
@@ -136,6 +142,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun updateSearch(query: String) {
+        val mode = _search.value.mode
         val pending = _search.value.copy(
             query = query,
             loading = query.isNotBlank(),
@@ -145,21 +152,26 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _search.value = pending
         searchJob?.cancel()
         if (query.isBlank()) {
-            _search.value = SearchUiState()
+            _search.value = SearchUiState(mode = mode)
             return
         }
         searchJob = viewModelScope.launch {
             try {
-                delay(220)
-                if (_search.value.query != query) {
+                delay(if (mode == SearchMode.PLOT) 650 else 220)
+                if (_search.value.query != query || _search.value.mode != mode) {
                     return@launch
                 }
                 val loading = _search.value.copy(loading = true)
                 _search.value = loading
-                val results = client.search(query)
-                if (_search.value.query == query) {
+                val results = if (mode == SearchMode.PLOT) {
+                    client.searchByPlot(query)
+                } else {
+                    client.search(query)
+                }
+                if (_search.value.query == query && _search.value.mode == mode) {
                     val complete = SearchUiState(
                         query = query,
+                        mode = mode,
                         loading = false,
                         results = results,
                     )
@@ -168,9 +180,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                if (_search.value.query == query) {
+                if (_search.value.query == query && _search.value.mode == mode) {
                     val failed = SearchUiState(
                         query = query,
+                        mode = mode,
                         loading = false,
                         error = error.message ?: "Search failed.",
                     )
@@ -178,6 +191,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         }
+    }
+
+    fun selectSearchMode(mode: SearchMode) {
+        if (_search.value.mode == mode) return
+        searchJob?.cancel()
+        _search.value = SearchUiState(mode = mode)
     }
 
     fun openDetails(item: Media) {

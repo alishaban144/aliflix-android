@@ -1,4 +1,4 @@
-name: Publish Aliflix Android and TV
+name: Publish Aliflix Android
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
           test -n "$KEYSTORE_BASE64"
           echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/aliflix-release.jks"
 
-      - name: Build signed Android and TV APKs
+      - name: Build signed Android APK
         env:
           ALIFLIX_KEYSTORE_FILE: ${{ runner.temp }}/aliflix-release.jks
           ALIFLIX_KEYSTORE_PASSWORD: ${{ secrets.ALIFLIX_KEYSTORE_PASSWORD }}
@@ -50,21 +50,19 @@ jobs:
           ./gradlew \
             -Dorg.gradle.java.home="$JAVA_HOME" \
             -PALIFLIX_MOBILE_UPDATE_MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update-mobile.json" \
-            -PALIFLIX_TV_UPDATE_MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update-tv.json" \
-            testMobileDebugUnitTest testTvDebugUnitTest \
-            lintMobileDebug lintTvDebug \
-            assembleMobileRelease assembleTvRelease
+            testMobileDebugUnitTest \
+            lintMobileDebug \
+            assembleMobileRelease
 
       - name: Prepare release assets
         env:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Fixes 67 Movies playback on Android and Android TV by using its official watch pages, improves WebView compatibility, and preserves TV remote focus in the embedded player."
+            RELEASE_NOTES="Adds the Describe Plot beta search, with smart candidate discovery and native catalogue ranking. Includes the latest mobile animations, genre exploration, expanded home catalogue, and Bcine playback fixes."
           fi
           mkdir -p dist
           cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/aliflix-mobile-release.apk
-          cp app/build/outputs/apk/tv/release/app-tv-release.apk dist/aliflix-tv-release.apk
           MOBILE_VERSION_CODE="$(jq -r '.elements[0].versionCode' app/build/outputs/apk/mobile/release/output-metadata.json)"
           MOBILE_VERSION_NAME="$(jq -r '.elements[0].versionName' app/build/outputs/apk/mobile/release/output-metadata.json)"
           MOBILE_SHA256="$(sha256sum dist/aliflix-mobile-release.apk | cut -d ' ' -f 1)"
@@ -82,23 +80,12 @@ jobs:
               minimumSdk: 29,
               notes: $notes
             }' > dist/update-mobile.json
-          TV_VERSION_CODE="$(jq -r '.elements[0].versionCode' app/build/outputs/apk/tv/release/output-metadata.json)"
-          TV_VERSION_NAME="$(jq -r '.elements[0].versionName' app/build/outputs/apk/tv/release/output-metadata.json)"
-          TV_SHA256="$(sha256sum dist/aliflix-tv-release.apk | cut -d ' ' -f 1)"
-          jq -n \
-            --argjson versionCode "$TV_VERSION_CODE" \
-            --arg versionName "$TV_VERSION_NAME" \
-            --arg apkUrl "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/aliflix-tv-release.apk" \
-            --arg sha256 "$TV_SHA256" \
-            --arg notes "$RELEASE_NOTES" \
-            '{
-              versionCode: $versionCode,
-              versionName: $versionName,
-              apkUrl: $apkUrl,
-              sha256: $sha256,
-              minimumSdk: 30,
-              notes: $notes
-            }' > dist/update-tv.json
+          curl --fail --location \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/aliflix-tv-release.apk" \
+            --output dist/aliflix-tv-release.apk
+          curl --fail --location \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update-tv.json" \
+            --output dist/update-tv.json
 
       - name: Publish GitHub Release
         env:
@@ -107,7 +94,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Fixes 67 Movies playback on Android and Android TV by using its official watch pages, improves WebView compatibility, and preserves TV remote focus in the embedded player."
+            RELEASE_NOTES="Adds the Describe Plot beta search, with smart candidate discovery and native catalogue ranking. Includes the latest mobile animations, genre exploration, expanded home catalogue, and Bcine playback fixes."
           fi
           VERSION_NAME="$(jq -r '.versionName' dist/update-mobile.json)"
           gh release create "$RELEASE_TAG" \
