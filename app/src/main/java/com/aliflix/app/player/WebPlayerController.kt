@@ -993,6 +993,7 @@ class WebPlayerController(
     ) {
         when (selection.source.provider) {
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
+            PlaybackProviderId.RIVESTREAM -> { /* Rivestream detail page loads directly */ }
             PlaybackProviderId.MOVIES_67 -> alignVidloveContent(view, selection)
         }
     }

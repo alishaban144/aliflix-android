@@ -121,4 +121,30 @@ class MediaTest {
             preferences.sourceFor(item).provider,
         )
     }
+
+    @Test
+    fun rivestreamBuildsDetailUrlForMovieAndTv() {
+        val movie = Media(id = 1273221, type = MediaType.MOVIE, title = "Example Movie")
+        val tv = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
+
+        val movieSelection = PlaybackSelection(
+            media = movie,
+            source = PlaybackSource.rivestream(),
+        )
+        val tvSelection = PlaybackSelection(
+            media = tv,
+            seasonNumber = 2,
+            episodeNumber = 3,
+            source = PlaybackSource.rivestream(),
+        )
+
+        assertEquals(
+            "https://www.rivestream.app/detail?type=movie&id=1273221",
+            movieSelection.entryUrl,
+        )
+        assertEquals(
+            "https://www.rivestream.app/detail?type=tv&id=66732&season=2&episode=3",
+            tvSelection.entryUrl,
+        )
+    }
 }

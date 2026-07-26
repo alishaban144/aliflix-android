@@ -9,6 +9,7 @@ class PlaybackNavigationPolicyTest {
     fun allowsApprovedPlaybackHosts() {
         listOf(
             "https://ramoflix.net/inception/",
+            "https://www.rivestream.app/detail?type=movie&id=1273221",
             "https://67movies.nl/watch/movie/27205",
             "https://player.vidlove.cc/embed/tv/66732/2/3",
             "https://www.345movie.nl/watch/movie/27205",
@@ -49,7 +50,6 @@ class PlaybackNavigationPolicyTest {
     @Test
     fun removedProviderHostsAreBlocked() {
         listOf(
-            "https://www.rivestream.app/watch",
             "https://www.cineby.at/watch",
             "https://shuttletv.su/watch",
             "https://vidbox.vc/watch",

@@ -220,6 +220,7 @@ fun AliflixApp(
 
     val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val ramoflixConfig = playbackPreferences.ramoflixConfig
+    val rivestreamBaseUrl = playbackPreferences.rivestreamBaseUrl
     val movies67BaseUrl = playbackPreferences.movies67BaseUrl
     val activity = LocalActivity.current as ComponentActivity
     val updateManager = remember(activity) { AppUpdateManager(activity) }
@@ -544,33 +545,29 @@ fun AliflixApp(
         }
 
         urlDialogProvider?.let { provider ->
-            val isRamoflix = provider == PlaybackProviderId.RAMOFLIX
+            val currentUrl = when (provider) {
+                PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
+                PlaybackProviderId.RIVESTREAM -> rivestreamBaseUrl
+                PlaybackProviderId.MOVIES_67 -> movies67BaseUrl
+            }
             MobileProviderUrlDialog(
                 providerName = provider.displayName,
-                description = if (isRamoflix) {
-                    "Only change this if the Ramoflix website moves."
-                } else {
-                    "Only change this if 67 Movies moves to a new address."
-                },
-                currentUrl = if (isRamoflix) {
-                    ramoflixConfig.baseUrl
-                } else {
-                    movies67BaseUrl
-                },
+                description = "Only change this if the ${provider.displayName} website moves.",
+                currentUrl = currentUrl,
                 defaultUrl = provider.defaultBaseUrl,
                 onSave = {
-                    if (isRamoflix) {
-                        viewModel.updateRamoflixUrl(it)
-                    } else {
-                        viewModel.updateMovies67Url(it)
+                    when (provider) {
+                        PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(it)
+                        PlaybackProviderId.RIVESTREAM -> viewModel.updateRivestreamUrl(it)
+                        PlaybackProviderId.MOVIES_67 -> viewModel.updateMovies67Url(it)
                     }
                     urlDialogProvider = null
                 },
                 onReset = {
-                    if (isRamoflix) {
-                        viewModel.resetRamoflixUrl()
-                    } else {
-                        viewModel.resetMovies67Url()
+                    when (provider) {
+                        PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
+                        PlaybackProviderId.RIVESTREAM -> viewModel.resetRivestreamUrl()
+                        PlaybackProviderId.MOVIES_67 -> viewModel.resetMovies67Url()
                     }
                     urlDialogProvider = null
                 },
@@ -1535,6 +1532,7 @@ private fun PlaybackProviderSelector(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             listOf(
+                PlaybackProviderId.RIVESTREAM,
                 PlaybackProviderId.RAMOFLIX,
                 PlaybackProviderId.MOVIES_67,
             ).forEach { provider ->

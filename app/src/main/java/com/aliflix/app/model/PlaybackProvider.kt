@@ -13,6 +13,11 @@ enum class PlaybackProviderId(
         defaultBaseUrl = RamoflixConfig.DEFAULT_URL,
         supportsGeneralPlayback = true,
     ),
+    RIVESTREAM(
+        displayName = "Rivestream",
+        defaultBaseUrl = "https://www.rivestream.app/",
+        supportsGeneralPlayback = true,
+    ),
     MOVIES_67(
         displayName = "67 Movies",
         defaultBaseUrl = "https://67movies.nl/",
@@ -27,6 +32,10 @@ enum class PlaybackProviderId(
             entries.firstOrNull { provider ->
                 provider.name.equals(value, ignoreCase = true) ||
                     provider.displayName.equals(value, ignoreCase = true) ||
+                    (
+                        provider == RIVESTREAM &&
+                            value.equals("rivestream", ignoreCase = true)
+                        ) ||
                     (
                         provider == MOVIES_67 &&
                             value.equals("67movies", ignoreCase = true)
@@ -55,6 +64,17 @@ data class PlaybackSource(
         PlaybackProviderId.RAMOFLIX ->
             RamoflixConfig(baseUrl).buildWatchUrl(media.title)
 
+        PlaybackProviderId.RIVESTREAM -> {
+            val base = baseUrl.trimEnd('/')
+            if (media.type == MediaType.TV) {
+                val s = seasonNumber ?: 1
+                val e = episodeNumber ?: 1
+                "$base/detail?type=tv&id=${media.id}&season=$s&episode=$e"
+            } else {
+                "$base/detail?type=movie&id=${media.id}"
+            }
+        }
+
         PlaybackProviderId.MOVIES_67 -> {
             val route = if (media.type == MediaType.TV) {
                 "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
@@ -69,6 +89,10 @@ data class PlaybackSource(
         fun ramoflix(config: RamoflixConfig = RamoflixConfig()) =
             PlaybackSource(PlaybackProviderId.RAMOFLIX, config.baseUrl)
 
+        fun rivestream(
+            baseUrl: String = PlaybackProviderId.RIVESTREAM.defaultBaseUrl,
+        ) = PlaybackSource(PlaybackProviderId.RIVESTREAM, baseUrl)
+
         fun movies67(
             baseUrl: String = PlaybackProviderId.MOVIES_67.defaultBaseUrl,
         ) = PlaybackSource(PlaybackProviderId.MOVIES_67, baseUrl)
@@ -76,13 +100,14 @@ data class PlaybackSource(
 }
 
 data class PlaybackPreferences(
-    val generalProvider: PlaybackProviderId = PlaybackProviderId.RAMOFLIX,
+    val generalProvider: PlaybackProviderId = PlaybackProviderId.RIVESTREAM,
     val ramoflixConfig: RamoflixConfig = RamoflixConfig(),
+    val rivestreamBaseUrl: String = PlaybackProviderId.RIVESTREAM.defaultBaseUrl,
     val movies67BaseUrl: String = PlaybackProviderId.MOVIES_67.defaultBaseUrl,
 ) {
     val safeGeneralProvider: PlaybackProviderId
         get() = generalProvider.takeIf(PlaybackProviderId::supportsGeneralPlayback)
-            ?: PlaybackProviderId.RAMOFLIX
+            ?: PlaybackProviderId.RIVESTREAM
 
     fun sourceFor(
         media: Media,
@@ -93,6 +118,7 @@ data class PlaybackPreferences(
             ?: safeGeneralProvider
         return when (provider) {
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
+            PlaybackProviderId.RIVESTREAM -> PlaybackSource.rivestream(rivestreamBaseUrl)
             PlaybackProviderId.MOVIES_67 -> PlaybackSource.movies67(movies67BaseUrl)
         }
     }
