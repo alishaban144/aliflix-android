@@ -154,6 +154,7 @@ import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.aliflix.app.AliflixViewModel
 import com.aliflix.app.DetailUiState
+import com.aliflix.app.GenreUiState
 import com.aliflix.app.HomeUiState
 import com.aliflix.app.SearchMode
 import com.aliflix.app.SearchUiState
@@ -220,6 +221,7 @@ fun AliflixApp(
     val home by viewModel.home.collectAsState()
     val search by viewModel.search.collectAsState()
     val detail by viewModel.detail.collectAsState()
+    val genre by viewModel.genre.collectAsState()
     val myList by viewModel.myList.collectAsState()
     val recent by viewModel.recent.collectAsState()
     val likes by viewModel.likes.collectAsState()
@@ -361,10 +363,13 @@ fun AliflixApp(
         }
     }
 
-    BackHandler(enabled = activeGenreTarget != null && !playerVisible) {
+    BackHandler(
+        enabled = detail.item == null && activeGenreTarget != null && !playerVisible,
+    ) {
         activeGenreTarget = null
+        viewModel.closeGenre()
     }
-    BackHandler(enabled = activeGenreTarget == null && detail.item != null && !playerVisible) {
+    BackHandler(enabled = detail.item != null && !playerVisible) {
         viewModel.closeDetails()
     }
 
@@ -386,8 +391,8 @@ fun AliflixApp(
             },
         ) { padding ->
             val screen = when {
-                activeGenreTarget != null -> AppScreen.GENRE_EXPLORE
                 detail.item != null -> AppScreen.DETAIL
+                activeGenreTarget != null -> AppScreen.GENRE_EXPLORE
                 selectedTab == AppTab.HOME -> AppScreen.HOME
                 selectedTab == AppTab.SEARCH -> AppScreen.SEARCH
                 else -> AppScreen.MY_SPACE
@@ -446,23 +451,15 @@ fun AliflixApp(
             ) { target ->
                 when (target) {
                     AppScreen.GENRE_EXPLORE -> activeGenreTarget?.let { (genreName, mediaType) ->
-                        val allCatalogItems = remember(home.content, search.results, myList, likes, recent) {
-                            val list = mutableListOf<Media>()
-                            home.content?.let { content ->
-                                list.add(content.hero)
-                                content.rails.forEach { rail -> list.addAll(rail.items) }
-                            }
-                            list.addAll(search.results)
-                            list.addAll(myList)
-                            list.addAll(likes)
-                            list.addAll(recent)
-                            list.distinctBy { it.key }
-                        }
                         GenreExploreScreen(
                             genreName = genreName,
-                            initialMediaType = mediaType,
-                            allItems = allCatalogItems,
-                            onBack = { activeGenreTarget = null },
+                            mediaType = mediaType,
+                            state = genre,
+                            onRetry = viewModel::retryGenre,
+                            onBack = {
+                                activeGenreTarget = null
+                                viewModel.closeGenre()
+                            },
                             onOpen = ::openDetails,
                             modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                         )
@@ -503,6 +500,8 @@ fun AliflixApp(
                         },
                         onOpenGenre = { genreName, mediaType ->
                             activeGenreTarget = genreName to mediaType
+                            viewModel.openGenre(genreName, mediaType)
+                            viewModel.closeDetails()
                         },
                     )
 
@@ -1480,6 +1479,15 @@ private fun SearchScreen(
             onValueChange = { updated ->
                 queryValue = updated
                 onQueryChange(updated.text)
+            },
+            label = {
+                Text(
+                    if (state.mode == SearchMode.PLOT) {
+                        "Describe the movie or show"
+                    } else {
+                        "Title search"
+                    },
+                )
             },
             placeholder = {
                 Text("Title, year, or words you remember…")
@@ -2731,21 +2739,15 @@ private fun AnimatedFavoriteButton(
 @Composable
 private fun GenreExploreScreen(
     genreName: String,
-    initialMediaType: MediaType,
-    allItems: List<Media>,
+    mediaType: MediaType,
+    state: GenreUiState,
+    onRetry: () -> Unit,
     onBack: () -> Unit,
     onOpen: (Media) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var filterType by remember { mutableStateOf<MediaType?>(initialMediaType) }
-    val filteredItems = remember(genreName, filterType, allItems) {
-        allItems.filter { item ->
-            val matchesGenre = item.genres.any { it.equals(genreName, ignoreCase = true) } ||
-                item.title.contains(genreName, ignoreCase = true) ||
-                item.overview.contains(genreName, ignoreCase = true)
-            val matchesType = filterType == null || item.type == filterType
-            matchesGenre && matchesType
-        }.distinctBy { it.key }
+    val items = remember(state.items, mediaType) {
+        state.items.filter { it.type == mediaType }.distinctBy(Media::key)
     }
 
     Column(
@@ -2783,10 +2785,9 @@ private fun GenreExploreScreen(
                     letterSpacing = 1.6.sp,
                 )
                 Text(
-                    text = when (filterType) {
+                    text = when (mediaType) {
                         MediaType.MOVIE -> "Movies"
                         MediaType.TV -> "TV Series"
-                        null -> "All Works"
                     },
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
@@ -2795,38 +2796,21 @@ private fun GenreExploreScreen(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            listOf(
-                "Movies" to MediaType.MOVIE,
-                "Series" to MediaType.TV,
-                "All" to null,
-            ).forEach { (label, type) ->
-                val selected = filterType == type
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (selected) AliflixRed else Color.White.copy(alpha = 0.08f))
-                        .clickable { filterType = type }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        text = label,
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                    )
-                }
-            }
-        }
-
         Spacer(Modifier.height(8.dp))
 
-        if (filteredItems.isEmpty()) {
+        when {
+            state.loading -> Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(color = AliflixRed)
+            }
+            state.error != null -> ConfigurationError(
+                message = state.error,
+                onRetry = onRetry,
+                modifier = Modifier.fillMaxSize(),
+            )
+            items.isEmpty() -> {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -2839,7 +2823,8 @@ private fun GenreExploreScreen(
                     fontSize = 14.sp,
                 )
             }
-        } else {
+            }
+            else -> {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(118.dp),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 40.dp),
@@ -2847,13 +2832,14 @@ private fun GenreExploreScreen(
                 verticalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.weight(1f),
             ) {
-                items(filteredItems, key = { "genre:${it.key}" }) { item ->
+                items(items, key = { "genre:${it.key}" }) { item ->
                     MediaPoster(
                         item = item,
                         width = 118.dp,
                         onClick = { onOpen(item) },
                     )
                 }
+            }
             }
         }
     }

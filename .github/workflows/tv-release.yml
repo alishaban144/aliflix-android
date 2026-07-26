@@ -59,7 +59,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Adds the Describe Plot beta search, with smart candidate discovery and native catalogue ranking. Includes the latest mobile animations, genre exploration, expanded home catalogue, and Bcine playback fixes."
+            RELEASE_NOTES="Adds 28 fully populated genre and subgenre rows, progressive cached catalogue loading, 40-title native genre pages, and external-only Describe Plot web discovery."
           fi
           mkdir -p dist
           cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/aliflix-mobile-release.apk
@@ -94,7 +94,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Adds the Describe Plot beta search, with smart candidate discovery and native catalogue ranking. Includes the latest mobile animations, genre exploration, expanded home catalogue, and Bcine playback fixes."
+            RELEASE_NOTES="Adds 28 fully populated genre and subgenre rows, progressive cached catalogue loading, 40-title native genre pages, and external-only Describe Plot web discovery."
           fi
           VERSION_NAME="$(jq -r '.versionName' dist/update-mobile.json)"
           gh release create "$RELEASE_TAG" \

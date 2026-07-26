@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aliflix.app.data.CatalogClient
+import com.aliflix.app.data.AndroidCatalogCacheStore
 import com.aliflix.app.data.LibraryStore
 import com.aliflix.app.data.PlaybackProviderRepository
 import com.aliflix.app.model.Episode
@@ -52,13 +53,24 @@ data class DetailUiState(
     val error: String? = null,
 )
 
+data class GenreUiState(
+    val genre: String = "",
+    val type: MediaType = MediaType.MOVIE,
+    val loading: Boolean = false,
+    val items: List<Media> = emptyList(),
+    val error: String? = null,
+)
+
 class AliflixViewModel(application: Application) : AndroidViewModel(application) {
-    private val client = CatalogClient()
+    private val client = CatalogClient(
+        cacheStore = AndroidCatalogCacheStore(application),
+    )
     private val library = LibraryStore(application)
     private val playbackProviderRepository = PlaybackProviderRepository(application)
     private var searchJob: Job? = null
     private var detailJob: Job? = null
     private var episodeJob: Job? = null
+    private var genreJob: Job? = null
     private var homeRefreshJob: Job? = null
     private var lastHomeRefreshAt = 0L
 
@@ -70,6 +82,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     private val _detail = MutableStateFlow(DetailUiState())
     val detail: StateFlow<DetailUiState> = _detail.asStateFlow()
+
+    private val _genre = MutableStateFlow(GenreUiState())
+    val genre: StateFlow<GenreUiState> = _genre.asStateFlow()
 
     val myList = library.myList
     val recent = library.recent
@@ -120,7 +135,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 loading = showLoading && previous.content == null,
                 error = null,
             )
-            _home.value = runCatching { client.home() }
+            _home.value = runCatching {
+                client.home { partial ->
+                    _home.value = HomeUiState(
+                        loading = false,
+                        content = partial,
+                    )
+                }
+            }
                 .fold(
                     onSuccess = {
                         lastHomeRefreshAt = System.currentTimeMillis()
@@ -197,6 +219,52 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         if (_search.value.mode == mode) return
         searchJob?.cancel()
         _search.value = SearchUiState(mode = mode)
+    }
+
+    fun openGenre(genre: String, type: MediaType) {
+        genreJob?.cancel()
+        _genre.value = GenreUiState(
+            genre = genre,
+            type = type,
+            loading = true,
+        )
+        genreJob = viewModelScope.launch {
+            _genre.value = runCatching { client.browseGenre(genre, type) }
+                .fold(
+                    onSuccess = { items ->
+                        if (items.size >= MIN_GENRE_RESULTS) {
+                            GenreUiState(
+                                genre = genre,
+                                type = type,
+                                items = items,
+                            )
+                        } else {
+                            GenreUiState(
+                                genre = genre,
+                                type = type,
+                                error = "This genre could not be filled yet. Check your connection and retry.",
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        GenreUiState(
+                            genre = genre,
+                            type = type,
+                            error = error.message ?: "This genre could not be loaded.",
+                        )
+                    },
+                )
+        }
+    }
+
+    fun retryGenre() {
+        val current = _genre.value
+        if (current.genre.isNotBlank()) openGenre(current.genre, current.type)
+    }
+
+    fun closeGenre() {
+        genreJob?.cancel()
+        _genre.value = GenreUiState()
     }
 
     fun openDetails(item: Media) {
@@ -291,6 +359,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun clearRecent() = library.clearRecent()
 
     private companion object {
+        const val MIN_GENRE_RESULTS = 20
         const val HOME_STALE_AFTER_MS = 5 * 60 * 1_000L
         const val HOME_REFRESH_INTERVAL_MS = 30 * 60 * 1_000L
     }
