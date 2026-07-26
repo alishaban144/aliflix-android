@@ -78,14 +78,11 @@ data class PlaybackSource(
 
         PlaybackProviderId.DORABY -> {
             val base = baseUrl.trimEnd('/')
-            val route = if (media.type == MediaType.TV) {
-                val s = seasonNumber ?: 1
-                val e = episodeNumber ?: 1
-                "/tv/${media.id}/$s/$e"
-            } else {
-                "/movie/${media.id}"
-            }
-            "$base$route"
+            val slug = media.title.lowercase()
+                .replace(Regex("[^a-z0-9\\s-]"), "")
+                .trim()
+                .replace(Regex("\\s+"), "-")
+            "$base/$slug/"
         }
     }
 

@@ -120,7 +120,7 @@ class MediaTest {
 
     @Test
     fun dorabyBuildsMovieAndTvWatchUrl() {
-        val movie = Media(id = 1083381, type = MediaType.MOVIE, title = "Inception")
+        val movie = Media(id = 1083381, type = MediaType.MOVIE, title = "Descendants: Wicked Wonderland")
         val movieSelection = PlaybackSelection(
             media = movie,
             source = PlaybackSource.doraby(),
@@ -135,11 +135,11 @@ class MediaTest {
         )
 
         assertEquals(
-            "https://doraby.com/movie/1083381",
+            "https://doraby.com/descendants-wicked-wonderland/",
             movieSelection.entryUrl,
         )
         assertEquals(
-            "https://doraby.com/tv/66732/2/3",
+            "https://doraby.com/stranger-things/",
             tvSelection.entryUrl,
         )
     }

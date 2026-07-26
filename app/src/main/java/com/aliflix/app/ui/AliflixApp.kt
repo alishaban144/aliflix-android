@@ -1501,26 +1501,27 @@ private fun PlaybackProviderSelector(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color.White.copy(alpha = 0.055f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(9.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .border(1.dp, Color.White.copy(alpha = 0.09f), RoundedCornerShape(20.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column {
                 Text(
                     text = "PLAYBACK SOURCE",
                     color = AliflixRed,
-                    fontSize = 9.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
-                    letterSpacing = 1.2.sp,
+                    letterSpacing = 1.4.sp,
                 )
                 Text(
-                    text = "Choose where Aliflix opens playback",
+                    text = "Select streaming provider for play",
                     color = AliflixMuted,
                     fontSize = 11.sp,
                 )
@@ -1529,7 +1530,7 @@ private fun PlaybackProviderSelector(
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             listOf(
                 PlaybackProviderId.BCINE,
@@ -1537,40 +1538,44 @@ private fun PlaybackProviderSelector(
                 PlaybackProviderId.DORABY,
             ).forEach { provider ->
                 val selected = selectedProvider == provider
-                Row(
+                Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(13.dp))
+                        .height(50.dp)
+                        .clip(RoundedCornerShape(15.dp))
                         .background(
-                            if (selected) AliflixRed else Color.Black.copy(alpha = 0.22f),
+                            if (selected) {
+                                Brush.horizontalGradient(
+                                    listOf(AliflixRed, Color(0xFFE50914)),
+                                )
+                            } else {
+                                Brush.verticalGradient(
+                                    listOf(Color(0xFF1E222A).copy(alpha = 0.6f), Color.Black.copy(alpha = 0.4f)),
+                                )
+                            },
                         )
                         .border(
-                            1.dp,
-                            if (selected) {
-                                AliflixRed
+                            width = if (selected) 1.5.dp else 1.dp,
+                            color = if (selected) {
+                                Color.White.copy(alpha = 0.45f)
                             } else {
                                 Color.White.copy(alpha = 0.10f)
                             },
-                            RoundedCornerShape(13.dp),
+                            shape = RoundedCornerShape(15.dp),
                         )
-                        .selectable(
-                            selected = selected,
-                            onClick = { onSelectProvider(provider) },
-                        )
-                        .padding(start = 10.dp, end = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .clickable { onSelectProvider(provider) }
+                        .padding(horizontal = 6.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f, fill = false),
+                        horizontalArrangement = Arrangement.Center,
                     ) {
                         Text(
                             text = provider.displayName,
                             color = Color.White,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -1579,21 +1584,23 @@ private fun PlaybackProviderSelector(
                             Icon(
                                 imageVector = Icons.Filled.Check,
                                 contentDescription = "Selected",
-                                modifier = Modifier.size(15.dp),
-                            )
-                        }
-                    }
-                    if (onEditProviderUrl != null) {
-                        IconButton(
-                            onClick = { onEditProviderUrl(provider) },
-                            modifier = Modifier.size(24.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Edit,
-                                contentDescription = "Edit ${provider.displayName} URL",
-                                tint = Color.White.copy(alpha = 0.82f),
+                                tint = Color.White,
                                 modifier = Modifier.size(14.dp),
                             )
+                        }
+                        if (onEditProviderUrl != null) {
+                            Spacer(Modifier.width(2.dp))
+                            IconButton(
+                                onClick = { onEditProviderUrl(provider) },
+                                modifier = Modifier.size(22.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Edit,
+                                    contentDescription = "Edit ${provider.displayName} URL",
+                                    tint = Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(12.dp),
+                                )
+                            }
                         }
                     }
                 }

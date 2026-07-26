@@ -963,8 +963,33 @@ class WebPlayerController(
     ) {
         when (selection.source.provider) {
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
-            PlaybackProviderId.BCINE -> { /* Bcine movie/tv page loads directly */ }
-            PlaybackProviderId.DORABY -> { /* Doraby movie/tv page loads directly */ }
+            PlaybackProviderId.BCINE -> alignBcineContent(view, selection)
+            PlaybackProviderId.DORABY -> { /* Doraby webpage loads directly */ }
+        }
+    }
+
+    private fun alignBcineContent(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        if (!isActiveSelection(view, selection)) return
+        if (selection.media.type == MediaType.MOVIE) {
+            view.evaluateJavascript(
+                """
+                (() => {
+                    const player = document.querySelector('iframe') || 
+                                   document.querySelector('#player') || 
+                                   document.querySelector('.player') ||
+                                   document.querySelector('[class*="player"]');
+                    if (player) {
+                        player.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    } else {
+                        window.scrollTo(0, 500);
+                    }
+                })();
+                """.trimIndent(),
+                null,
+            )
         }
     }
 
