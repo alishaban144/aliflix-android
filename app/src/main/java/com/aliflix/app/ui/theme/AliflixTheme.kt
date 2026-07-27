@@ -17,35 +17,35 @@ import androidx.compose.ui.unit.sp
  * Aliflix "Cinematic Intelligence" palette.
  *
  * The primary accent deliberately supports white text at WCAG AA contrast while
- * staying vivid on the deep blue-black surfaces used throughout the app.
+ * remaining restrained against the deep blue-black surfaces used by the app.
  */
-val AliflixBackgroundBase = Color(0xFF070912)
-val AliflixBackgroundImmersive = Color(0xFF090C17)
-val AliflixSurfacePrimary = Color(0xFF111521)
-val AliflixSurfaceSecondary = Color(0xFF181D2B)
-val AliflixSurfaceElevated = Color(0xFF22283A)
-val AliflixSurfacePressed = Color(0xFF2A3147)
-val AliflixSurfaceDisabled = Color(0xFF202432)
+val AliflixBackgroundBase = Color(0xFF05070D)
+val AliflixBackgroundImmersive = Color(0xFF070A12)
+val AliflixSurfacePrimary = Color(0xFF0D111A)
+val AliflixSurfaceSecondary = Color(0xFF131824)
+val AliflixSurfaceElevated = Color(0xFF1A2030)
+val AliflixSurfacePressed = Color(0xFF22293A)
+val AliflixSurfaceDisabled = Color(0xFF181C25)
 
-val AliflixContentPrimary = Color(0xFFF6F4FA)
-val AliflixContentSecondary = Color(0xFFBEC2D0)
-val AliflixContentTertiary = Color(0xFF8D93A6)
-val AliflixContentInverse = Color(0xFF11131B)
+val AliflixContentPrimary = Color(0xFFEDECF2)
+val AliflixContentSecondary = Color(0xFFA6AAB8)
+val AliflixContentTertiary = Color(0xFF777D8D)
+val AliflixContentInverse = Color(0xFF0D1017)
 
-val AliflixBorderSubtle = Color(0xFF303649)
-val AliflixBorderStrong = Color(0xFF505974)
-val AliflixAccentPrimary = Color(0xFF7C5CE5)
-val AliflixAccentPrimaryContainer = Color(0xFF2C2350)
-val AliflixAccentSecondary = Color(0xFFB8A1FF)
-val AliflixEditorialWarm = Color(0xFFFFB86B)
+val AliflixBorderSubtle = Color(0xFF252B39)
+val AliflixBorderStrong = Color(0xFF3B4355)
+val AliflixAccentPrimary = Color(0xFF6650B8)
+val AliflixAccentPrimaryContainer = Color(0xFF211A39)
+val AliflixAccentSecondary = Color(0xFF9A8BB8)
+val AliflixEditorialWarm = Color(0xFFC28B53)
 
-val AliflixSuccess = Color(0xFF69D69A)
-val AliflixWarning = Color(0xFFFFBF69)
-val AliflixError = Color(0xFFFF7183)
-val AliflixInfo = Color(0xFF75C7FF)
-val AliflixFocus = Color(0xFFD0C1FF)
-val AliflixScrimLight = Color(0x6604070E)
-val AliflixScrimStrong = Color(0xD904070E)
+val AliflixSuccess = Color(0xFF52AD79)
+val AliflixWarning = Color(0xFFC89755)
+val AliflixError = Color(0xFFD25E6C)
+val AliflixInfo = Color(0xFF5B9FC5)
+val AliflixFocus = Color(0xFFA394C8)
+val AliflixScrimLight = Color(0x70020409)
+val AliflixScrimStrong = Color(0xE0020409)
 
 // Short semantic aliases for call sites where the role is already clear.
 val AliflixAccent = AliflixAccentPrimary
@@ -104,16 +104,16 @@ private val AliflixMobileColors = darkColorScheme(
     primary = AliflixAccentPrimary,
     onPrimary = Color.White,
     primaryContainer = AliflixAccentPrimaryContainer,
-    onPrimaryContainer = Color(0xFFE8DFFF),
-    inversePrimary = Color(0xFF5E40C0),
+    onPrimaryContainer = Color(0xFFD5CCE8),
+    inversePrimary = Color(0xFF5B45A0),
     secondary = AliflixAccentSecondary,
-    onSecondary = Color(0xFF1B1233),
-    secondaryContainer = Color(0xFF30284A),
-    onSecondaryContainer = Color(0xFFE8DFFF),
+    onSecondary = Color(0xFF17121F),
+    secondaryContainer = Color(0xFF252033),
+    onSecondaryContainer = Color(0xFFD6CDE4),
     tertiary = AliflixEditorialWarm,
-    onTertiary = Color(0xFF2C1700),
-    tertiaryContainer = Color(0xFF4A301B),
-    onTertiaryContainer = Color(0xFFFFDDBB),
+    onTertiary = Color(0xFF241505),
+    tertiaryContainer = Color(0xFF352719),
+    onTertiaryContainer = Color(0xFFE6C7A7),
     background = AliflixBackgroundBase,
     onBackground = AliflixContentPrimary,
     surface = AliflixSurfacePrimary,
@@ -121,12 +121,12 @@ private val AliflixMobileColors = darkColorScheme(
     surfaceVariant = AliflixSurfaceSecondary,
     onSurfaceVariant = AliflixContentSecondary,
     surfaceTint = AliflixAccentPrimary,
-    inverseSurface = Color(0xFFE7E2EC),
-    inverseOnSurface = Color(0xFF292630),
+    inverseSurface = Color(0xFFD8D5DC),
+    inverseOnSurface = Color(0xFF26242B),
     error = AliflixError,
-    onError = Color(0xFF3A000D),
-    errorContainer = Color(0xFF5A202B),
-    onErrorContainer = Color(0xFFFFD9DE),
+    onError = Color(0xFF250007),
+    errorContainer = Color(0xFF442229),
+    onErrorContainer = Color(0xFFEBC6CA),
     outline = AliflixBorderStrong,
     outlineVariant = AliflixBorderSubtle,
     scrim = Color.Black,

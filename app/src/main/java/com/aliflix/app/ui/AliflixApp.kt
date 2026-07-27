@@ -29,6 +29,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
@@ -49,7 +50,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -136,7 +136,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
@@ -836,12 +838,45 @@ private fun HomeFeed(
     ) {
         item {
             Box {
-                HeroBanner(
-                    item = hero,
-                    personalMatch = PersonalizationEngine.match(hero, likes),
-                    onPlay = { onPlay(hero) },
-                    onInfo = { onOpen(hero) },
-                )
+                AnimatedContent(
+                    targetState = hero,
+                    contentKey = Media::key,
+                    transitionSpec = {
+                        val enterMotion = tween<IntOffset>(
+                            durationMillis = 440,
+                            easing = FastOutSlowInEasing,
+                        )
+                        val enterFade = tween<Float>(
+                            durationMillis = 400,
+                            easing = FastOutSlowInEasing,
+                        )
+                        val exitMotion = tween<IntOffset>(
+                            durationMillis = 300,
+                            easing = FastOutSlowInEasing,
+                        )
+                        val exitFade = tween<Float>(
+                            durationMillis = 260,
+                            easing = FastOutSlowInEasing,
+                        )
+                        (
+                            fadeIn(enterFade) +
+                                slideInHorizontally(enterMotion) { fullWidth -> fullWidth / 24 } +
+                                scaleIn(enterFade, initialScale = 0.992f)
+                            ).togetherWith(
+                            fadeOut(exitFade) +
+                                slideOutHorizontally(exitMotion) { fullWidth -> -fullWidth / 32 } +
+                                scaleOut(exitFade, targetScale = 0.996f),
+                        )
+                    },
+                    label = "home-featured-transition",
+                ) { featured ->
+                    HeroBanner(
+                        item = featured,
+                        personalMatch = PersonalizationEngine.match(featured, likes),
+                        onPlay = { onPlay(featured) },
+                        onInfo = { onOpen(featured) },
+                    )
+                }
                 HomeHeader(
                     onSearch = onSearch,
                     modifier = Modifier
@@ -905,28 +940,12 @@ private fun HomeHeader(
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 2.dp),
         ) {
-            Box(
+            AliflixLogoMark(
                 modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.secondary,
-                            ),
-                        ),
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "A",
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    fontSize = 21.sp,
-                    fontWeight = FontWeight.Black,
-                )
-            }
-            Spacer(Modifier.width(11.dp))
+                    .width(42.dp)
+                    .height(38.dp),
+            )
+            Spacer(Modifier.width(9.dp))
             Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(
                     text = "ALIFLIX",
@@ -963,6 +982,54 @@ private fun HomeHeader(
                 modifier = Modifier.size(22.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun AliflixLogoMark(
+    modifier: Modifier = Modifier,
+) {
+    val primary = AliflixAccentPrimary
+    val highlight = AliflixAccentSecondary
+    Canvas(modifier = modifier) {
+        val unit = minOf(size.width, size.height)
+        val left = (size.width - unit) / 2f
+        val top = (size.height - unit) / 2f
+        fun point(x: Float, y: Float) = Offset(
+            x = left + unit * x,
+            y = top + unit * y,
+        )
+
+        drawCircle(
+            color = highlight,
+            radius = unit * 0.115f,
+            center = point(0.25f, 0.66f),
+        )
+
+        val shadowBlade = Path().apply {
+            moveTo(point(0.59f, 0.19f).x, point(0.59f, 0.19f).y)
+            lineTo(point(0.80f, 0.84f).x, point(0.80f, 0.84f).y)
+            lineTo(point(0.68f, 0.84f).x, point(0.68f, 0.84f).y)
+            lineTo(point(0.56f, 0.47f).x, point(0.56f, 0.47f).y)
+            close()
+        }
+        drawPath(path = shadowBlade, color = primary)
+
+        val lightBlade = Path().apply {
+            moveTo(point(0.43f, 0.19f).x, point(0.43f, 0.19f).y)
+            lineTo(point(0.59f, 0.19f).x, point(0.59f, 0.19f).y)
+            lineTo(point(0.68f, 0.84f).x, point(0.68f, 0.84f).y)
+            lineTo(point(0.55f, 0.84f).x, point(0.55f, 0.84f).y)
+            close()
+        }
+        drawPath(
+            path = lightBlade,
+            brush = Brush.linearGradient(
+                colors = listOf(AliflixContentPrimary, highlight),
+                start = point(0.43f, 0.19f),
+                end = point(0.68f, 0.84f),
+            ),
+        )
     }
 }
 
@@ -1867,7 +1934,6 @@ private fun SearchScreen(
                 ),
             )
             .windowInsetsPadding(WindowInsets.statusBars)
-            .imePadding()
             .padding(top = 8.dp),
     ) {
         Text(
@@ -2886,13 +2952,13 @@ private fun MobileSettingsDialog(
                                 modifier = Modifier
                                     .size(34.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFFFF4444).copy(alpha = 0.16f)),
+                                    .background(AliflixError.copy(alpha = 0.14f)),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.DeleteSweep,
                                     contentDescription = null,
-                                    tint = Color(0xFFFF6B6B),
+                                    tint = AliflixError,
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
@@ -2912,7 +2978,7 @@ private fun MobileSettingsDialog(
                         }
                         Text(
                             text = "Clear",
-                            color = Color(0xFFFF6B6B),
+                            color = AliflixError,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                         )
@@ -3035,14 +3101,14 @@ private fun MySpaceScreen(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = "MY SPACE",
+                    text = "ALIFLIX",
                     color = AliflixAccentSecondary,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
                     letterSpacing = 1.7.sp,
                 )
                 Text(
-                    text = "Your library",
+                    text = "My Space",
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.ExtraBold,
                 )
@@ -4379,8 +4445,8 @@ private fun ArtworkPlaceholder(
 private fun LoadingScreen(modifier: Modifier = Modifier) {
     val animation = rememberInfiniteTransition(label = "launch")
     val pulse by animation.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.08f,
+        initialValue = 0.98f,
+        targetValue = 1.02f,
         animationSpec = infiniteRepeatable(
             animation = tween(1_200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
@@ -4388,8 +4454,8 @@ private fun LoadingScreen(modifier: Modifier = Modifier) {
         label = "logo-pulse",
     )
     val glow by animation.animateFloat(
-        initialValue = 0.18f,
-        targetValue = 0.55f,
+        initialValue = 0.10f,
+        targetValue = 0.28f,
         animationSpec = infiniteRepeatable(
             animation = tween(1_200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
@@ -4436,38 +4502,12 @@ private fun LoadingScreen(modifier: Modifier = Modifier) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Box(
+            AliflixLogoMark(
                 modifier = Modifier
-                    .size(92.dp)
-                    .shadow(
-                        24.dp,
-                        RoundedCornerShape(26.dp),
-                        ambientColor = AliflixAccentPrimary,
-                    )
-                    .clip(RoundedCornerShape(26.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                AliflixAccentSecondary,
-                                AliflixAccentPrimary,
-                                Color(0xFF5035A5),
-                            ),
-                        ),
-                    )
-                    .border(
-                        1.dp,
-                        Color.White.copy(alpha = 0.22f),
-                        RoundedCornerShape(26.dp),
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "A",
-                    color = Color.White,
-                    fontSize = 58.sp,
-                    fontWeight = FontWeight.Black,
-                )
-            }
+                    .width(132.dp)
+                    .height(96.dp)
+                    .scale(pulse),
+            )
             Spacer(Modifier.height(24.dp))
             Text(
                 text = "ALIFLIX",
@@ -4478,7 +4518,7 @@ private fun LoadingScreen(modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(9.dp))
             Text(
-                text = "CURATING YOUR SPACE",
+                text = "YOUR CINEMA, CURATED",
                 color = AliflixMuted,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
@@ -4541,18 +4581,10 @@ private fun ConfigurationError(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(
-            text = "A",
-            color = AliflixAccentSecondary,
-            fontSize = 42.sp,
-            fontWeight = FontWeight.Black,
+        AliflixLogoMark(
             modifier = Modifier
-                .size(72.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(AliflixAccentPrimary.copy(alpha = 0.16f))
-                .border(1.dp, AliflixBorderStrong, RoundedCornerShape(22.dp))
-                .padding(top = 8.dp),
-            textAlign = TextAlign.Center,
+                .width(84.dp)
+                .height(68.dp),
         )
         Spacer(Modifier.height(24.dp))
         Text(
@@ -4596,20 +4628,11 @@ private fun EmptyMessage(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
+        AliflixLogoMark(
             modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(AliflixAccentPrimary.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "A",
-                color = AliflixAccentSecondary,
-                fontSize = 27.sp,
-                fontWeight = FontWeight.Black,
-            )
-        }
+                .width(64.dp)
+                .height(50.dp),
+        )
         Spacer(Modifier.height(18.dp))
         Text(
             text = title,
