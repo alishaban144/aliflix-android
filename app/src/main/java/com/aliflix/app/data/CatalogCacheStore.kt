@@ -21,8 +21,8 @@ interface CatalogCacheStore {
 
 class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
     private val cacheDir = File(context.filesDir, "catalog-cache")
-    private val homeFile = File(cacheDir, "home-v3.json")
-    private val plotFile = File(cacheDir, "plot-v1.json")
+    private val homeFile = File(cacheDir, "home-v4.json")
+    private val plotFile = File(cacheDir, "plot-v2.json")
     private val mutex = Mutex()
 
     override suspend fun loadHome(): HomeContent? = mutex.withLock {

@@ -86,6 +86,30 @@ class CatalogClientTest {
     }
 
     @Test
+    fun parsesQuerySuffixedTmdbRouteAndKeepsCanonicalTitleSpan() {
+        val html = """
+            <main>
+              <div data-object-id="movie-4977">
+                <a data-media-type="movie" href="/movie/4977?language=en-US">
+                  <img class="poster" alt="Paprika" src="/poster.jpg" />
+                </a>
+                <a data-media-type="movie" href="/movie/4977?language=en-US">
+                  <h2><span>Paprika</span><span> (パプリカ)</span></h2>
+                </a>
+                <span class="release_date">March 28, 2007</span>
+                <p>A psychologist enters dreams with an experimental device.</p>
+              </div>
+            </main>
+        """.trimIndent()
+
+        val result = client.parseSearchResults(html).single()
+
+        assertEquals(4977, result.id)
+        assertEquals("Paprika", result.title)
+        assertEquals("2007", result.year)
+    }
+
+    @Test
     fun parsesOfficialTitlePageRecommendations() {
         val html = """
             <main>

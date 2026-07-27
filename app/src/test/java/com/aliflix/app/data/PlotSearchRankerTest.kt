@@ -42,4 +42,35 @@ class PlotSearchRankerTest {
         assertEquals(inception.key, ranked.first().key)
         assertTrue(ranked.indexOf(paprika) < ranked.indexOf(unrelated))
     }
+
+    @Test
+    fun literalPlotDetailsBreakTheGenericDreamThemeTie() {
+        val description =
+            "a movie where a thief enters other people's dreams to steal secrets"
+        val inception = Media(
+            id = 27205,
+            type = MediaType.MOVIE,
+            title = "Inception",
+            overview = "A thief enters shared dreams and steals secrets from the subconscious.",
+        )
+        val paprika = Media(
+            id = 4977,
+            type = MediaType.MOVIE,
+            title = "Paprika",
+            overview = "A psychologist uses a device to enter patients' dreams.",
+        )
+
+        val inceptionLiteral = PlotSearchRanker.literalTextRelevanceScore(
+            description,
+            "${inception.title} ${inception.overview}",
+        )
+        val paprikaLiteral = PlotSearchRanker.literalTextRelevanceScore(
+            description,
+            "${paprika.title} ${paprika.overview}",
+        )
+        val ranked = PlotSearchRanker.rank(description, listOf(paprika, inception))
+
+        assertTrue(inceptionLiteral > paprikaLiteral)
+        assertEquals(inception.key, ranked.first().key)
+    }
 }

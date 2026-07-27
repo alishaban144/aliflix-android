@@ -12,32 +12,26 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 class CatalogExpansionTest {
     @Test
-    fun homeLoadsAll28GenreRowsWith20ItemsAndAtMostFourRequestsAtOnce() = runTest {
-        val nextBase = AtomicInteger(10_000)
+    fun homeLoads28VerifiedRowsWith20GloballyUniqueCorrectlyTypedItems() = runTest {
         val active = AtomicInteger(0)
         val maximumActive = AtomicInteger(0)
-        val bases = ConcurrentHashMap<String, Int>()
+        val requestedUrls = CopyOnWriteArrayList<String>()
         val client = CatalogClient(
             pageLoader = { url ->
+                requestedUrls += url
                 val nowActive = active.incrementAndGet()
                 maximumActive.updateAndGet { previous -> maxOf(previous, nowActive) }
                 try {
-                    delay(5)
-                    val type = if ("/tv" in url) MediaType.TV else MediaType.MOVIE
-                    searchHtml(
-                        type = type,
-                        baseId = bases.computeIfAbsent(url) {
-                            nextBase.getAndAdd(100)
-                        },
-                        count = 20,
-                    )
+                    delay(3)
+                    catalogueHtml(url)
                 } finally {
                     active.decrementAndGet()
                 }
@@ -45,75 +39,150 @@ class CatalogExpansionTest {
         )
 
         val home = client.home()
-        val genreRails = home.rails.filter { rail ->
-            GenreCatalog.homeSpecs.any { it.title == rail.title }
-        }
+        val genreTypes = GenreCatalog.homeSpecs.associate { it.title to it.type }
+        val genreRails = home.rails.filter { it.title in genreTypes }
+        val appearances = home.rails
+            .flatMap(ContentRail::items)
+            .groupingBy(Media::key)
+            .eachCount()
 
         assertEquals(28, GenreCatalog.homeSpecs.size)
         assertEquals(28, genreRails.size)
         assertTrue(genreRails.all { it.items.size == 20 })
+        assertTrue(
+            genreRails.all { rail ->
+                rail.items.all { item -> item.type == genreTypes.getValue(rail.title) }
+            },
+        )
+        assertTrue(appearances.values.all { count -> count == 1 })
         assertTrue(maximumActive.get() <= 4)
+        assertTrue(requestedUrls.none { "/discover/" in it })
+        assertTrue(requestedUrls.any { "/genre/28-action/movie" in it })
+        assertTrue(requestedUrls.any { "/genre/10765-sci-fi-fantasy/tv" in it })
     }
 
     @Test
-    fun shortGenreResponseIsRefilledByAlternateSortAndFailedRequestRetries() = runTest {
-        val calls = ConcurrentHashMap<String, AtomicInteger>()
-        val bases = ConcurrentHashMap<String, Int>()
-        val nextBase = AtomicInteger(20_000)
+    fun anyGenreRowsInterleaveEveryConfiguredSource() = runTest {
+        val home = CatalogClient(
+            pageLoader = { url -> catalogueHtml(url) },
+        ).home()
+
+        val familyAndKids = home.rails.first { it.title == "Family & Kids Series" }
+        val mysteryAndScienceFiction =
+            home.rails.first { it.title == "Mystery & Sci-Fi Series" }
+
+        assertTrue(familyAndKids.items.count { "Family" in it.genres } >= 8)
+        assertTrue(familyAndKids.items.count { "Kids" in it.genres } >= 8)
+        assertTrue(mysteryAndScienceFiction.items.count { "Mystery" in it.genres } >= 8)
+        assertTrue(
+            mysteryAndScienceFiction.items.count { "Sci-Fi & Fantasy" in it.genres } >= 8,
+        )
+    }
+
+    @Test
+    fun failedAndShortStableGenrePagesRetryAndRefillFromDeeperPages() = runTest {
+        val actionPageOneAttempts = AtomicInteger(0)
+        val requestedUrls = CopyOnWriteArrayList<String>()
         val client = CatalogClient(
             pageLoader = { url ->
-                val call = calls.computeIfAbsent(url) { AtomicInteger(0) }.incrementAndGet()
-                val type = if ("/tv" in url) MediaType.TV else MediaType.MOVIE
-                val isActionPrimary =
-                    "with_genres=28" in url && "sort_by=popularity.desc" in url
-                if (isActionPrimary && call == 1) throw IOException("temporary")
-                val count = if (isActionPrimary) 10 else 20
-                searchHtml(
-                    type = type,
-                    baseId = bases.computeIfAbsent(url) {
-                        nextBase.getAndAdd(100)
+                requestedUrls += url
+                if (
+                    "/genre/28-action/movie" in url &&
+                    "page=1" in url &&
+                    actionPageOneAttempts.incrementAndGet() <= 2
+                ) {
+                    throw IOException("temporary")
+                }
+                catalogueHtml(
+                    url = url,
+                    countOverride = if (
+                        "/genre/28-action/movie" in url && "page=1" in url
+                    ) {
+                        8
+                    } else {
+                        null
                     },
-                    count = count,
                 )
             },
         )
 
         val action = client.home().rails.first { it.title == "Action" }
-        val primary = calls.entries.first { (url, _) ->
-            "with_genres=28" in url && "sort_by=popularity.desc" in url
-        }
 
+        assertEquals(3, actionPageOneAttempts.get())
         assertEquals(20, action.items.size)
-        assertEquals(2, primary.value.get())
+        assertTrue(action.items.all { it.type == MediaType.MOVIE })
+        assertTrue(
+            requestedUrls.any { url ->
+                "/genre/28-action/movie" in url && "page=2" in url
+            },
+        )
     }
 
     @Test
-    fun genrePageFetches40ItemsAndKeepsTheOriginatingMediaType() = runTest {
-        val nextBase = AtomicInteger(30_000)
-        val bases = ConcurrentHashMap<String, Int>()
+    fun genericRedirectIsRejectedInsteadOfBeingStampedWithWrongGenre() {
         val client = CatalogClient(
             pageLoader = { url ->
-                searchHtml(
-                    type = if ("/discover/tv" in url) MediaType.TV else MediaType.MOVIE,
-                    baseId = bases.computeIfAbsent(url) {
-                        nextBase.getAndAdd(100)
-                    },
-                    count = 20,
+                catalogueHtml(
+                    url = url,
+                    canonicalOverride = "https://www.themoviedb.org/movie",
                 )
             },
         )
 
-        val results = client.browseGenre("Action", MediaType.MOVIE)
+        val error = assertThrows(IOException::class.java) {
+            runTest { client.browseGenre("Action", MediaType.MOVIE) }
+        }
 
-        assertEquals(40, results.size)
-        assertTrue(results.all { it.type == MediaType.MOVIE })
+        assertTrue(error.message.orEmpty().contains("unseen"))
     }
 
     @Test
-    fun cachedGenreRowsRemainAvailableWhenRefreshRequestsFail() = runTest {
-        val cache = MemoryCatalogCache(
-            home = cachedHome(),
+    fun detailGenreReturns40FreshTypedItemsAndAdvancesToAnotherDisjointBatch() = runTest {
+        val requestedUrls = CopyOnWriteArrayList<String>()
+        val client = CatalogClient(
+            pageLoader = { url ->
+                requestedUrls += url
+                catalogueHtml(url)
+            },
         )
+        val home = client.home()
+        val homeKeys = home.rails.flatMap(ContentRail::items).mapTo(hashSetOf(), Media::key)
+
+        val first = client.browseGenre("Action", MediaType.MOVIE)
+        val second = client.browseGenre("Action", MediaType.MOVIE)
+
+        assertEquals(40, first.size)
+        assertEquals(40, second.size)
+        assertTrue(first.all { it.type == MediaType.MOVIE && "Action" in it.genres })
+        assertTrue(second.all { it.type == MediaType.MOVIE && "Action" in it.genres })
+        assertTrue(homeKeys.intersect(first.mapTo(hashSetOf(), Media::key)).isEmpty())
+        assertTrue(first.map(Media::key).intersect(second.map(Media::key).toSet()).isEmpty())
+        val browsePages = requestedUrls
+            .filter { "/genre/28-action/movie" in it }
+            .mapNotNull(::pageNumber)
+            .filter { it >= 6 }
+            .toSet()
+        assertTrue(setOf(6, 7, 8, 9).all { it in browsePages })
+        assertTrue(requestedUrls.none { "/discover/" in it })
+    }
+
+    @Test
+    fun movieAndSeriesGenreDestinationsNeverCrossMediaTypes() = runTest {
+        val client = CatalogClient(pageLoader = { url -> catalogueHtml(url) })
+
+        val movies = client.browseGenre("Comedy", MediaType.MOVIE)
+        val series = client.browseGenre("Comedy", MediaType.TV)
+
+        assertEquals(40, movies.size)
+        assertEquals(40, series.size)
+        assertTrue(movies.all { it.type == MediaType.MOVIE })
+        assertTrue(series.all { it.type == MediaType.TV })
+        assertTrue(movies.map(Media::key).intersect(series.map(Media::key).toSet()).isEmpty())
+    }
+
+    @Test
+    fun completeCachedGenreRowsRemainAvailableWhenRefreshRequestsFail() = runTest {
+        val cache = MemoryCatalogCache(home = cachedHome())
         val progress = mutableListOf<HomeContent>()
         val client = CatalogClient(
             cacheStore = cache,
@@ -121,10 +190,83 @@ class CatalogExpansionTest {
         )
 
         val result = client.home { progress += it }
+        val appearances = result.rails
+            .flatMap(ContentRail::items)
+            .groupingBy(Media::key)
+            .eachCount()
 
         assertTrue(progress.isNotEmpty())
         assertEquals(28, result.rails.size)
         assertTrue(result.rails.all { it.items.size == 20 })
+        assertTrue(appearances.values.all { it == 1 })
+    }
+
+    @Test
+    fun completeCachedSnapshotIsNotDowngradedByCollidingFreshAllocation() = runTest {
+        val expected = cachedHome()
+        val client = CatalogClient(
+            cacheStore = MemoryCatalogCache(home = expected),
+            pageLoader = { url -> collidingCatalogueHtml(url) },
+        )
+
+        val result = client.home()
+
+        assertEquals(expected.rails, result.rails)
+        assertEquals(28, result.rails.size)
+        assertTrue(result.rails.all { it.items.size == 20 })
+    }
+
+    @Test
+    fun genreBrowseDuringProgressExcludesAlreadyShownHomeCards() = runTest {
+        var shownActionKeys = emptySet<String>()
+        var browseDuringProgress: List<Media>? = null
+        val client = CatalogClient(
+            pageLoader = { url ->
+                if ("/genre/28-action/movie" in url) {
+                    actionOverlapCatalogueHtml(url)
+                } else {
+                    catalogueHtml(url)
+                }
+            },
+        )
+
+        client.home { partial ->
+            if (browseDuringProgress == null) {
+                val action = partial.rails.firstOrNull { it.title == "Action" }
+                if (action?.items?.size == 20) {
+                    shownActionKeys = action.items.mapTo(hashSetOf(), Media::key)
+                    browseDuringProgress = client.browseGenre("Action", MediaType.MOVIE)
+                }
+            }
+        }
+
+        val genreItems = requireNotNull(browseDuringProgress)
+        assertEquals(40, genreItems.size)
+        assertTrue(shownActionKeys.intersect(genreItems.mapTo(hashSetOf(), Media::key)).isEmpty())
+    }
+
+    @Test
+    fun globalBrowseHistorySurvivesHomeRefreshAcrossDifferentGenres() = runTest {
+        val client = CatalogClient(pageLoader = { url -> catalogueHtml(url) })
+
+        val action = client.browseGenre("Action", MediaType.MOVIE)
+        client.home()
+        val thriller = client.browseGenre("Thriller", MediaType.MOVIE)
+
+        assertEquals(40, action.size)
+        assertEquals(40, thriller.size)
+        assertTrue(action.map(Media::key).intersect(thriller.map(Media::key).toSet()).isEmpty())
+    }
+
+    @Test
+    fun tvMovieDetailGenreHasAStableMovieRoute() {
+        val spec = GenreCatalog.specFor("TV Movie", MediaType.MOVIE)
+
+        assertEquals(listOf(10770), spec?.genreIds)
+        assertEquals(
+            "/genre/10770-tv-movie/movie",
+            GenreCatalog.pagePath(10770, MediaType.MOVIE),
+        )
     }
 
     @Test
@@ -143,40 +285,12 @@ class CatalogExpansionTest {
             pageLoader = { url ->
                 when {
                     "search.brave.com" in url -> braveHtml(external)
-                    "/search/" in url -> {
-                        val title = queryParameter(url, "query")
-                        val match = external.firstOrNull {
-                            it.first.equals(title, ignoreCase = true)
-                        }
-                        if (match == null) {
-                            "<main></main>"
-                        } else {
-                            val requestedType = if ("/search/tv" in url) {
-                                MediaType.TV
-                            } else {
-                                MediaType.MOVIE
-                            }
-                            if (requestedType != match.third) {
-                                "<main></main>"
-                            } else {
-                                searchHtml(
-                                    type = match.third,
-                                    baseId = external.indexOf(match) + 50_000,
-                                    count = 1,
-                                    title = match.first,
-                                    year = match.second,
-                                    overview = plotFor(match.first),
-                                )
-                            }
-                        }
-                    }
+                    "wikipedia.org/w/api.php" in url -> emptyWikipedia()
+                    "duckduckgo.com" in url -> """<div class="no-results"></div>"""
+                    "/search/" in url -> tmdbResolvedTitleHtml(url, external)
                     else -> error("Unexpected request: $url")
                 }
             },
-        )
-        assertEquals(
-            external.map { it.first },
-            client.parseBravePlotCandidates(braveHtml(external)).map { it.title },
         )
 
         val results = client.searchByPlot(
@@ -190,6 +304,76 @@ class CatalogExpansionTest {
         assertTrue("Groundhog Day" in titles)
         assertTrue("Breaking Bad" in titles)
         assertFalse("Parasite" in titles)
+    }
+
+    @Test
+    fun realShapedDuckDuckGoHeadingResolvesCleanTitleYearAndType() = runTest {
+        val client = CatalogClient(
+            pageLoader = { url ->
+                when {
+                    "search.brave.com" in url -> """<html>captcha challenge</html>"""
+                    "wikipedia.org/w/api.php" in url -> emptyWikipedia()
+                    "duckduckgo.com" in url -> """
+                        <div class="result">
+                          <a class="result__a"
+                             href="https://www.imdb.com/title/tt1375666/">
+                            Inception (2010) - Plot - IMDb
+                          </a>
+                          <a class="result__snippet">
+                            A thief enters shared dreams to steal secrets.
+                          </a>
+                        </div>
+                    """.trimIndent()
+                    "/search/movie" in url -> searchHtml(
+                        type = MediaType.MOVIE,
+                        items = listOf(
+                            FixtureItem(
+                                id = 27205,
+                                title = "Inception",
+                                year = "2010",
+                                overview = "A thief enters shared dreams to steal secrets.",
+                            ),
+                        ),
+                    )
+                    "/search/tv" in url -> "<main></main>"
+                    else -> error("Unexpected request: $url")
+                }
+            },
+        )
+
+        val results = client.searchByPlot("a thief enters dreams to steal secrets")
+
+        assertEquals(listOf("Inception"), results.map(Media::title))
+    }
+
+    @Test
+    fun normalizedPlotQueryUsesThe24HourCacheWithoutAnotherWebLookup() = runTest {
+        val cache = MemoryCatalogCache()
+        val webCalls = AtomicInteger(0)
+        val external = listOf(Triple("Breaking Bad", "2008", MediaType.TV))
+        val client = CatalogClient(
+            cacheStore = cache,
+            pageLoader = { url ->
+                when {
+                    "search.brave.com" in url -> {
+                        webCalls.incrementAndGet()
+                        braveHtml(external)
+                    }
+                    "wikipedia.org/w/api.php" in url -> emptyWikipedia()
+                    "duckduckgo.com" in url -> """<div class="no-results"></div>"""
+                    "/search/" in url -> tmdbResolvedTitleHtml(url, external)
+                    else -> error("Unexpected request: $url")
+                }
+            },
+        )
+
+        val first = client.searchByPlot("A chemistry teacher becomes a drug dealer")
+        val callsAfterFirst = webCalls.get()
+        val second = client.searchByPlot("  a CHEMISTRY teacher becomes a drug dealer  ")
+
+        assertEquals(listOf("Breaking Bad"), first.map(Media::title))
+        assertEquals(first, second)
+        assertEquals(callsAfterFirst, webCalls.get())
     }
 
     @Test
@@ -213,7 +397,7 @@ class CatalogExpansionTest {
     }
 
     @Test
-    fun plotSearchNeverFallsBackToLocalTitlesWhenWebLookupFails() {
+    fun plotSearchNeverFallsBackToLocalTitlesWhenEveryWebSourceFails() {
         val client = CatalogClient(
             pageLoader = { throw IOException("blocked") },
         )
@@ -224,7 +408,7 @@ class CatalogExpansionTest {
             }
         }
 
-        assertTrue(error.message.orEmpty().contains("Web lookup unavailable"))
+        assertEquals("Web lookup unavailable—try again.", error.message)
     }
 
     private fun cachedHome(): HomeContent {
@@ -233,7 +417,7 @@ class CatalogExpansionTest {
                 title = spec.title,
                 items = (0 until 20).map { itemIndex ->
                     Media(
-                        id = 70_000 + railIndex * 100 + itemIndex,
+                        id = 70_000_000 + railIndex * 100 + itemIndex,
                         type = spec.type,
                         title = "${spec.title} $itemIndex",
                     )
@@ -256,34 +440,187 @@ class CatalogExpansionTest {
             append("</main>")
         }
 
+    private fun emptyWikipedia(): String = """{"query":{"search":[]}}"""
+
+    private fun tmdbResolvedTitleHtml(
+        url: String,
+        external: List<Triple<String, String, MediaType>>,
+    ): String {
+        val title = queryParameter(url, "query")
+        val match = external.firstOrNull { it.first.equals(title, ignoreCase = true) }
+            ?: return "<main></main>"
+        val requestedType = if ("/search/tv" in url) MediaType.TV else MediaType.MOVIE
+        if (requestedType != match.third) return "<main></main>"
+        return searchHtml(
+            type = match.third,
+            items = listOf(
+                FixtureItem(
+                    id = external.indexOf(match) + 50_000,
+                    title = match.first,
+                    year = match.second,
+                    overview = plotFor(match.first),
+                ),
+            ),
+        )
+    }
+
+    private fun collidingCatalogueHtml(url: String): String {
+        val uri = URI(url)
+        val type = if (
+            uri.path.endsWith("/tv") ||
+            uri.path == "/tv" ||
+            uri.path.startsWith("/tv/")
+        ) {
+            MediaType.TV
+        } else {
+            MediaType.MOVIE
+        }
+        val page = pageNumber(url) ?: 1
+        val items = (0 until 25).map { index ->
+            FixtureItem(
+                id = 620_000_000 + type.ordinal * 10_000_000 + page * 100 + index,
+                title = "${type.routeName} colliding page $page item $index",
+            )
+        }
+        return searchHtml(
+            type = type,
+            items = items,
+            canonical = uri.path
+                .takeIf { path -> path.startsWith("/genre/") }
+                ?.let { path -> "https://www.themoviedb.org$path" },
+        )
+    }
+
+    private fun actionOverlapCatalogueHtml(url: String): String {
+        val uri = URI(url)
+        val page = pageNumber(url) ?: 1
+        val shared = (0 until 20).map { index ->
+            FixtureItem(
+                id = 660_000_000 + index,
+                title = "Action shared item $index",
+            )
+        }
+        val unique = (0 until 20).map { index ->
+            FixtureItem(
+                id = 670_000_000 + page * 100 + index,
+                title = "Action page $page item $index",
+            )
+        }
+        return searchHtml(
+            type = MediaType.MOVIE,
+            items = shared + unique,
+            canonical = "https://www.themoviedb.org${uri.path}",
+        )
+    }
+
+    private fun catalogueHtml(
+        url: String,
+        countOverride: Int? = null,
+        canonicalOverride: String? = null,
+    ): String {
+        val uri = URI(url)
+        val type = if (
+            uri.path.endsWith("/tv") ||
+            uri.path == "/tv" ||
+            uri.path.startsWith("/tv/")
+        ) {
+            MediaType.TV
+        } else {
+            MediaType.MOVIE
+        }
+        val page = pageNumber(url) ?: 1
+        val genreId = Regex("/genre/(\\d+)-")
+            .find(uri.path)
+            ?.groupValues
+            ?.get(1)
+            ?.toIntOrNull()
+        val items = if (genreId == null) {
+            val seed = (
+                uri.path.fold(0) { total, character ->
+                    (total * 31 + character.code) and 0xffff
+                } + page * 100
+                )
+            (0 until (countOverride ?: 25)).map { index ->
+                FixtureItem(
+                    id = 90_000_000 + type.ordinal * 10_000_000 + seed * 100 + index,
+                    title = "${type.routeName} base $seed $index",
+                )
+            }
+        } else {
+            genreFixtureItems(type, genreId, page).let { generated ->
+                countOverride?.let(generated::take) ?: generated
+            }
+        }
+        return searchHtml(
+            type = type,
+            items = items,
+            canonical = canonicalOverride ?: if (genreId == null) {
+                null
+            } else {
+                "https://www.themoviedb.org${uri.path}"
+            },
+        )
+    }
+
+    private fun genreFixtureItems(
+        type: MediaType,
+        genreId: Int,
+        page: Int,
+    ): List<FixtureItem> {
+        val typeOffset = type.ordinal * 200_000_000
+        val groups = compoundGroups[type].orEmpty()
+            .filter { (_, ids) -> genreId in ids }
+        val own = (0 until 10).map { index ->
+            val id = 1_000_000 + typeOffset + genreId * 1_000 + page * 20 + index
+            FixtureItem(id, "${type.routeName} genre $genreId unique p$page-$index")
+        }
+        val shared = (0 until 15).map { index ->
+            if (groups.isEmpty()) {
+                val id = 10_000_000 + typeOffset + genreId * 1_000 + page * 30 + index
+                FixtureItem(id, "${type.routeName} genre $genreId extra p$page-$index")
+            } else {
+                val (groupId, _) = groups[index % groups.size]
+                val groupIndex = index / groups.size
+                val id = 50_000_000 + typeOffset + groupId * 10_000 + page * 100 + groupIndex
+                FixtureItem(id, "${type.routeName} compound $groupId p$page-$groupIndex")
+            }
+        }
+        return own + shared
+    }
+
     private fun searchHtml(
         type: MediaType,
-        baseId: Int,
-        count: Int,
-        title: String? = null,
-        year: String = "2024",
-        overview: String = "A distinctive story with memorable characters.",
+        items: List<FixtureItem>,
+        canonical: String? = null,
     ): String = buildString {
-        append("<main>")
-        repeat(count) { index ->
-            val itemTitle = title ?: "${type.routeName} title ${baseId + index}"
+        append("<html><head>")
+        canonical?.let { append("""<link rel="canonical" href="$it" />""") }
+        append("</head><body><main>")
+        items.forEach { item ->
             append(
                 """
-                <div data-object-id="${type.routeName}-${baseId + index}">
+                <div data-object-id="${type.routeName}-${item.id}">
                   <a data-media-type="${type.routeName}"
-                     href="/${type.routeName}/${baseId + index}-test">
-                    <img class="poster" alt="$itemTitle"
-                      src="https://media.themoviedb.org/t/p/w94_and_h141_face/p$index.jpg" />
-                    <h2>$itemTitle</h2>
+                     href="/${type.routeName}/${item.id}-test">
+                    <img class="poster" alt="${item.title}"
+                      src="https://media.themoviedb.org/t/p/w94_and_h141_face/p${item.id}.jpg" />
+                    <h2>${item.title}</h2>
                   </a>
-                  <span class="release_date">January 1, $year</span>
-                  <p>$overview</p>
+                  <span class="release_date">January 1, ${item.year}</span>
+                  <p>${item.overview}</p>
                 </div>
                 """.trimIndent(),
             )
         }
-        append("</main>")
+        append("</main></body></html>")
     }
+
+    private fun pageNumber(url: String): Int? =
+        Regex("[?&]page=(\\d+)")
+            .find(url)
+            ?.groupValues
+            ?.get(1)
+            ?.toIntOrNull()
 
     private fun queryParameter(url: String, name: String): String {
         val raw = url.substringAfter("$name=").substringBefore('&')
@@ -298,6 +635,13 @@ class CatalogExpansionTest {
         "Breaking Bad" -> "A chemistry teacher becomes a drug dealer."
         else -> "A science fiction mystery."
     }
+
+    private data class FixtureItem(
+        val id: Int,
+        val title: String,
+        val year: String = "2024",
+        val overview: String = "A distinctive story with memorable characters.",
+    )
 
     private class MemoryCatalogCache(
         private var home: HomeContent? = null,
@@ -318,5 +662,22 @@ class CatalogExpansionTest {
         override suspend fun savePlot(queryKey: String, items: List<Media>) {
             plots[queryKey] = items
         }
+    }
+
+    private companion object {
+        val compoundGroups = mapOf(
+            MediaType.MOVIE to listOf(
+                1 to setOf(28, 53),
+                2 to setOf(35, 10749),
+                3 to setOf(80, 53),
+                4 to setOf(18, 36),
+                5 to setOf(16, 10751, 12),
+            ),
+            MediaType.TV to listOf(
+                101 to setOf(18, 80),
+                102 to setOf(18, 9648),
+                103 to setOf(18, 35),
+            ),
+        )
     }
 }

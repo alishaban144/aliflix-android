@@ -22,7 +22,9 @@ import org.jsoup.nodes.Document
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
+import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.Normalizer
@@ -32,15 +34,76 @@ internal data class PlotCandidate(
     val title: String,
     val year: String? = null,
     val type: MediaType? = null,
+    val evidence: String = title,
+    val source: PlotSource = PlotSource.BRAVE,
+    val position: Int = 0,
+    val sourceCount: Int = 1,
 ) {
     val cacheKey: String
-        get() = "${title.lowercase()}:${year.orEmpty()}:${type?.routeName.orEmpty()}"
+        get() = title
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim() + ":${type?.routeName.orEmpty()}"
+}
+
+internal enum class PlotSource(val priority: Int) {
+    BRAVE(30),
+    WIKIPEDIA(24),
+    DUCKDUCKGO(20),
 }
 
 private data class PlotDiscovery(
     val candidates: List<PlotCandidate>,
     val successfulSources: Int,
 )
+
+private data class ResolvedPlotCandidate(
+    val candidate: PlotCandidate,
+    val media: Media,
+    val resolutionScore: Int,
+)
+
+private data class WikipediaSearchHit(
+    val title: String,
+    val snippet: String,
+)
+
+private data class GenreFetch(
+    val items: List<Media>,
+    val pagesLoaded: Int,
+)
+
+private data class WikipediaConceptGroup(
+    val triggers: Set<String>,
+    val searchTerms: List<String>,
+)
+
+internal fun allocateUniqueHomeRails(
+    rails: List<ContentRail>,
+    priorityTitles: List<String>,
+    itemLimit: Int = 20,
+): List<ContentRail> {
+    if (rails.isEmpty() || itemLimit <= 0) return emptyList()
+    val byTitle = rails.associateBy(ContentRail::title)
+    val allocationOrder = (
+        priorityTitles + rails.map(ContentRail::title)
+        ).distinct()
+    val usedKeys = mutableSetOf<String>()
+    val selected = mutableMapOf<String, ContentRail>()
+
+    allocationOrder.forEach { title ->
+        val rail = byTitle[title] ?: return@forEach
+        val items = rail.items
+            .asSequence()
+            .distinctBy(Media::key)
+            .filter { item -> item.key !in usedKeys }
+            .take(itemLimit)
+            .toList()
+        usedKeys += items.map(Media::key)
+        selected[title] = rail.copy(items = items)
+    }
+    return rails.mapNotNull { rail -> selected[rail.title] }
+}
 
 /**
  * Builds the native catalogue from public, server-rendered movie metadata pages.
@@ -57,6 +120,13 @@ class CatalogClient(
     private var catalogue: List<Media> = fallbackItems
     private val imdbRatingsCache = ConcurrentHashMap<String, Double>()
     private val rottenTomatoesRatingsCache = ConcurrentHashMap<String, Int>()
+    private val tmdbSearchCache = ConcurrentHashMap<String, List<Media>>()
+    private val verifiedGenrePageCache = ConcurrentHashMap<String, List<Media>>()
+    private val verifiedGenrePageLocks = ConcurrentHashMap<String, Mutex>()
+    private val genreBrowsePageCursor = ConcurrentHashMap<String, Int>()
+    private val genreBrowseSeenKeys = ConcurrentHashMap.newKeySet<String>()
+    @Volatile
+    private var homeShownKeys: Set<String> = emptySet()
 
     suspend fun home(
         onProgress: suspend (HomeContent) -> Unit = {},
@@ -68,19 +138,41 @@ class CatalogClient(
             .orEmpty()
             .associateBy(ContentRail::title)
         val genreTitles = GenreCatalog.homeSpecs.map(GenreSpec::title).toSet()
-        val resolved = linkedMapOf<String, ContentRail>()
+        val genreSpecsByTitle = GenreCatalog.homeSpecs.associateBy(GenreSpec::title)
+        val candidates = linkedMapOf<String, ContentRail>()
         cachedHome?.rails.orEmpty().forEach { rail ->
-            val items = rail.items.distinctBy(Media::key)
+            val expectedType = genreSpecsByTitle[rail.title]?.type
+            val items = rail.items
+                .asSequence()
+                .filter { item -> expectedType == null || item.type == expectedType }
+                .distinctBy(Media::key)
+                .toList()
             val acceptable = if (rail.title in genreTitles) {
                 items.size >= MIN_GENRE_RAIL_ITEMS
             } else {
                 items.isNotEmpty()
             }
-            if (acceptable) resolved[rail.title] = rail.copy(items = items)
+            if (acceptable) candidates[rail.title] = rail.copy(items = items)
         }
 
         suspend fun snapshot(): HomeContent {
-            val rails = orderedTitles.mapNotNull(resolved::get)
+            val orderedCandidates = orderedTitles.mapNotNull(candidates::get)
+            val genrePriority = GenreCatalog.homeSpecs
+                .sortedWith(
+                    compareBy<GenreSpec> { spec ->
+                        candidates[spec.title]?.items?.size ?: Int.MAX_VALUE
+                    }.thenByDescending { spec ->
+                        if (spec.matchMode == GenreMatchMode.ALL) spec.genreIds.size else 0
+                    }.thenBy(GenreSpec::title),
+                )
+                .map(GenreSpec::title)
+            val rails = allocateUniqueHomeRails(
+                rails = orderedCandidates,
+                priorityTitles = genrePriority + baseHomeRailSpecs.map(TmdbHomeRailSpec::title),
+                itemLimit = HOME_RAIL_LIMIT,
+            ).filter { rail ->
+                rail.title !in genreTitles || rail.items.size >= MIN_GENRE_RAIL_ITEMS
+            }
             val hero = rails.firstNotNullOfOrNull { rail ->
                 rail.items.firstOrNull { it.backdropPath != null }
             } ?: rails.firstNotNullOfOrNull { it.items.firstOrNull() }
@@ -92,7 +184,35 @@ class CatalogClient(
             )
         }
 
-        if (resolved.isNotEmpty()) onProgress(snapshot())
+        fun isCompleteGenreSnapshot(content: HomeContent): Boolean {
+            val railsByTitle = content.rails.associateBy(ContentRail::title)
+            val allGenresComplete = GenreCatalog.homeSpecs.all { spec ->
+                railsByTitle[spec.title]?.items?.let { items ->
+                    items.size >= MIN_GENRE_RAIL_ITEMS &&
+                        items.all { item -> item.type == spec.type }
+                } == true
+            }
+            val keys = content.rails.flatMap(ContentRail::items).map(Media::key)
+            return allGenresComplete && keys.size == keys.distinct().size
+        }
+
+        fun recordShownHome(content: HomeContent) {
+            homeShownKeys = buildSet {
+                add(content.hero.key)
+                content.rails.forEach { rail ->
+                    rail.items.forEach { item -> add(item.key) }
+                }
+            }
+        }
+
+        suspend fun emitProgress(content: HomeContent) {
+            recordShownHome(content)
+            onProgress(content)
+        }
+
+        val cachedSnapshot = if (candidates.isNotEmpty()) snapshot() else null
+        val completeCachedSnapshot = cachedSnapshot?.takeIf(::isCompleteGenreSnapshot)
+        if (cachedSnapshot != null) emitProgress(cachedSnapshot)
 
         val progressMutex = Mutex()
         val requestGate = Semaphore(HOME_CONCURRENT_REQUESTS)
@@ -104,8 +224,13 @@ class CatalogClient(
                             fetchBaseRail(spec, cachedByTitle[spec.title])
                         } ?: return@async
                         progressMutex.withLock {
-                            resolved[spec.title] = rail
-                            onProgress(snapshot())
+                            candidates[spec.title] = rail
+                            val partial = snapshot()
+                            emitProgress(
+                                completeCachedSnapshot
+                                    ?.takeUnless { isCompleteGenreSnapshot(partial) }
+                                    ?: partial,
+                            )
                         }
                     },
                 )
@@ -116,14 +241,26 @@ class CatalogClient(
                         val rail = requestGate.withPermit {
                             fetchGenreRail(
                                 spec = spec,
-                                targetSize = MIN_GENRE_RAIL_ITEMS,
+                                targetSize = if (
+                                    spec.matchMode == GenreMatchMode.ALL &&
+                                    spec.genreIds.size > 1
+                                ) {
+                                    HOME_COMPOUND_GENRE_CANDIDATE_TARGET
+                                } else {
+                                    HOME_GENRE_CANDIDATE_TARGET
+                                },
                                 minimumSize = MIN_GENRE_RAIL_ITEMS,
                                 cached = cachedByTitle[spec.title]?.items.orEmpty(),
                             )
                         } ?: return@async
                         progressMutex.withLock {
-                            resolved[spec.title] = rail
-                            onProgress(snapshot())
+                            candidates[spec.title] = rail
+                            val partial = snapshot()
+                            emitProgress(
+                                completeCachedSnapshot
+                                    ?.takeUnless { isCompleteGenreSnapshot(partial) }
+                                    ?: partial,
+                            )
                         }
                     },
                 )
@@ -131,13 +268,17 @@ class CatalogClient(
         }
         jobs.awaitAll()
 
-        val content = snapshot()
+        val refreshedContent = snapshot()
+        val content = completeCachedSnapshot
+            ?.takeUnless { isCompleteGenreSnapshot(refreshedContent) }
+            ?: refreshedContent
+        recordShownHome(content)
         catalogue = content.rails
             .flatMap(ContentRail::items)
             .distinctBy(Media::key)
             .ifEmpty { fallbackItems }
-        if (content.rails.any { it.title in genreTitles && it.items.size >= MIN_GENRE_RAIL_ITEMS }) {
-            cacheStore?.saveHome(content)
+        if (isCompleteGenreSnapshot(refreshedContent)) {
+            cacheStore?.saveHome(refreshedContent)
         }
         content
     }
@@ -146,11 +287,15 @@ class CatalogClient(
         spec: TmdbHomeRailSpec,
         cached: ContentRail?,
     ): ContentRail? {
-        val fresh = loadSearchPageWithRetry(spec.path)
+        val fresh = (1..HOME_BASE_MAX_PAGES)
+            .flatMap { page ->
+                val separator = if ("?" in spec.path) "&" else "?"
+                loadSearchPageWithRetry("${spec.path}${separator}page=$page")
+            }
             .distinctBy(Media::key)
         val items = (fresh + cached?.items.orEmpty())
             .distinctBy(Media::key)
-            .take(HOME_RAIL_LIMIT)
+            .take(HOME_BASE_CANDIDATE_TARGET)
         return items.takeIf(List<Media>::isNotEmpty)?.let {
             ContentRail(spec.title, it)
         }
@@ -162,34 +307,37 @@ class CatalogClient(
         minimumSize: Int,
         cached: List<Media>,
     ): ContentRail? {
-        val collected = linkedMapOf<String, Media>()
-        genreDiscoverPaths(spec).forEach { path ->
-            if (collected.size >= targetSize) return@forEach
-            loadSearchPageWithRetry(path)
-                .asSequence()
-                .filter { it.type == spec.type }
-                .forEach { collected.putIfAbsent(it.key, it) }
-        }
-        cached.asSequence()
-            .filter { it.type == spec.type }
-            .forEach { collected.putIfAbsent(it.key, it) }
-        val items = collected.values.take(targetSize)
-        return if (items.size >= minimumSize) {
-            ContentRail(spec.title, items)
-        } else {
-            null
-        }
+        val fetched = fetchGenreItemsWithRecovery(
+            spec = spec,
+            startPage = HOME_GENRE_START_PAGE,
+            maxPages = if (
+                spec.matchMode == GenreMatchMode.ALL && spec.genreIds.size > 1
+            ) {
+                HOME_COMPOUND_GENRE_MAX_PAGES
+            } else {
+                HOME_GENRE_MAX_PAGES
+            },
+            targetSize = targetSize,
+            minimumSize = minimumSize,
+            excludedKeys = emptySet(),
+            cached = cached,
+        ) ?: return null
+        return ContentRail(spec.title, fetched.items)
     }
 
     private suspend fun loadSearchPageWithRetry(path: String): List<Media> {
         repeat(CATALOG_REQUEST_ATTEMPTS) { attempt ->
-            val result = runCatching {
+            try {
                 val separator = if ("?" in path) "&" else "?"
-                parseSearchResults(
+                val parsed = parseSearchResults(
                     pageLoader("$TMDB_SITE_URL$path${separator}language=en-US"),
                 )
+                if (parsed.isNotEmpty()) return parsed
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Retry below.
             }
-            if (result.isSuccess) return result.getOrThrow()
             if (attempt < CATALOG_REQUEST_ATTEMPTS - 1) {
                 delay(CATALOG_RETRY_DELAY_MS * (attempt + 1))
             }
@@ -197,28 +345,169 @@ class CatalogClient(
         return emptyList()
     }
 
-    private fun genreDiscoverPaths(spec: GenreSpec): List<String> {
-        val encodedGenres = URLEncoder.encode(
-            spec.genreExpression,
-            StandardCharsets.UTF_8.toString(),
-        )
-        val base = "/discover/${spec.type.routeName}?with_genres=$encodedGenres"
-        val sortVariants = when (spec.type) {
-            MediaType.MOVIE -> listOf(
-                "popularity.desc",
-                "vote_average.desc&vote_count.gte=100",
-                "primary_release_date.desc&vote_count.gte=10",
-                "vote_count.desc",
-                "revenue.desc",
+    private suspend fun fetchGenreItemsWithRecovery(
+        spec: GenreSpec,
+        startPage: Int,
+        maxPages: Int,
+        targetSize: Int,
+        minimumSize: Int,
+        excludedKeys: Set<String>,
+        cached: List<Media> = emptyList(),
+    ): GenreFetch? {
+        repeat(GENRE_ASSEMBLY_ATTEMPTS) { attempt ->
+            val result = fetchGenreItems(
+                spec = spec,
+                startPage = startPage,
+                maxPages = maxPages,
+                targetSize = targetSize,
+                minimumSize = minimumSize,
+                excludedKeys = excludedKeys,
+                cached = cached,
             )
-            MediaType.TV -> listOf(
-                "popularity.desc",
-                "vote_average.desc&vote_count.gte=100",
-                "first_air_date.desc&vote_count.gte=10",
-                "vote_count.desc",
-            )
+            if (result != null) return result
+            if (attempt < GENRE_ASSEMBLY_ATTEMPTS - 1) {
+                delay(GENRE_ASSEMBLY_RETRY_DELAY_MS * (attempt + 1))
+            }
         }
-        return sortVariants.map { "$base&sort_by=$it" }
+        return null
+    }
+
+    private suspend fun fetchGenreItems(
+        spec: GenreSpec,
+        startPage: Int,
+        maxPages: Int,
+        targetSize: Int,
+        minimumSize: Int,
+        excludedKeys: Set<String>,
+        cached: List<Media> = emptyList(),
+    ): GenreFetch? {
+        if (spec.genreIds.isEmpty()) return null
+        val pools = spec.genreIds.associateWith { linkedMapOf<String, Media>() }
+        var combined = emptyList<Media>()
+        var pagesLoaded = 0
+
+        for (page in startPage until startPage + maxPages) {
+            spec.genreIds.forEach { genreId ->
+                loadVerifiedGenrePageWithRetry(spec.type, genreId, page)
+                    .forEach { item -> pools.getValue(genreId).putIfAbsent(item.key, item) }
+            }
+            pagesLoaded += 1
+            combined = combineGenrePools(spec, pools)
+                .filterNot { item -> item.key in excludedKeys }
+                .distinctBy(Media::key)
+            if (combined.size >= targetSize) break
+        }
+        val merged = (combined + cached)
+            .asSequence()
+            .filter { item -> item.type == spec.type && item.key !in excludedKeys }
+            .distinctBy(Media::key)
+            .take(targetSize)
+            .toList()
+        return merged
+            .takeIf { items -> items.size >= minimumSize }
+            ?.let { items -> GenreFetch(items, pagesLoaded) }
+    }
+
+    private fun combineGenrePools(
+        spec: GenreSpec,
+        pools: Map<Int, LinkedHashMap<String, Media>>,
+    ): List<Media> {
+        val labels = spec.genreIds.mapNotNull { genreId ->
+            GenreCatalog.labelFor(genreId, spec.type)
+        }
+        return when (spec.matchMode) {
+            GenreMatchMode.ALL -> {
+                val first = pools[spec.genreIds.first()]?.values.orEmpty()
+                val commonKeys = spec.genreIds.drop(1).fold(
+                    first.mapTo(linkedSetOf(), Media::key),
+                ) { common, genreId ->
+                    common.apply {
+                        retainAll(pools[genreId]?.keys.orEmpty())
+                    }
+                }
+                first.filter { item -> item.key in commonKeys }
+                    .map { item -> item.copy(genres = (labels + item.genres).distinct()) }
+            }
+            GenreMatchMode.ANY -> {
+                val sourceItems = spec.genreIds.map { genreId ->
+                    val label = GenreCatalog.labelFor(genreId, spec.type)
+                    pools[genreId]?.values.orEmpty().map { item ->
+                        if (label == null) item else item.copy(
+                            genres = (listOf(label) + item.genres).distinct(),
+                        )
+                    }
+                }
+                val interleaved = linkedMapOf<String, Media>()
+                val longestSource = sourceItems.maxOfOrNull(List<Media>::size) ?: 0
+                repeat(longestSource) { index ->
+                    sourceItems.forEach { items ->
+                        val item = items.getOrNull(index) ?: return@forEach
+                        val existing = interleaved[item.key]
+                        interleaved[item.key] = if (existing == null) {
+                            item
+                        } else {
+                            existing.copy(
+                                genres = (existing.genres + item.genres).distinct(),
+                            )
+                        }
+                    }
+                }
+                interleaved.values.toList()
+            }
+        }
+    }
+
+    private suspend fun loadVerifiedGenrePageWithRetry(
+        type: MediaType,
+        genreId: Int,
+        page: Int,
+    ): List<Media> {
+        val path = GenreCatalog.pagePath(genreId, type) ?: return emptyList()
+        val cacheKey = "${type.routeName}:$genreId:$page"
+        verifiedGenrePageCache[cacheKey]?.let { return it }
+        val pageLock = verifiedGenrePageLocks.computeIfAbsent(cacheKey) { Mutex() }
+        return pageLock.withLock {
+            verifiedGenrePageCache[cacheKey]?.let { return@withLock it }
+            repeat(CATALOG_REQUEST_ATTEMPTS) { attempt ->
+                try {
+                    val html = pageLoader(
+                        "$TMDB_SITE_URL$path?page=$page&language=en-US",
+                    )
+                    val document = Jsoup.parse(html, TMDB_SITE_URL)
+                    val canonicalPath = document
+                        .selectFirst("link[rel=canonical][href]")
+                        ?.attr("abs:href")
+                        ?.takeIf(String::isNotBlank)
+                        ?.let { href -> runCatching { URL(href).path }.getOrNull() }
+                    if (canonicalPath?.trimEnd('/') != path.trimEnd('/')) {
+                        throw IOException("Genre source redirected to a generic catalogue page.")
+                    }
+                    val label = GenreCatalog.labelFor(genreId, type)
+                    val parsed = parseSearchResults(html)
+                        .asSequence()
+                        .filter { item -> item.type == type }
+                        .map { item ->
+                            if (label == null) item else item.copy(
+                                genres = (listOf(label) + item.genres).distinct(),
+                            )
+                        }
+                        .distinctBy(Media::key)
+                        .toList()
+                    if (parsed.isEmpty()) {
+                        throw IOException("Genre source returned no verified titles.")
+                    }
+                    verifiedGenrePageCache[cacheKey] = parsed
+                    return@withLock parsed
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    if (attempt < CATALOG_REQUEST_ATTEMPTS - 1) {
+                        delay(CATALOG_RETRY_DELAY_MS * (attempt + 1))
+                    }
+                }
+            }
+            emptyList()
+        }
     }
 
     suspend fun search(query: String): List<Media> = supervisorScope {
@@ -285,33 +574,60 @@ class CatalogClient(
         val intent = SearchRanker.parseIntent(cleanDescription)
         val discovery = discoverPlotCandidates(cleanDescription)
         if (discovery.successfulSources == 0) {
-            throw IOException("Web lookup unavailable - try again.")
+            throw IOException("Web lookup unavailable—try again.")
         }
 
         val requestGate = Semaphore(PLOT_RESOLUTION_CONCURRENCY)
-        val resolved = discovery.candidates
+        val candidatesToResolve = discovery.candidates
+            .groupBy(PlotCandidate::source)
+            .values
+            .flatMap { sourceCandidates ->
+                sourceCandidates
+                    .sortedWith(
+                        compareByDescending<PlotCandidate> { candidate ->
+                            plotCandidateDiscoveryScore(
+                                cleanDescription,
+                                candidate,
+                            )
+                        }.thenBy(PlotCandidate::position),
+                    )
+                    .take(PLOT_CANDIDATES_PER_SOURCE_LIMIT)
+            }
+            .distinctBy(PlotCandidate::cacheKey)
             .take(PLOT_TITLE_SUGGESTION_LIMIT)
-            .mapIndexed { index, candidate ->
-            async {
-                requestGate.withPermit {
-                    val types = candidate.type?.let { listOf(it.routeName) }
-                        ?: intent.type?.let { listOf(it.routeName) }
-                        ?: listOf("movie", "tv")
-                    val results = runCatching {
-                        searchTmdb(candidate.title, types)
-                    }.getOrDefault(emptyList())
-                    selectResolvedPlotMatch(candidate, results)?.let { index to it }
+        val resolved = candidatesToResolve
+            .map { candidate ->
+                async {
+                    requestGate.withPermit {
+                        val types = candidate.type?.let { listOf(it.routeName) }
+                            ?: intent.type?.let { listOf(it.routeName) }
+                            ?: listOf("movie", "tv")
+                        val results = try {
+                            searchTmdb(
+                                query = candidate.title,
+                                types = types,
+                                retryEmpty = true,
+                            )
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (_: Throwable) {
+                            emptyList()
+                        }
+                        selectResolvedPlotMatch(candidate, results)
+                    }
                 }
             }
-        }
             .awaitAll()
             .filterNotNull()
-            .sortedBy(Pair<Int, Media>::first)
-            .map(Pair<Int, Media>::second)
-            .filter { intent.type == null || it.type == intent.type }
-            .distinctBy(Media::key)
+            .filter { match -> intent.type == null || match.media.type == intent.type }
 
-        val ranked = PlotSearchRanker.rank(cleanDescription, resolved)
+        val ranked = resolved
+            .groupBy { match -> match.media.key }
+            .map { (_, matches) ->
+                matches.maxBy { match -> resolvedPlotScore(cleanDescription, match) }
+            }
+            .sortedByDescending { match -> resolvedPlotScore(cleanDescription, match) }
+            .map(ResolvedPlotCandidate::media)
             .take(PLOT_RESULT_LIMIT)
         catalogue = (ranked + catalogue).distinctBy(Media::key)
         if (ranked.isNotEmpty()) cacheStore?.savePlot(queryKey, ranked)
@@ -323,96 +639,286 @@ class CatalogClient(
         type: MediaType,
     ): List<Media> {
         val spec = GenreCatalog.specFor(genre, type) ?: return emptyList()
-        val cached = cacheStore?.loadHome()
-            ?.rails
-            ?.firstOrNull { it.title.equals(spec.title, ignoreCase = true) }
-            ?.items
-            .orEmpty()
-        val rail = fetchGenreRail(
-            spec = spec,
-            targetSize = GENRE_PAGE_TARGET,
-            minimumSize = MIN_GENRE_RAIL_ITEMS,
-            cached = cached,
+        val cursorKey = "${type.routeName}:${spec.genreIds.sorted()}:${spec.matchMode}"
+        val startPage = genreBrowsePageCursor.getOrDefault(
+            cursorKey,
+            GENRE_BROWSE_START_PAGE,
         )
-            ?: return emptyList()
-        catalogue = (rail.items + catalogue).distinctBy(Media::key)
-        return rail.items
+        val excluded = buildSet {
+            catalogue.forEach { item -> add(item.key) }
+            addAll(homeShownKeys)
+            addAll(genreBrowseSeenKeys)
+        }
+        val fetched = fetchGenreItemsWithRecovery(
+            spec = spec,
+            startPage = startPage,
+            maxPages = GENRE_BROWSE_MAX_PAGES,
+            targetSize = GENRE_PAGE_TARGET,
+            minimumSize = GENRE_PAGE_TARGET,
+            excludedKeys = excluded,
+        ) ?: throw IOException(
+            "No more unseen ${if (type == MediaType.MOVIE) "movie" else "series"} " +
+            "titles are available in this genre yet.",
+        )
+        genreBrowsePageCursor[cursorKey] = startPage + fetched.pagesLoaded
+        genreBrowseSeenKeys += fetched.items.map(Media::key)
+        catalogue = (fetched.items + catalogue).distinctBy(Media::key)
+        return fetched.items
     }
 
-    private suspend fun discoverPlotCandidates(description: String): PlotDiscovery {
+    private suspend fun discoverPlotCandidates(
+        description: String,
+    ): PlotDiscovery {
         var successfulSources = 0
         val candidates = linkedMapOf<String, PlotCandidate>()
 
-        suspend fun collect(result: Result<List<PlotCandidate>>) {
+        fun collect(result: Result<List<PlotCandidate>>) {
             result.onSuccess { found ->
                 successfulSources += 1
                 found.forEach { candidate ->
-                    candidates.putIfAbsent(candidate.cacheKey, candidate)
+                    val existing = candidates[candidate.cacheKey]
+                    candidates[candidate.cacheKey] = if (existing == null) {
+                        candidate
+                    } else {
+                        mergePlotCandidates(existing, candidate)
+                    }
                 }
             }
         }
 
         collect(
-            runCatching {
+            capturePlotLookup {
                 val query = URLEncoder.encode(
-                    "movie or tv show $description",
+                    "what movie or tv show is this plot $description",
                     StandardCharsets.UTF_8.toString(),
                 )
                 parseBravePlotCandidates(
-                    pageLoader("$BRAVE_SEARCH_URL?q=$query&source=web"),
+                    pageLoader("$BRAVE_SEARCH_URL?q=$query&source=web&spellcheck=1"),
                 )
             },
         )
-        if (candidates.size < MIN_EXTERNAL_PLOT_CANDIDATES) {
-            collect(runCatching { wikipediaPlotCandidates(description) })
-        }
-        if (candidates.size < MIN_EXTERNAL_PLOT_CANDIDATES) {
-            collect(runCatching { duckDuckGoPlotCandidates(description) })
-        }
-        return PlotDiscovery(candidates.values.toList(), successfulSources)
+        collect(capturePlotLookup { wikipediaPlotCandidates(description) })
+        collect(capturePlotLookup { duckDuckGoPlotCandidates(description) })
+        return PlotDiscovery(
+            candidates = candidates.values.sortedByDescending { candidate ->
+                plotCandidateDiscoveryScore(description, candidate)
+            },
+            successfulSources = successfulSources,
+        )
+    }
+
+    private suspend fun <T> capturePlotLookup(
+        block: suspend () -> T,
+    ): Result<T> = try {
+        Result.success(block())
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        Result.failure(error)
     }
 
     internal fun parseBravePlotCandidates(html: String): List<PlotCandidate> {
         val document = Jsoup.parse(html, BRAVE_SEARCH_URL)
+        if (
+            document.select("div.snippet[data-type=web]").isEmpty() &&
+            document.select(".search-snippet-title, a.result-header").isEmpty() &&
+            (
+                html.contains("captcha", ignoreCase = true) ||
+                    html.contains("challenge", ignoreCase = true)
+                )
+        ) {
+            throw IOException("Brave Search returned an anti-bot page.")
+        }
+        val webResults = document.select("div.snippet[data-type=web]")
+            .flatMapIndexed { index, result ->
+                val heading = result.selectFirst(
+                    ".title, .snippet-title, .search-snippet-title, " +
+                        "[data-testid=result-title], h3",
+                )?.text().orEmpty()
+                val link = result.selectFirst("a[href]")?.attr("abs:href").orEmpty()
+                val snippet = result.selectFirst(
+                    ".snippet-description, .description, .snippet-content, p",
+                )?.text().orEmpty()
+                webResultCandidates(
+                    heading = heading,
+                    url = link,
+                    snippet = snippet,
+                    source = PlotSource.BRAVE,
+                    position = index,
+                )
+            }
         val directTitles = document.select(
             ".search-snippet-title, " +
                 ".entity-infobox-header-title-row .line-clamp-2, " +
                 ".entity-infobox-header-title, " +
                 "a.result-header",
-        ).map { element ->
+        ).mapIndexed { index, element ->
             val value = element.attr("title").takeIf(String::isNotBlank) ?: element.text()
-            plotCandidateFromTitle(value)
+            plotCandidateFromTitle(
+                value = value,
+                evidence = value,
+                source = PlotSource.BRAVE,
+                position = index,
+            )
         }
         val answerTitles = document.select(
             ".inline-qa-answer, .entity-infobox-description, .generic-snippet",
-        ).flatMap { element ->
-            extractCapitalizedTitles(element.text()).map(::plotCandidateFromTitle)
+        ).flatMapIndexed { index, element ->
+            extractNamedTitles(element).map { title ->
+                plotCandidateFromTitle(
+                    value = title,
+                    evidence = element.text(),
+                    source = PlotSource.BRAVE,
+                    position = index,
+                )
+            }
         }
-        return (directTitles + answerTitles)
+        val resultElementsPresent = webResults.isNotEmpty() ||
+            directTitles.isNotEmpty() ||
+            document.select(".no-results, [data-testid=no-results]").isNotEmpty()
+        if (!resultElementsPresent) {
+            throw IOException("Brave Search returned no parseable result page.")
+        }
+        return (webResults + directTitles + answerTitles)
             .filterNotNull()
             .filterNot { candidate -> isGenericPlotResult(candidate.title) }
             .distinctBy(PlotCandidate::cacheKey)
     }
 
-    private suspend fun wikipediaPlotCandidates(description: String): List<PlotCandidate> {
-            val query = URLEncoder.encode(
-                "film television $description",
-                StandardCharsets.UTF_8.toString(),
-            )
-            val payload = JSONObject(
-                pageLoader(
-                    "$WIKIPEDIA_SEARCH_URL?action=query&list=search&format=json" +
-                        "&utf8=1&srlimit=18&srsearch=$query",
-                ),
-            )
-            val results = payload.optJSONObject("query")
-                ?.optJSONArray("search")
-                ?: return emptyList()
-            return (0 until results.length())
-                .mapNotNull { index -> results.optJSONObject(index)?.optString("title") }
-                .mapNotNull(::plotCandidateFromTitle)
-                .filterNot { isGenericPlotResult(it.title) }
-                .distinctBy(PlotCandidate::cacheKey)
+    private suspend fun wikipediaPlotCandidates(
+        description: String,
+    ): List<PlotCandidate> {
+        val candidates = linkedMapOf<String, PlotCandidate>()
+        var successfulQueries = 0
+        var lastFailure: Throwable? = null
+        buildWikipediaPlotQueries(description)
+            .take(WIKIPEDIA_QUERY_LIMIT)
+            .forEachIndexed { queryIndex, rawQuery ->
+                val hits = try {
+                    loadWikipediaSearchHits(rawQuery)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    lastFailure = error
+                    return@forEachIndexed
+                }
+                successfulQueries += 1
+                hits.forEachIndexed { index, hit ->
+                    wikipediaCandidatesFromHit(
+                        hit = hit,
+                        queryIndex = queryIndex,
+                        resultIndex = index,
+                    ).forEach { candidate ->
+                        if (isGenericPlotResult(candidate.title)) return@forEach
+                        val existing = candidates[candidate.cacheKey]
+                        candidates[candidate.cacheKey] = if (existing == null) {
+                            candidate
+                        } else {
+                            mergePlotCandidates(existing, candidate)
+                        }
+                    }
+                }
+            }
+        if (successfulQueries == 0) {
+            throw IOException("Wikipedia search was unavailable.", lastFailure)
+        }
+        return candidates.values.toList()
+    }
+
+    private suspend fun loadWikipediaSearchHits(
+        rawQuery: String,
+    ): List<WikipediaSearchHit> = wikipediaRequestMutex.withLock {
+        val elapsed = System.currentTimeMillis() - wikipediaLastRequestAt
+        val waitBeforeRequest = WIKIPEDIA_MIN_REQUEST_INTERVAL_MS - elapsed
+        if (waitBeforeRequest > 0) {
+            withContext(Dispatchers.IO) { delay(waitBeforeRequest) }
+        }
+        val query = URLEncoder.encode(
+            rawQuery,
+            StandardCharsets.UTF_8.toString(),
+        )
+        var lastFailure: Throwable? = null
+        repeat(WIKIPEDIA_REQUEST_ATTEMPTS) { attempt ->
+            try {
+                val payload = JSONObject(
+                    pageLoader(
+                        "$WIKIPEDIA_SEARCH_URL?action=query&list=search&format=json" +
+                            "&utf8=1&srnamespace=0&srlimit=$WIKIPEDIA_RESULT_BATCH_SIZE" +
+                            "&srprop=snippet&srsearch=$query",
+                    ),
+                )
+                payload.optJSONObject("error")?.let { apiError ->
+                    throw IOException(
+                        apiError.optString("info").ifBlank {
+                            "Wikipedia returned an API error."
+                        },
+                    )
+                }
+                val results = payload.optJSONObject("query")
+                    ?.optJSONArray("search")
+                    ?: throw IOException("Wikipedia returned no search response.")
+                wikipediaLastRequestAt = System.currentTimeMillis()
+                return@withLock (0 until results.length()).mapNotNull { index ->
+                    val entry = results.optJSONObject(index) ?: return@mapNotNull null
+                    WikipediaSearchHit(
+                        title = entry.optString("title").trim(),
+                        snippet = Jsoup.parse(entry.optString("snippet")).text(),
+                    )
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                lastFailure = error
+                wikipediaLastRequestAt = System.currentTimeMillis()
+                if (attempt + 1 < WIKIPEDIA_REQUEST_ATTEMPTS) {
+                    withContext(Dispatchers.IO) {
+                        delay(WIKIPEDIA_RETRY_DELAY_MS * (attempt + 1))
+                    }
+                }
+            }
+        }
+        throw IOException("Wikipedia search was unavailable.", lastFailure)
+    }
+
+    private fun wikipediaCandidatesFromHit(
+        hit: WikipediaSearchHit,
+        queryIndex: Int,
+        resultIndex: Int,
+    ): List<PlotCandidate> {
+        if (!isWikipediaMediaResult(hit.title, hit.snippet)) return emptyList()
+        val evidence = "${hit.title}. ${hit.snippet}"
+        val position = resultIndex + queryIndex * WIKIPEDIA_QUERY_POSITION_PENALTY
+        val titles = buildList {
+            add(hit.title)
+            wikipediaSeasonTitle.find(hit.title)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                ?.takeIf(String::isNotBlank)
+                ?.let(::add)
+            wikipediaParentheticalWork.find(hit.title)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                ?.takeIf { value ->
+                    value.isNotBlank() &&
+                        wikipediaParentheticalNonTitles.none { qualifier ->
+                            value.contains(qualifier, ignoreCase = true)
+                        }
+                }
+                ?.let(::add)
+        }
+        return titles
+            .distinct()
+            .mapNotNull { title ->
+                plotCandidateFromTitle(
+                    value = title,
+                    evidence = evidence,
+                    source = PlotSource.WIKIPEDIA,
+                    position = position,
+                )
+            }
+            .distinctBy(PlotCandidate::cacheKey)
     }
 
     private suspend fun duckDuckGoPlotCandidates(
@@ -422,36 +928,171 @@ class CatalogClient(
             "movie or tv show where $description",
             StandardCharsets.UTF_8.toString(),
         )
-        return Jsoup.parse(
+        val document = Jsoup.parse(
             pageLoader("$DUCKDUCKGO_HTML_URL/?q=$query"),
             DUCKDUCKGO_HTML_URL,
         )
-            .select("a.result__a")
-            .mapNotNull { result -> plotCandidateFromTitle(result.text()) }
+        val resultBlocks = document.select(".result")
+        val fromBlocks = resultBlocks.flatMapIndexed { index, result ->
+            val link = result.selectFirst("a.result__a")
+            webResultCandidates(
+                heading = link?.text().orEmpty(),
+                url = link?.attr("abs:href").orEmpty(),
+                snippet = result.selectFirst(".result__snippet")?.text().orEmpty(),
+                source = PlotSource.DUCKDUCKGO,
+                position = index,
+            )
+        }
+        val legacy = if (resultBlocks.isEmpty()) {
+            document.select("a.result__a").mapIndexedNotNull { index, result ->
+                plotCandidateFromTitle(
+                    value = result.text(),
+                    evidence = result.text(),
+                    source = PlotSource.DUCKDUCKGO,
+                    position = index,
+                )
+            }
+        } else {
+            emptyList()
+        }
+        if (
+            fromBlocks.isEmpty() &&
+            legacy.isEmpty() &&
+            document.select(".no-results, .no-results__message").isEmpty()
+        ) {
+            throw IOException("DuckDuckGo returned no parseable result page.")
+        }
+        return (fromBlocks + legacy)
             .filterNot { isGenericPlotResult(it.title) }
             .distinctBy(PlotCandidate::cacheKey)
-            .take(14)
+            .take(20)
     }
 
-    private fun plotCandidateFromTitle(value: String): PlotCandidate? {
-        val year = fourDigitYear.find(value)?.value
+    private fun webResultCandidates(
+        heading: String,
+        url: String,
+        snippet: String,
+        source: PlotSource,
+        position: Int,
+    ): List<PlotCandidate> {
+        val evidence = listOf(heading, snippet)
+            .filter(String::isNotBlank)
+            .joinToString(". ")
+        val direct = plotCandidateFromTitle(
+            value = heading,
+            evidence = evidence,
+            source = source,
+            position = position,
+        )
+        val fromUrl = plotCandidateFromTrustedUrl(
+            value = url,
+            evidence = evidence,
+            source = source,
+            position = position,
+        )
+        return listOfNotNull(fromUrl, direct)
+            .filterNot { candidate -> isGenericPlotResult(candidate.title) }
+            .distinctBy(PlotCandidate::cacheKey)
+    }
+
+    private fun plotCandidateFromTrustedUrl(
+        value: String,
+        evidence: String,
+        source: PlotSource,
+        position: Int,
+    ): PlotCandidate? {
+        val unwrapped = unwrapSearchResultUrl(value)
+        val uri = runCatching { URI(unwrapped) }.getOrNull() ?: return null
+        val host = uri.host.orEmpty().lowercase()
+        val path = uri.path.orEmpty()
+        val rawTitle = when {
+            host.endsWith("wikipedia.org") && "/wiki/" in path -> path
+                .substringAfter("/wiki/")
+                .replace('_', ' ')
+                .let { URLDecoder.decode(it, StandardCharsets.UTF_8.toString()) }
+            host.endsWith("themoviedb.org") -> Regex(
+                """/(?:movie|tv)/\d+-([^/?#]+)""",
+            ).find(path)?.groupValues?.getOrNull(1)?.replace('-', ' ')
+            else -> null
+        } ?: return null
         val type = when {
-            value.contains("TV series", ignoreCase = true) ||
-                value.contains("television series", ignoreCase = true) -> MediaType.TV
-            value.contains("film", ignoreCase = true) -> MediaType.MOVIE
+            "/movie/" in path -> MediaType.MOVIE
+            "/tv/" in path -> MediaType.TV
             else -> null
         }
-        val quoted = Regex("""["']([^"']{2,60})["']""")
+        return plotCandidateFromTitle(
+            value = rawTitle,
+            evidence = evidence,
+            source = source,
+            position = position,
+            forcedType = type,
+        )
+    }
+
+    private fun unwrapSearchResultUrl(value: String): String {
+        val absolute = if (value.startsWith("//")) "https:$value" else value
+        val uri = runCatching { URI(absolute) }.getOrNull() ?: return absolute
+        if (!uri.host.orEmpty().contains("duckduckgo.com", ignoreCase = true)) {
+            return absolute
+        }
+        return uri.rawQuery.orEmpty()
+            .split('&')
+            .mapNotNull { part ->
+                val name = part.substringBefore('=')
+                val rawValue = part.substringAfter('=', "")
+                if (name == "uddg" && rawValue.isNotBlank()) {
+                    URLDecoder.decode(rawValue, StandardCharsets.UTF_8.toString())
+                } else {
+                    null
+                }
+            }
+            .firstOrNull()
+            ?: absolute
+    }
+
+    private fun plotCandidateFromTitle(
+        value: String,
+        evidence: String = value,
+        source: PlotSource = PlotSource.BRAVE,
+        position: Int = 0,
+        forcedType: MediaType? = null,
+    ): PlotCandidate? {
+        val year = fourDigitYear.find(value)?.value
+            ?: fourDigitYear.find(evidence)?.value
+        val qualifierText = "$value $evidence"
+        val type = forcedType ?: when {
+            qualifierText.contains("TV series", ignoreCase = true) ||
+                qualifierText.contains("television series", ignoreCase = true) ||
+                qualifierText.contains("miniseries", ignoreCase = true) -> MediaType.TV
+            qualifierText.contains("film", ignoreCase = true) ||
+                qualifierText.contains("movie", ignoreCase = true) -> MediaType.MOVIE
+            else -> null
+        }
+        val quoted = Regex("""["“‘']([^"”’']{2,70})["”’']""")
             .find(value)
             ?.groupValues
             ?.getOrNull(1)
-        val candidate = quoted ?: value
+        var candidate = quoted ?: value
             .substringBefore(" - Wikipedia")
             .substringBefore(" - IMDb")
             .substringBefore(" | ")
             .substringBefore(" - Rotten Tomatoes")
+        val titledYear = Regex(
+            """^(.+?)\s*\(((?:18|19|20|21)\d{2})(?:\s+(?:film|TV series|television series|miniseries))?\)(?:\s*[-–—|:].*)?$""",
+            RegexOption.IGNORE_CASE,
+        ).matchEntire(candidate.trim())
+        if (titledYear != null) {
+            candidate = titledYear.groupValues[1]
+        }
         val title = candidate
             .substringBefore(" ⭐")
+            .replace(
+                Regex(
+                    """\s*[-–—|:]\s*(?:plot|review|reviews|cast|trailer|ending|explained|movie|film|TV series|IMDb|Wikipedia).*$""",
+                    RegexOption.IGNORE_CASE,
+                ),
+                "",
+            )
             .replace(
                 Regex(
                     """\s*\((?:\d{4}\s+)?(?:film|TV series|television series|miniseries)\)\s*$""",
@@ -460,15 +1101,30 @@ class CatalogClient(
                 "",
             )
             .replace(Regex("""\s*\(\d{4}\)\s*$"""), "")
-            .trim(' ', '-', ':', '"', '\'')
+            .trim(' ', '-', '–', '—', ':', '"', '\'', '“', '”', '‘', '’')
         return title
-            .takeIf { it.length in 2..90 }
-            ?.let { PlotCandidate(it, year, type) }
+            .takeIf { it.length in 2..90 && it.split(Regex("\\s+")).size <= 12 }
+            ?.let {
+                PlotCandidate(
+                    title = it,
+                    year = year,
+                    type = type,
+                    evidence = evidence,
+                    source = source,
+                    position = position,
+                )
+            }
+    }
+
+    private fun extractNamedTitles(element: org.jsoup.nodes.Element): List<String> {
+        val emphasized = element.select("i, em, strong, b, a")
+            .map { child -> child.text().trim() }
+            .filter { title -> title.length in 2..90 }
+        return (emphasized + extractCapitalizedTitles(element.text())).distinct()
     }
 
     private fun extractCapitalizedTitles(value: String): List<String> =
-        value
-            .split(Regex("""[?!;,]|\s+and\s+(?=[A-Z])"""))
+        value.split(Regex("""[?!;,]|\s+and\s+(?=[A-Z])"""))
             .asSequence()
             .flatMap { chunk -> capitalizedTitlePattern.findAll(chunk).map(MatchResult::value) }
             .map { it.trim(' ', '.', ',', ':', ';', '?', '!', '"', '\'') }
@@ -480,18 +1136,140 @@ class CatalogClient(
             title.startsWith("List of ", ignoreCase = true) ||
             title.startsWith("Category:", ignoreCase = true)
 
+    private fun buildWikipediaPlotQueries(description: String): List<String> {
+        val words = normalizeText(description)
+            .split(' ')
+            .asSequence()
+            .filter { word -> word.length > 2 && word !in plotQueryStopWords }
+            .distinct()
+            .toList()
+        val matchedGroups = wikipediaConceptGroups.filter { group ->
+            group.triggers.any(words::contains)
+        }
+        val coveredWords = matchedGroups.flatMapTo(hashSetOf()) { group -> group.triggers }
+        val conceptTerms = matchedGroups.flatMap { group ->
+            val first = group.searchTerms.firstOrNull() ?: return@flatMap emptyList()
+            val matchedTriggerCount = group.triggers.count(words::contains)
+            val limit = if (' ' in first) 1 else matchedTriggerCount.coerceIn(1, 2)
+            group.searchTerms.take(limit)
+        }
+        val contextTerms = words
+            .filter { word -> word in wikipediaPlotContextTerms && word !in coveredWords }
+            .take(WIKIPEDIA_CONTEXT_TERM_LIMIT)
+        val fallbackTerms = if (matchedGroups.isEmpty()) {
+            words.take(WIKIPEDIA_FALLBACK_TERM_LIMIT)
+        } else {
+            emptyList()
+        }
+        val focus = (conceptTerms + contextTerms + fallbackTerms)
+            .distinct()
+            .joinToString(" ")
+            .ifBlank { words.take(WIKIPEDIA_FALLBACK_TERM_LIMIT).joinToString(" ") }
+        val requestedTypes = SearchRanker.parseIntent(description).type
+            ?.let(::listOf)
+            ?: listOf(MediaType.MOVIE, MediaType.TV)
+        return requestedTypes
+            .map { type ->
+                val mediaPrefix = if (type == MediaType.MOVIE) {
+                    "movie"
+                } else {
+                    "television series"
+                }
+                "$mediaPrefix $focus"
+            }
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+    }
+
+    private fun isWikipediaMediaResult(title: String, snippet: String): Boolean {
+        if (isGenericPlotResult(title)) return false
+        val text = "$title $snippet".lowercase()
+        val titleHasMediaQualifier = wikipediaTitleMediaQualifier.containsMatchIn(title)
+        val hasMediaSignal = titleHasMediaQualifier ||
+            wikipediaStrongMediaPatterns.any { pattern -> pattern.containsMatchIn(text) }
+        val isBiography = wikipediaBiographyPattern.containsMatchIn(text) &&
+            !titleHasMediaQualifier
+        return hasMediaSignal && !isBiography
+    }
+
+    private fun mergePlotCandidates(
+        first: PlotCandidate,
+        second: PlotCandidate,
+    ): PlotCandidate {
+        val preferred = if (first.source.priority >= second.source.priority) first else second
+        val other = if (preferred === first) second else first
+        return preferred.copy(
+            year = preferred.year ?: other.year,
+            type = preferred.type ?: other.type,
+            evidence = listOf(first.evidence, second.evidence)
+                .filter(String::isNotBlank)
+                .distinct()
+                .joinToString(". ")
+                .take(PLOT_EVIDENCE_LIMIT),
+            position = minOf(first.position, second.position),
+            sourceCount = first.sourceCount +
+                if (first.source == second.source) 0 else second.sourceCount,
+        )
+    }
+
+    private fun plotCandidateDiscoveryScore(
+        description: String,
+        candidate: PlotCandidate,
+    ): Double =
+        PlotSearchRanker.textRelevanceScore(description, candidate.evidence) * 1.4 +
+            candidate.source.priority +
+            candidate.sourceCount * 8.0 -
+            candidate.position.coerceAtMost(20) * 0.8
+
+    private fun resolvedPlotScore(
+        description: String,
+        resolved: ResolvedPlotCandidate,
+    ): Double {
+        val resolvedMediaEvidence = listOf(
+            resolved.media.title,
+            resolved.media.overview,
+            resolved.media.genres.joinToString(" "),
+            resolved.media.cast.joinToString(" "),
+        ).joinToString(" ")
+        val score = PlotSearchRanker.relevanceScore(description, resolved.media) * 1.7 +
+            PlotSearchRanker.textRelevanceScore(
+                description,
+                resolved.candidate.evidence,
+            ) * 1.1 +
+            PlotSearchRanker.literalTextRelevanceScore(
+                description,
+                resolvedMediaEvidence,
+            ) * 2.4 +
+            PlotSearchRanker.literalTextRelevanceScore(
+                description,
+                resolved.candidate.evidence,
+            ) * 1.2 +
+            resolved.resolutionScore * 0.25 +
+            resolved.candidate.source.priority +
+            resolved.candidate.sourceCount * 6.0 -
+            resolved.candidate.position.coerceAtMost(20) * 0.5 +
+            (
+                PLOT_SOURCE_POSITION_WINDOW -
+                    resolved.candidate.position.coerceAtMost(PLOT_SOURCE_POSITION_WINDOW)
+                ) * PLOT_SOURCE_POSITION_WEIGHT
+        return score
+    }
+
     private fun selectResolvedPlotMatch(
         candidate: PlotCandidate,
         results: List<Media>,
-    ): Media? {
+    ): ResolvedPlotCandidate? {
         val candidateTitle = normalizeText(candidate.title)
         return results
             .asSequence()
             .filter { candidate.type == null || it.type == candidate.type }
             .map { item ->
-                val itemTitle = normalizeText(item.title)
+                val itemTitle = normalizeText(
+                    item.title.replace(Regex("""\s*\([^()]*\)\s*$"""), ""),
+                )
                 val titleScore = when {
-                    itemTitle == candidateTitle -> 100
+                    itemTitle == candidateTitle -> 130
                     itemTitle.startsWith(candidateTitle) ||
                         candidateTitle.startsWith(itemTitle) -> 78
                     else -> {
@@ -510,12 +1288,15 @@ class CatalogClient(
             }
             .filter { (_, score) -> score >= MIN_PLOT_TITLE_MATCH_SCORE }
             .maxByOrNull { (_, score) -> score }
-            ?.first
+            ?.let { (media, score) ->
+                ResolvedPlotCandidate(candidate, media, score)
+            }
     }
 
     private suspend fun searchTmdb(
         query: String,
         types: List<String> = listOf("movie", "tv"),
+        retryEmpty: Boolean = false,
     ): List<Media> = supervisorScope {
         val encoded = URLEncoder.encode(
             query.trim(),
@@ -523,14 +1304,30 @@ class CatalogClient(
         )
         val resultGroups = types.map { type ->
             async {
-                runCatching {
-                    parseSearchResults(
-                        pageLoader(
-                            "$TMDB_SITE_URL/search/$type" +
-                                "?query=$encoded&language=en-US",
-                        ),
-                    )
-                }.getOrDefault(emptyList())
+                val cacheKey = "$type:${normalizeText(query)}"
+                tmdbSearchCache[cacheKey]?.let { return@async it }
+                repeat(if (retryEmpty) PLOT_TMDB_SEARCH_ATTEMPTS else 1) { attempt ->
+                    try {
+                        val parsed = parseSearchResults(
+                            pageLoader(
+                                "$TMDB_SITE_URL/search/$type" +
+                                    "?query=$encoded&language=en-US",
+                            ),
+                        ).filter { item -> item.type.routeName == type }
+                        if (parsed.isNotEmpty()) {
+                            tmdbSearchCache[cacheKey] = parsed
+                            return@async parsed
+                        }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        // Retry below for external plot candidates.
+                    }
+                    if (retryEmpty && attempt < PLOT_TMDB_SEARCH_ATTEMPTS - 1) {
+                        delay(PLOT_TMDB_RETRY_DELAY_MS * (attempt + 1))
+                    }
+                }
+                emptyList()
             }
         }.awaitAll()
         val largestGroup = resultGroups.maxOfOrNull(List<Media>::size) ?: 0
@@ -724,8 +1521,9 @@ class CatalogClient(
             val titleLink = card.selectFirst("a[data-media-type][href] h2")?.parent()
                 ?: return@mapNotNull null
             val match = tmdbTitleRoute.find(titleLink.attr("href")) ?: return@mapNotNull null
-            val title = titleLink.selectFirst("h2")?.text()?.trim()
-                ?.takeIf(String::isNotBlank)
+            val heading = titleLink.selectFirst("h2") ?: return@mapNotNull null
+            val title = (heading.selectFirst("span")?.text() ?: heading.text()).trim()
+                .takeIf(String::isNotBlank)
                 ?: return@mapNotNull null
             val poster = card.selectFirst("img.poster, img[alt=\"$title\"]")
                 ?.attr("src")
@@ -1179,14 +1977,38 @@ class CatalogClient(
         const val HOME_RAIL_LIMIT = 20
         const val MIN_GENRE_RAIL_ITEMS = 20
         const val GENRE_PAGE_TARGET = 40
+        const val HOME_BASE_CANDIDATE_TARGET = 60
+        const val HOME_BASE_MAX_PAGES = 3
+        const val HOME_GENRE_CANDIDATE_TARGET = 80
+        const val HOME_COMPOUND_GENRE_CANDIDATE_TARGET = 40
+        const val HOME_GENRE_START_PAGE = 1
+        const val HOME_GENRE_MAX_PAGES = 5
+        const val HOME_COMPOUND_GENRE_MAX_PAGES = 20
+        const val GENRE_BROWSE_START_PAGE = 6
+        const val GENRE_BROWSE_MAX_PAGES = 12
         const val HOME_CONCURRENT_REQUESTS = 4
-        const val CATALOG_REQUEST_ATTEMPTS = 2
-        const val CATALOG_RETRY_DELAY_MS = 250L
-        const val PLOT_TITLE_SUGGESTION_LIMIT = 24
+        const val CATALOG_REQUEST_ATTEMPTS = 3
+        const val CATALOG_RETRY_DELAY_MS = 400L
+        const val GENRE_ASSEMBLY_ATTEMPTS = 2
+        const val GENRE_ASSEMBLY_RETRY_DELAY_MS = 750L
+        const val PLOT_TITLE_SUGGESTION_LIMIT = 18
+        const val PLOT_CANDIDATES_PER_SOURCE_LIMIT = 6
         const val PLOT_RESULT_LIMIT = 20
-        const val PLOT_RESOLUTION_CONCURRENCY = 4
-        const val MIN_EXTERNAL_PLOT_CANDIDATES = 8
+        const val PLOT_RESOLUTION_CONCURRENCY = 2
+        const val PLOT_TMDB_SEARCH_ATTEMPTS = 3
+        const val PLOT_TMDB_RETRY_DELAY_MS = 300L
         const val MIN_PLOT_TITLE_MATCH_SCORE = 62
+        const val PLOT_EVIDENCE_LIMIT = 1_400
+        const val PLOT_SOURCE_POSITION_WINDOW = 10
+        const val PLOT_SOURCE_POSITION_WEIGHT = 40.0
+        const val WIKIPEDIA_RESULT_BATCH_SIZE = 24
+        const val WIKIPEDIA_QUERY_LIMIT = 2
+        const val WIKIPEDIA_QUERY_POSITION_PENALTY = 3
+        const val WIKIPEDIA_REQUEST_ATTEMPTS = 3
+        const val WIKIPEDIA_MIN_REQUEST_INTERVAL_MS = 650L
+        const val WIKIPEDIA_RETRY_DELAY_MS = 900L
+        const val WIKIPEDIA_CONTEXT_TERM_LIMIT = 3
+        const val WIKIPEDIA_FALLBACK_TERM_LIMIT = 8
         const val PLOT_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000L
         val genericWebResultTerms = listOf(
             "best movies",
@@ -1204,12 +2026,137 @@ class CatalogClient(
             "moviepilot",
             "watch free movies",
         )
+        val plotQueryStopWords = setOf(
+            "about", "after", "also", "and", "are", "film", "goes", "into", "movie",
+            "other", "others", "people", "protagonist", "series", "show", "story",
+            "that", "the", "their", "them", "they", "this", "where", "with",
+        )
+        val wikipediaPlotContextTerms = setOf(
+            "cancer", "day", "enter", "entered", "entering", "enters",
+            "relive", "relives", "repeatedly", "secret", "secrets", "steal", "steals",
+        )
+        val wikipediaTitleMediaQualifier = Regex(
+            """\((?:(?:18|19|20|21)\d{2}\s+)?""" +
+                """(?:film|TV series|television series|miniseries)\)\s*$""",
+            RegexOption.IGNORE_CASE,
+        )
+        val wikipediaStrongMediaPatterns = listOf(
+            Regex("""\bthe\s+(?:film|movie|series)\b""", RegexOption.IGNORE_CASE),
+            Regex(
+                """\b(?:is|was)\b.{0,70}\b""" +
+                    """(?:film|movie|television series|tv series|miniseries)\b""",
+                RegexOption.IGNORE_CASE,
+            ),
+            Regex(
+                """\b(?:television series|tv series|miniseries|episode|screenplay|""" +
+                    """directed by|starring)\b""",
+                RegexOption.IGNORE_CASE,
+            ),
+        )
+        val wikipediaBiographyPattern = Regex(
+            """\b(?:is|was|career as)\b.{0,45}\b""" +
+                """(?:actor|actress|filmmaker|director|singer|musician|producer)\b""",
+            RegexOption.IGNORE_CASE,
+        )
+        val wikipediaSeasonTitle = Regex(
+            """^(.+?)\s+season\s+\d+\b.*$""",
+            RegexOption.IGNORE_CASE,
+        )
+        val wikipediaParentheticalWork = Regex("""\(([^()]{2,70})\)\s*$""")
+        val wikipediaParentheticalNonTitles = setOf(
+            "film", "tv series", "television series", "miniseries", "episode",
+            "character", "actor", "actress", "novel", "book", "game",
+        )
+        val wikipediaRequestMutex = Mutex()
+        @Volatile
+        var wikipediaLastRequestAt = 0L
+        val wikipediaConceptGroups = listOf(
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "dream", "dreams", "dreaming", "nightmare", "nightmares",
+                    "subconscious", "sleep",
+                ),
+                searchTerms = listOf("dream", "subconscious", "sleep"),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "thief", "thieves", "steal", "steals", "stolen", "secret",
+                    "secrets", "heist",
+                ),
+                searchTerms = listOf(
+                    "thief", "steal", "infiltrate", "secret", "information",
+                ),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "repeat", "repeats", "repeatedly", "relive", "relives",
+                    "loop", "loops", "timeline",
+                ),
+                searchTerms = listOf("time loop", "repeat", "relive", "day"),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "chemistry", "teacher", "professor", "scientist",
+                ),
+                searchTerms = listOf("chemistry teacher", "teacher", "chemistry"),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "meth", "methamphetamine", "dealer", "drug", "drugs",
+                ),
+                searchTerms = listOf("drug dealer", "methamphetamine", "drug", "crime"),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "psychic", "experiment", "experiments", "government",
+                ),
+                searchTerms = listOf(
+                    "psychic", "government", "experiment", "conspiracy",
+                ),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "device", "machine", "technology", "invention",
+                ),
+                searchTerms = listOf("device", "technology", "machine"),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "therapist", "psychologist", "psychiatrist", "doctor",
+                ),
+                searchTerms = listOf(
+                    "psychologist", "therapist", "psychiatrist", "doctor",
+                ),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "space", "spaceship", "astronaut", "planet", "alien", "galaxy",
+                ),
+                searchTerms = listOf(
+                    "space", "spaceship", "astronaut", "planet", "alien",
+                ),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "memory", "memories", "amnesia", "forget", "forgets",
+                ),
+                searchTerms = listOf("memory", "amnesia", "forget"),
+            ),
+            WikipediaConceptGroup(
+                triggers = setOf(
+                    "robot", "android", "artificial", "intelligence", "machine",
+                ),
+                searchTerms = listOf(
+                    "robot", "android", "artificial intelligence", "machine",
+                ),
+            ),
+        )
         val capitalizedTitlePattern = Regex(
             """\b[A-Z][A-Za-z0-9:'-]*(?:\s+(?:(?:of|the|on|in|and|a|an|to)\s+)?[A-Z][A-Za-z0-9:'-]*){0,6}\b""",
         )
         val titleRoute = Regex("^/(movie|tv)/.*-(\\d+)$")
         val watchRoute = Regex("^/watch/(movie|tv)/(\\d+)$")
-        val tmdbTitleRoute = Regex("^/(movie|tv)/(\\d+)(?:-|$)")
+        val tmdbTitleRoute = Regex("^/(movie|tv)/(\\d+)(?:-|\\?|$)")
         val yearText = Regex("^\\d{4}(?:-\\d{2}-\\d{2})?$")
         val fourDigitYear = Regex("\\b(?:18|19|20|21)\\d{2}\\b")
         val matchPercent = Regex("(\\d{1,3})%\\s*Match", RegexOption.IGNORE_CASE)
@@ -1520,6 +2467,9 @@ class CatalogClient(
         )
 
         suspend fun downloadPage(url: String): String = withContext(Dispatchers.IO) {
+            val isWikipediaApi = runCatching {
+                URL(url).host.equals("en.wikipedia.org", ignoreCase = true)
+            }.getOrDefault(false)
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 12_000
@@ -1527,10 +2477,22 @@ class CatalogClient(
                 instanceFollowRedirects = true
                 setRequestProperty(
                     "User-Agent",
-                    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/126 Mobile Safari/537.36",
+                    if (isWikipediaApi) {
+                        "AliflixAndroid/2.7.8 " +
+                            "(https://github.com/alishaban144/aliflix-android)"
+                    } else {
+                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) Chrome/126 Mobile Safari/537.36"
+                    },
                 )
-                setRequestProperty("Accept", "text/html,application/xhtml+xml")
+                setRequestProperty(
+                    "Accept",
+                    if (isWikipediaApi) {
+                        "application/json"
+                    } else {
+                        "text/html,application/xhtml+xml"
+                    },
+                )
                 setRequestProperty("Accept-Language", "en-US,en;q=0.9")
             }
             try {
