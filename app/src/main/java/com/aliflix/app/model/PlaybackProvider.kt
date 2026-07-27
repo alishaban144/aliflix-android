@@ -18,9 +18,9 @@ enum class PlaybackProviderId(
         defaultBaseUrl = "https://doraby.com/",
         supportsGeneralPlayback = true,
     ),
-    BCINE(
-        displayName = "Bcine",
-        defaultBaseUrl = "https://bcine.ru/",
+    MOVIEPIRE(
+        displayName = "Moviepire",
+        defaultBaseUrl = "https://moviepire.ru/",
         supportsGeneralPlayback = true,
     );
 
@@ -33,7 +33,7 @@ enum class PlaybackProviderId(
                 provider.name.equals(value, ignoreCase = true) ||
                     provider.displayName.equals(value, ignoreCase = true) ||
                     (
-                        provider == BCINE &&
+                        provider == MOVIEPIRE &&
                             value.equals("bcine", ignoreCase = true)
                         ) ||
                     (
@@ -64,14 +64,14 @@ data class PlaybackSource(
         PlaybackProviderId.RAMOFLIX ->
             RamoflixConfig(baseUrl).buildWatchUrl(media.title)
 
-        PlaybackProviderId.BCINE -> {
+        PlaybackProviderId.MOVIEPIRE -> {
             val base = baseUrl.trimEnd('/')
             val route = if (media.type == MediaType.TV) {
                 val s = seasonNumber ?: 1
                 val e = episodeNumber ?: 1
-                "/tv/${media.id}/$s/$e"
+                "/watch/${media.id}?s=$s&e=$e"
             } else {
-                "/movie/${media.id}"
+                "/watch/${media.id}"
             }
             "$base$route"
         }
@@ -90,9 +90,9 @@ data class PlaybackSource(
         fun ramoflix(config: RamoflixConfig = RamoflixConfig()) =
             PlaybackSource(PlaybackProviderId.RAMOFLIX, config.baseUrl)
 
-        fun bcine(
-            baseUrl: String = PlaybackProviderId.BCINE.defaultBaseUrl,
-        ) = PlaybackSource(PlaybackProviderId.BCINE, baseUrl)
+        fun moviepire(
+            baseUrl: String = PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
+        ) = PlaybackSource(PlaybackProviderId.MOVIEPIRE, baseUrl)
 
         fun doraby(
             baseUrl: String = PlaybackProviderId.DORABY.defaultBaseUrl,
@@ -103,7 +103,7 @@ data class PlaybackSource(
 data class PlaybackPreferences(
     val generalProvider: PlaybackProviderId = PlaybackProviderId.RAMOFLIX,
     val ramoflixConfig: RamoflixConfig = RamoflixConfig(),
-    val bcineBaseUrl: String = PlaybackProviderId.BCINE.defaultBaseUrl,
+    val moviepireBaseUrl: String = PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
     val dorabyBaseUrl: String = PlaybackProviderId.DORABY.defaultBaseUrl,
 ) {
     val safeGeneralProvider: PlaybackProviderId
@@ -119,7 +119,7 @@ data class PlaybackPreferences(
             ?: safeGeneralProvider
         return when (provider) {
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
-            PlaybackProviderId.BCINE -> PlaybackSource.bcine(bcineBaseUrl)
+            PlaybackProviderId.MOVIEPIRE -> PlaybackSource.moviepire(moviepireBaseUrl)
             PlaybackProviderId.DORABY -> PlaybackSource.doraby(dorabyBaseUrl)
         }
     }

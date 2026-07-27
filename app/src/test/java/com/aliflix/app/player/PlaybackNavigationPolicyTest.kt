@@ -9,7 +9,8 @@ class PlaybackNavigationPolicyTest {
     fun allowsApprovedPlaybackHosts() {
         listOf(
             "https://ramoflix.net/inception/",
-            "https://bcine.ru/movie/1083381",
+            "https://moviepire.ru/watch/1275779",
+            "https://moviepire.ru/watch/66732?s=2&e=3",
             "https://doraby.com/movie/1083381",
             "https://67movies.nl/watch/movie/27205",
             "https://player.vidlove.cc/embed/tv/66732/2/3",
@@ -56,6 +57,7 @@ class PlaybackNavigationPolicyTest {
             "https://vidbox.vc/watch",
             "https://popcornmovies.io/watch",
             "https://toustream.xyz/watch",
+            "https://bcine.ru/movie/1083381",
         ).forEach { url ->
             assertFalse(url, PlaybackNavigationPolicy.isAllowedTopLevel(url))
         }

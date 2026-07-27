@@ -5,7 +5,7 @@ import java.net.URI
 object PlaybackNavigationPolicy {
     private val defaultApprovedPlaybackHosts = setOf(
         "ramoflix.net",
-        "bcine.ru",
+        "moviepire.ru",
         "doraby.com",
         "player.vidlove.cc",
         "345movie.nl",

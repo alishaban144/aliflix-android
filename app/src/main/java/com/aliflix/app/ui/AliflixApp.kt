@@ -121,6 +121,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -228,7 +229,7 @@ fun AliflixApp(
 
     val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val ramoflixConfig = playbackPreferences.ramoflixConfig
-    val bcineBaseUrl = playbackPreferences.bcineBaseUrl
+    val moviepireBaseUrl = playbackPreferences.moviepireBaseUrl
     val dorabyBaseUrl = playbackPreferences.dorabyBaseUrl
     val activity = LocalActivity.current as ComponentActivity
     val updateManager = remember(activity) { AppUpdateManager(activity) }
@@ -258,6 +259,12 @@ fun AliflixApp(
     val detailProvider = requestedDetailProvider?.takeIf { provider ->
         detail.item?.let(provider::isAvailableFor) == true
     } ?: playbackPreferences.safeGeneralProvider
+    val detailInMyList = detail.item?.let { item ->
+        myList.any { saved -> saved.key == item.key }
+    } == true
+    val detailLiked = detail.item?.let { item ->
+        likes.any { saved -> saved.key == item.key }
+    } == true
 
     LaunchedEffect(detail.item?.key) {
         detailProviderName = null
@@ -467,8 +474,8 @@ fun AliflixApp(
 
                     AppScreen.DETAIL -> DetailScreen(
                         state = detail,
-                        inMyList = detail.item?.let(viewModel::isInMyList) == true,
-                        liked = detail.item?.let(viewModel::isLiked) == true,
+                        inMyList = detailInMyList,
+                        liked = detailLiked,
                         onBack = viewModel::closeDetails,
                         onPlay = { item ->
                             playSelection(
@@ -584,7 +591,7 @@ fun AliflixApp(
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
-                PlaybackProviderId.BCINE -> bcineBaseUrl
+                PlaybackProviderId.MOVIEPIRE -> moviepireBaseUrl
                 PlaybackProviderId.DORABY -> dorabyBaseUrl
             }
             MobileProviderUrlDialog(
@@ -595,7 +602,7 @@ fun AliflixApp(
                 onSave = {
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(it)
-                        PlaybackProviderId.BCINE -> viewModel.updateBcineUrl(it)
+                        PlaybackProviderId.MOVIEPIRE -> viewModel.updateMoviepireUrl(it)
                         PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(it)
                     }
                     urlDialogProvider = null
@@ -603,7 +610,7 @@ fun AliflixApp(
                 onReset = {
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
-                        PlaybackProviderId.BCINE -> viewModel.resetBcineUrl()
+                        PlaybackProviderId.MOVIEPIRE -> viewModel.resetMoviepireUrl()
                         PlaybackProviderId.DORABY -> viewModel.resetDorabyUrl()
                     }
                     urlDialogProvider = null
@@ -1480,19 +1487,31 @@ private fun SearchScreen(
                 queryValue = updated
                 onQueryChange(updated.text)
             },
-            label = {
-                Text(
-                    if (state.mode == SearchMode.PLOT) {
-                        "Describe the movie or show"
-                    } else {
-                        "Title search"
-                    },
-                )
+            label = if (state.mode == SearchMode.PLOT) {
+                null
+            } else {
+                {
+                    Text("Title search")
+                }
             },
             placeholder = {
-                Text("Title, year, or words you remember…")
+                Text(
+                    text = if (state.mode == SearchMode.PLOT) {
+                        "Describe the movie or show…"
+                    } else {
+                        "Title, year, or words you remember…"
+                    },
+                    color = AliflixMuted,
+                    lineHeight = 20.sp,
+                )
             },
-            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            leadingIcon = if (state.mode == SearchMode.PLOT) {
+                null
+            } else {
+                {
+                    Icon(Icons.Filled.Search, contentDescription = null)
+                }
+            },
             trailingIcon = {
                 if (state.query.isNotEmpty()) {
                     IconButton(
@@ -1646,111 +1665,159 @@ private fun PlaybackProviderSelector(
     modifier: Modifier = Modifier,
     onEditProviderUrl: ((PlaybackProviderId) -> Unit)? = null,
 ) {
+    val providers = PlaybackProviderId.entries.filter(PlaybackProviderId::supportsGeneralPlayback)
+
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color.White.copy(alpha = 0.05f))
-            .border(1.dp, Color.White.copy(alpha = 0.09f), RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        AliflixSurfaceRaised.copy(alpha = 0.94f),
+                        AliflixSurface.copy(alpha = 0.90f),
+                    ),
+                ),
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(22.dp))
             .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column {
-                Text(
-                    text = "PLAYBACK SOURCE",
-                    color = AliflixRed,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.4.sp,
+        Text(
+            text = "Streaming source",
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.ExtraBold,
+        )
+        Text(
+            text = "Choose the provider Aliflix uses when you press Play.",
+            color = AliflixMuted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+        )
+
+        providers.forEach { provider ->
+            val selected = selectedProvider == provider
+            val cardShape = RoundedCornerShape(16.dp)
+            val cardBackground = if (selected) {
+                Brush.horizontalGradient(
+                    listOf(
+                        AliflixRed.copy(alpha = 0.23f),
+                        AliflixRed.copy(alpha = 0.08f),
+                    ),
                 )
-                Text(
-                    text = "Select streaming provider for play",
-                    color = AliflixMuted,
-                    fontSize = 11.sp,
+            } else {
+                Brush.horizontalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.055f),
+                        Color.White.copy(alpha = 0.025f),
+                    ),
                 )
             }
-        }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            listOf(
-                PlaybackProviderId.RAMOFLIX,
-                PlaybackProviderId.DORABY,
-                PlaybackProviderId.BCINE,
-            ).forEach { provider ->
-                val selected = selectedProvider == provider
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 62.dp)
+                    .clip(cardShape)
+                    .background(cardBackground)
+                    .border(
+                        width = if (selected) 1.5.dp else 1.dp,
+                        color = if (selected) {
+                            AliflixRed.copy(alpha = 0.72f)
+                        } else {
+                            Color.White.copy(alpha = 0.09f)
+                        },
+                        shape = cardShape,
+                    )
+                    .selectable(
+                        selected = selected,
+                        onClick = { onSelectProvider(provider) },
+                    )
+                    .padding(start = 11.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(50.dp)
-                        .clip(RoundedCornerShape(15.dp))
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .background(
                             if (selected) {
-                                Brush.horizontalGradient(
-                                    listOf(AliflixRed, Color(0xFFE50914)),
-                                )
+                                AliflixRed
                             } else {
-                                Brush.verticalGradient(
-                                    listOf(Color(0xFF1E222A).copy(alpha = 0.6f), Color.Black.copy(alpha = 0.4f)),
-                                )
+                                Color.White.copy(alpha = 0.08f)
                             },
                         )
                         .border(
-                            width = if (selected) 1.5.dp else 1.dp,
-                            color = if (selected) {
-                                Color.White.copy(alpha = 0.45f)
-                            } else {
-                                Color.White.copy(alpha = 0.10f)
-                            },
-                            shape = RoundedCornerShape(15.dp),
-                        )
-                        .clickable { onSelectProvider(provider) }
-                        .padding(horizontal = 6.dp),
+                            1.dp,
+                            Color.White.copy(alpha = if (selected) 0.22f else 0.08f),
+                            RoundedCornerShape(12.dp),
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
+                    Text(
+                        text = provider.displayName.take(1).uppercase(),
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Black,
+                    )
+                }
+
+                Spacer(Modifier.width(11.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = provider.displayName,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = if (selected) "Selected for playback" else "Tap to use this source",
+                        color = if (selected) {
+                            Color.White.copy(alpha = 0.78f)
+                        } else {
+                            AliflixMuted
+                        },
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                if (selected) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(AliflixRed),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            text = provider.displayName,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = "Selected provider",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp),
                         )
-                        if (selected) {
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.Filled.Check,
-                                contentDescription = "Selected",
-                                tint = Color.White,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        }
-                        if (onEditProviderUrl != null) {
-                            Spacer(Modifier.width(2.dp))
-                            IconButton(
-                                onClick = { onEditProviderUrl(provider) },
-                                modifier = Modifier.size(22.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Edit,
-                                    contentDescription = "Edit ${provider.displayName} URL",
-                                    tint = Color.White.copy(alpha = 0.85f),
-                                    modifier = Modifier.size(12.dp),
-                                )
-                            }
-                        }
                     }
+                }
+
+                if (onEditProviderUrl != null) {
+                    IconButton(
+                        onClick = { onEditProviderUrl(provider) },
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Edit,
+                            contentDescription = "Edit ${provider.displayName} URL",
+                            tint = if (selected) Color.White else AliflixIce,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                } else {
+                    Spacer(Modifier.width(8.dp))
                 }
             }
         }
@@ -2615,7 +2682,7 @@ private fun AnimatedMyListButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var scaleState by remember { mutableStateOf(1f) }
+    var scaleState by remember { mutableFloatStateOf(1f) }
     val animatedScale by animateFloatAsState(
         targetValue = scaleState,
         animationSpec = spring(
@@ -2683,7 +2750,7 @@ private fun AnimatedFavoriteButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var scaleState by remember { mutableStateOf(1f) }
+    var scaleState by remember { mutableFloatStateOf(1f) }
     val animatedScale by animateFloatAsState(
         targetValue = scaleState,
         animationSpec = spring(

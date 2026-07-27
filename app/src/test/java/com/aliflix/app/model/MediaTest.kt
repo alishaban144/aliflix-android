@@ -17,11 +17,11 @@ class MediaTest {
     }
 
     @Test
-    fun bcineBuildsOfficialMovieAndTvWatchUrl() {
-        val movie = Media(id = 1083381, type = MediaType.MOVIE, title = "Inception")
+    fun moviepireBuildsOfficialMovieAndTvWatchUrl() {
+        val movie = Media(id = 1275779, type = MediaType.MOVIE, title = "Disclosure Day")
         val movieSelection = PlaybackSelection(
             media = movie,
-            source = PlaybackSource.bcine(),
+            source = PlaybackSource.moviepire(),
         )
 
         val tv = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
@@ -29,15 +29,15 @@ class MediaTest {
             media = tv,
             seasonNumber = 2,
             episodeNumber = 3,
-            source = PlaybackSource.bcine(),
+            source = PlaybackSource.moviepire(),
         )
 
         assertEquals(
-            "https://bcine.ru/movie/1083381",
+            "https://moviepire.ru/watch/1275779",
             movieSelection.entryUrl,
         )
         assertEquals(
-            "https://bcine.ru/tv/66732/2/3",
+            "https://moviepire.ru/watch/66732?s=2&e=3",
             tvSelection.entryUrl,
         )
     }
@@ -49,14 +49,14 @@ class MediaTest {
             media = item,
             source = PlaybackSource.ramoflix(),
         )
-        val bcine = PlaybackSelection(
+        val moviepire = PlaybackSelection(
             media = item,
-            source = PlaybackSource.bcine(),
+            source = PlaybackSource.moviepire(),
         )
 
-        assertNotEquals(ramoflix.key, bcine.key)
+        assertNotEquals(ramoflix.key, moviepire.key)
         assertEquals("movie:27205:via:ramoflix@ramoflix.net", ramoflix.key)
-        assertEquals("movie:27205:via:bcine@bcine.ru", bcine.key)
+        assertEquals("movie:27205:via:moviepire@moviepire.ru", moviepire.key)
     }
 
     @Test
@@ -82,11 +82,11 @@ class MediaTest {
     }
 
     @Test
-    fun customBcineDomainBuildsMirrorWatchUrl() {
+    fun customMoviepireDomainBuildsMirrorWatchUrl() {
         val item = Media(id = 66732, type = MediaType.TV, title = "Stranger Things")
         val preferences = PlaybackPreferences(
-            generalProvider = PlaybackProviderId.BCINE,
-            bcineBaseUrl = "https://bcine-mirror.example/",
+            generalProvider = PlaybackProviderId.MOVIEPIRE,
+            moviepireBaseUrl = "https://moviepire-mirror.example/",
         )
         val selection = PlaybackSelection(
             media = item,
@@ -96,26 +96,37 @@ class MediaTest {
         )
 
         assertEquals(
-            "https://bcine-mirror.example/tv/66732/2/3",
+            "https://moviepire-mirror.example/watch/66732?s=2&e=3",
             selection.entryUrl,
         )
         assertEquals(
-            "tv:66732:s2:e3:via:bcine@bcine-mirror.example",
+            "tv:66732:s2:e3:via:moviepire@moviepire-mirror.example",
             selection.key,
         )
     }
 
     @Test
-    fun savedBcineChoiceIsUsedForPlayback() {
+    fun savedMoviepireChoiceIsUsedForPlayback() {
         val item = Media(id = 27205, type = MediaType.MOVIE, title = "Inception")
         val preferences = PlaybackPreferences(
-            generalProvider = PlaybackProviderId.BCINE,
+            generalProvider = PlaybackProviderId.MOVIEPIRE,
         )
 
         assertEquals(
-            PlaybackProviderId.BCINE,
+            PlaybackProviderId.MOVIEPIRE,
             preferences.sourceFor(item).provider,
         )
+    }
+
+    @Test
+    fun legacyBcineProviderNamesMigrateToMoviepire() {
+        listOf("BCINE", "Bcine", "bcine").forEach { storedValue ->
+            assertEquals(
+                storedValue,
+                PlaybackProviderId.MOVIEPIRE,
+                PlaybackProviderId.fromStoredValue(storedValue),
+            )
+        }
     }
 
     @Test

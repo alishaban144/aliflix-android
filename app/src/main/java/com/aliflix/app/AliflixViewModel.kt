@@ -101,10 +101,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun resetRamoflixUrl() = playbackProviderRepository.resetRamoflixUrl()
 
-    fun updateBcineUrl(newUrl: String) =
-        playbackProviderRepository.updateBcineUrl(newUrl)
+    fun updateMoviepireUrl(newUrl: String) =
+        playbackProviderRepository.updateMoviepireUrl(newUrl)
 
-    fun resetBcineUrl() = playbackProviderRepository.resetBcineUrl()
+    fun resetMoviepireUrl() = playbackProviderRepository.resetMoviepireUrl()
 
     fun updateDorabyUrl(newUrl: String) =
         playbackProviderRepository.updateDorabyUrl(newUrl)

@@ -39,16 +39,16 @@ class PlaybackProviderRepository(context: Context) {
         )
     }
 
-    fun updateBcineUrl(newUrl: String) {
+    fun updateMoviepireUrl(newUrl: String) {
         val normalized = RamoflixConfig.normalizeBaseUrl(newUrl) ?: return
-        prefs.edit { putString(KEY_CUSTOM_BCINE_URL, normalized) }
-        _preferences.value = _preferences.value.copy(bcineBaseUrl = normalized)
+        prefs.edit { putString(KEY_CUSTOM_MOVIEPIRE_URL, normalized) }
+        _preferences.value = _preferences.value.copy(moviepireBaseUrl = normalized)
     }
 
-    fun resetBcineUrl() {
-        prefs.edit { remove(KEY_CUSTOM_BCINE_URL) }
+    fun resetMoviepireUrl() {
+        prefs.edit { remove(KEY_CUSTOM_MOVIEPIRE_URL) }
         _preferences.value = _preferences.value.copy(
-            bcineBaseUrl = PlaybackProviderId.BCINE.defaultBaseUrl,
+            moviepireBaseUrl = PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
         )
     }
 
@@ -72,11 +72,14 @@ class PlaybackProviderRepository(context: Context) {
         if (savedRamoflixUrl != null && normalizedRamoflixUrl == null) {
             prefs.edit { remove(KEY_CUSTOM_RAMOFLIX_URL) }
         }
-        val savedBcineUrl = prefs.getString(KEY_CUSTOM_BCINE_URL, null)
-        val normalizedBcineUrl =
-            savedBcineUrl?.let(RamoflixConfig::normalizeBaseUrl)
-        if (savedBcineUrl != null && normalizedBcineUrl == null) {
-            prefs.edit { remove(KEY_CUSTOM_BCINE_URL) }
+        val savedMoviepireUrl = prefs.getString(KEY_CUSTOM_MOVIEPIRE_URL, null)
+        val normalizedMoviepireUrl =
+            savedMoviepireUrl?.let(RamoflixConfig::normalizeBaseUrl)
+        if (savedMoviepireUrl != null && normalizedMoviepireUrl == null) {
+            prefs.edit { remove(KEY_CUSTOM_MOVIEPIRE_URL) }
+        }
+        if (prefs.contains(KEY_LEGACY_CUSTOM_BCINE_URL)) {
+            prefs.edit { remove(KEY_LEGACY_CUSTOM_BCINE_URL) }
         }
         val savedDorabyUrl = prefs.getString(KEY_CUSTOM_DORABY_URL, null)
         val normalizedDorabyUrl =
@@ -100,8 +103,8 @@ class PlaybackProviderRepository(context: Context) {
             ramoflixConfig = RamoflixConfig(
                 normalizedRamoflixUrl ?: RamoflixConfig.DEFAULT_URL,
             ),
-            bcineBaseUrl = normalizedBcineUrl
-                ?: PlaybackProviderId.BCINE.defaultBaseUrl,
+            moviepireBaseUrl = normalizedMoviepireUrl
+                ?: PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
             dorabyBaseUrl = normalizedDorabyUrl
                 ?: PlaybackProviderId.DORABY.defaultBaseUrl,
         )
@@ -110,7 +113,8 @@ class PlaybackProviderRepository(context: Context) {
     private companion object {
         const val PREFS_NAME = "aliflix_streaming_sources_prefs"
         const val KEY_CUSTOM_RAMOFLIX_URL = "custom_url_ramoflix"
-        const val KEY_CUSTOM_BCINE_URL = "custom_url_bcine"
+        const val KEY_CUSTOM_MOVIEPIRE_URL = "custom_url_moviepire"
+        const val KEY_LEGACY_CUSTOM_BCINE_URL = "custom_url_bcine"
         const val KEY_CUSTOM_DORABY_URL = "custom_url_doraby"
         const val KEY_GENERAL_PROVIDER_ID = "general_provider_id"
         const val KEY_LEGACY_ACTIVE_SOURCE_ID = "active_source_id"

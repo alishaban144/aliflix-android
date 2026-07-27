@@ -41,6 +41,8 @@ class CatalogExpansionTest {
         val home = client.home()
         val genreTypes = GenreCatalog.homeSpecs.associate { it.title to it.type }
         val genreRails = home.rails.filter { it.title in genreTypes }
+        val trendingMovies = home.rails.first { it.title == "Trending Movies" }
+        val trendingSeries = home.rails.first { it.title == "Trending Series" }
         val appearances = home.rails
             .flatMap(ContentRail::items)
             .groupingBy(Media::key)
@@ -54,11 +56,85 @@ class CatalogExpansionTest {
                 rail.items.all { item -> item.type == genreTypes.getValue(rail.title) }
             },
         )
+        assertEquals(20, trendingMovies.items.size)
+        assertEquals(20, trendingSeries.items.size)
+        assertTrue(trendingMovies.items.all { it.type == MediaType.MOVIE })
+        assertTrue(trendingSeries.items.all { it.type == MediaType.TV })
         assertTrue(appearances.values.all { count -> count == 1 })
         assertTrue(maximumActive.get() <= 4)
-        assertTrue(requestedUrls.none { "/discover/" in it })
+        assertTrue(requestedUrls.none { "/discover/" in it && "with_genres" in it })
+        assertTrue(
+            requestedUrls.any {
+                "/discover/movie" in it &&
+                    "include_adult=false" in it &&
+                    "vote_count.gte=50" in it
+            },
+        )
+        assertTrue(
+            requestedUrls.any {
+                "/discover/tv" in it &&
+                    "include_adult=false" in it &&
+                    "vote_count.gte=25" in it
+            },
+        )
         assertTrue(requestedUrls.any { "/genre/28-action/movie" in it })
         assertTrue(requestedUrls.any { "/genre/10765-sci-fi-fantasy/tv" in it })
+    }
+
+    @Test
+    fun trendingRailsStayFullWhenPopularItemsAlsoBelongToGenreRows() = runTest {
+        val client = CatalogClient(
+            pageLoader = { url -> trendingOverlapCatalogueHtml(url) },
+        )
+
+        val home = client.home()
+        val trendingMovies = home.rails.first { it.title == "Trending Movies" }
+        val trendingSeries = home.rails.first { it.title == "Trending Series" }
+        val genreTypes = GenreCatalog.homeSpecs.associate { it.title to it.type }
+        val genreRails = home.rails.filter { it.title in genreTypes }
+        val appearances = home.rails
+            .flatMap(ContentRail::items)
+            .groupingBy(Media::key)
+            .eachCount()
+
+        assertEquals(20, trendingMovies.items.size)
+        assertEquals(20, trendingSeries.items.size)
+        assertTrue(trendingMovies.items.all { it.type == MediaType.MOVIE })
+        assertTrue(trendingSeries.items.all { it.type == MediaType.TV })
+        assertTrue(trendingMovies.items.all(::isSafeTrendingItem))
+        assertTrue(trendingSeries.items.all(::isSafeTrendingItem))
+        assertTrue(
+            home.rails
+                .flatMap(ContentRail::items)
+                .none { item -> "porn" in item.title.lowercase() },
+        )
+        assertEquals(28, genreRails.size)
+        assertTrue(genreRails.all { it.items.size == 20 })
+        assertTrue(appearances.values.all { count -> count == 1 })
+    }
+
+    @Test
+    fun trendingSafetyCheckRejectsExplicitMetadataWithoutBlockingNormalTitles() {
+        assertFalse(
+            isSafeTrendingItem(
+                Media(
+                    id = 1,
+                    type = MediaType.MOVIE,
+                    title = "XXX Adult Porn Collection",
+                    overview = "Explicit content for adults only.",
+                ),
+            ),
+        )
+        assertTrue(
+            isSafeTrendingItem(
+                Media(
+                    id = 2,
+                    type = MediaType.MOVIE,
+                    title = "Inception",
+                    overview = "A thief enters dreams to steal secrets.",
+                ),
+            ),
+        )
     }
 
     @Test
@@ -163,7 +239,7 @@ class CatalogExpansionTest {
             .filter { it >= 6 }
             .toSet()
         assertTrue(setOf(6, 7, 8, 9).all { it in browsePages })
-        assertTrue(requestedUrls.none { "/discover/" in it })
+        assertTrue(requestedUrls.none { "/discover/" in it && "with_genres" in it })
     }
 
     @Test
@@ -510,6 +586,30 @@ class CatalogExpansionTest {
             type = MediaType.MOVIE,
             items = shared + unique,
             canonical = "https://www.themoviedb.org${uri.path}",
+        )
+    }
+
+    private fun trendingOverlapCatalogueHtml(url: String): String {
+        val uri = URI(url)
+        val page = pageNumber(url) ?: 1
+        val type = when (uri.path) {
+            "/discover/tv", "/tv" -> MediaType.TV
+            "/discover/movie", "/movie" -> MediaType.MOVIE
+            else -> return catalogueHtml(url)
+        }
+        val genreIds = when (type) {
+            MediaType.MOVIE -> listOf(28, 12, 35, 80, 18)
+            MediaType.TV -> listOf(10759, 16, 35, 80, 9648)
+        }
+        val genreId = genreIds[(page - 1).mod(genreIds.size)]
+        val explicit = FixtureItem(
+            id = 880_000_000 + type.ordinal * 1_000 + page,
+            title = "XXX Adult Porn Volume $page",
+            overview = "Explicit adult film content.",
+        )
+        return searchHtml(
+            type = type,
+            items = listOf(explicit) + genreFixtureItems(type, genreId, 1).take(20),
         )
     }
 

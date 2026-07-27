@@ -201,7 +201,7 @@ class WebPlayerController(
                         KeyEvent.KEYCODE_DPAD_UP,
                         KeyEvent.KEYCODE_DPAD_DOWN,
                         -> {
-                            if (isMovies67Wrapper(this)) {
+                            if (isMoviepireWrapper(this)) {
                                 return super.dispatchKeyEvent(event)
                             }
                             if (event.repeatCount == 0) {
@@ -409,9 +409,9 @@ class WebPlayerController(
     private fun customHostsForActiveSelection(): Set<String> =
         activeSelection?.source?.approvedTopLevelHosts.orEmpty()
 
-    private fun isMovies67Wrapper(view: WebView): Boolean {
+    private fun isMoviepireWrapper(view: WebView): Boolean {
         val selection = activeSelection ?: return false
-        if (selection.source.provider != PlaybackProviderId.BCINE) return false
+        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE) return false
         val currentHost = runCatching {
             URI(view.url.orEmpty()).host?.removePrefix("www.")
         }.getOrNull()
@@ -963,73 +963,9 @@ class WebPlayerController(
     ) {
         when (selection.source.provider) {
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
-            PlaybackProviderId.BCINE -> alignBcineContent(view, selection)
+            PlaybackProviderId.MOVIEPIRE -> { /* Moviepire owns its full-screen player layout. */ }
             PlaybackProviderId.DORABY -> { /* Doraby webpage loads directly */ }
         }
-    }
-
-    private fun alignBcineContent(
-        view: WebView,
-        selection: PlaybackSelection,
-    ) {
-        if (!isActiveSelection(view, selection)) return
-        view.evaluateJavascript(
-            """
-            (function() {
-                if (!document.getElementById("aliflix-bcine-style")) {
-                    const style = document.createElement("style");
-                    style.id = "aliflix-bcine-style";
-                    style.textContent = `
-                        iframe, #player, .player, [class*="player-container"], [id*="player"] {
-                            position: fixed !important;
-                            top: 0 !important;
-                            left: 0 !important;
-                            width: 100vw !important;
-                            height: 100vh !important;
-                            z-index: 999999 !important;
-                            background: #000 !important;
-                        }
-                    `;
-                    (document.head || document.documentElement).appendChild(style);
-                }
-
-                function doAlign() {
-                    const playSelectors = [
-                        '.play-btn', '.btn-play', '.play-button', '#play-btn',
-                        '[class*="play-btn"]', '[class*="play_btn"]', '[class*="playButton"]',
-                        'button[class*="play"]', 'a[class*="play"]', '.poster-play',
-                        '.player-play', '.vjs-big-play-button', '.play_icon', '.play'
-                    ];
-                    for (const sel of playSelectors) {
-                        const btn = document.querySelector(sel);
-                        if (btn && btn.offsetWidth > 0 && btn.offsetHeight > 0) {
-                            try { btn.click(); } catch(e) {}
-                            break;
-                        }
-                    }
-
-                    const player = document.querySelector('iframe') ||
-                                   document.querySelector('#player') ||
-                                   document.querySelector('.player') ||
-                                   document.querySelector('[class*="player"]');
-                    if (player) {
-                        player.scrollIntoView({ behavior: 'auto', block: 'start' });
-                    } else {
-                        window.scrollTo(0, 480);
-                    }
-                }
-
-                doAlign();
-                let count = 0;
-                const timer = setInterval(() => {
-                    count++;
-                    doAlign();
-                    if (count >= 15) clearInterval(timer);
-                }, 300);
-            })();
-            """.trimIndent(),
-            null,
-        )
     }
 
     private fun alignVidloveContent(

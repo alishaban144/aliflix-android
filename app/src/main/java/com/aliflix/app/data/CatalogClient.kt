@@ -105,6 +105,59 @@ internal fun allocateUniqueHomeRails(
     return rails.mapNotNull { rail -> selected[rail.title] }
 }
 
+private val explicitTrendingWords = setOf(
+    "hentai",
+    "onlyfans",
+    "porn",
+    "porno",
+    "pornographic",
+    "pornography",
+    "xxx",
+)
+private val explicitTrendingTitleWords = setOf(
+    "deseo",
+    "desire",
+    "desires",
+    "erotica",
+    "erotic",
+    "hardcore",
+    "lust",
+    "playboy",
+    "seduction",
+    "sensual",
+)
+private val explicitTrendingPhrases = setOf(
+    "18 plus",
+    "adults only",
+    "adult film",
+    "adult movie",
+    "explicit content",
+    "porn star",
+    "sex tape",
+    "uncensored version",
+)
+
+internal fun isSafeTrendingItem(item: Media): Boolean {
+    val normalizedTitle = item.title.lowercase()
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .trim()
+    val searchable = buildString {
+        append(item.title)
+        append(' ')
+        append(item.overview)
+        append(' ')
+        append(item.genres.joinToString(" "))
+    }.lowercase()
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .trim()
+    if (searchable.isBlank()) return true
+    val words = searchable.split(' ').filterTo(hashSetOf(), String::isNotBlank)
+    val titleWords = normalizedTitle.split(' ').filterTo(hashSetOf(), String::isNotBlank)
+    return words.none(explicitTrendingWords::contains) &&
+        titleWords.none(explicitTrendingTitleWords::contains) &&
+        explicitTrendingPhrases.none(searchable::contains)
+}
+
 /**
  * Builds the native catalogue from public, server-rendered movie metadata pages.
  *
@@ -139,18 +192,25 @@ class CatalogClient(
             .associateBy(ContentRail::title)
         val genreTitles = GenreCatalog.homeSpecs.map(GenreSpec::title).toSet()
         val genreSpecsByTitle = GenreCatalog.homeSpecs.associateBy(GenreSpec::title)
+        val baseSpecsByTitle = baseHomeRailSpecs.associateBy(TmdbHomeRailSpec::title)
+        val trendingTitles = baseHomeRailSpecs
+            .filter(TmdbHomeRailSpec::isTrending)
+            .mapTo(linkedSetOf(), TmdbHomeRailSpec::title)
         val candidates = linkedMapOf<String, ContentRail>()
         cachedHome?.rails.orEmpty().forEach { rail ->
             val expectedType = genreSpecsByTitle[rail.title]?.type
+                ?: baseSpecsByTitle[rail.title]?.expectedType
+            val baseSpec = baseSpecsByTitle[rail.title]
             val items = rail.items
                 .asSequence()
                 .filter { item -> expectedType == null || item.type == expectedType }
+                .filter { item -> baseSpec?.isTrending != true || isSafeTrendingItem(item) }
                 .distinctBy(Media::key)
                 .toList()
             val acceptable = if (rail.title in genreTitles) {
                 items.size >= MIN_GENRE_RAIL_ITEMS
             } else {
-                items.isNotEmpty()
+                items.size >= (baseSpec?.minimumItems ?: 1)
             }
             if (acceptable) candidates[rail.title] = rail.copy(items = items)
         }
@@ -168,10 +228,18 @@ class CatalogClient(
                 .map(GenreSpec::title)
             val rails = allocateUniqueHomeRails(
                 rails = orderedCandidates,
-                priorityTitles = genrePriority + baseHomeRailSpecs.map(TmdbHomeRailSpec::title),
+                priorityTitles = trendingTitles.toList() +
+                    genrePriority +
+                    baseHomeRailSpecs
+                        .filterNot(TmdbHomeRailSpec::isTrending)
+                        .map(TmdbHomeRailSpec::title),
                 itemLimit = HOME_RAIL_LIMIT,
             ).filter { rail ->
-                rail.title !in genreTitles || rail.items.size >= MIN_GENRE_RAIL_ITEMS
+                when (rail.title) {
+                    in genreTitles -> rail.items.size >= MIN_GENRE_RAIL_ITEMS
+                    in trendingTitles -> rail.items.size >= MIN_TRENDING_RAIL_ITEMS
+                    else -> rail.items.isNotEmpty()
+                }
             }
             val hero = rails.firstNotNullOfOrNull { rail ->
                 rail.items.firstOrNull { it.backdropPath != null }
@@ -287,16 +355,43 @@ class CatalogClient(
         spec: TmdbHomeRailSpec,
         cached: ContentRail?,
     ): ContentRail? {
-        val fresh = (1..HOME_BASE_MAX_PAGES)
-            .flatMap { page ->
-                val separator = if ("?" in spec.path) "&" else "?"
-                loadSearchPageWithRetry("${spec.path}${separator}page=$page")
+        val candidateTarget = if (spec.isTrending) {
+            HOME_TRENDING_CANDIDATE_TARGET
+        } else {
+            HOME_BASE_CANDIDATE_TARGET
+        }
+        val pagesPerPath = if (spec.isTrending) {
+            HOME_TRENDING_MAX_PAGES_PER_PATH
+        } else {
+            HOME_BASE_MAX_PAGES
+        }
+        val fresh = linkedMapOf<String, Media>()
+        val paths = listOf(spec.path) + spec.alternatePaths
+        paths.forEach { path ->
+            if (fresh.size >= candidateTarget) return@forEach
+            val pathPageLimit = if (path.startsWith("/discover/")) 1 else pagesPerPath
+            for (page in 1..pathPageLimit) {
+                val separator = if ("?" in path) "&" else "?"
+                loadSearchPageWithRetry("${path}${separator}page=$page")
+                    .asSequence()
+                    .filter { item ->
+                        spec.expectedType == null || item.type == spec.expectedType
+                    }
+                    .filter { item -> !spec.isTrending || isSafeTrendingItem(item) }
+                    .forEach { item -> fresh.putIfAbsent(item.key, item) }
+                if (fresh.size >= candidateTarget) break
             }
+        }
+        val cachedItems = cached?.items
+            .orEmpty()
+            .asSequence()
+            .filter { item -> spec.expectedType == null || item.type == spec.expectedType }
+            .filter { item -> !spec.isTrending || isSafeTrendingItem(item) }
+            .toList()
+        val items = (fresh.values + cachedItems)
             .distinctBy(Media::key)
-        val items = (fresh + cached?.items.orEmpty())
-            .distinctBy(Media::key)
-            .take(HOME_BASE_CANDIDATE_TARGET)
-        return items.takeIf(List<Media>::isNotEmpty)?.let {
+            .take(candidateTarget)
+        return items.takeIf { it.size >= spec.minimumItems }?.let {
             ContentRail(spec.title, it)
         }
     }
@@ -1963,6 +2058,10 @@ class CatalogClient(
     private data class TmdbHomeRailSpec(
         val path: String,
         val title: String,
+        val expectedType: MediaType? = null,
+        val alternatePaths: List<String> = emptyList(),
+        val minimumItems: Int = 1,
+        val isTrending: Boolean = false,
     )
 
     private companion object {
@@ -1976,9 +2075,12 @@ class CatalogClient(
         const val ROTTEN_TOMATOES_URL = "https://www.rottentomatoes.com"
         const val HOME_RAIL_LIMIT = 20
         const val MIN_GENRE_RAIL_ITEMS = 20
+        const val MIN_TRENDING_RAIL_ITEMS = 20
         const val GENRE_PAGE_TARGET = 40
         const val HOME_BASE_CANDIDATE_TARGET = 60
         const val HOME_BASE_MAX_PAGES = 3
+        const val HOME_TRENDING_CANDIDATE_TARGET = 100
+        const val HOME_TRENDING_MAX_PAGES_PER_PATH = 5
         const val HOME_GENRE_CANDIDATE_TARGET = 80
         const val HOME_COMPOUND_GENRE_CANDIDATE_TARGET = 40
         const val HOME_GENRE_START_PAGE = 1
@@ -2201,12 +2303,52 @@ class CatalogClient(
         )
 
         val baseHomeRailSpecs = listOf(
-            TmdbHomeRailSpec("/movie", "Trending Movies"),
-            TmdbHomeRailSpec("/tv", "Trending Series"),
-            TmdbHomeRailSpec("/movie/now-playing", "Now in Cinemas"),
-            TmdbHomeRailSpec("/tv/on-the-air", "Series Airing Now"),
-            TmdbHomeRailSpec("/movie/top-rated", "All-Time Movie Greats"),
-            TmdbHomeRailSpec("/tv/top-rated", "Binge-Worthy Series"),
+            TmdbHomeRailSpec(
+                path = "/discover/movie?" +
+                    "include_adult=false&sort_by=popularity.desc&vote_count.gte=50",
+                title = "Trending Movies",
+                expectedType = MediaType.MOVIE,
+                alternatePaths = listOf(
+                    "/movie?include_adult=false",
+                    "/movie/now-playing?include_adult=false",
+                    "/movie/top-rated?include_adult=false",
+                ),
+                minimumItems = MIN_TRENDING_RAIL_ITEMS,
+                isTrending = true,
+            ),
+            TmdbHomeRailSpec(
+                path = "/discover/tv?" +
+                    "include_adult=false&sort_by=popularity.desc&vote_count.gte=25",
+                title = "Trending Series",
+                expectedType = MediaType.TV,
+                alternatePaths = listOf(
+                    "/tv?include_adult=false",
+                    "/tv/on-the-air?include_adult=false",
+                    "/tv/top-rated?include_adult=false",
+                ),
+                minimumItems = MIN_TRENDING_RAIL_ITEMS,
+                isTrending = true,
+            ),
+            TmdbHomeRailSpec(
+                "/movie/now-playing",
+                "Now in Cinemas",
+                MediaType.MOVIE,
+            ),
+            TmdbHomeRailSpec(
+                "/tv/on-the-air",
+                "Series Airing Now",
+                MediaType.TV,
+            ),
+            TmdbHomeRailSpec(
+                "/movie/top-rated",
+                "All-Time Movie Greats",
+                MediaType.MOVIE,
+            ),
+            TmdbHomeRailSpec(
+                "/tv/top-rated",
+                "Binge-Worthy Series",
+                MediaType.TV,
+            ),
         )
 
         @Suppress("unused")
