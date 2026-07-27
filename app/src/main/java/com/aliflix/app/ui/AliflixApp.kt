@@ -110,12 +110,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -138,6 +137,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -175,13 +175,27 @@ import com.aliflix.app.update.AppUpdateManager
 import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
 import com.aliflix.app.update.UpdateInfo
-import com.aliflix.app.ui.theme.AliflixBlack
-import com.aliflix.app.ui.theme.AliflixGreen
-import com.aliflix.app.ui.theme.AliflixIce
-import com.aliflix.app.ui.theme.AliflixMuted
-import com.aliflix.app.ui.theme.AliflixRed
-import com.aliflix.app.ui.theme.AliflixSurface
-import com.aliflix.app.ui.theme.AliflixSurfaceRaised
+import com.aliflix.app.ui.theme.AliflixAccentPrimary
+import com.aliflix.app.ui.theme.AliflixAccentSecondary
+import com.aliflix.app.ui.theme.AliflixAccentPrimary as AliflixRed
+import com.aliflix.app.ui.theme.AliflixAccentSecondary as AliflixIce
+import com.aliflix.app.ui.theme.AliflixBackgroundBase as AliflixBlack
+import com.aliflix.app.ui.theme.AliflixBackgroundImmersive
+import com.aliflix.app.ui.theme.AliflixBorderStrong
+import com.aliflix.app.ui.theme.AliflixBorderSubtle
+import com.aliflix.app.ui.theme.AliflixContentPrimary
+import com.aliflix.app.ui.theme.AliflixContentSecondary
+import com.aliflix.app.ui.theme.AliflixContentTertiary
+import com.aliflix.app.ui.theme.AliflixEditorialWarm
+import com.aliflix.app.ui.theme.AliflixError
+import com.aliflix.app.ui.theme.AliflixSuccess as AliflixGreen
+import com.aliflix.app.ui.theme.AliflixContentSecondary as AliflixMuted
+import com.aliflix.app.ui.theme.AliflixScrimStrong
+import com.aliflix.app.ui.theme.AliflixSurfacePrimary as AliflixSurface
+import com.aliflix.app.ui.theme.AliflixSurfaceElevated as AliflixSurfaceRaised
+import com.aliflix.app.ui.theme.AliflixSurfacePressed
+import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
+import com.aliflix.app.ui.theme.AliflixTheme
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -579,12 +593,14 @@ fun AliflixApp(
                 .zIndex(20f),
         ) {
             playerSelection?.let { selection ->
-                WebPlayerScreen(
-                    selection = selection,
-                    visible = playerVisible,
-                    controller = playerController,
-                    onClose = { playerVisible = false },
-                )
+                AliflixTheme {
+                    WebPlayerScreen(
+                        selection = selection,
+                        visible = playerVisible,
+                        controller = playerController,
+                        onClose = { playerVisible = false },
+                    )
+                }
             }
         }
 
@@ -626,23 +642,20 @@ private fun AliflixBottomBar(
     selected: AppTab,
     onSelect: (AppTab) -> Unit,
 ) {
-    Box(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = 16.dp, vertical = 9.dp)
-            .shadow(30.dp, RoundedCornerShape(30.dp), ambientColor = Color.Black)
-            .clip(RoundedCornerShape(30.dp))
-            .background(
-                Brush.horizontalGradient(
-                    listOf(Color(0xFA11141B), Color(0xFA17131A), Color(0xFA11141B)),
-                ),
-            )
-            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(30.dp))
-            .padding(5.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = AliflixSurfaceRaised.copy(alpha = 0.98f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle),
+        shadowElevation = 18.dp,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 5.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -653,15 +666,15 @@ private fun AliflixBottomBar(
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .height(60.dp)
-                        .scale(if (pressed) 0.95f else 1f)
-                        .clip(RoundedCornerShape(23.dp))
+                        .height(56.dp)
+                        .scale(if (pressed) 0.96f else 1f)
+                        .clip(RoundedCornerShape(18.dp))
                         .background(
                             if (isSelected) {
-                                Brush.verticalGradient(
+                                Brush.horizontalGradient(
                                     listOf(
-                                        AliflixRed.copy(alpha = 0.25f),
-                                        AliflixRed.copy(alpha = 0.08f),
+                                        AliflixAccentPrimary.copy(alpha = 0.28f),
+                                        AliflixAccentSecondary.copy(alpha = 0.10f),
                                     ),
                                 )
                             } else {
@@ -691,25 +704,29 @@ private fun AliflixBottomBar(
                             }
                         },
                         contentDescription = tab.label,
-                        tint = if (isSelected) Color.White else Color(0xFF767B87),
-                        modifier = Modifier.size(22.dp),
+                        tint = if (isSelected) AliflixContentPrimary else AliflixContentTertiary,
+                        modifier = Modifier.size(23.dp),
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
                         text = tab.label,
-                        color = if (isSelected) Color.White else Color(0xFF767B87),
-                        fontSize = 10.sp,
+                        color = if (isSelected) AliflixContentPrimary else AliflixContentTertiary,
+                        fontSize = 11.sp,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
                     )
                     if (isSelected) {
-                        Spacer(Modifier.height(3.dp))
+                        Spacer(Modifier.height(2.dp))
                         Box(
                             modifier = Modifier
-                                .width(16.dp)
-                                .height(2.dp)
+                                .width(20.dp)
+                                .height(3.dp)
                                 .clip(CircleShape)
-                                .background(AliflixRed),
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(AliflixAccentPrimary, AliflixAccentSecondary),
+                                    ),
+                                ),
                         )
                     }
                 }
@@ -812,8 +829,10 @@ private fun HomeFeed(
 
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 28.dp),
+        modifier = modifier
+            .fillMaxSize()
+            .background(AliflixBlack),
+        contentPadding = PaddingValues(bottom = 40.dp),
     ) {
         item {
             Box {
@@ -850,7 +869,7 @@ private fun HomeFeed(
         }
 
         items(filteredRails, key = { it.title }) { rail ->
-            MediaRail(
+            HomeMediaRail(
                 rail = rail,
                 onOpen = onOpen,
                 compact = false,
@@ -869,56 +888,79 @@ private fun HomeHeader(
             .fillMaxWidth()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color.Black.copy(alpha = 0.82f), Color.Transparent),
+                    listOf(
+                        AliflixBlack.copy(alpha = 0.94f),
+                        AliflixBlack.copy(alpha = 0.54f),
+                        Color.Transparent,
+                    ),
                 ),
             )
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 2.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(11.dp))
                     .background(
                         Brush.linearGradient(
-                            listOf(AliflixRed, Color(0xFFB70B35)),
+                            listOf(
+                                MaterialTheme.colorScheme.primary,
+                                MaterialTheme.colorScheme.secondary,
+                            ),
                         ),
                     ),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = "A",
-                    color = Color.White,
-                    fontSize = 22.sp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontSize = 21.sp,
                     fontWeight = FontWeight.Black,
                 )
             }
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = "ALIFLIX",
-                color = Color.White,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 2.6.sp,
-            )
+            Spacer(Modifier.width(11.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text(
+                    text = "ALIFLIX",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 2.3.sp,
+                )
+                Text(
+                    text = "CINEMA, CURATED",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.3.sp,
+                )
+            }
         }
         IconButton(
             onClick = onSearch,
             modifier = Modifier
-                .size(42.dp)
+                .size(48.dp)
                 .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.38f))
-                .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape),
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f))
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                    CircleShape,
+                ),
         ) {
             Icon(
                 Icons.Outlined.Search,
                 contentDescription = "Search",
-                modifier = Modifier.size(21.dp),
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp),
             )
         }
     }
@@ -931,10 +973,15 @@ private fun HeroBanner(
     onPlay: () -> Unit,
     onInfo: () -> Unit,
 ) {
+    val fontScale = LocalDensity.current.fontScale
+    val accessibilityExpansion = (
+        (fontScale - 1f).coerceAtLeast(0f) * 170f
+    ).coerceAtMost(320f).dp
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(510.dp),
+            .height(556.dp + accessibilityExpansion),
     ) {
         ArtworkPlaceholder(title = item.title)
         AsyncImage(
@@ -947,15 +994,16 @@ private fun HeroBanner(
                     drawContent()
                     drawRect(
                         Brush.verticalGradient(
-                            0f to Color.Black.copy(alpha = 0.18f),
-                            0.46f to Color.Transparent,
+                            0f to AliflixBlack.copy(alpha = 0.20f),
+                            0.42f to Color.Transparent,
+                            0.70f to AliflixBlack.copy(alpha = 0.36f),
                             1f to AliflixBlack,
                         ),
                     )
                     drawRect(
                         Brush.horizontalGradient(
-                            0f to Color.Black.copy(alpha = 0.54f),
-                            0.72f to Color.Transparent,
+                            0f to AliflixBlack.copy(alpha = 0.74f),
+                            0.70f to AliflixBlack.copy(alpha = 0.06f),
                         ),
                     )
                 },
@@ -964,83 +1012,147 @@ private fun HeroBanner(
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(horizontal = 20.dp, vertical = 22.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
                     modifier = Modifier
+                        .width(26.dp)
+                        .height(3.dp)
                         .clip(CircleShape)
-                        .background(AliflixRed)
-                        .padding(horizontal = 9.dp, vertical = 5.dp),
-                ) {
-                    Text(
-                        text = "SPOTLIGHT",
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 1.2.sp,
-                    )
-                }
+                        .background(MaterialTheme.colorScheme.tertiary),
+                )
+                Text(
+                    text = "ALIFLIX FEATURED",
+                    color = MaterialTheme.colorScheme.tertiary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.45.sp,
+                )
             }
             Text(
                 text = item.title,
+                color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.displayLarge,
+                fontSize = 40.sp,
+                lineHeight = 42.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 360.dp),
             )
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (personalMatch != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.20f))
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.46f),
+                                RoundedCornerShape(7.dp),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = "${personalMatch.score}% match",
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                if (item.rating > 0.0) {
                     Text(
-                        text = "${personalMatch.score}% Match",
-                        color = AliflixGreen,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
+                        text = String.format(
+                            java.util.Locale.US,
+                            "%.1f rated",
+                            item.rating,
+                        ),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
                     )
                 }
-                if (item.year.isNotBlank()) Text(item.year, color = Color.White.copy(alpha = 0.75f))
+                if (item.year.isNotBlank()) {
+                    Text(
+                        text = item.year,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+            val typeAndGenres = buildList {
+                add(if (item.type == MediaType.MOVIE) "Movie" else "Series")
+                addAll(item.genres.take(2))
+            }.joinToString("  •  ")
+            if (typeAndGenres.isNotBlank()) {
                 Text(
-                    text = if (item.type == MediaType.MOVIE) "Movie" else "Series",
-                    color = Color.White.copy(alpha = 0.75f),
+                    text = typeAndGenres,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Text(
-                text = item.overview.ifBlank { "Open details for the full English synopsis." },
-                maxLines = 2,
+                text = item.overview.ifBlank { "Open details to discover more about this title." },
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
-                color = Color.White.copy(alpha = 0.82f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.84f),
+                fontSize = 14.sp,
                 lineHeight = 20.sp,
+                modifier = Modifier.widthIn(max = 420.dp),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Button(
                     onClick = onPlay,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color.Black,
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
                     ),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 13.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 14.dp),
+                    modifier = Modifier.heightIn(min = 50.dp),
                 ) {
-                    Icon(Icons.Rounded.PlayArrow, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(7.dp))
                     Text("Play", fontWeight = FontWeight.Bold)
                 }
-                Button(
+                OutlinedButton(
                     onClick = onInfo,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White.copy(alpha = 0.13f),
-                        contentColor = Color.White,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                        contentColor = MaterialTheme.colorScheme.onSurface,
                     ),
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 13.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.82f),
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
+                    modifier = Modifier.heightIn(min = 50.dp),
                 ) {
-                    Icon(Icons.Rounded.Info, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        Icons.Rounded.Info,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(7.dp))
                     Text("More Info", fontWeight = FontWeight.Bold)
                 }
             }
@@ -1057,7 +1169,14 @@ private fun FilterBar(
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .background(AliflixBlack.copy(alpha = 0.96f))
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        AliflixBlack.copy(alpha = 0.99f),
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                    ),
+                ),
+            )
             .then(
                 if (pinned) {
                     Modifier.windowInsetsPadding(WindowInsets.statusBars)
@@ -1065,36 +1184,371 @@ private fun FilterBar(
                     Modifier
                 },
             ),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 9.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(HomeFilter.entries) { filter ->
             val active = filter == selected
             Box(
                 modifier = Modifier
-                    .clip(CircleShape)
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(14.dp))
                     .background(
-                        if (active) Color.White else Color.White.copy(alpha = 0.06f),
+                        if (active) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.20f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+                        },
                     )
                     .border(
                         1.dp,
-                        if (active) Color.White else Color.White.copy(alpha = 0.10f),
-                        CircleShape,
+                        if (active) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.76f)
+                        } else {
+                            MaterialTheme.colorScheme.outline.copy(alpha = 0.46f)
+                        },
+                        RoundedCornerShape(14.dp),
                     )
                     .selectable(
                         selected = active,
                         onClick = { onSelect(filter) },
                     )
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
             ) {
                 Text(
                     text = filter.label,
-                    color = if (active) Color.Black else Color.White.copy(alpha = 0.82f),
-                    fontWeight = FontWeight.SemiBold,
+                    color = if (active) {
+                        MaterialTheme.colorScheme.secondary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                     fontSize = 13.sp,
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun HomeMediaRail(
+    rail: ContentRail,
+    onOpen: (Media) -> Unit,
+    compact: Boolean,
+) {
+    val trending = rail.title.contains("Trending", ignoreCase = true)
+    val editorialLandscape = !trending && listOf(
+        "Popular",
+        "Now Playing",
+        "Airing",
+        "Documentary",
+        "Reality",
+    ).any { marker -> rail.title.contains(marker, ignoreCase = true) }
+
+    Column(
+        modifier = Modifier.padding(top = if (trending) 30.dp else 26.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        HomeSectionHeader(
+            title = rail.title,
+            eyebrow = when {
+                trending -> "TRENDING NOW"
+                editorialLandscape -> "EDITOR'S VIEW"
+                else -> null
+            },
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (trending) 10.dp else 12.dp),
+        ) {
+            itemsIndexed(rail.items, key = { _, item -> item.key }) { index, item ->
+                when {
+                    trending -> HomePosterCard(
+                        item = item,
+                        width = if (compact) 112.dp else 130.dp,
+                        rank = index + 1,
+                        onClick = { onOpen(item) },
+                    )
+                    editorialLandscape -> HomeLandscapeCard(
+                        item = item,
+                        compact = compact,
+                        onClick = { onOpen(item) },
+                    )
+                    else -> HomePosterCard(
+                        item = item,
+                        width = if (compact) 112.dp else 128.dp,
+                        onClick = { onOpen(item) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomePosterCard(
+    item: Media,
+    width: androidx.compose.ui.unit.Dp,
+    rank: Int? = null,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val posterScale by animateFloatAsState(
+        targetValue = if (pressed) 0.965f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium,
+        ),
+        label = "home-poster-press",
+    )
+    val leadingSpace = if (rank == null) 0.dp else 42.dp
+
+    Column(
+        modifier = Modifier
+            .width(width + leadingSpace)
+            .scale(posterScale)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(width / 0.68f),
+        ) {
+            if (rank != null) {
+                Text(
+                    text = rank.toString(),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.90f),
+                    fontSize = if (rank < 10) 66.sp else 56.sp,
+                    lineHeight = 62.sp,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(bottom = 7.dp),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .width(width)
+                    .fillMaxHeight()
+                    .align(Alignment.CenterEnd)
+                    .shadow(14.dp, RoundedCornerShape(15.dp))
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(
+                        1.dp,
+                        if (pressed) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.68f)
+                        } else {
+                            MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)
+                        },
+                        RoundedCornerShape(15.dp),
+                    ),
+            ) {
+                ArtworkPlaceholder(title = item.title)
+                AsyncImage(
+                    model = item.posterUrl,
+                    contentDescription = "${item.title} poster",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0.58f to Color.Transparent,
+                                1f to AliflixBlack.copy(alpha = 0.78f),
+                            ),
+                        ),
+                )
+                if (item.rating > 0.0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(7.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(AliflixBlack.copy(alpha = 0.78f))
+                            .padding(horizontal = 7.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = String.format(
+                                java.util.Locale.US,
+                                "%.1f",
+                                item.rating,
+                            ),
+                            color = MaterialTheme.colorScheme.tertiary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
+        Text(
+            text = item.title,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = 17.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .padding(start = leadingSpace)
+                .height(34.dp),
+        )
+        Row(
+            modifier = Modifier.padding(start = leadingSpace),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (item.type == MediaType.MOVIE) "Movie" else "Series",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            if (item.year.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .size(3.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.outline),
+                )
+                Text(
+                    text = item.year,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeLandscapeCard(
+    item: Media,
+    compact: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val cardScale by animateFloatAsState(
+        targetValue = if (pressed) 0.97f else 1f,
+        animationSpec = tween(durationMillis = 110),
+        label = "home-landscape-press",
+    )
+
+    Box(
+        modifier = Modifier
+            .width(if (compact) 210.dp else 238.dp)
+            .aspectRatio(1.68f)
+            .scale(cardScale)
+            .shadow(12.dp, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(
+                1.dp,
+                if (pressed) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+                } else {
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
+                },
+                RoundedCornerShape(16.dp),
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
+    ) {
+        ArtworkPlaceholder(title = item.title)
+        AsyncImage(
+            model = item.backdropUrl ?: item.posterUrl,
+            contentDescription = "${item.title} artwork",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.18f to Color.Transparent,
+                        1f to AliflixBlack.copy(alpha = 0.94f),
+                    ),
+                ),
+        )
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(13.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = item.title,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = buildList {
+                    add(if (item.type == MediaType.MOVIE) "Movie" else "Series")
+                    if (item.year.isNotBlank()) add(item.year)
+                }.joinToString("  •  "),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeSectionHeader(
+    title: String,
+    eyebrow: String? = null,
+) {
+    Column(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        if (eyebrow != null) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(18.dp)
+                        .height(2.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.tertiary),
+                )
+                Text(
+                    text = eyebrow,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.45.sp,
+                )
+            }
+        }
+        Text(
+            text = title,
+            color = MaterialTheme.colorScheme.onBackground,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -1262,27 +1716,49 @@ private fun RecentRail(
     onOpen: (Media) -> Unit,
 ) {
     Column(
-        modifier = Modifier.padding(top = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.padding(top = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SectionHeader(title = "Recently Played", eyebrow = "PICK UP THE STORY")
+        HomeSectionHeader(title = "Recently Played", eyebrow = "RETURN TO")
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(items, key = { it.key }) { item ->
+                val interactionSource = remember { MutableInteractionSource() }
+                val pressed by interactionSource.collectIsPressedAsState()
+                val cardScale by animateFloatAsState(
+                    targetValue = if (pressed) 0.97f else 1f,
+                    animationSpec = tween(110),
+                    label = "recent-card-press",
+                )
                 Box(
                     modifier = Modifier
-                        .width(210.dp)
-                        .aspectRatio(1.62f)
+                        .width(236.dp)
+                        .aspectRatio(1.68f)
+                        .scale(cardScale)
+                        .shadow(12.dp, RoundedCornerShape(16.dp))
                         .clip(RoundedCornerShape(16.dp))
-                        .background(AliflixSurfaceRaised)
-                        .clickable { onOpen(item) },
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .border(
+                            1.dp,
+                            if (pressed) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.66f)
+                            } else {
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
+                            },
+                            RoundedCornerShape(16.dp),
+                        )
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = null,
+                            onClick = { onOpen(item) },
+                        ),
                 ) {
                     ArtworkPlaceholder(title = item.title)
                     AsyncImage(
                         model = item.backdropUrl ?: item.posterUrl,
-                        contentDescription = item.title,
+                        contentDescription = "${item.title} artwork",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -1291,41 +1767,48 @@ private fun RecentRail(
                             .fillMaxSize()
                             .background(
                                 Brush.verticalGradient(
-                                    0.25f to Color.Transparent,
-                                    1f to Color.Black.copy(alpha = 0.90f),
+                                    0.20f to Color.Transparent,
+                                    1f to AliflixBlack.copy(alpha = 0.95f),
                                 ),
                             ),
                     )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(10.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.82f))
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                    ) {
+                        Text(
+                            text = "RECENT",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 1.0.sp,
+                        )
+                    }
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                            .fillMaxWidth()
+                            .padding(13.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
                             text = item.title,
+                            color = MaterialTheme.colorScheme.onBackground,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = if (item.type == MediaType.MOVIE) "Movie" else "Series",
-                            color = Color.White.copy(alpha = 0.68f),
+                            text = buildList {
+                                add(if (item.type == MediaType.MOVIE) "Movie" else "Series")
+                                if (item.year.isNotBlank()) add(item.year)
+                            }.joinToString("  •  "),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 11.sp,
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.92f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Rounded.PlayArrow,
-                            contentDescription = null,
-                            tint = Color.Black,
                         )
                     }
                 }
@@ -1346,6 +1829,7 @@ private fun SearchScreen(
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
+    val plotMode = state.mode == SearchMode.PLOT
     var queryValue by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(
             TextFieldValue(
@@ -1377,41 +1861,55 @@ private fun SearchScreen(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFF101D29), AliflixBlack, AliflixBlack),
+                    0f to Color(0xFF121D2A),
+                    0.28f to Color(0xFF0C1119),
+                    1f to AliflixBlack,
                 ),
             )
             .windowInsetsPadding(WindowInsets.statusBars)
             .imePadding()
-            .padding(top = 12.dp),
+            .padding(top = 8.dp),
     ) {
         Text(
-            text = "DISCOVER",
+            text = "CINEMATIC DISCOVERY",
             color = AliflixRed,
             fontSize = 10.sp,
             fontWeight = FontWeight.Black,
-            letterSpacing = 1.7.sp,
-            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp),
+            letterSpacing = 1.5.sp,
+            modifier = Modifier.padding(start = 18.dp, top = 8.dp, bottom = 3.dp),
         )
         Text(
-            text = if (state.mode == SearchMode.TITLE) {
-                "Search movies & shows"
+            text = if (plotMode) {
+                "Find it from the story"
             } else {
-                "What was that movie?"
+                "Search movies & series"
             },
-            style = MaterialTheme.typography.headlineLarge,
+            style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            color = Color.White,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 3.dp),
+        )
+        Text(
+            text = if (plotMode) {
+                "Describe what you remember and Aliflix will estimate the closest titles."
+            } else {
+                "Search the full catalogue by title, year, or a memorable keyword."
+            },
+            color = Color.White.copy(alpha = 0.66f),
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 3.dp),
         )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color.White.copy(alpha = 0.055f))
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color.Black.copy(alpha = 0.22f))
                 .border(
                     1.dp,
-                    Color.White.copy(alpha = 0.09f),
-                    RoundedCornerShape(16.dp),
+                    Color.White.copy(alpha = 0.10f),
+                    RoundedCornerShape(18.dp),
                 )
                 .padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1422,15 +1920,19 @@ private fun SearchScreen(
             ).forEach { (mode, label) ->
                 val selected = state.mode == mode
                 val tabColor by animateColorAsState(
-                    targetValue = if (selected) AliflixRed else Color.Transparent,
-                    animationSpec = tween(280, easing = FastOutSlowInEasing),
+                    targetValue = if (selected) {
+                        AliflixRed.copy(alpha = 0.94f)
+                    } else {
+                        Color.Transparent
+                    },
+                    animationSpec = tween(240, easing = FastOutSlowInEasing),
                     label = "search-mode-color",
                 )
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
-                        .clip(RoundedCornerShape(13.dp))
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(tabColor)
                         .selectable(
                             selected = selected,
@@ -1442,7 +1944,7 @@ private fun SearchScreen(
                     Text(
                         text = label,
                         color = if (selected) Color.White else AliflixMuted,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                     )
@@ -1472,120 +1974,165 @@ private fun SearchScreen(
                 }
             }
         }
-        if (state.mode == SearchMode.PLOT) {
-            Text(
-                text = "Tell us anything you remember: characters, setting, a scene, or the ending.",
-                color = AliflixMuted,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
-            )
-        }
-        TextField(
-            value = queryValue,
-            onValueChange = { updated ->
-                queryValue = updated
-                onQueryChange(updated.text)
-            },
-            label = if (state.mode == SearchMode.PLOT) {
-                null
-            } else {
-                {
-                    Text("Title search")
-                }
-            },
-            placeholder = {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    text = if (state.mode == SearchMode.PLOT) {
-                        "Describe the movie or show…"
-                    } else {
-                        "Title, year, or words you remember…"
-                    },
-                    color = AliflixMuted,
-                    lineHeight = 20.sp,
+                    text = if (plotMode) "STORY CLUES" else "TITLE LOOKUP",
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.1.sp,
                 )
-            },
-            leadingIcon = if (state.mode == SearchMode.PLOT) {
-                null
-            } else {
-                {
-                    Icon(Icons.Filled.Search, contentDescription = null)
+                Spacer(Modifier.weight(1f))
+                if (plotMode) {
+                    Text(
+                        text = "Internet required",
+                        color = AliflixMuted,
+                        fontSize = 10.sp,
+                    )
                 }
-            },
-            trailingIcon = {
-                if (state.query.isNotEmpty()) {
-                    IconButton(
-                        onClick = {
-                            queryValue = TextFieldValue("")
-                            onQueryChange("")
+            }
+            OutlinedTextField(
+                value = queryValue,
+                onValueChange = { updated ->
+                    queryValue = updated
+                    onQueryChange(updated.text)
+                },
+                placeholder = {
+                    Text(
+                        text = if (plotMode) {
+                            "Describe the movie or show..."
+                        } else {
+                            "Title, year, or words you remember..."
                         },
-                    ) {
-                        Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                        color = Color.White.copy(alpha = 0.46f),
+                        fontSize = 14.sp,
+                        lineHeight = 21.sp,
+                    )
+                },
+                leadingIcon = if (plotMode) {
+                    null
+                } else {
+                    {
+                        Icon(
+                            Icons.Filled.Search,
+                            contentDescription = null,
+                            tint = AliflixMuted,
+                        )
                     }
-                }
-            },
-            singleLine = state.mode == SearchMode.TITLE,
-            minLines = if (state.mode == SearchMode.PLOT) 3 else 1,
-            maxLines = if (state.mode == SearchMode.PLOT) 5 else 1,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = Color.White.copy(alpha = 0.10f),
-                unfocusedContainerColor = Color.White.copy(alpha = 0.08f),
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-            ),
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-        )
+                },
+                trailingIcon = {
+                    if (state.query.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                queryValue = TextFieldValue("")
+                                onQueryChange("")
+                            },
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Clear search",
+                            )
+                        }
+                    }
+                },
+                singleLine = !plotMode,
+                minLines = if (plotMode) 4 else 1,
+                maxLines = if (plotMode) 6 else 1,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = Color.White,
+                    lineHeight = 22.sp,
+                ),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color(0xFF171D27).copy(alpha = 0.96f),
+                    unfocusedContainerColor = Color(0xFF141A23).copy(alpha = 0.94f),
+                    focusedBorderColor = AliflixRed.copy(alpha = 0.82f),
+                    unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
+                    cursorColor = AliflixRed,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                ),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = if (plotMode) 140.dp else 56.dp),
+            )
+            if (plotMode) {
+                Text(
+                    text = "Useful clues include a distinctive scene, character, place, or ending.",
+                    color = AliflixMuted,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    modifier = Modifier.padding(horizontal = 2.dp),
+                )
+            }
+        }
 
         when {
-            state.loading -> Box(
-                Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(color = AliflixRed)
-            }
-            state.error != null -> EmptyMessage(
+            state.loading -> SearchStatusPanel(
+                title = if (plotMode) {
+                    "Comparing your clues"
+                } else {
+                    "Searching the catalogue"
+                },
+                message = if (plotMode) {
+                    "Checking possible movie and series titles..."
+                } else {
+                    "Finding the strongest title matches..."
+                },
+                loading = true,
+                modifier = Modifier.weight(1f),
+            )
+            state.error != null -> SearchStatusPanel(
                 title = "Search unavailable",
                 message = state.error,
                 modifier = Modifier.weight(1f),
             )
-            state.query.isBlank() -> EmptyMessage(
-                title = if (state.mode == SearchMode.PLOT) {
-                    "Describe the story"
+            state.query.isBlank() -> SearchStatusPanel(
+                title = if (plotMode) {
+                    "Start with the part you remember"
                 } else {
                     "What do you want to watch?"
                 },
-                message = if (state.mode == SearchMode.PLOT) {
-                    "Write a sentence or two. Aliflix will estimate the closest movies and series."
+                message = if (plotMode) {
+                    "A sentence or two works best. Include unusual details when you can."
                 } else {
-                    "Search with a title, release year, or a few words you remember."
+                    "Enter a title, release year, or memorable words from the name."
                 },
                 modifier = Modifier.weight(1f),
             )
-            state.results.isEmpty() -> EmptyMessage(
-                title = if (state.mode == SearchMode.PLOT) {
+            state.results.isEmpty() -> SearchStatusPanel(
+                title = if (plotMode) {
                     "No confident estimate"
                 } else {
-                    "No matches"
+                    "No matching titles"
                 },
-                message = if (state.mode == SearchMode.PLOT) {
-                    "Add a distinctive scene, place, character, or time period and try again."
+                message = if (plotMode) {
+                    "Add a more distinctive scene, place, character, or time period."
                 } else {
-                    "Check the spelling, remove extra words, or try the release year."
+                    "Check the spelling, remove extra words, or add the release year."
                 },
                 modifier = Modifier.weight(1f),
             )
-            else -> Column(Modifier.fillMaxSize()) {
+            else -> Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -1593,23 +2140,34 @@ private fun SearchScreen(
                         val active = mediaFilter == option
                         Box(
                             modifier = Modifier
-                                .clip(CircleShape)
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(16.dp))
                                 .background(
                                     if (active) {
-                                        Color.White
+                                        AliflixRed.copy(alpha = 0.18f)
                                     } else {
                                         Color.White.copy(alpha = 0.06f)
                                     },
+                                )
+                                .border(
+                                    1.dp,
+                                    if (active) {
+                                        AliflixRed.copy(alpha = 0.72f)
+                                    } else {
+                                        Color.White.copy(alpha = 0.08f)
+                                    },
+                                    RoundedCornerShape(16.dp),
                                 )
                                 .selectable(
                                     selected = active,
                                     onClick = { onMediaFilterChange(option) },
                                 )
-                                .padding(horizontal = 13.dp, vertical = 9.dp),
+                                .padding(horizontal = 15.dp),
+                            contentAlignment = Alignment.Center,
                         ) {
                             Text(
                                 text = option,
-                                color = if (active) Color.Black else Color.White,
+                                color = if (active) Color.White else AliflixMuted,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -1618,7 +2176,7 @@ private fun SearchScreen(
                     }
                     Spacer(Modifier.weight(1f))
                     Text(
-                        text = "${visibleResults.size} found",
+                        text = "${visibleResults.size} ${if (plotMode) "estimates" else "results"}",
                         color = AliflixMuted,
                         fontSize = 11.sp,
                         maxLines = 1,
@@ -1637,8 +2195,8 @@ private fun SearchScreen(
                         contentPadding = PaddingValues(
                             start = 16.dp,
                             end = 16.dp,
-                            top = 4.dp,
-                            bottom = 24.dp,
+                            top = 2.dp,
+                            bottom = 32.dp,
                         ),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -1659,6 +2217,65 @@ private fun SearchScreen(
 }
 
 @Composable
+private fun SearchStatusPanel(
+    title: String,
+    message: String,
+    modifier: Modifier = Modifier,
+    loading: Boolean = false,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 420.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.White.copy(alpha = 0.045f))
+                .border(
+                    1.dp,
+                    Color.White.copy(alpha = 0.08f),
+                    RoundedCornerShape(22.dp),
+                )
+                .padding(horizontal = 24.dp, vertical = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    color = AliflixRed,
+                    strokeWidth = 2.5.dp,
+                    modifier = Modifier.size(28.dp),
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(AliflixRed),
+                )
+            }
+            Text(
+                text = title,
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = message,
+                color = AliflixMuted,
+                fontSize = 13.sp,
+                lineHeight = 19.sp,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+@Composable
 private fun PlaybackProviderSelector(
     selectedProvider: PlaybackProviderId,
     onSelectProvider: (PlaybackProviderId) -> Unit,
@@ -1670,47 +2287,62 @@ private fun PlaybackProviderSelector(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        AliflixSurfaceRaised.copy(alpha = 0.94f),
-                        AliflixSurface.copy(alpha = 0.90f),
-                    ),
-                ),
-            )
-            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(22.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(AliflixSurfaceSecondary)
+            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(20.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            text = "Streaming source",
-            color = Color.White,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.ExtraBold,
-        )
-        Text(
-            text = "Choose the provider Aliflix uses when you press Play.",
-            color = AliflixMuted,
-            fontSize = 11.sp,
-            lineHeight = 16.sp,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = "Streaming source",
+                    color = AliflixContentPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "Used when you activate Play",
+                    color = AliflixContentTertiary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(AliflixAccentPrimary.copy(alpha = 0.15f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            ) {
+                Text(
+                    text = "SOURCE",
+                    color = AliflixAccentSecondary,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.sp,
+                )
+            }
+        }
 
         providers.forEach { provider ->
             val selected = selectedProvider == provider
-            val cardShape = RoundedCornerShape(16.dp)
+            val cardShape = RoundedCornerShape(14.dp)
             val cardBackground = if (selected) {
                 Brush.horizontalGradient(
                     listOf(
-                        AliflixRed.copy(alpha = 0.23f),
-                        AliflixRed.copy(alpha = 0.08f),
+                        AliflixAccentPrimary.copy(alpha = 0.24f),
+                        AliflixAccentPrimary.copy(alpha = 0.08f),
                     ),
                 )
             } else {
                 Brush.horizontalGradient(
                     listOf(
-                        Color.White.copy(alpha = 0.055f),
-                        Color.White.copy(alpha = 0.025f),
+                        AliflixSurfaceRaised,
+                        AliflixSurfaceRaised.copy(alpha = 0.75f),
                     ),
                 )
             }
@@ -1724,9 +2356,9 @@ private fun PlaybackProviderSelector(
                     .border(
                         width = if (selected) 1.5.dp else 1.dp,
                         color = if (selected) {
-                            AliflixRed.copy(alpha = 0.72f)
+                            AliflixAccentSecondary.copy(alpha = 0.72f)
                         } else {
-                            Color.White.copy(alpha = 0.09f)
+                            AliflixBorderSubtle
                         },
                         shape = cardShape,
                     )
@@ -1734,30 +2366,34 @@ private fun PlaybackProviderSelector(
                         selected = selected,
                         onClick = { onSelectProvider(provider) },
                     )
-                    .padding(start = 11.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
+                    .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(11.dp))
                         .background(
                             if (selected) {
-                                AliflixRed
+                                Brush.linearGradient(
+                                    listOf(AliflixAccentPrimary, AliflixAccentSecondary),
+                                )
                             } else {
-                                Color.White.copy(alpha = 0.08f)
+                                Brush.linearGradient(
+                                    listOf(AliflixSurfacePressed, AliflixSurfaceRaised),
+                                )
                             },
                         )
                         .border(
                             1.dp,
-                            Color.White.copy(alpha = if (selected) 0.22f else 0.08f),
-                            RoundedCornerShape(12.dp),
+                            if (selected) Color.White.copy(alpha = 0.20f) else AliflixBorderSubtle,
+                            RoundedCornerShape(11.dp),
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = provider.displayName.take(1).uppercase(),
-                        color = Color.White,
+                        color = if (selected) AliflixContentPrimary else AliflixContentSecondary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Black,
                     )
@@ -1768,8 +2404,8 @@ private fun PlaybackProviderSelector(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = provider.displayName,
-                        color = Color.White,
-                        fontSize = 13.sp,
+                        color = AliflixContentPrimary,
+                        fontSize = 14.sp,
                         fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1777,11 +2413,11 @@ private fun PlaybackProviderSelector(
                     Text(
                         text = if (selected) "Selected for playback" else "Tap to use this source",
                         color = if (selected) {
-                            Color.White.copy(alpha = 0.78f)
+                            AliflixAccentSecondary
                         } else {
-                            AliflixMuted
+                            AliflixContentTertiary
                         },
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -1792,7 +2428,7 @@ private fun PlaybackProviderSelector(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(CircleShape)
-                            .background(AliflixRed),
+                            .background(AliflixAccentPrimary),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -1812,7 +2448,7 @@ private fun PlaybackProviderSelector(
                         Icon(
                             imageVector = Icons.Rounded.Edit,
                             contentDescription = "Edit ${provider.displayName} URL",
-                            tint = if (selected) Color.White else AliflixIce,
+                            tint = if (selected) AliflixContentPrimary else AliflixContentSecondary,
                             modifier = Modifier.size(18.dp),
                         )
                     }
@@ -1891,28 +2527,45 @@ private fun MobileProviderUrlDialog(
                 .padding(horizontal = 24.dp)
                 .widthIn(max = 360.dp)
                 .fillMaxWidth(),
-            color = AliflixSurfaceRaised,
-            contentColor = Color.White,
-            shape = RoundedCornerShape(22.dp),
+            color = AliflixSurfaceSecondary,
+            contentColor = AliflixContentPrimary,
+            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
+            shape = RoundedCornerShape(24.dp),
             tonalElevation = 6.dp,
             shadowElevation = 18.dp,
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "$providerName address",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Text(
-                        text = description,
-                        color = AliflixMuted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                    )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(AliflixAccentPrimary.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Edit,
+                            contentDescription = null,
+                            tint = AliflixAccentSecondary,
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text = "$providerName address",
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                        Text(
+                            text = description,
+                            color = AliflixContentSecondary,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
                 OutlinedTextField(
                     value = url,
@@ -1950,8 +2603,9 @@ private fun MobileProviderUrlDialog(
                     Button(
                         onClick = saveUrl,
                         enabled = normalizedUrl != null,
-                        colors = ButtonDefaults.buttonColors(containerColor = AliflixRed),
-                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
+                        shape = RoundedCornerShape(14.dp),
                     ) {
                         Text("Save", fontWeight = FontWeight.Bold)
                     }
@@ -1972,25 +2626,25 @@ private fun MobileUpdatePanel(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color.White.copy(alpha = 0.055f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(11.dp),
+            .clip(RoundedCornerShape(16.dp))
+            .background(AliflixSurfaceSecondary)
+            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
+            .padding(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(38.dp)
+                .size(42.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(AliflixRed.copy(alpha = 0.18f)),
+                .background(AliflixAccentPrimary.copy(alpha = 0.18f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Rounded.SystemUpdate,
                 contentDescription = null,
-                tint = AliflixRed,
-                modifier = Modifier.size(21.dp),
+                tint = AliflixAccentSecondary,
+                modifier = Modifier.size(22.dp),
             )
         }
         Column(
@@ -1999,43 +2653,47 @@ private fun MobileUpdatePanel(
         ) {
             Text(
                 text = "App updates",
-                color = Color.White,
-                fontSize = 13.sp,
+                color = AliflixContentPrimary,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
             )
             Text(
                 text = state.message.ifBlank {
                     "Check the Aliflix GitHub release for a newer version."
                 },
-                color = AliflixMuted,
-                fontSize = 10.sp,
+                color = AliflixContentSecondary,
+                fontSize = 11.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         when {
             state.busy -> CircularProgressIndicator(
-                color = AliflixRed,
+                color = AliflixAccentSecondary,
                 strokeWidth = 3.dp,
                 modifier = Modifier.size(25.dp),
             )
             state.downloadedApk != null -> Button(
                 onClick = onInstall,
+                modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(horizontal = 13.dp, vertical = 7.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AliflixRed),
+                colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
             ) {
                 Text("Install", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
             state.available != null -> Button(
                 onClick = onDownload,
+                modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(horizontal = 13.dp, vertical = 7.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AliflixRed),
+                colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
             ) {
                 Text("Download", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
             else -> OutlinedButton(
                 onClick = onCheck,
+                modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
             ) {
                 Icon(
                     Icons.Rounded.Refresh,
@@ -2080,7 +2738,7 @@ private fun MobileSettingsDialog(
                         onClearRecent()
                     },
                 ) {
-                    Text("Clear all", color = AliflixRed, fontWeight = FontWeight.Bold)
+                    Text("Clear all", color = AliflixError, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -2104,10 +2762,10 @@ private fun MobileSettingsDialog(
                 .padding(horizontal = 20.dp, vertical = 24.dp)
                 .widthIn(max = 440.dp)
                 .fillMaxWidth(),
-            color = Color(0xFF161A22),
-            contentColor = Color.White,
-            shape = RoundedCornerShape(28.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+            color = AliflixSurface,
+            contentColor = AliflixContentPrimary,
+            shape = RoundedCornerShape(26.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
             tonalElevation = 10.dp,
             shadowElevation = 24.dp,
         ) {
@@ -2130,13 +2788,13 @@ private fun MobileSettingsDialog(
                             modifier = Modifier
                                 .size(38.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(AliflixRed.copy(alpha = 0.2f)),
+                                .background(AliflixAccentPrimary.copy(alpha = 0.18f)),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Settings,
                                 contentDescription = null,
-                                tint = AliflixRed,
+                                tint = AliflixAccentSecondary,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -2157,8 +2815,8 @@ private fun MobileSettingsDialog(
                     IconButton(
                         onClick = onDismiss,
                         modifier = Modifier
-                            .size(34.dp)
-                            .background(Color.White.copy(alpha = 0.08f), CircleShape),
+                            .size(48.dp)
+                            .background(AliflixSurfaceRaised, CircleShape),
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
@@ -2172,7 +2830,7 @@ private fun MobileSettingsDialog(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "PLAYBACK SOURCE",
-                        color = AliflixRed,
+                        color = AliflixAccentSecondary,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.2.sp,
@@ -2187,7 +2845,7 @@ private fun MobileSettingsDialog(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "UPDATES & VERSION",
-                        color = AliflixRed,
+                        color = AliflixAccentSecondary,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.2.sp,
@@ -2203,7 +2861,7 @@ private fun MobileSettingsDialog(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "DATA & HISTORY",
-                        color = AliflixRed,
+                        color = AliflixAccentSecondary,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.2.sp,
@@ -2211,9 +2869,10 @@ private fun MobileSettingsDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Color.White.copy(alpha = 0.055f))
-                            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+                            .heightIn(min = 64.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(AliflixSurfaceSecondary)
+                            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
                             .clickable { showClearConfirmation = true }
                             .padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2321,7 +2980,7 @@ private fun MySpaceScreen(
                         onClearRecent()
                     },
                 ) {
-                    Text("Clear all", color = AliflixRed, fontWeight = FontWeight.Bold)
+                    Text("Clear all", color = AliflixError, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -2355,7 +3014,11 @@ private fun MySpaceScreen(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFF251017), Color(0xFF0B0D12), AliflixBlack),
+                    listOf(
+                        AliflixAccentPrimary.copy(alpha = 0.16f),
+                        AliflixBackgroundImmersive,
+                        AliflixBlack,
+                    ),
                 ),
             )
             .windowInsetsPadding(WindowInsets.statusBars)
@@ -2373,7 +3036,7 @@ private fun MySpaceScreen(
             ) {
                 Text(
                     text = "MY SPACE",
-                    color = AliflixRed,
+                    color = AliflixAccentSecondary,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
                     letterSpacing = 1.7.sp,
@@ -2386,11 +3049,11 @@ private fun MySpaceScreen(
             }
             OutlinedButton(
                 onClick = { showSettingsWindow = true },
-                modifier = Modifier.height(42.dp),
+                modifier = Modifier.heightIn(min = 48.dp),
                 shape = RoundedCornerShape(14.dp),
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
-                    Color.White.copy(alpha = 0.15f),
+                    AliflixBorderStrong,
                 ),
                 contentPadding = PaddingValues(horizontal = 12.dp),
             ) {
@@ -2418,9 +3081,9 @@ private fun MySpaceScreen(
             modifier = Modifier
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color.White.copy(alpha = 0.06f))
-                .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(18.dp))
+                .clip(RoundedCornerShape(16.dp))
+                .background(AliflixSurfaceSecondary)
+                .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
                 .padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -2429,13 +3092,14 @@ private fun MySpaceScreen(
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
+                        .heightIn(min = 52.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .background(
                             if (selected) {
                                 Brush.horizontalGradient(
                                     listOf(
-                                        AliflixRed.copy(alpha = 0.38f),
-                                        Color.White.copy(alpha = 0.11f),
+                                        AliflixAccentPrimary.copy(alpha = 0.42f),
+                                        AliflixAccentSecondary.copy(alpha = 0.12f),
                                     ),
                                 )
                             } else {
@@ -2448,13 +3112,13 @@ private fun MySpaceScreen(
                             selected = selected,
                             onClick = { onPageChange(index) },
                         )
-                        .padding(vertical = 8.dp),
+                        .padding(vertical = 7.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
                     Text(
                         text = label,
-                        color = if (selected) Color.White else AliflixMuted,
+                        color = if (selected) AliflixContentPrimary else AliflixContentSecondary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         maxLines = 1,
@@ -2462,9 +3126,9 @@ private fun MySpaceScreen(
                     Text(
                         text = count.toString(),
                         color = if (selected) {
-                            Color.White.copy(alpha = 0.72f)
+                            AliflixAccentSecondary
                         } else {
-                            AliflixMuted.copy(alpha = 0.76f)
+                            AliflixContentTertiary
                         },
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -2628,13 +3292,13 @@ private fun HistoryCollection(
                 Icon(
                     Icons.Rounded.DeleteSweep,
                     contentDescription = null,
-                    tint = AliflixRed,
+                    tint = AliflixError,
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = "Clear all",
-                    color = AliflixRed,
+                    color = AliflixError,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                 )
@@ -2687,22 +3351,22 @@ private fun AnimatedMyListButton(
         targetValue = scaleState,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow,
+            stiffness = Spring.StiffnessMedium,
         ),
         finishedListener = { scaleState = 1f },
     )
     val containerColor by animateColorAsState(
-        targetValue = if (inMyList) AliflixRed else Color.White.copy(alpha = 0.08f),
-        animationSpec = tween(300),
+        targetValue = if (inMyList) AliflixAccentPrimary else AliflixSurfaceRaised,
+        animationSpec = tween(260),
     )
     val borderColor by animateColorAsState(
-        targetValue = if (inMyList) AliflixRed else Color.White.copy(alpha = 0.20f),
-        animationSpec = tween(300),
+        targetValue = if (inMyList) AliflixAccentSecondary else AliflixBorderStrong,
+        animationSpec = tween(260),
     )
 
     Button(
         onClick = {
-            scaleState = 1.25f
+            scaleState = 1.10f
             onClick()
         },
         modifier = modifier
@@ -2710,7 +3374,7 @@ private fun AnimatedMyListButton(
                 scaleX = animatedScale
                 scaleY = animatedScale
             },
-        shape = RoundedCornerShape(17.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = containerColor,
             contentColor = Color.White,
@@ -2754,23 +3418,27 @@ private fun AnimatedFavoriteButton(
     val animatedScale by animateFloatAsState(
         targetValue = scaleState,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioHighBouncy,
+            dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMedium,
         ),
         finishedListener = { scaleState = 1f },
     )
     val containerColor by animateColorAsState(
-        targetValue = if (liked) AliflixRed.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.08f),
-        animationSpec = tween(300),
+        targetValue = if (liked) {
+            AliflixEditorialWarm.copy(alpha = 0.22f)
+        } else {
+            AliflixSurfaceRaised
+        },
+        animationSpec = tween(260),
     )
     val borderColor by animateColorAsState(
-        targetValue = if (liked) AliflixRed else Color.White.copy(alpha = 0.20f),
-        animationSpec = tween(300),
+        targetValue = if (liked) AliflixEditorialWarm else AliflixBorderStrong,
+        animationSpec = tween(260),
     )
 
     Button(
         onClick = {
-            scaleState = 1.35f
+            scaleState = 1.12f
             onClick()
         },
         modifier = modifier
@@ -2778,7 +3446,7 @@ private fun AnimatedFavoriteButton(
                 scaleX = animatedScale
                 scaleY = animatedScale
             },
-        shape = RoundedCornerShape(17.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = containerColor,
             contentColor = Color.White,
@@ -2796,7 +3464,7 @@ private fun AnimatedFavoriteButton(
             Icon(
                 imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                 contentDescription = if (isLiked) "Unlike" else "Like",
-                tint = if (isLiked) AliflixRed else Color.White,
+                tint = if (isLiked) AliflixEditorialWarm else AliflixContentPrimary,
                 modifier = Modifier.size(21.dp),
             )
         }
@@ -2816,25 +3484,43 @@ private fun GenreExploreScreen(
     val items = remember(state.items, mediaType) {
         state.items.filter { it.type == mediaType }.distinctBy(Media::key)
     }
+    val mediaLabel = when (mediaType) {
+        MediaType.MOVIE -> "Movies"
+        MediaType.TV -> "TV Series"
+    }
+    val itemNoun = if (mediaType == MediaType.MOVIE) "movies" else "series"
+    var visibleCount by rememberSaveable(genreName, mediaType) {
+        mutableIntStateOf(GENRE_EXPLORE_PAGE_SIZE)
+    }
+    val visibleItems = remember(items, visibleCount) {
+        items.take(visibleCount)
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(AliflixBlack)
+            .background(
+                Brush.verticalGradient(
+                    0f to AliflixBackgroundImmersive,
+                    0.32f to Color(0xFF0D121A),
+                    1f to AliflixBlack,
+                ),
+            )
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(
                 onClick = onBack,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f)),
+                    .background(AliflixSurfaceSecondary)
+                    .border(1.dp, AliflixBorderSubtle, CircleShape),
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
@@ -2842,75 +3528,289 @@ private fun GenreExploreScreen(
                     tint = Color.White,
                 )
             }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Spacer(Modifier.width(14.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(AliflixAccentPrimary.copy(alpha = 0.16f))
+                            .border(
+                                1.dp,
+                                AliflixAccentPrimary.copy(alpha = 0.38f),
+                                CircleShape,
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Text(
+                            text = mediaLabel.uppercase(),
+                            color = AliflixAccentSecondary,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.9.sp,
+                        )
+                    }
+                    if (!state.loading && state.error == null && items.isNotEmpty()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "${items.size} titles",
+                            color = AliflixContentTertiary,
+                            fontSize = 11.sp,
+                        )
+                    }
+                }
                 Text(
-                    text = genreName.uppercase(),
-                    color = AliflixRed,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.6.sp,
-                )
-                Text(
-                    text = when (mediaType) {
-                        MediaType.MOVIE -> "Movies"
-                        MediaType.TV -> "TV Series"
-                    },
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    text = genreName,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = AliflixContentPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
 
-        Spacer(Modifier.height(8.dp))
-
         when {
-            state.loading -> Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(color = AliflixRed)
-            }
-            state.error != null -> ConfigurationError(
-                message = state.error,
-                onRetry = onRetry,
-                modifier = Modifier.fillMaxSize(),
+            state.loading -> GenreLoadingGrid(
+                mediaLabel = mediaLabel,
+                modifier = Modifier.weight(1f),
             )
-            items.isEmpty() -> {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "No ${genreName.lowercase()} titles found for this category.",
-                    color = AliflixMuted,
-                    fontSize = 14.sp,
-                )
-            }
-            }
-            else -> {
-            LazyVerticalGrid(
+            state.error != null -> GenreExploreStatePanel(
+                title = "$mediaLabel unavailable",
+                message = state.error,
+                actionLabel = "Try again",
+                onAction = onRetry,
+                modifier = Modifier.weight(1f),
+            )
+            items.isEmpty() -> GenreExploreStatePanel(
+                title = "No $itemNoun found",
+                message = "There are no $itemNoun available for $genreName right now.",
+                modifier = Modifier.weight(1f),
+            )
+            else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(118.dp),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 40.dp),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 10.dp,
+                    bottom = 40.dp,
+                ),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
                 modifier = Modifier.weight(1f),
             ) {
-                items(items, key = { "genre:${it.key}" }) { item ->
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "$mediaLabel in $genreName",
+                                color = AliflixContentPrimary,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = "Showing ${visibleItems.size} of ${items.size}",
+                                color = AliflixContentTertiary,
+                                fontSize = 11.sp,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(AliflixAccentPrimary),
+                        )
+                    }
+                }
+                items(visibleItems, key = { "genre:${it.key}" }) { item ->
                     MediaPoster(
                         item = item,
                         width = 118.dp,
                         onClick = { onOpen(item) },
                     )
                 }
-            }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    if (visibleItems.size < items.size) {
+                        OutlinedButton(
+                            onClick = {
+                                visibleCount = minOf(
+                                    items.size,
+                                    visibleCount + GENRE_EXPLORE_PAGE_SIZE,
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                AliflixBorderStrong,
+                            ),
+                        ) {
+                            Text(
+                                text = "Show ${minOf(
+                                    GENRE_EXPLORE_PAGE_SIZE,
+                                    items.size - visibleItems.size,
+                                )} more",
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "All ${items.size} $itemNoun loaded",
+                            color = AliflixContentTertiary,
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 10.dp),
+                        )
+                    }
+                }
             }
         }
     }
 }
+
+@Composable
+private fun GenreLoadingGrid(
+    mediaLabel: String,
+    modifier: Modifier = Modifier,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(118.dp),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 10.dp,
+            bottom = 40.dp,
+        ),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = modifier,
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(
+                    color = AliflixAccentPrimary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "Loading $mediaLabel",
+                    color = AliflixContentSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        items(count = 9) {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(2f / 3f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(AliflixSurfaceSecondary)
+                        .border(
+                            1.dp,
+                            AliflixBorderSubtle,
+                            RoundedCornerShape(16.dp),
+                        ),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.78f)
+                        .height(10.dp)
+                        .clip(CircleShape)
+                        .background(AliflixSurfacePressed),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.48f)
+                        .height(8.dp)
+                        .clip(CircleShape)
+                        .background(AliflixSurfaceSecondary),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GenreExploreStatePanel(
+    title: String,
+    message: String,
+    modifier: Modifier = Modifier,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(
+                    if (onAction == null) {
+                        AliflixContentTertiary
+                    } else {
+                        AliflixError
+                    },
+                ),
+        )
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = title,
+            color = AliflixContentPrimary,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = message,
+            color = AliflixContentSecondary,
+            fontSize = 13.sp,
+            lineHeight = 19.sp,
+            textAlign = TextAlign.Center,
+        )
+        if (actionLabel != null && onAction != null) {
+            Spacer(Modifier.height(20.dp))
+            Button(
+                onClick = onAction,
+                modifier = Modifier.heightIn(min = 48.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AliflixAccentPrimary,
+                ),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Text(actionLabel, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+private const val GENRE_EXPLORE_PAGE_SIZE = 20
 
 @Composable
 private fun DetailScreen(
@@ -2938,7 +3838,7 @@ private fun DetailScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(440.dp),
+                    .height(460.dp),
             ) {
                 ArtworkPlaceholder(title = item.title)
                 AsyncImage(
@@ -2951,14 +3851,14 @@ private fun DetailScreen(
                             drawContent()
                             drawRect(
                                 Brush.verticalGradient(
-                                    0f to Color.Black.copy(alpha = 0.12f),
-                                    0.55f to Color.Transparent,
+                                    0f to AliflixScrimStrong.copy(alpha = 0.34f),
+                                    0.48f to Color.Transparent,
                                     1f to AliflixBlack,
                                 ),
                             )
                             drawRect(
                                 Brush.horizontalGradient(
-                                    0f to Color.Black.copy(alpha = 0.42f),
+                                    0f to AliflixBackgroundImmersive.copy(alpha = 0.58f),
                                     0.8f to Color.Transparent,
                                 ),
                             )
@@ -2969,10 +3869,10 @@ private fun DetailScreen(
                     modifier = Modifier
                         .windowInsetsPadding(WindowInsets.statusBars)
                         .padding(16.dp)
-                        .size(44.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.52f))
-                        .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape),
+                        .background(AliflixScrimStrong)
+                        .border(1.dp, AliflixBorderStrong, CircleShape),
                 ) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
                 }
@@ -2983,15 +3883,19 @@ private fun DetailScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "ALIFLIX FEATURE",
-                        color = AliflixRed,
+                        text = if (item.type == MediaType.MOVIE) {
+                            "ALIFLIX MOVIE"
+                        } else {
+                            "ALIFLIX SERIES"
+                        },
+                        color = AliflixAccentSecondary,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.5.sp,
                     )
                     Text(
                         text = item.title,
-                        style = MaterialTheme.typography.displayLarge,
+                        style = MaterialTheme.typography.displayMedium,
                         fontWeight = FontWeight.Black,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
@@ -3023,7 +3927,8 @@ private fun DetailScreen(
                         Box(
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.07f))
+                                .background(AliflixSurfaceSecondary)
+                                .border(1.dp, AliflixBorderSubtle, CircleShape)
                                 .padding(horizontal = 9.dp, vertical = 5.dp),
                         ) {
                             Text(label, color = AliflixMuted, fontSize = 12.sp)
@@ -3031,10 +3936,6 @@ private fun DetailScreen(
                     }
                 }
                 RatingsRow(item = item)
-                PlaybackProviderSelector(
-                    selectedProvider = selectedProvider,
-                    onSelectProvider = onSelectProvider,
-                )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -3052,10 +3953,10 @@ private fun DetailScreen(
                             .weight(1f)
                             .height(54.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = AliflixRed,
-                            contentColor = Color.White,
+                            containerColor = AliflixAccentPrimary,
+                            contentColor = AliflixContentPrimary,
                         ),
-                        shape = RoundedCornerShape(17.dp),
+                        shape = RoundedCornerShape(16.dp),
                     ) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = null)
                         Spacer(Modifier.width(7.dp))
@@ -3086,9 +3987,13 @@ private fun DetailScreen(
                         modifier = Modifier.size(54.dp),
                     )
                 }
+                PlaybackProviderSelector(
+                    selectedProvider = selectedProvider,
+                    onSelectProvider = onSelectProvider,
+                )
                 Text(
                     text = "ABOUT",
-                    color = AliflixRed,
+                    color = AliflixEditorialWarm,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
                     letterSpacing = 1.4.sp,
@@ -3099,23 +4004,25 @@ private fun DetailScreen(
                     },
                     style = MaterialTheme.typography.bodyLarge,
                     lineHeight = 23.sp,
-                    color = Color.White.copy(alpha = 0.88f),
+                    color = AliflixContentSecondary,
                 )
                 if (item.genres.isNotEmpty()) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         items(item.genres.take(6)) { genre ->
                             Box(
                                 modifier = Modifier
+                                    .heightIn(min = 48.dp)
                                     .clip(CircleShape)
-                                    .background(AliflixSurfaceRaised)
-                                    .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+                                    .background(AliflixSurfaceSecondary)
+                                    .border(1.dp, AliflixBorderStrong, CircleShape)
                                     .clickable { onOpenGenre(genre, item.type) }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                                contentAlignment = Alignment.Center,
                             ) {
                                 Text(
                                     text = "$genre  ›",
-                                    color = AliflixIce,
-                                    fontSize = 11.sp,
+                                    color = AliflixAccentSecondary,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
                                 )
                             }
@@ -3149,7 +4056,7 @@ private fun DetailScreen(
                 ) {
                     Text(
                         text = "WATCH THE STORY",
-                        color = AliflixRed,
+                        color = AliflixEditorialWarm,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.5.sp,
@@ -3284,8 +4191,8 @@ private fun RatingPill(
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(AliflixSurfaceRaised)
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+            .background(AliflixSurfaceSecondary)
+            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(12.dp))
             .padding(end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -3321,11 +4228,11 @@ private fun EpisodeRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 7.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(AliflixSurfaceRaised)
-            .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
+            .background(AliflixSurfaceSecondary)
+            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
             .clickable(onClick = onPlay)
-            .padding(9.dp),
+            .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -3333,7 +4240,7 @@ private fun EpisodeRow(
             modifier = Modifier
                 .width(140.dp)
                 .height(84.dp)
-                .clip(RoundedCornerShape(13.dp))
+                .clip(RoundedCornerShape(12.dp))
                 .background(AliflixSurface),
             ) {
             ArtworkPlaceholder(title = episode.title)
@@ -3348,7 +4255,7 @@ private fun EpisodeRow(
                     .align(Alignment.Center)
                     .size(36.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.90f)),
+                    .background(AliflixContentPrimary.copy(alpha = 0.94f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -3379,7 +4286,7 @@ private fun EpisodeRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "S${episode.seasonNumber} · E${episode.number}",
-                    color = AliflixRed,
+                    color = AliflixAccentSecondary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
                     letterSpacing = 0.5.sp,
@@ -3442,7 +4349,7 @@ private fun ArtworkPlaceholder(
             .fillMaxSize()
             .background(
                 Brush.linearGradient(
-                    listOf(Color(0xFF24151D), Color(0xFF10141C)),
+                    listOf(AliflixSurfaceRaised, AliflixBackgroundImmersive),
                 ),
             ),
         contentAlignment = Alignment.Center,
@@ -3453,7 +4360,7 @@ private fun ArtworkPlaceholder(
         ) {
             Text(
                 text = title.firstOrNull()?.uppercase() ?: "A",
-                color = AliflixRed.copy(alpha = 0.78f),
+                color = AliflixAccentSecondary.copy(alpha = 0.82f),
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Black,
             )
@@ -3504,8 +4411,8 @@ private fun LoadingScreen(modifier: Modifier = Modifier) {
             .background(
                 Brush.radialGradient(
                     colors = listOf(
-                        Color(0xFF35101C),
-                        Color(0xFF110C12),
+                        AliflixAccentPrimary.copy(alpha = 0.22f),
+                        AliflixBackgroundImmersive,
                         AliflixBlack,
                     ),
                     radius = 1_050f,
@@ -3515,14 +4422,14 @@ private fun LoadingScreen(modifier: Modifier = Modifier) {
     ) {
         Box(
             modifier = Modifier
-                .size(180.dp)
-                .scale(pulse)
-                .alpha(glow)
+                    .size(180.dp)
+                    .scale(pulse)
+                    .alpha(glow)
                 .clip(CircleShape)
                 .background(
-                    Brush.radialGradient(
-                        listOf(AliflixRed.copy(alpha = 0.45f), Color.Transparent),
-                    ),
+                        Brush.radialGradient(
+                            listOf(AliflixAccentPrimary.copy(alpha = 0.42f), Color.Transparent),
+                        ),
                 ),
         )
         Column(
@@ -3532,17 +4439,25 @@ private fun LoadingScreen(modifier: Modifier = Modifier) {
             Box(
                 modifier = Modifier
                     .size(92.dp)
-                    .shadow(30.dp, RoundedCornerShape(28.dp), ambientColor = AliflixRed)
-                    .clip(RoundedCornerShape(28.dp))
+                    .shadow(
+                        24.dp,
+                        RoundedCornerShape(26.dp),
+                        ambientColor = AliflixAccentPrimary,
+                    )
+                    .clip(RoundedCornerShape(26.dp))
                     .background(
                         Brush.linearGradient(
-                            listOf(Color(0xFFFF3157), AliflixRed, Color(0xFF9F0929)),
+                            listOf(
+                                AliflixAccentSecondary,
+                                AliflixAccentPrimary,
+                                Color(0xFF5035A5),
+                            ),
                         ),
                     )
                     .border(
                         1.dp,
                         Color.White.copy(alpha = 0.22f),
-                        RoundedCornerShape(28.dp),
+                        RoundedCornerShape(26.dp),
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -3584,7 +4499,7 @@ private fun LoadingScreen(modifier: Modifier = Modifier) {
                         .clip(CircleShape)
                         .background(
                             Brush.horizontalGradient(
-                                listOf(Color(0xFFFF6C83), AliflixRed),
+                                listOf(AliflixAccentSecondary, AliflixAccentPrimary),
                             ),
                         ),
                 )
@@ -3613,19 +4528,33 @@ private fun ConfigurationError(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    listOf(
+                        AliflixAccentPrimary.copy(alpha = 0.15f),
+                        AliflixBlack,
+                    ),
+                ),
+            )
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = "ALIFLIX",
-            color = AliflixRed,
-            fontSize = 36.sp,
+            text = "A",
+            color = AliflixAccentSecondary,
+            fontSize = 42.sp,
             fontWeight = FontWeight.Black,
-            letterSpacing = 4.sp,
+            modifier = Modifier
+                .size(72.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(AliflixAccentPrimary.copy(alpha = 0.16f))
+                .border(1.dp, AliflixBorderStrong, RoundedCornerShape(22.dp))
+                .padding(top = 8.dp),
+            textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(24.dp))
         Text(
             text = "Catalogue unavailable",
             style = MaterialTheme.typography.headlineSmall,
@@ -3635,12 +4564,21 @@ private fun ConfigurationError(
         Spacer(Modifier.height(10.dp))
         Text(
             text = message,
-            color = AliflixMuted,
+            color = AliflixContentSecondary,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(22.dp))
-        Button(onClick = onRetry) {
-            Text("Try Again")
+        Button(
+            onClick = onRetry,
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .widthIn(min = 148.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
+            shape = RoundedCornerShape(14.dp),
+        ) {
+            Icon(Icons.Rounded.Refresh, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Try again")
         }
     }
 }
@@ -3658,6 +4596,21 @@ private fun EmptyMessage(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(AliflixAccentPrimary.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "A",
+                color = AliflixAccentSecondary,
+                fontSize = 27.sp,
+                fontWeight = FontWeight.Black,
+            )
+        }
+        Spacer(Modifier.height(18.dp))
         Text(
             text = title,
             style = MaterialTheme.typography.titleLarge,
@@ -3667,7 +4620,7 @@ private fun EmptyMessage(
         Spacer(Modifier.height(8.dp))
         Text(
             text = message,
-            color = AliflixMuted,
+            color = AliflixContentSecondary,
             textAlign = TextAlign.Center,
         )
     }

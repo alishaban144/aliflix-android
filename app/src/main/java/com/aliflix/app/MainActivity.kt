@@ -8,6 +8,7 @@ import androidx.activity.viewModels
 import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.ui.AliflixApp
 import com.aliflix.app.ui.AliflixTvApp
+import com.aliflix.app.ui.theme.AliflixMobileTheme
 import com.aliflix.app.ui.theme.AliflixTheme
 
 class MainActivity : ComponentActivity() {
@@ -20,13 +21,15 @@ class MainActivity : ComponentActivity() {
         playerController = WebPlayerController(this)
 
         setContent {
-            AliflixTheme {
-                if (BuildConfig.IS_TV) {
+            if (BuildConfig.IS_TV) {
+                AliflixTheme {
                     AliflixTvApp(
                         viewModel = viewModel,
                         playerController = playerController,
                     )
-                } else {
+                }
+            } else {
+                AliflixMobileTheme {
                     AliflixApp(
                         viewModel = viewModel,
                         playerController = playerController,

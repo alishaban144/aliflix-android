@@ -59,7 +59,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Prevents repeated or misclassified Home genre rows, loads fresh type-correct titles on genre pages, and improves Describe Plot with reliable external web discovery and ranking."
+            RELEASE_NOTES="Introduces the Cinematic Intelligence mobile redesign, restores full adult-filtered Trending Movies and Series rails, improves instant My List and Favorite feedback, refreshes streaming-source controls, and replaces Bcine with Moviepire playback."
           fi
           mkdir -p dist
           cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/aliflix-mobile-release.apk
@@ -94,7 +94,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Prevents repeated or misclassified Home genre rows, loads fresh type-correct titles on genre pages, and improves Describe Plot with reliable external web discovery and ranking."
+            RELEASE_NOTES="Introduces the Cinematic Intelligence mobile redesign, restores full adult-filtered Trending Movies and Series rails, improves instant My List and Favorite feedback, refreshes streaming-source controls, and replaces Bcine with Moviepire playback."
           fi
           VERSION_NAME="$(jq -r '.versionName' dist/update-mobile.json)"
           gh release create "$RELEASE_TAG" \
