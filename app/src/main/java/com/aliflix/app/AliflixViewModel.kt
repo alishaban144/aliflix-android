@@ -14,6 +14,11 @@ import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.Season
+import com.aliflix.app.recommendation.CatalogRecommendationCandidateRepository
+import com.aliflix.app.recommendation.RecommendationOrchestrator
+import com.aliflix.app.recommendation.RecommendationQuestion
+import com.aliflix.app.recommendation.RecommendationStore
+import com.aliflix.app.recommendation.RecommendationUiState
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -32,6 +37,7 @@ data class HomeUiState(
 enum class SearchMode {
     TITLE,
     PLOT,
+    AI,
 }
 
 data class SearchUiState(
@@ -67,6 +73,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     )
     private val library = LibraryStore(application)
     private val playbackProviderRepository = PlaybackProviderRepository(application)
+    private val recommendationStore = RecommendationStore(application)
+    private val recommendationOrchestrator = RecommendationOrchestrator(
+        scope = viewModelScope,
+        repository = CatalogRecommendationCandidateRepository(client),
+        store = recommendationStore,
+        likesProvider = { library.likes.value },
+        recentlyPlayedProvider = { library.recent.value },
+    )
     private var searchJob: Job? = null
     private var detailJob: Job? = null
     private var episodeJob: Job? = null
@@ -92,6 +106,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     val playbackPreferences: StateFlow<PlaybackPreferences> =
         playbackProviderRepository.preferences
+    val recommendation: StateFlow<RecommendationUiState> =
+        recommendationOrchestrator.state
+    val aiRecommendationsEnabled: StateFlow<Boolean> =
+        recommendationStore.enabled
 
     fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
         playbackProviderRepository.selectGeneralProvider(provider)
@@ -216,6 +234,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun selectSearchMode(mode: SearchMode) {
+        if (mode == SearchMode.AI && !recommendationStore.enabled.value) return
         if (_search.value.mode == mode) return
         searchJob?.cancel()
         _search.value = SearchUiState(mode = mode)
@@ -357,6 +376,45 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun removeRecent(item: Media) = library.removeRecent(item)
 
     fun clearRecent() = library.clearRecent()
+
+    fun submitRecommendationText(text: String) =
+        recommendationOrchestrator.submitText(text)
+
+    fun surpriseRecommendation() = recommendationOrchestrator.surpriseMe()
+
+    fun answerRecommendation(
+        question: RecommendationQuestion,
+        values: List<String>,
+    ) = recommendationOrchestrator.answer(question, values)
+
+    fun previousRecommendationStep() = recommendationOrchestrator.goBack()
+
+    fun restartRecommendations() = recommendationOrchestrator.restart()
+
+    fun retryRecommendations() = recommendationOrchestrator.retry()
+
+    fun requestAnotherRecommendation(
+        media: Media,
+        reason: String? = null,
+    ) = recommendationOrchestrator.requestAnother(media, reason)
+
+    fun acceptRecommendation(media: Media) =
+        recommendationOrchestrator.accept(media)
+
+    fun relaxRecommendationConstraint(id: String) =
+        recommendationOrchestrator.applyRelaxation(id)
+
+    fun setAiRecommendationsEnabled(enabled: Boolean) {
+        recommendationStore.setEnabled(enabled)
+        if (!enabled) {
+            recommendationOrchestrator.restart()
+            if (_search.value.mode == SearchMode.AI) {
+                _search.value = SearchUiState(mode = SearchMode.TITLE)
+            }
+        }
+    }
+
+    fun resetRecommendationTaste() = recommendationOrchestrator.resetTaste()
 
     private companion object {
         const val MIN_GENRE_RESULTS = 20
