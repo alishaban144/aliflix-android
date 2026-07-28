@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -402,8 +403,8 @@ fun AliflixTvApp(
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
                 PlaybackProviderId.RAMOFLIX -> playbackPreferences.ramoflixConfig.baseUrl
-                PlaybackProviderId.MOVIEPIRE -> playbackPreferences.moviepireBaseUrl
                 PlaybackProviderId.DORABY -> playbackPreferences.dorabyBaseUrl
+                PlaybackProviderId.MOVIEPIRE -> playbackPreferences.moviepireBaseUrl
             }
             TvProviderUrlDialog(
                 providerName = provider.displayName,
@@ -413,16 +414,16 @@ fun AliflixTvApp(
                 onSave = { newUrl ->
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
-                        PlaybackProviderId.MOVIEPIRE -> viewModel.updateMoviepireUrl(newUrl)
                         PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(newUrl)
+                        PlaybackProviderId.MOVIEPIRE -> viewModel.updateMoviepireUrl(newUrl)
                     }
                     urlDialogProvider = null
                 },
                 onReset = {
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
-                        PlaybackProviderId.MOVIEPIRE -> viewModel.resetMoviepireUrl()
                         PlaybackProviderId.DORABY -> viewModel.resetDorabyUrl()
+                        PlaybackProviderId.MOVIEPIRE -> viewModel.resetMoviepireUrl()
                     }
                     urlDialogProvider = null
                 },
@@ -1274,13 +1275,37 @@ private fun TvProviderOption(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                Text(
-                    text = provider.displayName,
-                    color = if (focused) Color.Black else Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = provider.displayName,
+                        color = if (focused) Color.Black else Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                    if (provider.isBeta) {
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(
+                                    if (focused) Color.Black.copy(alpha = 0.15f)
+                                    else AliflixRed.copy(alpha = 0.22f),
+                                )
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                        ) {
+                            Text(
+                                text = "BETA",
+                                color = if (focused) Color.Black else AliflixRed,
+                                fontSize = 7.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 0.4.sp,
+                            )
+                        }
+                    }
+                }
                 Text(
                     text = url
                         .removePrefix("https://")

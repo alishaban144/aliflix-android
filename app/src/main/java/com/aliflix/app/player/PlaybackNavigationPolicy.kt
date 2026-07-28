@@ -7,6 +7,8 @@ object PlaybackNavigationPolicy {
         "ramoflix.net",
         "moviepire.ru",
         "doraby.com",
+        "moviepire.net",
+        "moviepire.com",
         "player.vidlove.cc",
         "345movie.nl",
         "456movie.nl",

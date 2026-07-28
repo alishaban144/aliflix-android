@@ -7,6 +7,7 @@ enum class PlaybackProviderId(
     val displayName: String,
     val defaultBaseUrl: String,
     val supportsGeneralPlayback: Boolean,
+    val isBeta: Boolean = false,
 ) {
     RAMOFLIX(
         displayName = "Ramoflix",
@@ -22,6 +23,7 @@ enum class PlaybackProviderId(
         displayName = "Moviepire",
         defaultBaseUrl = "https://moviepire.ru/",
         supportsGeneralPlayback = true,
+        isBeta = true,
     );
 
     fun isAvailableFor(@Suppress("UNUSED_PARAMETER") media: Media): Boolean =
@@ -39,6 +41,10 @@ enum class PlaybackProviderId(
                     (
                         provider == DORABY &&
                             value.equals("doraby", ignoreCase = true)
+                        ) ||
+                    (
+                        provider == MOVIEPIRE &&
+                            value.equals("moviepire", ignoreCase = true)
                         )
             }
     }
@@ -103,8 +109,8 @@ data class PlaybackSource(
 data class PlaybackPreferences(
     val generalProvider: PlaybackProviderId = PlaybackProviderId.RAMOFLIX,
     val ramoflixConfig: RamoflixConfig = RamoflixConfig(),
-    val moviepireBaseUrl: String = PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
     val dorabyBaseUrl: String = PlaybackProviderId.DORABY.defaultBaseUrl,
+    val moviepireBaseUrl: String = PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
 ) {
     val safeGeneralProvider: PlaybackProviderId
         get() = generalProvider.takeIf(PlaybackProviderId::supportsGeneralPlayback)

@@ -617,11 +617,11 @@ fun AliflixApp(
                 description = "Only change this if the ${provider.displayName} website moves.",
                 currentUrl = currentUrl,
                 defaultUrl = provider.defaultBaseUrl,
-                onSave = {
+                onSave = { newUrl ->
                     when (provider) {
-                        PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(it)
-                        PlaybackProviderId.MOVIEPIRE -> viewModel.updateMoviepireUrl(it)
-                        PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(it)
+                        PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
+                        PlaybackProviderId.MOVIEPIRE -> viewModel.updateMoviepireUrl(newUrl)
+                        PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(newUrl)
                     }
                     urlDialogProvider = null
                 },
@@ -1667,7 +1667,7 @@ private fun MediaPoster(
     )
     Column(
         modifier = Modifier
-            .width(if (rank == null) width else width + 20.dp)
+            .width(width)
             .scale(posterScale)
             .clickable(
                 interactionSource = interactionSource,
@@ -1679,7 +1679,6 @@ private fun MediaPoster(
         Box(
             modifier = Modifier
                 .width(width)
-                .align(Alignment.End)
                 .aspectRatio(0.68f)
                 .shadow(12.dp, RoundedCornerShape(14.dp))
                 .clip(RoundedCornerShape(14.dp))
@@ -1718,15 +1717,25 @@ private fun MediaPoster(
                 )
             }
             if (rank != null) {
-                Text(
-                    text = rank.toString().padStart(2, '0'),
-                    color = Color.White,
-                    fontSize = 34.sp,
-                    fontWeight = FontWeight.Black,
+                Box(
                     modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(8.dp),
-                )
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(AliflixRed, Color(0xFFC6071E)),
+                            ),
+                        )
+                        .padding(horizontal = 7.dp, vertical = 3.dp),
+                ) {
+                    Text(
+                        text = "#$rank",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
             }
         }
         Text(
@@ -1736,16 +1745,13 @@ private fun MediaPoster(
             lineHeight = 17.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .padding(start = if (rank == null) 0.dp else 20.dp)
-                .height(34.dp),
+            modifier = Modifier.height(34.dp),
         )
         if (item.year.isNotBlank()) {
             Text(
                 text = item.year,
                 color = AliflixMuted,
                 fontSize = 11.sp,
-                modifier = Modifier.padding(start = if (rank == null) 0.dp else 20.dp),
             )
         }
     }
@@ -1897,6 +1903,11 @@ private fun SearchScreen(
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val plotMode = state.mode == SearchMode.PLOT
+    val coroutineScope = rememberCoroutineScope()
+    val pagerState = rememberPagerState(
+        initialPage = if (state.mode == SearchMode.TITLE) 0 else 1,
+        pageCount = { 2 },
+    )
     var queryValue by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(
             TextFieldValue(
@@ -1905,6 +1916,21 @@ private fun SearchScreen(
             ),
         )
     }
+
+    LaunchedEffect(pagerState.currentPage) {
+        val targetMode = if (pagerState.currentPage == 0) SearchMode.TITLE else SearchMode.PLOT
+        if (targetMode != state.mode) {
+            onModeChange(targetMode)
+        }
+    }
+
+    LaunchedEffect(state.mode) {
+        val targetPage = if (state.mode == SearchMode.TITLE) 0 else 1
+        if (pagerState.currentPage != targetPage) {
+            pagerState.animateScrollToPage(targetPage)
+        }
+    }
+
     LaunchedEffect(state.query) {
         if (state.query != queryValue.text) {
             queryValue = TextFieldValue(
@@ -1983,7 +2009,7 @@ private fun SearchScreen(
             listOf(
                 SearchMode.TITLE to "Title search",
                 SearchMode.PLOT to "Describe plot",
-            ).forEach { (mode, label) ->
+            ).forEachIndexed { index, (mode, label) ->
                 val selected = state.mode == mode
                 val tabColor by animateColorAsState(
                     targetValue = if (selected) {
@@ -2002,7 +2028,11 @@ private fun SearchScreen(
                         .background(tabColor)
                         .selectable(
                             selected = selected,
-                            onClick = { onModeChange(mode) },
+                            onClick = {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                            },
                         ),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
@@ -2040,161 +2070,216 @@ private fun SearchScreen(
                 }
             }
         }
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.weight(1f),
+        ) { page ->
+            val pagePlotMode = page == 1
+            Column(
+                modifier = Modifier.fillMaxSize(),
             ) {
-                Text(
-                    text = if (plotMode) "STORY CLUES" else "TITLE LOOKUP",
-                    color = Color.White.copy(alpha = 0.72f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.1.sp,
-                )
-                Spacer(Modifier.weight(1f))
-                if (plotMode) {
-                    Text(
-                        text = "Internet required",
-                        color = AliflixMuted,
-                        fontSize = 10.sp,
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    OutlinedTextField(
+                        value = queryValue,
+                        onValueChange = { updated ->
+                            queryValue = updated
+                            onQueryChange(updated.text)
+                        },
+                        placeholder = {
+                            Text(
+                                text = if (pagePlotMode) {
+                                    "Describe the movie or show..."
+                                } else {
+                                    "Search…"
+                                },
+                                color = Color.White.copy(alpha = 0.46f),
+                                fontSize = 14.sp,
+                                lineHeight = 21.sp,
+                            )
+                        },
+                        leadingIcon = if (pagePlotMode) {
+                            null
+                        } else {
+                            {
+                                Icon(
+                                    Icons.Filled.Search,
+                                    contentDescription = null,
+                                    tint = AliflixMuted,
+                                )
+                            }
+                        },
+                        trailingIcon = {
+                            if (state.query.isNotEmpty()) {
+                                IconButton(
+                                    onClick = {
+                                        queryValue = TextFieldValue("")
+                                        onQueryChange("")
+                                    },
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "Clear search",
+                                    )
+                                }
+                            }
+                        },
+                        singleLine = !pagePlotMode,
+                        minLines = if (pagePlotMode) 4 else 1,
+                        maxLines = if (pagePlotMode) 6 else 1,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = Color.White,
+                            lineHeight = 22.sp,
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color(0xFF171D27).copy(alpha = 0.96f),
+                            unfocusedContainerColor = Color(0xFF141A23).copy(alpha = 0.94f),
+                            focusedBorderColor = AliflixRed.copy(alpha = 0.82f),
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
+                            cursorColor = AliflixRed,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                        ),
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = if (pagePlotMode) 140.dp else 56.dp),
                     )
                 }
-            }
-            OutlinedTextField(
-                value = queryValue,
-                onValueChange = { updated ->
-                    queryValue = updated
-                    onQueryChange(updated.text)
-                },
-                placeholder = {
-                    Text(
-                        text = if (plotMode) {
-                            "Describe the movie or show..."
+
+                when {
+                    state.loading -> SearchStatusPanel(
+                        title = if (pagePlotMode) {
+                            "Comparing your clues"
                         } else {
-                            "Title, year, or words you remember..."
+                            "Searching the catalogue"
                         },
-                        color = Color.White.copy(alpha = 0.46f),
-                        fontSize = 14.sp,
-                        lineHeight = 21.sp,
+                        message = if (pagePlotMode) {
+                            "Checking possible movie and series titles..."
+                        } else {
+                            "Finding the strongest title matches..."
+                        },
+                        loading = true,
+                        modifier = Modifier.weight(1f),
                     )
-                },
-                leadingIcon = if (plotMode) {
-                    null
-                } else {
-                    {
-                        Icon(
-                            Icons.Filled.Search,
-                            contentDescription = null,
-                            tint = AliflixMuted,
-                        )
-                    }
-                },
-                trailingIcon = {
-                    if (state.query.isNotEmpty()) {
-                        IconButton(
-                            onClick = {
-                                queryValue = TextFieldValue("")
-                                onQueryChange("")
-                            },
+                    state.error != null -> SearchStatusPanel(
+                        title = "Search unavailable",
+                        message = state.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                    state.query.isBlank() -> SearchStatusPanel(
+                        title = if (pagePlotMode) {
+                            "Describe the story"
+                        } else {
+                            "What do you want to watch?"
+                        },
+                        message = "",
+                        modifier = Modifier.weight(1f),
+                    )
+                    state.results.isEmpty() -> SearchStatusPanel(
+                        title = if (pagePlotMode) {
+                            "No confident estimate"
+                        } else {
+                            "No matching titles"
+                        },
+                        message = "",
+                        modifier = Modifier.weight(1f),
+                    )
+                    else -> Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                Icons.Filled.Close,
-                                contentDescription = "Clear search",
+                            listOf("All", "Movies", "Series").forEach { option ->
+                                val active = mediaFilter == option
+                                Box(
+                                    modifier = Modifier
+                                        .height(48.dp)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(
+                                            if (active) {
+                                                AliflixRed.copy(alpha = 0.18f)
+                                            } else {
+                                                Color.White.copy(alpha = 0.06f)
+                                            },
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (active) {
+                                                AliflixRed.copy(alpha = 0.72f)
+                                            } else {
+                                                Color.White.copy(alpha = 0.08f)
+                                            },
+                                            RoundedCornerShape(16.dp),
+                                        )
+                                        .selectable(
+                                            selected = active,
+                                            onClick = { onMediaFilterChange(option) },
+                                        )
+                                        .padding(horizontal = 15.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = option,
+                                        color = if (active) Color.White else AliflixMuted,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                text = "${visibleResults.size} ${if (pagePlotMode) "estimates" else "results"}",
+                                color = AliflixMuted,
+                                fontSize = 11.sp,
+                                maxLines = 1,
                             )
                         }
+                        if (visibleResults.isEmpty()) {
+                            EmptyMessage(
+                                title = "No $mediaFilter here",
+                                message = "Switch the filter to see the other matching titles.",
+                                modifier = Modifier.weight(1f),
+                            )
+                        } else {
+                            LazyVerticalGrid(
+                                state = gridState,
+                                columns = GridCells.Adaptive(118.dp),
+                                contentPadding = PaddingValues(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = 2.dp,
+                                    bottom = 32.dp,
+                                ),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(20.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                items(visibleResults, key = { it.key }) { item ->
+                                    MediaPoster(
+                                        item = item,
+                                        width = 118.dp,
+                                        onClick = { onOpen(item) },
+                                    )
+                                }
+                            }
+                        }
                     }
-                },
-                singleLine = !plotMode,
-                minLines = if (plotMode) 4 else 1,
-                maxLines = if (plotMode) 6 else 1,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    color = Color.White,
-                    lineHeight = 22.sp,
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Color(0xFF171D27).copy(alpha = 0.96f),
-                    unfocusedContainerColor = Color(0xFF141A23).copy(alpha = 0.94f),
-                    focusedBorderColor = AliflixRed.copy(alpha = 0.82f),
-                    unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
-                    cursorColor = AliflixRed,
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                ),
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = if (plotMode) 140.dp else 56.dp),
-            )
-            if (plotMode) {
-                Text(
-                    text = "Useful clues include a distinctive scene, character, place, or ending.",
-                    color = AliflixMuted,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                    modifier = Modifier.padding(horizontal = 2.dp),
-                )
+                }
             }
         }
-
-        when {
-            state.loading -> SearchStatusPanel(
-                title = if (plotMode) {
-                    "Comparing your clues"
-                } else {
-                    "Searching the catalogue"
-                },
-                message = if (plotMode) {
-                    "Checking possible movie and series titles..."
-                } else {
-                    "Finding the strongest title matches..."
-                },
-                loading = true,
-                modifier = Modifier.weight(1f),
-            )
-            state.error != null -> SearchStatusPanel(
-                title = "Search unavailable",
-                message = state.error,
-                modifier = Modifier.weight(1f),
-            )
-            state.query.isBlank() -> SearchStatusPanel(
-                title = if (plotMode) {
-                    "Start with the part you remember"
-                } else {
-                    "What do you want to watch?"
-                },
-                message = if (plotMode) {
-                    "A sentence or two works best. Include unusual details when you can."
-                } else {
-                    "Enter a title, release year, or memorable words from the name."
-                },
-                modifier = Modifier.weight(1f),
-            )
-            state.results.isEmpty() -> SearchStatusPanel(
-                title = if (plotMode) {
-                    "No confident estimate"
-                } else {
-                    "No matching titles"
-                },
-                message = if (plotMode) {
-                    "Add a more distinctive scene, place, character, or time period."
-                } else {
-                    "Check the spelling, remove extra words, or add the release year."
-                },
-                modifier = Modifier.weight(1f),
-            )
-            else -> Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2279,8 +2364,6 @@ private fun SearchScreen(
                 }
             }
         }
-    }
-}
 
 @Composable
 private fun SearchStatusPanel(
@@ -2468,14 +2551,41 @@ private fun PlaybackProviderSelector(
                 Spacer(Modifier.width(11.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = provider.displayName,
-                        color = AliflixContentPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Text(
+                            text = provider.displayName,
+                            color = AliflixContentPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (provider.isBeta) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (selected) {
+                                            Color.White.copy(alpha = 0.22f)
+                                        } else {
+                                            AliflixRed.copy(alpha = 0.22f)
+                                        },
+                                    )
+                                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                            ) {
+                                Text(
+                                    text = "BETA",
+                                    color = if (selected) Color.White else AliflixRed,
+                                    fontSize = 7.sp,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 0.4.sp,
+                                )
+                            }
+                        }
+                    }
                     Text(
                         text = if (selected) "Selected for playback" else "Tap to use this source",
                         color = if (selected) {

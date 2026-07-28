@@ -39,19 +39,6 @@ class PlaybackProviderRepository(context: Context) {
         )
     }
 
-    fun updateMoviepireUrl(newUrl: String) {
-        val normalized = RamoflixConfig.normalizeBaseUrl(newUrl) ?: return
-        prefs.edit { putString(KEY_CUSTOM_MOVIEPIRE_URL, normalized) }
-        _preferences.value = _preferences.value.copy(moviepireBaseUrl = normalized)
-    }
-
-    fun resetMoviepireUrl() {
-        prefs.edit { remove(KEY_CUSTOM_MOVIEPIRE_URL) }
-        _preferences.value = _preferences.value.copy(
-            moviepireBaseUrl = PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
-        )
-    }
-
     fun updateDorabyUrl(newUrl: String) {
         val normalized = RamoflixConfig.normalizeBaseUrl(newUrl) ?: return
         prefs.edit { putString(KEY_CUSTOM_DORABY_URL, normalized) }
@@ -62,6 +49,19 @@ class PlaybackProviderRepository(context: Context) {
         prefs.edit { remove(KEY_CUSTOM_DORABY_URL) }
         _preferences.value = _preferences.value.copy(
             dorabyBaseUrl = PlaybackProviderId.DORABY.defaultBaseUrl,
+        )
+    }
+
+    fun updateMoviepireUrl(newUrl: String) {
+        val normalized = RamoflixConfig.normalizeBaseUrl(newUrl) ?: return
+        prefs.edit { putString(KEY_CUSTOM_MOVIEPIRE_URL, normalized) }
+        _preferences.value = _preferences.value.copy(moviepireBaseUrl = normalized)
+    }
+
+    fun resetMoviepireUrl() {
+        prefs.edit { remove(KEY_CUSTOM_MOVIEPIRE_URL) }
+        _preferences.value = _preferences.value.copy(
+            moviepireBaseUrl = PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
         )
     }
 
