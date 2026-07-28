@@ -1369,11 +1369,9 @@ private fun HomePosterCard(
         ),
         label = "home-poster-press",
     )
-    val leadingSpace = if (rank == null) 0.dp else 42.dp
-
     Column(
         modifier = Modifier
-            .width(width + leadingSpace)
+            .width(width)
             .scale(posterScale)
             .clickable(
                 interactionSource = interactionSource,
@@ -1387,23 +1385,9 @@ private fun HomePosterCard(
                 .fillMaxWidth()
                 .height(width / 0.68f),
         ) {
-            if (rank != null) {
-                Text(
-                    text = rank.toString(),
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.90f),
-                    fontSize = if (rank < 10) 66.sp else 56.sp,
-                    lineHeight = 62.sp,
-                    fontWeight = FontWeight.Black,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(bottom = 7.dp),
-                )
-            }
             Box(
                 modifier = Modifier
-                    .width(width)
-                    .fillMaxHeight()
-                    .align(Alignment.CenterEnd)
+                    .fillMaxSize()
                     .shadow(14.dp, RoundedCornerShape(15.dp))
                     .clip(RoundedCornerShape(15.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -1455,6 +1439,32 @@ private fun HomePosterCard(
                         )
                     }
                 }
+                if (rank != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(8.dp)
+                            .heightIn(min = 30.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(AliflixBackgroundImmersive.copy(alpha = 0.92f))
+                            .border(
+                                1.dp,
+                                AliflixAccentSecondary.copy(alpha = 0.48f),
+                                RoundedCornerShape(9.dp),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "#${rank.toString().padStart(2, '0')}",
+                            color = AliflixContentPrimary,
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.4.sp,
+                        )
+                    }
+                }
             }
         }
         Text(
@@ -1465,12 +1475,9 @@ private fun HomePosterCard(
             lineHeight = 17.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .padding(start = leadingSpace)
-                .height(34.dp),
+            modifier = Modifier.height(34.dp),
         )
         Row(
-            modifier = Modifier.padding(start = leadingSpace),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1954,21 +1961,21 @@ private fun SearchScreen(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    0f to Color(0xFF121D2A),
-                    0.28f to Color(0xFF0C1119),
+                    0f to AliflixBackgroundImmersive,
+                    0.36f to AliflixBlack,
                     1f to AliflixBlack,
                 ),
             )
             .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(top = 8.dp),
+            .padding(top = 6.dp),
     ) {
         Text(
-            text = "CINEMATIC DISCOVERY",
-            color = AliflixRed,
+            text = "DISCOVER",
+            color = AliflixAccentSecondary,
             fontSize = 10.sp,
             fontWeight = FontWeight.Black,
             letterSpacing = 1.5.sp,
-            modifier = Modifier.padding(start = 18.dp, top = 8.dp, bottom = 3.dp),
+            modifier = Modifier.padding(start = 18.dp, top = 8.dp, bottom = 2.dp),
         )
         Text(
             text = if (plotMode) {
@@ -1978,30 +1985,19 @@ private fun SearchScreen(
             },
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.ExtraBold,
-            color = Color.White,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 3.dp),
-        )
-        Text(
-            text = if (plotMode) {
-                "Describe what you remember and Aliflix will estimate the closest titles."
-            } else {
-                "Search the full catalogue by title, year, or a memorable keyword."
-            },
-            color = Color.White.copy(alpha = 0.66f),
-            fontSize = 12.sp,
-            lineHeight = 17.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 3.dp),
+            color = AliflixContentPrimary,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
         )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color.Black.copy(alpha = 0.22f))
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(AliflixSurface)
                 .border(
                     1.dp,
-                    Color.White.copy(alpha = 0.10f),
-                    RoundedCornerShape(18.dp),
+                    AliflixBorderSubtle,
+                    RoundedCornerShape(16.dp),
                 )
                 .padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -2013,7 +2009,7 @@ private fun SearchScreen(
                 val selected = state.mode == mode
                 val tabColor by animateColorAsState(
                     targetValue = if (selected) {
-                        AliflixRed.copy(alpha = 0.94f)
+                        AliflixSurfacePressed
                     } else {
                         Color.Transparent
                     },
@@ -2024,8 +2020,17 @@ private fun SearchScreen(
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(tabColor)
+                        .border(
+                            width = 1.dp,
+                            color = if (selected) {
+                                AliflixAccentPrimary.copy(alpha = 0.62f)
+                            } else {
+                                Color.Transparent
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                        )
                         .selectable(
                             selected = selected,
                             onClick = {
@@ -2039,7 +2044,7 @@ private fun SearchScreen(
                 ) {
                     Text(
                         text = label,
-                        color = if (selected) Color.White else AliflixMuted,
+                        color = if (selected) AliflixContentPrimary else AliflixContentSecondary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
@@ -2051,16 +2056,20 @@ private fun SearchScreen(
                                 .clip(CircleShape)
                                 .background(
                                     if (selected) {
-                                        Color.White.copy(alpha = 0.20f)
+                                        AliflixAccentPrimary.copy(alpha = 0.34f)
                                     } else {
-                                        AliflixRed.copy(alpha = 0.18f)
+                                        AliflixAccentPrimary.copy(alpha = 0.18f)
                                     },
                                 )
                                 .padding(horizontal = 5.dp, vertical = 2.dp),
                         ) {
                             Text(
                                 text = "BETA",
-                                color = if (selected) Color.White else AliflixRed,
+                                color = if (selected) {
+                                    AliflixContentPrimary
+                                } else {
+                                    AliflixAccentSecondary
+                                },
                                 fontSize = 7.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 0.5.sp,
@@ -2073,13 +2082,14 @@ private fun SearchScreen(
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.weight(1f),
+            userScrollEnabled = true,
         ) { page ->
             val pagePlotMode = page == 1
             Column(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     OutlinedTextField(
@@ -2093,9 +2103,9 @@ private fun SearchScreen(
                                 text = if (pagePlotMode) {
                                     "Describe the movie or show..."
                                 } else {
-                                    "Search…"
+                                    "Title, year, or keyword"
                                 },
-                                color = Color.White.copy(alpha = 0.46f),
+                                color = AliflixContentTertiary,
                                 fontSize = 14.sp,
                                 lineHeight = 21.sp,
                             )
@@ -2107,7 +2117,7 @@ private fun SearchScreen(
                                 Icon(
                                     Icons.Filled.Search,
                                     contentDescription = null,
-                                    tint = AliflixMuted,
+                                    tint = AliflixContentSecondary,
                                 )
                             }
                         },
@@ -2132,22 +2142,22 @@ private fun SearchScreen(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
-                            color = Color.White,
+                            color = AliflixContentPrimary,
                             lineHeight = 22.sp,
                         ),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = Color(0xFF171D27).copy(alpha = 0.96f),
-                            unfocusedContainerColor = Color(0xFF141A23).copy(alpha = 0.94f),
-                            focusedBorderColor = AliflixRed.copy(alpha = 0.82f),
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
-                            cursorColor = AliflixRed,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = AliflixSurfaceRaised,
+                            unfocusedContainerColor = AliflixSurfaceSecondary,
+                            focusedBorderColor = AliflixAccentPrimary.copy(alpha = 0.80f),
+                            unfocusedBorderColor = AliflixBorderSubtle,
+                            cursorColor = AliflixAccentSecondary,
+                            focusedTextColor = AliflixContentPrimary,
+                            unfocusedTextColor = AliflixContentPrimary,
                         ),
-                        shape = RoundedCornerShape(20.dp),
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = if (pagePlotMode) 140.dp else 56.dp),
+                            .heightIn(min = if (pagePlotMode) 132.dp else 56.dp),
                     )
                 }
 
@@ -2209,17 +2219,17 @@ private fun SearchScreen(
                                         .clip(RoundedCornerShape(16.dp))
                                         .background(
                                             if (active) {
-                                                AliflixRed.copy(alpha = 0.18f)
+                                                AliflixAccentPrimary.copy(alpha = 0.20f)
                                             } else {
-                                                Color.White.copy(alpha = 0.06f)
+                                                AliflixSurfaceSecondary
                                             },
                                         )
                                         .border(
                                             1.dp,
                                             if (active) {
-                                                AliflixRed.copy(alpha = 0.72f)
+                                                AliflixAccentPrimary.copy(alpha = 0.68f)
                                             } else {
-                                                Color.White.copy(alpha = 0.08f)
+                                                AliflixBorderSubtle
                                             },
                                             RoundedCornerShape(16.dp),
                                         )
@@ -2280,90 +2290,8 @@ private fun SearchScreen(
                 }
             }
         }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    listOf("All", "Movies", "Series").forEach { option ->
-                        val active = mediaFilter == option
-                        Box(
-                            modifier = Modifier
-                                .height(48.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(
-                                    if (active) {
-                                        AliflixRed.copy(alpha = 0.18f)
-                                    } else {
-                                        Color.White.copy(alpha = 0.06f)
-                                    },
-                                )
-                                .border(
-                                    1.dp,
-                                    if (active) {
-                                        AliflixRed.copy(alpha = 0.72f)
-                                    } else {
-                                        Color.White.copy(alpha = 0.08f)
-                                    },
-                                    RoundedCornerShape(16.dp),
-                                )
-                                .selectable(
-                                    selected = active,
-                                    onClick = { onMediaFilterChange(option) },
-                                )
-                                .padding(horizontal = 15.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = option,
-                                color = if (active) Color.White else AliflixMuted,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        text = "${visibleResults.size} ${if (plotMode) "estimates" else "results"}",
-                        color = AliflixMuted,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                    )
-                }
-                if (visibleResults.isEmpty()) {
-                    EmptyMessage(
-                        title = "No $mediaFilter here",
-                        message = "Switch the filter to see the other matching titles.",
-                        modifier = Modifier.weight(1f),
-                    )
-                } else {
-                    LazyVerticalGrid(
-                        state = gridState,
-                        columns = GridCells.Adaptive(118.dp),
-                        contentPadding = PaddingValues(
-                            start = 16.dp,
-                            end = 16.dp,
-                            top = 2.dp,
-                            bottom = 32.dp,
-                        ),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(20.dp),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        items(visibleResults, key = { it.key }) { item ->
-                            MediaPoster(
-                                item = item,
-                                width = 118.dp,
-                                onClick = { onOpen(item) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
+    }
+}
 
 @Composable
 private fun SearchStatusPanel(
@@ -2382,10 +2310,10 @@ private fun SearchStatusPanel(
             modifier = Modifier
                 .widthIn(max = 420.dp)
                 .clip(RoundedCornerShape(22.dp))
-                .background(Color.White.copy(alpha = 0.045f))
+                .background(AliflixSurfaceSecondary)
                 .border(
                     1.dp,
-                    Color.White.copy(alpha = 0.08f),
+                    AliflixBorderSubtle,
                     RoundedCornerShape(22.dp),
                 )
                 .padding(horizontal = 24.dp, vertical = 26.dp),
@@ -2394,7 +2322,7 @@ private fun SearchStatusPanel(
         ) {
             if (loading) {
                 CircularProgressIndicator(
-                    color = AliflixRed,
+                    color = AliflixAccentSecondary,
                     strokeWidth = 2.5.dp,
                     modifier = Modifier.size(28.dp),
                 )
@@ -2403,23 +2331,25 @@ private fun SearchStatusPanel(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(AliflixRed),
+                        .background(AliflixAccentSecondary),
                 )
             }
             Text(
                 text = title,
-                color = Color.White,
+                color = AliflixContentPrimary,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
             )
-            Text(
-                text = message,
-                color = AliflixMuted,
-                fontSize = 13.sp,
-                lineHeight = 19.sp,
-                textAlign = TextAlign.Center,
-            )
+            if (message.isNotBlank()) {
+                Text(
+                    text = message,
+                    color = AliflixContentSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
 }
@@ -3839,16 +3769,6 @@ private fun GenreExploreScreen(
                                 fontWeight = FontWeight.Bold,
                             )
                         }
-                    } else {
-                        Text(
-                            text = "All ${items.size} $itemNoun loaded",
-                            color = AliflixContentTertiary,
-                            fontSize = 11.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 10.dp),
-                        )
                     }
                 }
             }

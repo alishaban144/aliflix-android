@@ -119,6 +119,14 @@ class MediaTest {
     }
 
     @Test
+    fun moviepireIsTheOnlyBetaPlaybackProvider() {
+        assertEquals(
+            listOf(PlaybackProviderId.MOVIEPIRE),
+            PlaybackProviderId.entries.filter(PlaybackProviderId::isBeta),
+        )
+    }
+
+    @Test
     fun legacyBcineProviderNamesMigrateToMoviepire() {
         listOf("BCINE", "Bcine", "bcine").forEach { storedValue ->
             assertEquals(

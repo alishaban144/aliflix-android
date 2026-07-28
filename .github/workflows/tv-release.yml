@@ -59,7 +59,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Refines the Cinematic Intelligence mobile design with a darker palette, a unified Aliflix logo, animated featured transitions, consistent My Space naming, and corrected Search keyboard layout."
+            RELEASE_NOTES="Polishes Search with swipeable Title and Describe Plot modes, removes redundant discovery copy and genre footers, adds a compact Moviepire Beta label, and replaces oversized Trending numbers with refined rank badges."
           fi
           mkdir -p dist
           cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/aliflix-mobile-release.apk
@@ -94,7 +94,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Refines the Cinematic Intelligence mobile design with a darker palette, a unified Aliflix logo, animated featured transitions, consistent My Space naming, and corrected Search keyboard layout."
+            RELEASE_NOTES="Polishes Search with swipeable Title and Describe Plot modes, removes redundant discovery copy and genre footers, adds a compact Moviepire Beta label, and replaces oversized Trending numbers with refined rank badges."
           fi
           VERSION_NAME="$(jq -r '.versionName' dist/update-mobile.json)"
           gh release create "$RELEASE_TAG" \
