@@ -17,8 +17,16 @@ class RecommendationCatalogFallbackTest {
                 if ("advancedTitleSearch" in body) {
                     throw IOException("IMDb search challenged")
                 }
+                throw IOException("Unexpected JSON request")
+            },
+            imdbGraphQlTransport = ImdbGraphQlTransport { _, _, _ ->
                 """
-                    {"data":{"title":{"ratingsSummary":{
+                    {"data":{"title":{
+                      "id":"tt00123",
+                      "titleText":{"text":"Fallback"},
+                      "releaseYear":{"year":2020},
+                      "titleType":{"id":"movie"},
+                      "ratingsSummary":{
                       "aggregateRating":7.8,"voteCount":1000
                     }}}}
                 """.trimIndent()
@@ -26,7 +34,7 @@ class RecommendationCatalogFallbackTest {
             pageLoader = { url ->
                 when {
                     "sg.media-imdb.com/suggestion" in url ->
-                        """{"d":[{"id":"tt123","l":"Fallback","y":2020,"q":"feature"}]}"""
+                        """{"d":[{"id":"tt00123","l":"Fallback","y":2020,"q":"feature"}]}"""
                     else -> throw IOException("Unexpected request: $url")
                 }
             },

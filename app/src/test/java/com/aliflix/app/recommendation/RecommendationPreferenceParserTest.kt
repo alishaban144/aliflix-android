@@ -131,4 +131,128 @@ class RecommendationPreferenceParserTest {
         assertEquals(0, preferences.explicitSignalCount)
         assertTrue(preferences.answeredDimensions.isEmpty())
     }
+
+    @Test
+    fun twoHundredFiftyHardConstraintPhrasesParseWithoutDroppingARequirement() {
+        val ratingForms = listOf(
+            "IMDb 7+",
+            "7+ IMDb",
+            "above 7 on IMDb",
+            "IMDb at least 7",
+            "rating 7 on IMDb",
+        )
+        val yearForms = listOf(
+            "after 2015",
+            "since 2016",
+            "from 2016",
+            "made after 2015",
+            "released after 2015",
+        )
+        val runtimeForms = listOf(
+            "under 120 minutes",
+            "less than 120 minutes",
+            "at most 120 minutes",
+            "maximum 120 minutes",
+            "no longer than 120 minutes",
+        )
+        val genres = listOf("thriller" to "Thriller", "crime" to "Crime")
+        var checked = 0
+
+        ratingForms.forEach { rating ->
+            yearForms.forEach { year ->
+                runtimeForms.forEach { runtime ->
+                    genres.forEach { (genreText, canonicalGenre) ->
+                        val parsed = RecommendationPreferenceParser.parse(
+                            "A movie, $genreText, $rating, $year, $runtime",
+                        ).preferences
+                        assertEquals(RecommendationContentType.MOVIE, parsed.contentType?.value)
+                        assertEquals(7.0, parsed.minimumImdb?.value ?: 0.0, 0.001)
+                        assertEquals(2016, parsed.yearMinimum?.value)
+                        assertEquals(120, parsed.runtimeMaximumMinutes?.value)
+                        assertTrue(
+                            parsed.includedGenres.any { it.value == canonicalGenre },
+                        )
+                        checked += 1
+                    }
+                }
+            }
+        }
+        assertEquals(250, checked)
+    }
+
+    @Test
+    fun nuancedTasteIsPreservedAsOntologyFacetsAndUnmatchedSignals() {
+        val preferences = RecommendationPreferenceParser.parse(
+            "A psychological slow-burn neo-noir thriller with moral ambiguity, " +
+                "beautiful shadows, restrained dialogue, no supernatural elements",
+        ).preferences
+
+        val facets = preferences.semanticFacets.map { it.value.id }.toSet()
+        assertTrue("psychological" in facets)
+        assertTrue("slow_burn" in facets)
+        assertTrue("neo_noir" in facets)
+        assertTrue("morality" in facets)
+        assertTrue(preferences.unmatchedPreferences.isNotEmpty())
+        assertTrue(
+            preferences.unmatchedPreferences.any {
+                "supernatural" in it.text || "restrained" in it.text
+            },
+        )
+    }
+
+    @Test
+    fun explicitCorrectionReplacesEarlierSubjectiveTaste() {
+        val initial = RecommendationPreferenceParser.parse(
+            "slow-burn, bleak and psychological",
+        ).preferences
+        val corrected = RecommendationPreferenceParser.parse(
+            "actually make it fast paced and hopeful",
+            initial,
+        ).preferences
+
+        val facets = corrected.semanticFacets.map { it.value.id }.toSet()
+        assertTrue("fast_paced" in facets)
+        assertTrue("hopeful" in facets)
+        assertTrue("slow_burn" !in facets)
+        assertTrue("bleak" !in facets)
+    }
+
+    @Test
+    fun freeTextCannotSilentlyChangeTheMandatorySelectedMediaType() {
+        val selectedMovie = RecommendationPreferences(
+            contentType = PreferenceSignal(
+                RecommendationContentType.MOVIE,
+                PreferenceOrigin.EXPLICIT,
+                ConstraintStrength.HARD,
+            ),
+        )
+
+        val parsed = RecommendationPreferenceParser.parse(
+            "A show-like movie or series with a procedural rhythm",
+            selectedMovie,
+        ).preferences
+
+        assertEquals(RecommendationContentType.MOVIE, parsed.contentType?.value)
+        assertEquals(ConstraintStrength.HARD, parsed.contentType?.strength)
+    }
+
+    @Test
+    fun parsesFinishedSeriesAndNotFamousWithoutReversingIntent() {
+        val selectedSeries = RecommendationPreferences(
+            contentType = PreferenceSignal(
+                RecommendationContentType.TV,
+                PreferenceOrigin.EXPLICIT,
+                ConstraintStrength.HARD,
+            ),
+        )
+
+        val parsed = RecommendationPreferenceParser.parse(
+            "A finished crime series that is not famous",
+            selectedSeries,
+        ).preferences
+
+        assertEquals("Ended", parsed.requiredStatus?.value)
+        assertEquals(ConstraintStrength.HARD, parsed.requiredStatus?.strength)
+        assertEquals(FamiliarityPreference.OBSCURE, parsed.familiarity?.value)
+    }
 }

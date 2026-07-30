@@ -12,6 +12,13 @@ enum class MediaType(val routeName: String) {
     }
 }
 
+enum class RatingSourceState {
+    VERIFIED,
+    STALE,
+    NOT_RATED,
+    UNAVAILABLE,
+}
+
 data class Media(
     val id: Int,
     val type: MediaType,
@@ -21,7 +28,10 @@ data class Media(
     val backdropPath: String? = null,
     val year: String = "",
     val rating: Double = 0.0,
+    val imdbId: String? = null,
     val imdbRating: Double? = null,
+    val imdbVoteCount: Int? = null,
+    val imdbRatingState: RatingSourceState? = null,
     val rottenTomatoesRating: Int? = null,
     val genres: List<String> = emptyList(),
     val cast: List<String> = emptyList(),
@@ -41,7 +51,10 @@ data class Media(
         put("backdropPath", backdropPath)
         put("year", year)
         put("rating", rating)
+        imdbId?.let { put("imdbId", it) }
         imdbRating?.let { put("imdbRating", it) }
+        imdbVoteCount?.let { put("imdbVoteCount", it) }
+        imdbRatingState?.let { put("imdbRatingState", it.name) }
         rottenTomatoesRating?.let { put("rottenTomatoesRating", it) }
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
@@ -68,9 +81,19 @@ data class Media(
                     .takeIf { it.isNotBlank() && it != "null" },
                 year = json.optString("year"),
                 rating = json.optDouble("rating", 0.0),
+                imdbId = json.optString("imdbId")
+                    .takeIf { it.matches(Regex("tt\\d+")) },
                 imdbRating = json.optDouble("imdbRating").takeIf {
                     json.has("imdbRating") && it > 0.0
                 },
+                imdbVoteCount = json.optInt("imdbVoteCount").takeIf {
+                    json.has("imdbVoteCount") && it >= 0
+                },
+                imdbRatingState = json.optString("imdbRatingState")
+                    .takeIf(String::isNotBlank)
+                    ?.let { value ->
+                        RatingSourceState.entries.firstOrNull { it.name == value }
+                    },
                 rottenTomatoesRating = json.optInt("rottenTomatoesRating").takeIf {
                     json.has("rottenTomatoesRating") && it > 0
                 },

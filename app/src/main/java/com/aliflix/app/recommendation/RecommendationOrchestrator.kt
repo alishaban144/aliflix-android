@@ -35,6 +35,12 @@ interface RecommendationCandidateRepository {
     ): RecommendationPage
 
     suspend fun resolveSimilarityAnchor(title: String): RecommendationCandidate?
+
+    suspend fun relatedCandidates(
+        anchor: RecommendationCandidate,
+        spec: CatalogDiscoverySpec,
+        requiredFields: RequiredMetadataFields,
+    ): List<RecommendationCandidate> = emptyList()
 }
 
 class CatalogRecommendationCandidateRepository(
@@ -88,6 +94,33 @@ class CatalogRecommendationCandidateRepository(
         )
     }
 
+    override suspend fun relatedCandidates(
+        anchor: RecommendationCandidate,
+        spec: CatalogDiscoverySpec,
+        requiredFields: RequiredMetadataFields,
+    ): List<RecommendationCandidate> = supervisorScope {
+        val gate = Semaphore(METADATA_CONCURRENCY)
+        client.relatedRecommendationItems(anchor.media)
+            .filter { it.type == spec.mediaKind.mediaType }
+            .mapIndexed { index, media ->
+                async {
+                    gate.withPermit {
+                        verifySeed(
+                            RecommendationDiscoveryItem(
+                                media = media,
+                                evidence = "Related to ${anchor.media.title}",
+                                sources = setOf("ANCHOR_RELATED"),
+                                sourceCount = 1,
+                                sourcePosition = index,
+                            ),
+                            requiredFields,
+                        )
+                    }
+                }
+            }
+            .awaitAll()
+    }
+
     private suspend fun verifySeed(
         seed: RecommendationDiscoveryItem,
         required: RequiredMetadataFields,
@@ -117,6 +150,7 @@ class CatalogRecommendationCandidateRepository(
         metadata = metadata.toRecommendationMetadata(),
         evidence = evidence,
         sources = sources,
+        sourceRanks = sources.associateWith { sourcePosition.coerceAtLeast(0) },
         sourceCount = sourceCount,
         sourcePosition = sourcePosition,
     )
@@ -162,6 +196,7 @@ class CatalogRecommendationCandidateRepository(
         if (required.originalLanguage && metadata.originalLanguage.isNullOrBlank()) {
             return false
         }
+        if (required.status && metadata.status.isNullOrBlank()) return false
         if (required.imdbRating && media.imdbRating == null) return false
         if (required.rottenTomatoesRating &&
             media.rottenTomatoesRating == null
@@ -189,6 +224,8 @@ object RecommendationQueryBuilder {
             )
             addAll(preferences.includedGenres.map { it.value })
             addAll(preferences.moods.map { it.value.label })
+            addAll(preferences.semanticFacets.map { it.value.label })
+            addAll(preferences.excludedFacets.map { "avoid ${it.value.label}" })
             preferences.viewingContext?.let {
                 add("for ${it.value.label.lowercase()}")
             }
@@ -204,6 +241,9 @@ object RecommendationQueryBuilder {
             preferences.originalLanguage?.let {
                 add("${it.value} original language")
             }
+            preferences.requiredStatus?.let {
+                add("${it.value} series")
+            }
             preferences.similarityTitle?.let { anchor ->
                 add(
                     when (preferences.relativeRuntime?.value) {
@@ -216,6 +256,12 @@ object RecommendationQueryBuilder {
                 )
             }
             preferences.familiarity?.let { add(it.value.label) }
+            addAll(preferences.creatorNames.map { "directed by ${it.value}" })
+            addAll(preferences.castNames.map { "starring ${it.value}" })
+            addAll(preferences.countryPreferences.map { "from ${it.value}" })
+            addAll(preferences.unmatchedPreferences.map { signal ->
+                if (signal.negated) "avoid ${signal.text}" else signal.text
+            })
             addAll(preferences.unverifiedTerms)
             if (preferences.surpriseMe) add("surprising highly rated")
         }
@@ -230,12 +276,85 @@ object RecommendationQueryBuilder {
     private const val MAX_QUERY_LENGTH = 360
 }
 
+internal fun mergeRecommendationCandidates(
+    existing: RecommendationCandidate?,
+    incoming: RecommendationCandidate,
+): RecommendationCandidate {
+    if (existing == null) return incoming
+    val sources = existing.sources + incoming.sources
+    val mergedMedia = existing.media.copy(
+        title = incoming.media.title.takeIf(String::isNotBlank) ?: existing.media.title,
+        overview = incoming.media.overview.takeIf { it.length > existing.media.overview.length }
+            ?: existing.media.overview,
+        posterPath = incoming.media.posterPath ?: existing.media.posterPath,
+        backdropPath = incoming.media.backdropPath ?: existing.media.backdropPath,
+        year = incoming.media.year.takeIf(String::isNotBlank) ?: existing.media.year,
+        rating = maxOf(existing.media.rating, incoming.media.rating),
+        imdbId = incoming.media.imdbId ?: existing.media.imdbId,
+        imdbRating = incoming.media.imdbRating ?: existing.media.imdbRating,
+        imdbVoteCount = maxOf(
+            existing.media.imdbVoteCount ?: 0,
+            incoming.media.imdbVoteCount ?: 0,
+        ).takeIf { it > 0 },
+        imdbRatingState =
+            incoming.media.imdbRatingState ?: existing.media.imdbRatingState,
+        rottenTomatoesRating =
+            incoming.media.rottenTomatoesRating ?: existing.media.rottenTomatoesRating,
+        genres = (existing.media.genres + incoming.media.genres)
+            .distinctBy(String::lowercase),
+        cast = (existing.media.cast + incoming.media.cast)
+            .distinctBy(String::lowercase)
+            .take(12),
+    )
+    val existingMetadata = existing.metadata
+    val incomingMetadata = incoming.metadata
+    val evidence = (existing.evidence.lineSequence() + incoming.evidence.lineSequence())
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .distinct()
+        .take(6)
+        .joinToString(". ")
+    return existing.copy(
+        media = mergedMedia,
+        metadata = VerifiedMediaMetadata(
+            genresVerified =
+                existingMetadata.genresVerified || incomingMetadata.genresVerified,
+            runtimeMinutes =
+                incomingMetadata.runtimeMinutes ?: existingMetadata.runtimeMinutes,
+            originalLanguage =
+                incomingMetadata.originalLanguage ?: existingMetadata.originalLanguage,
+            status = incomingMetadata.status ?: existingMetadata.status,
+            director = incomingMetadata.director ?: existingMetadata.director,
+            seasonCount = incomingMetadata.seasonCount ?: existingMetadata.seasonCount,
+            averageEpisodeRuntimeMinutes =
+                incomingMetadata.averageEpisodeRuntimeMinutes
+                    ?: existingMetadata.averageEpisodeRuntimeMinutes,
+            verifiedAtMillis = maxOf(
+                existingMetadata.verifiedAtMillis,
+                incomingMetadata.verifiedAtMillis,
+            ),
+        ),
+        evidence = evidence,
+        sources = sources,
+        sourceRanks = (existing.sourceRanks.keys + incoming.sourceRanks.keys + sources)
+            .associateWith { source ->
+                minOf(
+                    existing.sourceRanks[source] ?: existing.sourcePosition,
+                    incoming.sourceRanks[source] ?: incoming.sourcePosition,
+                ).coerceAtLeast(0)
+            },
+        sourceCount = maxOf(existing.sourceCount, incoming.sourceCount, sources.size),
+        sourcePosition = minOf(existing.sourcePosition, incoming.sourcePosition),
+    )
+}
+
 class RecommendationOrchestrator(
     private val scope: CoroutineScope,
     private val repository: RecommendationCandidateRepository,
     private val store: RecommendationStore,
     private val likesProvider: () -> List<Media>,
     private val recentlyPlayedProvider: () -> List<Media>,
+    private val semanticScorerProvider: () -> SemanticTextScorer? = { null },
 ) {
     private val _state = MutableStateFlow<RecommendationUiState>(
         RecommendationUiState.SelectType(),
@@ -252,6 +371,7 @@ class RecommendationOrchestrator(
     private var activeFingerprint: String? = null
     private var job: Job? = null
     private var preparationJob: Job? = null
+    private var prefetchJob: Job? = null
     private var preparationFingerprint: String? = null
     private var preparationSeedReady: CompletableDeferred<Unit>? = null
     private var attemptGeneration = 0L
@@ -325,13 +445,11 @@ class RecommendationOrchestrator(
 
     fun answer(question: RecommendationQuestion, selectedValues: List<String>) {
         history += preferences
-        preferences = applyAnswer(preferences, question, selectedValues)
+        preferences = applyAnswer(preferences, question, selectedValues).copy(
+            askedQuestionIds = preferences.askedQuestionIds + question.id,
+        )
         resetPagingIfNeeded()
-        if (candidatePool.isEmpty()) {
-            prepareAndAsk()
-        } else {
-            decideNextStep()
-        }
+        prepareAndAsk()
     }
 
     fun showMatches() {
@@ -432,6 +550,77 @@ class RecommendationOrchestrator(
         store.recordAccepted(media)
     }
 
+    fun moreLike(media: Media) {
+        history += preferences
+        preferences = preferences.copy(
+            similarityTitle = PreferenceSignal(
+                value = media.title,
+                origin = PreferenceOrigin.EXPLICIT,
+                strength = ConstraintStrength.SOFT,
+            ),
+        )
+        similarityAnchor = null
+        resetPagingIfNeeded(force = true)
+        prepareAndAsk()
+    }
+
+    fun lessLike(media: Media) {
+        requestAnother(media, "Less like this")
+    }
+
+    fun alreadySeen(media: Media) {
+        store.markSeen(media)
+        requestAnother(media, "I've already seen it")
+    }
+
+    fun applyCorrection(correction: PreferenceCorrection) {
+        history += preferences
+        val key = correction.key
+        preferences = when {
+            key.startsWith("mood:") -> preferences.copy(
+                moods = preferences.moods.filterNot {
+                    it.value.name.equals(key.substringAfter(':'), ignoreCase = true)
+                },
+            )
+            key.startsWith("genre:") -> preferences.copy(
+                includedGenres = preferences.includedGenres.filterNot {
+                    it.value.equals(key.substringAfter(':'), ignoreCase = true)
+                },
+            )
+            key.startsWith("facet:") -> preferences.copy(
+                semanticFacets = preferences.semanticFacets.filterNot {
+                    it.value.id == key.substringAfter(':')
+                },
+            )
+            key.startsWith("excluded_facet:") -> preferences.copy(
+                excludedFacets = preferences.excludedFacets.filterNot {
+                    it.value.id == key.substringAfter(':')
+                },
+            )
+            key.startsWith("unmatched:") -> preferences.copy(
+                unmatchedPreferences = preferences.unmatchedPreferences.filterNot {
+                    it.text == key.substringAfter(':')
+                },
+            )
+            key == "runtime_max" -> preferences.copy(runtimeMaximumMinutes = null)
+            key == "runtime_min" -> preferences.copy(runtimeMinimumMinutes = null)
+            key == "year_min" -> preferences.copy(yearMinimum = null)
+            key == "year_max" -> preferences.copy(yearMaximum = null)
+            key == "imdb" -> preferences.copy(minimumImdb = null)
+            key == "language" -> preferences.copy(originalLanguage = null)
+            key == "status" -> preferences.copy(requiredStatus = null)
+            key == "similarity" -> preferences.copy(
+                similarityTitle = null,
+                relativeRuntime = null,
+            )
+            key == "context" -> preferences.copy(viewingContext = null)
+            else -> preferences
+        }
+        similarityAnchor = null
+        resetPagingIfNeeded(force = true)
+        prepareAndAsk()
+    }
+
     fun applyRelaxation(id: String) {
         history += preferences
         preferences = RecommendationRanker.applyRelaxation(preferences, id)
@@ -451,15 +640,12 @@ class RecommendationOrchestrator(
             _state.value = RecommendationUiState.SelectType(preferences)
             return
         }
-        if (publishNextQuestion()) {
-            startCataloguePreparation(spec)
-        } else {
-            showMatches()
-        }
+        startCataloguePreparation(spec)
+        loadForResults(RESULT_PAGE_SIZE)
     }
 
     private fun decideNextStep() {
-        if (!publishNextQuestion()) showMatches()
+        showMatches()
     }
 
     private fun publishNextQuestion(): Boolean {
@@ -506,7 +692,11 @@ class RecommendationOrchestrator(
                 )
                 if (!isActiveAttempt(generation)) return@launch
                 seeds.forEach { candidate ->
-                    candidatePool.putIfAbsent(candidate.media.key, candidate)
+                    candidatePool[candidate.media.key] =
+                        mergeRecommendationCandidates(
+                            candidatePool[candidate.media.key],
+                            candidate,
+                        )
                 }
                 seedReady.complete(Unit)
                 fetchOnePage(effectiveSpec, generation)
@@ -525,6 +715,8 @@ class RecommendationOrchestrator(
         targetAdditionalItems: Int,
         forceNetwork: Boolean = false,
     ) {
+        prefetchJob?.cancel()
+        prefetchJob = null
         job?.cancel()
         val generation = attemptGeneration
         val spec = CatalogDiscoverySpec.from(preferences)
@@ -541,7 +733,14 @@ class RecommendationOrchestrator(
         }
         val beforeCount = displayed.size
         val existingEligible = eligibleCandidates()
-        appendRanked(existingEligible, targetAdditionalItems)
+        appendRanked(
+            existingEligible,
+            if (beforeCount == 0) {
+                minOf(targetAdditionalItems, INITIAL_CACHE_PREVIEW)
+            } else {
+                targetAdditionalItems
+            },
+        )
         if (displayed.size > beforeCount) {
             publishResults(
                 refreshing = displayed.size - beforeCount < targetAdditionalItems && hasMore,
@@ -558,12 +757,14 @@ class RecommendationOrchestrator(
             (displayed.size - beforeCount >= targetAdditionalItems || !hasMore)
         ) {
             finishResultLoad()
+            scheduleBackgroundPrefetch(spec, generation)
             completeRetry(generation)
             return
         }
 
         job = scope.launch {
             var scanned = 0
+            val startedAt = System.currentTimeMillis()
             try {
                 val preparedJob = preparationJob
                 val seedReady = preparationSeedReady
@@ -601,7 +802,12 @@ class RecommendationOrchestrator(
                     displayed.size - beforeCount < targetAdditionalItems &&
                     hasMore
                 ) {
-                    if (beforeCount > 0 && scanned >= MAX_PAGES_PER_ACTION) break
+                    if (
+                        scanned >= MAX_PAGES_PER_ACTION ||
+                        System.currentTimeMillis() - startedAt >= MAX_ACTION_DURATION_MS
+                    ) {
+                        break
+                    }
                     if (!fetchOnePage(activeSpec, generation)) return@launch
                     scanned += 1
                     appendRanked(
@@ -630,6 +836,7 @@ class RecommendationOrchestrator(
                     }
                 }
                 finishResultLoad()
+                scheduleBackgroundPrefetch(activeSpec, generation)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -660,7 +867,11 @@ class RecommendationOrchestrator(
         }
         page.sourceHealth.requiredFailureOrNull()?.let { throw it }
         page.candidates.forEach { candidate ->
-            candidatePool.putIfAbsent(candidate.media.key, candidate)
+            candidatePool[candidate.media.key] =
+                mergeRecommendationCandidates(
+                    candidatePool[candidate.media.key],
+                    candidate,
+                )
         }
         // Health represents the latest completed request. A successful page
         // therefore recovers a source that was unavailable on an earlier try.
@@ -685,6 +896,21 @@ class RecommendationOrchestrator(
             )
         }
         preferences = applyRelativeRuntime(preferences, similarityAnchor)
+        resolved?.let { anchor ->
+            val activeSpec = CatalogDiscoverySpec.from(preferences) ?: return@let
+            repository.relatedCandidates(
+                anchor = anchor,
+                spec = activeSpec,
+                requiredFields = RequiredMetadataFields.from(preferences),
+            ).forEach { candidate ->
+                if (!isActiveAttempt(generation)) return
+                candidatePool[candidate.media.key] =
+                    mergeRecommendationCandidates(
+                        candidatePool[candidate.media.key],
+                        candidate,
+                    )
+            }
+        }
         val fingerprint = CatalogDiscoverySpec.from(preferences)?.fingerprint
         if (fingerprint != activeFingerprint) {
             // This runs inside the preparation/action coroutine, so preserve
@@ -717,6 +943,7 @@ class RecommendationOrchestrator(
             likes = likesProvider(),
             taste = store.taste.value,
             similarityAnchor = similarityAnchor?.media,
+            semanticScorer = semanticScorerProvider(),
         ).take(limit).forEach(displayed::add)
     }
 
@@ -770,6 +997,10 @@ class RecommendationOrchestrator(
             pageError = pageError,
             sourceHealth = sourceHealth,
             webLimited = sourceHealth.web == RecommendationSourceStatus.UNAVAILABLE,
+            refinementQuestion = RecommendationQuestionSelector.nextQuestion(
+                preferences,
+                eligibleCandidates(),
+            ),
         )
     }
 
@@ -794,6 +1025,36 @@ class RecommendationOrchestrator(
             publishResults(pageError = sourceFailureMessage(error.source))
         } else {
             sourceFailure(error)
+        }
+    }
+
+    private fun scheduleBackgroundPrefetch(
+        spec: CatalogDiscoverySpec,
+        generation: Long,
+    ) {
+        if (!hasMore || !isActiveAttempt(generation)) return
+        prefetchJob?.cancel()
+        prefetchJob = scope.launch {
+            val startedAt = System.currentTimeMillis()
+            var pages = 0
+            try {
+                while (
+                    hasMore &&
+                    isActiveAttempt(generation) &&
+                    pages < BACKGROUND_PREFETCH_PAGES &&
+                    System.currentTimeMillis() - startedAt <
+                    BACKGROUND_PREFETCH_DURATION_MS
+                ) {
+                    if (!fetchOnePage(spec, generation)) break
+                    pages += 1
+                    yield()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Results already shown remain usable. Foreground pagination
+                // retries this exact cursor if the user continues scrolling.
+            }
         }
     }
 
@@ -852,6 +1113,8 @@ class RecommendationOrchestrator(
             retryGenerationInFlight = null
             job?.cancel()
             job = null
+            prefetchJob?.cancel()
+            prefetchJob = null
         }
         if (cancelPreparation) {
             preparationJob?.cancel()
@@ -905,10 +1168,19 @@ class RecommendationOrchestrator(
             RecommendationDimension.LANGUAGE -> base.copy(
                 originalLanguage = PreferenceSignal(selected.first(), explicit, hard),
             )
+            RecommendationDimension.STATUS -> base
             RecommendationDimension.FAMILIARITY -> base.copy(
                 familiarity = selected.firstNotNullOfOrNull { value ->
                     FamiliarityPreference.entries.firstOrNull { it.name == value }
                 }?.let { PreferenceSignal(it, explicit, soft) },
+            )
+            RecommendationDimension.SUBJECTIVE_FACET -> base.copy(
+                semanticFacets = (
+                    base.semanticFacets +
+                        selected.mapNotNull { value ->
+                            RecommendationOntology.byId(value.removePrefix("facet:"))
+                        }.map { PreferenceSignal(it, explicit, soft) }
+                    ).distinctBy { it.value.id },
             )
             RecommendationDimension.UNSUPPORTED_CONFIRMATION -> if (
                 selected.first() == "remove"
@@ -1025,5 +1297,9 @@ class RecommendationOrchestrator(
     private companion object {
         const val RESULT_PAGE_SIZE = 20
         const val MAX_PAGES_PER_ACTION = 6
+        const val INITIAL_CACHE_PREVIEW = 6
+        const val MAX_ACTION_DURATION_MS = 12_000L
+        const val BACKGROUND_PREFETCH_PAGES = 4
+        const val BACKGROUND_PREFETCH_DURATION_MS = 12_000L
     }
 }

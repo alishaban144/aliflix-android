@@ -34,6 +34,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
@@ -173,6 +174,7 @@ import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.RatingSourceState
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.player.WebPlayerController
@@ -185,6 +187,7 @@ import com.aliflix.app.recommendation.RecommendationPreferences
 import com.aliflix.app.recommendation.RecommendationQuestion
 import com.aliflix.app.recommendation.RecommendationQuestionType
 import com.aliflix.app.recommendation.RecommendationUiState
+import com.aliflix.app.recommendation.SemanticModelState
 import com.aliflix.app.update.AppUpdateManager
 import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
@@ -345,6 +348,8 @@ fun AliflixApp(
     val likes by viewModel.likes.collectAsState()
     val recommendation by viewModel.recommendation.collectAsState()
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
+    val semanticModelState by viewModel.semanticModelState.collectAsState()
+    val shouldOfferSemanticModel by viewModel.shouldOfferSemanticModel.collectAsState()
 
     val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val ramoflixConfig = playbackPreferences.ramoflixConfig
@@ -771,6 +776,8 @@ fun AliflixApp(
                         state = search,
                         recommendationState = recommendation,
                         aiEnabled = aiRecommendationsEnabled,
+                        semanticModelState = semanticModelState,
+                        shouldOfferSemanticModel = shouldOfferSemanticModel,
                         onQueryChange = viewModel::updateSearch,
                         onModeChange = viewModel::selectSearchMode,
                         onOpen = ::openDetails,
@@ -785,6 +792,13 @@ fun AliflixApp(
                         onLoadMoreRecommendations = viewModel::loadMoreRecommendations,
                         onRetryRecommendationPage = viewModel::retryRecommendationPage,
                         onRelaxRecommendation = viewModel::relaxRecommendationConstraint,
+                        onDownloadSemanticModel = viewModel::downloadSemanticModel,
+                        onDismissSemanticModelOffer = viewModel::dismissSemanticModelOffer,
+                        onMoreLikeRecommendation = viewModel::moreLikeRecommendation,
+                        onLessLikeRecommendation = viewModel::lessLikeRecommendation,
+                        onRecommendationSeen = viewModel::markRecommendationSeen,
+                        onCorrectRecommendationPreference =
+                            viewModel::correctRecommendationPreference,
                         gridState = searchScrollState,
                         mediaFilter = searchMediaFilter,
                         onMediaFilterChange = { searchMediaFilter = it },
@@ -817,6 +831,9 @@ fun AliflixApp(
                             viewModel::setAiRecommendationsEnabled,
                         onResetRecommendationTaste =
                             viewModel::resetRecommendationTaste,
+                        semanticModelState = semanticModelState,
+                        onDownloadSemanticModel = viewModel::downloadSemanticModel,
+                        onDeleteSemanticModel = viewModel::deleteSemanticModel,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
                 }
@@ -1905,6 +1922,7 @@ private fun MediaPoster(
     width: androidx.compose.ui.unit.Dp,
     rank: Int? = null,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -1918,10 +1936,21 @@ private fun MediaPoster(
         modifier = modifier
             .width(width)
             .scale(posterScale)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
+            .then(
+                if (onLongClick == null) {
+                    Modifier.clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = onClick,
+                    )
+                } else {
+                    Modifier.combinedClickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = onClick,
+                        onLongClick = onLongClick,
+                    )
+                },
             ),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -2144,6 +2173,8 @@ private fun SearchScreen(
     state: SearchUiState,
     recommendationState: RecommendationUiState,
     aiEnabled: Boolean,
+    semanticModelState: SemanticModelState,
+    shouldOfferSemanticModel: Boolean,
     onQueryChange: (String) -> Unit,
     onModeChange: (SearchMode) -> Unit,
     onOpen: (Media) -> Unit,
@@ -2158,6 +2189,12 @@ private fun SearchScreen(
     onLoadMoreRecommendations: () -> Unit,
     onRetryRecommendationPage: () -> Unit,
     onRelaxRecommendation: (String) -> Unit,
+    onDownloadSemanticModel: () -> Unit,
+    onDismissSemanticModelOffer: () -> Unit,
+    onMoreLikeRecommendation: (Media) -> Unit,
+    onLessLikeRecommendation: (Media) -> Unit,
+    onRecommendationSeen: (Media) -> Unit,
+    onCorrectRecommendationPreference: (String) -> Unit,
     gridState: LazyGridState,
     mediaFilter: String,
     onMediaFilterChange: (String) -> Unit,
@@ -2359,6 +2396,8 @@ private fun SearchScreen(
             if (pageMode == SearchMode.AI) {
                 AliflixAiScreen(
                     state = recommendationState,
+                    semanticModelState = semanticModelState,
+                    shouldOfferSemanticModel = shouldOfferSemanticModel,
                     onSelectType = onSelectRecommendationType,
                     onSubmit = onSubmitRecommendation,
                     onSurprise = onSurpriseRecommendation,
@@ -2375,6 +2414,12 @@ private fun SearchScreen(
                     onLoadMore = onLoadMoreRecommendations,
                     onRetryPage = onRetryRecommendationPage,
                     onRelax = onRelaxRecommendation,
+                    onDownloadSemanticModel = onDownloadSemanticModel,
+                    onDismissSemanticModelOffer = onDismissSemanticModelOffer,
+                    onMoreLike = onMoreLikeRecommendation,
+                    onLessLike = onLessLikeRecommendation,
+                    onAlreadySeen = onRecommendationSeen,
+                    onCorrectPreference = onCorrectRecommendationPreference,
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
@@ -2591,6 +2636,8 @@ private fun SearchScreen(
 @Composable
 private fun AliflixAiScreen(
     state: RecommendationUiState,
+    semanticModelState: SemanticModelState,
+    shouldOfferSemanticModel: Boolean,
     onSelectType: (RecommendationMediaKind) -> Unit,
     onSubmit: (String) -> Unit,
     onSurprise: () -> Unit,
@@ -2604,6 +2651,12 @@ private fun AliflixAiScreen(
     onLoadMore: () -> Unit,
     onRetryPage: () -> Unit,
     onRelax: (String) -> Unit,
+    onDownloadSemanticModel: () -> Unit,
+    onDismissSemanticModelOffer: () -> Unit,
+    onMoreLike: (Media) -> Unit,
+    onLessLike: (Media) -> Unit,
+    onAlreadySeen: (Media) -> Unit,
+    onCorrectPreference: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
@@ -2611,7 +2664,18 @@ private fun AliflixAiScreen(
     var selectedOptions by rememberSaveable { mutableStateOf(setOf<String>()) }
     var adjustVisible by remember { mutableStateOf(false) }
     val typeState = state as? RecommendationUiState.SelectType
-    val selectedType = when (typeState?.preferences?.contentType?.value) {
+    val statePreferences = when (state) {
+        RecommendationUiState.Idle -> null
+        is RecommendationUiState.SelectType -> state.preferences
+        is RecommendationUiState.Discovering -> state.preferences
+        is RecommendationUiState.Question -> state.preferences
+        is RecommendationUiState.Results -> state.preferences
+        is RecommendationUiState.Empty -> state.preferences
+        is RecommendationUiState.SourceUnavailable -> state.preferences
+        is RecommendationUiState.Relaxation -> state.preferences
+        is RecommendationUiState.Error -> state.preferences
+    }
+    val selectedType = when (statePreferences?.contentType?.value) {
         com.aliflix.app.recommendation.RecommendationContentType.MOVIE ->
             RecommendationMediaKind.MOVIE
         com.aliflix.app.recommendation.RecommendationContentType.TV ->
@@ -2634,6 +2698,13 @@ private fun AliflixAiScreen(
             AiTypeSelector(
                 selected = selectedType,
                 onSelect = onSelectType,
+            )
+        }
+        if (shouldOfferSemanticModel || semanticModelState is SemanticModelState.Downloading) {
+            SemanticModelOffer(
+                state = semanticModelState,
+                onDownload = onDownloadSemanticModel,
+                onDismiss = onDismissSemanticModelOffer,
             )
         }
         if (state == RecommendationUiState.Idle || selectedType != null) {
@@ -2702,6 +2773,11 @@ private fun AliflixAiScreen(
             is RecommendationUiState.Results -> AiResultsContent(
                 state = state,
                 onDetails = onDetails,
+                onAnswer = onAnswer,
+                onMoreLike = onMoreLike,
+                onLessLike = onLessLike,
+                onAlreadySeen = onAlreadySeen,
+                onCorrectPreference = onCorrectPreference,
                 onLoadMore = onLoadMore,
                 onRetryPage = onRetryPage,
                 onAdjust = { adjustVisible = true },
@@ -2772,6 +2848,69 @@ private fun AliflixAiScreen(
                 TextButton(onClick = { adjustVisible = false }) { Text("Cancel") }
             },
         )
+    }
+}
+
+@Composable
+private fun SemanticModelOffer(
+    state: SemanticModelState,
+    onDownload: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(AliflixSurfaceSecondary)
+            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = if (state is SemanticModelState.Downloading) {
+                    "Adding smarter local matching"
+                } else {
+                    "Improve nuanced matches on this device"
+                },
+                color = AliflixContentPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = if (state is SemanticModelState.Downloading) {
+                    "${state.progressPercent}% downloaded"
+                } else {
+                    "Optional 6 MB Google language model. Your request stays private."
+                },
+                color = AliflixContentTertiary,
+                fontSize = 10.sp,
+            )
+        }
+        if (state is SemanticModelState.Downloading) {
+            CircularProgressIndicator(
+                progress = { state.progressPercent / 100f },
+                color = AliflixAccentSecondary,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(28.dp),
+            )
+        } else {
+            TextButton(onClick = onDownload) {
+                Text("Download")
+            }
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Not now",
+                    tint = AliflixContentTertiary,
+                )
+            }
+        }
     }
 }
 
@@ -3211,6 +3350,11 @@ private fun AiQuestionContent(
 private fun AiResultsContent(
     state: RecommendationUiState.Results,
     onDetails: (Media) -> Unit,
+    onAnswer: (RecommendationQuestion, List<String>) -> Unit,
+    onMoreLike: (Media) -> Unit,
+    onLessLike: (Media) -> Unit,
+    onAlreadySeen: (Media) -> Unit,
+    onCorrectPreference: (String) -> Unit,
     onLoadMore: () -> Unit,
     onRetryPage: () -> Unit,
     onAdjust: () -> Unit,
@@ -3218,6 +3362,7 @@ private fun AiResultsContent(
     modifier: Modifier = Modifier,
 ) {
     val gridState = rememberLazyGridState()
+    var feedbackItem by remember { mutableStateOf<Media?>(null) }
     val candidates = remember(state.candidates) {
         state.candidates.distinctBy { it.media.key }
     }
@@ -3283,7 +3428,65 @@ private fun AiResultsContent(
                         )
                     }
                 }
-                AiPreferenceSummary(state.preferences)
+                AiPreferenceSummary(
+                    preferences = state.preferences,
+                    onRemove = onCorrectPreference,
+                )
+                state.refinementQuestion?.let { question ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(AliflixSurfaceSecondary)
+                            .border(
+                                1.dp,
+                                AliflixBorderSubtle,
+                                RoundedCornerShape(18.dp),
+                            )
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(9.dp),
+                    ) {
+                        Text(
+                            text = question.text,
+                            color = AliflixContentPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp),
+                        ) {
+                            question.options.forEach { option ->
+                                AssistChip(
+                                    onClick = {
+                                        onAnswer(question, listOf(option.value))
+                                    },
+                                    label = { Text(option.label) },
+                                    colors = AssistChipDefaults.assistChipColors(
+                                        containerColor = AliflixSurfaceRaised,
+                                        labelColor = AliflixContentSecondary,
+                                    ),
+                                    border = AssistChipDefaults.assistChipBorder(
+                                        enabled = true,
+                                        borderColor = AliflixBorderSubtle,
+                                    ),
+                                )
+                            }
+                            AssistChip(
+                                onClick = { onAnswer(question, listOf("any")) },
+                                label = { Text("Doesn't matter") },
+                                colors = AssistChipDefaults.assistChipColors(
+                                    containerColor = AliflixSurfaceRaised,
+                                    labelColor = AliflixContentSecondary,
+                                ),
+                                border = AssistChipDefaults.assistChipBorder(
+                                    enabled = true,
+                                    borderColor = AliflixBorderSubtle,
+                                ),
+                            )
+                        }
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = onAdjust,
@@ -3311,6 +3514,7 @@ private fun AiResultsContent(
                 item = candidate.media,
                 width = 118.dp,
                 onClick = { onDetails(candidate.media) },
+                onLongClick = { feedbackItem = candidate.media },
                 modifier = Modifier.testTag("ai-result-${candidate.media.key}"),
             )
         }
@@ -3367,6 +3571,48 @@ private fun AiResultsContent(
                 }
             }
         }
+    }
+
+    feedbackItem?.let { item ->
+        AlertDialog(
+            onDismissRequest = { feedbackItem = null },
+            containerColor = AliflixSurfaceSecondary,
+            title = {
+                Text(
+                    text = item.title,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            feedbackItem = null
+                            onMoreLike(item)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("More like this") }
+                    TextButton(
+                        onClick = {
+                            feedbackItem = null
+                            onLessLike(item)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Less like this") }
+                    TextButton(
+                        onClick = {
+                            feedbackItem = null
+                            onAlreadySeen(item)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Already seen") }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { feedbackItem = null }) { Text("Close") }
+            },
+        )
     }
 }
 
@@ -3591,59 +3837,148 @@ private fun AiErrorContent(
 private fun AiPreferenceSummary(
     preferences: RecommendationPreferences,
     modifier: Modifier = Modifier,
+    onRemove: ((String) -> Unit)? = null,
 ) {
-    val labels = remember(preferences) { aiPreferenceLabels(preferences) }
-    if (labels.isEmpty()) return
+    val chips = remember(preferences) { aiPreferenceChips(preferences) }
+    if (chips.isEmpty()) return
     LazyRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(7.dp),
         contentPadding = PaddingValues(horizontal = 1.dp),
     ) {
-        items(labels) { label ->
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(AliflixAccentPrimary.copy(alpha = 0.16f))
-                    .border(
-                        1.dp,
-                        AliflixAccentPrimary.copy(alpha = 0.32f),
-                        CircleShape,
-                    )
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-            ) {
-                Text(
-                    label,
-                    color = AliflixContentSecondary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
+        items(
+            items = chips,
+            key = { "${it.key}:${it.label}" },
+        ) { chip ->
+            if (onRemove != null && chip.key != null) {
+                AssistChip(
+                    onClick = { onRemove(chip.key) },
+                    label = {
+                        Text(
+                            chip.label,
+                            maxLines = 1,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    },
+                    trailingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Remove ${chip.label} preference",
+                            modifier = Modifier.size(14.dp),
+                        )
+                    },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = AliflixAccentPrimary.copy(alpha = 0.16f),
+                        labelColor = AliflixContentSecondary,
+                        trailingIconContentColor = AliflixContentTertiary,
+                    ),
+                    border = AssistChipDefaults.assistChipBorder(
+                        enabled = true,
+                        borderColor = AliflixAccentPrimary.copy(alpha = 0.32f),
+                    ),
                 )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(AliflixAccentPrimary.copy(alpha = 0.16f))
+                        .border(
+                            1.dp,
+                            AliflixAccentPrimary.copy(alpha = 0.32f),
+                            CircleShape,
+                        )
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        chip.label,
+                        color = AliflixContentSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
     }
 }
 
-private fun aiPreferenceLabels(
+private data class AiPreferenceChip(
+    val key: String?,
+    val label: String,
+)
+
+private fun aiPreferenceChips(
     preferences: RecommendationPreferences,
-): List<String> = buildList {
+): List<AiPreferenceChip> = buildList {
     preferences.contentType?.value?.let {
         add(
-            when (it) {
-                com.aliflix.app.recommendation.RecommendationContentType.MOVIE -> "Movies"
-                com.aliflix.app.recommendation.RecommendationContentType.TV -> "Series"
-                com.aliflix.app.recommendation.RecommendationContentType.EITHER -> "Movies or series"
-            },
+            AiPreferenceChip(
+                key = null,
+                label = when (it) {
+                    com.aliflix.app.recommendation.RecommendationContentType.MOVIE -> "Movies"
+                    com.aliflix.app.recommendation.RecommendationContentType.TV -> "Series"
+                    com.aliflix.app.recommendation.RecommendationContentType.EITHER ->
+                        "Movies or series"
+                },
+            ),
         )
     }
-    addAll(preferences.moods.map { it.value.label })
-    addAll(preferences.includedGenres.map { it.value })
-    preferences.viewingContext?.let { add(it.value.label) }
-    preferences.runtimeMaximumMinutes?.let { add("≤ ${it.value} min") }
-    preferences.runtimeMinimumMinutes?.let { add("≥ ${it.value} min") }
-    preferences.yearMinimum?.let { add("${it.value}+") }
-    preferences.minimumImdb?.let { add("IMDb ${it.value}+") }
-    preferences.originalLanguage?.let { add(it.value) }
-    preferences.similarityTitle?.let { add("Like ${it.value}") }
-}.distinct().take(12)
+    addAll(
+        preferences.moods.map {
+            AiPreferenceChip("mood:${it.value.name}", it.value.label)
+        },
+    )
+    addAll(
+        preferences.includedGenres.map {
+            AiPreferenceChip("genre:${it.value}", it.value)
+        },
+    )
+    addAll(
+        preferences.semanticFacets.map {
+            AiPreferenceChip("facet:${it.value.id}", it.value.label)
+        },
+    )
+    addAll(
+        preferences.excludedFacets.map {
+            AiPreferenceChip(
+                "excluded_facet:${it.value.id}",
+                "No ${it.value.label.lowercase()}",
+            )
+        },
+    )
+    addAll(
+        preferences.unmatchedPreferences
+            .filterNot { it.negated }
+            .map { AiPreferenceChip("unmatched:${it.text}", it.text) },
+    )
+    preferences.viewingContext?.let {
+        add(AiPreferenceChip("context", it.value.label))
+    }
+    preferences.runtimeMaximumMinutes?.let {
+        add(AiPreferenceChip("runtime_max", "Up to ${it.value} min"))
+    }
+    preferences.runtimeMinimumMinutes?.let {
+        add(AiPreferenceChip("runtime_min", "At least ${it.value} min"))
+    }
+    preferences.yearMinimum?.let {
+        add(AiPreferenceChip("year_min", "${it.value}+"))
+    }
+    preferences.yearMaximum?.let {
+        add(AiPreferenceChip("year_max", "Through ${it.value}"))
+    }
+    preferences.minimumImdb?.let {
+        add(AiPreferenceChip("imdb", "IMDb ${it.value}+"))
+    }
+    preferences.originalLanguage?.let {
+        add(AiPreferenceChip("language", it.value))
+    }
+    preferences.requiredStatus?.let {
+        add(AiPreferenceChip("status", it.value))
+    }
+    preferences.similarityTitle?.let {
+        add(AiPreferenceChip("similarity", "Like ${it.value}"))
+    }
+}.distinctBy { it.key to it.label }.take(16)
 
 private val aiStarterPrompts = listOf(
     "Something scary under 100 minutes",
@@ -4180,6 +4515,9 @@ private fun MobileSettingsDialog(
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
     onResetRecommendationTaste: () -> Unit,
+    semanticModelState: SemanticModelState,
+    onDownloadSemanticModel: () -> Unit,
+    onDeleteSemanticModel: () -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -4402,6 +4740,51 @@ private fun MobileSettingsDialog(
                                 fontWeight = FontWeight.Bold,
                             )
                         }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Nuanced local matching",
+                                    color = AliflixContentPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = when (semanticModelState) {
+                                        SemanticModelState.Ready -> "On-device model ready"
+                                        SemanticModelState.Unavailable -> "Optional 6 MB download"
+                                        SemanticModelState.Corrupt -> "Downloaded model failed validation"
+                                        is SemanticModelState.Downloading ->
+                                            "${semanticModelState.progressPercent}% downloaded"
+                                        is SemanticModelState.Failed ->
+                                            "Download unavailable"
+                                    },
+                                    color = AliflixContentTertiary,
+                                    fontSize = 10.sp,
+                                )
+                            }
+                            TextButton(
+                                onClick = if (semanticModelState is SemanticModelState.Ready) {
+                                    onDeleteSemanticModel
+                                } else {
+                                    onDownloadSemanticModel
+                                },
+                                enabled =
+                                    semanticModelState !is SemanticModelState.Downloading,
+                            ) {
+                                Text(
+                                    if (semanticModelState is SemanticModelState.Ready) {
+                                        "Remove"
+                                    } else {
+                                        "Download"
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -4489,6 +4872,9 @@ private fun MySpaceScreen(
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
     onResetRecommendationTaste: () -> Unit,
+    semanticModelState: SemanticModelState,
+    onDownloadSemanticModel: () -> Unit,
+    onDeleteSemanticModel: () -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -4553,6 +4939,9 @@ private fun MySpaceScreen(
             aiRecommendationsEnabled = aiRecommendationsEnabled,
             onSetAiRecommendationsEnabled = onSetAiRecommendationsEnabled,
             onResetRecommendationTaste = onResetRecommendationTaste,
+            semanticModelState = semanticModelState,
+            onDownloadSemanticModel = onDownloadSemanticModel,
+            onDeleteSemanticModel = onDeleteSemanticModel,
             updateUi = updateUi,
             onCheckForUpdates = onCheckForUpdates,
             onDownloadUpdate = onDownloadUpdate,
@@ -5712,8 +6101,12 @@ private fun RatingsRow(item: Media) {
     ) {
         RatingPill(
             source = "IMDb",
-            value = item.imdbRating?.let { String.format(java.util.Locale.US, "%.1f", it) }
-                ?: "Not rated",
+            value = when {
+                item.imdbRating != null ->
+                    String.format(java.util.Locale.US, "%.1f", item.imdbRating)
+                item.imdbRatingState == RatingSourceState.NOT_RATED -> "Not rated"
+                else -> "Unavailable"
+            },
             accent = Color(0xFFF5C518),
             darkText = true,
         )

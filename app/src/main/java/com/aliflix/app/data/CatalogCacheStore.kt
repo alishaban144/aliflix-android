@@ -64,6 +64,14 @@ interface CatalogCacheStore {
         maxAgeMs: Long,
     ): VerifiedRecommendationItem? = null
     suspend fun saveVerifiedMetadata(item: VerifiedRecommendationItem) = Unit
+    suspend fun loadImdbRating(
+        mediaKey: String,
+        maxAgeMs: Long,
+    ): ImdbRatingSnapshot? = null
+    suspend fun saveImdbRating(
+        mediaKey: String,
+        snapshot: ImdbRatingSnapshot,
+    ) = Unit
 }
 
 data class CachedRecommendationCatalogPage(
@@ -80,6 +88,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
     private val recommendationFile = File(cacheDir, "recommendations-v1.json")
     private val recommendationPageFile = File(cacheDir, "recommendation-pages-v3.json")
     private val metadataFile = File(cacheDir, "recommendation-metadata-v1.json")
+    private val imdbRatingFile = File(cacheDir, "imdb-ratings-v1.json")
     private val mutex = Mutex()
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pendingMetadata = linkedMapOf<String, VerifiedRecommendationItem>()
@@ -451,6 +460,88 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         }
     }
 
+    override suspend fun loadImdbRating(
+        mediaKey: String,
+        maxAgeMs: Long,
+    ): ImdbRatingSnapshot? = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val entries = JSONObject(imdbRatingFile.readText())
+                    .optJSONArray("entries") ?: return@runCatching null
+                val entry = (0 until entries.length())
+                    .mapNotNull(entries::optJSONObject)
+                    .firstOrNull { it.optString("key") == mediaKey }
+                    ?: return@runCatching null
+                val fetchedAt = entry.optLong("fetchedAt")
+                if (System.currentTimeMillis() - fetchedAt > maxAgeMs) {
+                    return@runCatching null
+                }
+                val imdbId = entry.optString("imdbId")
+                    .takeIf { it.matches(Regex("tt\\d+")) }
+                    ?: return@runCatching null
+                val type = MediaType.from(entry.optString("type"))
+                val state = com.aliflix.app.model.RatingSourceState.entries
+                    .firstOrNull { it.name == entry.optString("state") }
+                    ?: return@runCatching null
+                ImdbRatingSnapshot(
+                    identity = ImdbTitleIdentity(
+                        imdbId = imdbId,
+                        title = entry.optString("title"),
+                        year = entry.optInt("year").takeIf { entry.has("year") },
+                        type = type,
+                    ),
+                    rating = entry.optDouble("rating").takeIf {
+                        entry.has("rating") && !it.isNaN() && it in 0.1..10.0
+                    },
+                    voteCount = entry.optInt("votes").takeIf {
+                        entry.has("votes") && it >= 0
+                    },
+                    state = state,
+                    fetchedAtMillis = fetchedAt,
+                )
+            }.getOrNull()
+        }
+    }
+
+    override suspend fun saveImdbRating(
+        mediaKey: String,
+        snapshot: ImdbRatingSnapshot,
+    ) = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            val previous = runCatching {
+                JSONObject(imdbRatingFile.readText()).optJSONArray("entries")
+            }.getOrNull()
+            val entries = buildList {
+                add(
+                    JSONObject()
+                        .put("key", mediaKey)
+                        .put("imdbId", snapshot.identity.imdbId)
+                        .put("title", snapshot.identity.title)
+                        .put("type", snapshot.identity.type.routeName)
+                        .put("state", snapshot.state.name)
+                        .put("fetchedAt", snapshot.fetchedAtMillis)
+                        .apply {
+                            snapshot.identity.year?.let { put("year", it) }
+                            snapshot.rating?.let { put("rating", it) }
+                            snapshot.voteCount?.let { put("votes", it) }
+                        },
+                )
+                if (previous != null) {
+                    (0 until previous.length())
+                        .mapNotNull(previous::optJSONObject)
+                        .filterNot { it.optString("key") == mediaKey }
+                        .sortedByDescending { it.optLong("fetchedAt") }
+                        .take(MAX_IMDB_RATING_ENTRIES - 1)
+                        .forEach(::add)
+                }
+            }
+            writeAtomically(
+                imdbRatingFile,
+                JSONObject().put("entries", JSONArray(entries)).toString(),
+            )
+        }
+    }
+
     private suspend fun flushPendingMetadata() = mutex.withLock {
         if (pendingMetadata.isEmpty()) return@withLock
         val batch = pendingMetadata.values.toList()
@@ -635,6 +726,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         const val MAX_PLOT_CACHE_ENTRIES = 24
         const val MAX_RECOMMENDATION_CACHE_ENTRIES = 80
         const val MAX_RECOMMENDATION_PAGE_CACHE_ENTRIES = 72
+        const val MAX_IMDB_RATING_ENTRIES = 600
         const val MAX_METADATA_CACHE_ENTRIES = 600
         const val METADATA_WRITE_DEBOUNCE_MS = 250L
     }

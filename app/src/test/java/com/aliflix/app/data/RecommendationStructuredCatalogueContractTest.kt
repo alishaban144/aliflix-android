@@ -220,7 +220,7 @@ class RecommendationStructuredCatalogueContractTest {
     }
 
     @Test
-    fun cursorExcludesSeenTitlesAndCarriesVerifiedMetadataAcrossPages() = runTest {
+    fun cursorExcludesSeenTitlesWithoutInventingRequestedGenres() = runTest {
         val requestedPages = CopyOnWriteArrayList<Int>()
         val requestedUrls = CopyOnWriteArrayList<String>()
         val client = CatalogClient(
@@ -246,15 +246,15 @@ class RecommendationStructuredCatalogueContractTest {
         assertNotNull(firstCursor)
         assertEquals(20, first.items.size)
         assertEquals(2, firstCursor?.page)
-        assertTrue(first.items.all { it.metadata.genresVerified })
-        assertTrue(first.items.all { "Thriller" in it.media.genres })
+        assertTrue(first.items.none { it.metadata.genresVerified })
+        assertTrue(first.items.none { "Thriller" in it.media.genres })
 
         val second = client.recommendationPage(spec, firstCursor!!)
         assertEquals((21..39).toList(), second.items.map { it.media.id })
         assertFalse(second.items.any { it.media.id == 1 })
         assertEquals(39, second.nextCursor?.seenKeys?.size)
         assertEquals(3, second.nextCursor?.page)
-        assertTrue(second.items.all { it.metadata.genresVerified })
+        assertTrue(second.items.none { it.metadata.genresVerified })
         assertEquals(listOf(1, 1, 2, 2), requestedPages.sorted())
         assertTrue(requestedUrls.take(2).all { it.endsWith("/discover/movie") })
         assertTrue(requestedUrls.drop(2).all { it.endsWith("/discover/movie/items") })

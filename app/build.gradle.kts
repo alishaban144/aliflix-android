@@ -25,8 +25,8 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 35
-        versionName = "2.7.16"
+        versionCode = 36
+        versionName = "2.7.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -119,6 +119,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("org.jsoup:jsoup:1.22.2")
+    implementation("com.google.mediapipe:tasks-text:0.10.35")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

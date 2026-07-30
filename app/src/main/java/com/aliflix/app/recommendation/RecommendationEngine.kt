@@ -4,53 +4,35 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import kotlin.math.abs
 import kotlin.math.ln
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+fun interface SemanticTextScorer {
+    fun similarity(query: String, document: String): Double?
+}
+
 object RecommendationQuestionSelector {
-    const val MAX_QUESTIONS = 5
-    private const val MIN_INFORMATION_GAIN = 0.15
-    private const val MIN_METADATA_COVERAGE = 0.70
+    const val MAX_QUESTIONS = 2
+    private const val MIN_INFORMATION_GAIN = 0.12
+    private const val MIN_METADATA_COVERAGE = 0.55
+    private const val MIN_CANDIDATE_POOL = 12
 
     fun nextQuestion(
         preferences: RecommendationPreferences,
         candidates: List<RecommendationCandidate>,
     ): RecommendationQuestion? {
-        if (preferences.askedQuestionIds.size >= MAX_QUESTIONS || preferences.surpriseMe) {
-            return null
-        }
         if (
-            preferences.explicitSignalCount == 0 &&
-            RecommendationDimension.MOOD !in preferences.answeredDimensions
+            preferences.askedQuestionIds.count(::isTailoredQuestionId) >= MAX_QUESTIONS ||
+            preferences.surpriseMe ||
+            candidates.size < MIN_CANDIDATE_POOL
         ) {
-            return moodQuestion()
+            return null
         }
 
         val proposals = buildList {
-            if (RecommendationDimension.VIEWING_CONTEXT !in preferences.answeredDimensions) {
-                val contextRelevance = if (
-                    preferences.moods.any {
-                        it.value in setOf(
-                            RecommendationMood.SCARY,
-                            RecommendationMood.FUNNY,
-                            RecommendationMood.ROMANTIC,
-                        )
-                    }
-                ) {
-                    0.58
-                } else {
-                    0.10
-                }
-                add(QuestionProposal(viewingContextQuestion(), contextRelevance, 1.0))
-            }
-            if (RecommendationDimension.CONTENT_TYPE !in preferences.answeredDimensions) {
-                add(
-                    distributionProposal(
-                        question = contentTypeQuestion(),
-                        candidates = candidates,
-                        bucket = { it.media.type.routeName },
-                    ),
-                )
+            if (RecommendationDimension.SUBJECTIVE_FACET !in preferences.answeredDimensions) {
+                facetContrastProposal(preferences, candidates)?.let(::add)
             }
             if (RecommendationDimension.RUNTIME !in preferences.answeredDimensions) {
                 add(
@@ -71,10 +53,7 @@ object RecommendationQuestionSelector {
                     ),
                 )
             }
-            if (
-                RecommendationDimension.GENRE !in preferences.answeredDimensions &&
-                preferences.includedGenres.isEmpty()
-            ) {
+            if (preferences.includedGenres.isEmpty()) {
                 add(
                     distributionProposal(
                         question = genreQuestion(candidates),
@@ -128,9 +107,6 @@ object RecommendationQuestionSelector {
                     ),
                 )
             }
-            if (RecommendationDimension.FAMILIARITY !in preferences.answeredDimensions) {
-                add(QuestionProposal(familiarityQuestion(), 0.16, 1.0))
-            }
         }
 
         return proposals
@@ -143,12 +119,10 @@ object RecommendationQuestionSelector {
     }
 
     fun progressMessage(preferences: RecommendationPreferences): String = when {
-        preferences.askedQuestionIds.isEmpty() ->
-            "A little context will make the matches much stronger."
-        preferences.askedQuestionIds.size >= 3 ->
-            "I have a good picture now. One useful detail may still help."
+        preferences.askedQuestionIds.none(::isTailoredQuestionId) ->
+            "One useful distinction can sharpen these matches."
         else ->
-            "The shortlist is taking shape."
+            "One final distinction may help."
     }
 
     internal fun informationGain(values: List<String>): Double {
@@ -184,6 +158,76 @@ object RecommendationQuestionSelector {
         } else {
             candidate.metadata.runtimeMinutes
         }
+
+    private fun facetContrastProposal(
+        preferences: RecommendationPreferences,
+        candidates: List<RecommendationCandidate>,
+    ): QuestionProposal? {
+        val selectedIds = (
+            preferences.semanticFacets.map { it.value.id } +
+                preferences.excludedFacets.map { it.value.id }
+            ).toSet()
+        val facetsByCandidate = candidates.associateWith { candidate ->
+            RecommendationOntology.detect(
+                listOf(
+                    candidate.media.title,
+                    candidate.media.overview,
+                    candidate.media.genres.joinToString(" "),
+                    candidate.evidence,
+                ).joinToString(" "),
+            ).filterNot { it.id in selectedIds }
+        }
+        val category = SemanticFacetCategory.entries
+            .asSequence()
+            .map { category ->
+                val values = facetsByCandidate.values.mapNotNull { facets ->
+                    facets.firstOrNull { it.category == category }?.id
+                }
+                Triple(category, informationGain(values), values.size.toDouble() / candidates.size)
+            }
+            .filter { (_, gain, coverage) ->
+                gain >= MIN_INFORMATION_GAIN && coverage >= MIN_METADATA_COVERAGE
+            }
+            .maxByOrNull { (_, gain, coverage) -> gain * coverage }
+            ?: return null
+        val categoryFacets = facetsByCandidate.values
+            .flatten()
+            .filter { it.category == category.first }
+            .groupingBy(SemanticFacet::id)
+            .eachCount()
+            .entries
+            .sortedByDescending(Map.Entry<String, Int>::value)
+            .mapNotNull { RecommendationOntology.byId(it.key) }
+            .take(3)
+        if (categoryFacets.size < 2) return null
+        val question = RecommendationQuestion(
+            id = "contrast:${category.first.name.lowercase()}:" +
+                categoryFacets.joinToString(",") { it.id },
+            dimension = RecommendationDimension.SUBJECTIVE_FACET,
+            text = when (category.first) {
+                SemanticFacetCategory.PACE -> "Which pace feels closer?"
+                SemanticFacetCategory.TONE -> "Which tone fits tonight?"
+                SemanticFacetCategory.THEME -> "Which theme matters more?"
+                SemanticFacetCategory.STYLE -> "Which style are you after?"
+                SemanticFacetCategory.NARRATIVE -> "Which story direction fits better?"
+                else -> "Which direction feels closer?"
+            },
+            type = RecommendationQuestionType.SINGLE_SELECT,
+            options = categoryFacets.map {
+                RecommendationOption(it.id, it.label, "facet:${it.id}")
+            } + RecommendationOption("any", "Doesn't matter", "any"),
+            supportingText = "These are the strongest differences in the current matches.",
+        )
+        return QuestionProposal(
+            question = question,
+            gain = category.second * category.third + 0.08,
+            coverage = category.third,
+        )
+    }
+
+    private fun isTailoredQuestionId(id: String): Boolean =
+        id.startsWith("contrast:") ||
+            id in setOf("runtime", "genre", "era", "language", "quality")
 
     private fun moodQuestion() = RecommendationQuestion(
         id = "mood",
@@ -223,7 +267,7 @@ object RecommendationQuestionSelector {
     private fun runtimeQuestion() = RecommendationQuestion(
         id = "runtime",
         dimension = RecommendationDimension.RUNTIME,
-        text = "How much time do you have?",
+        text = "The strongest matches split by length. Which side fits better?",
         type = RecommendationQuestionType.SINGLE_SELECT,
         options = listOf(
             RecommendationOption("under90", "Under 90 min", "max:89"),
@@ -249,7 +293,7 @@ object RecommendationQuestionSelector {
         return RecommendationQuestion(
             id = "genre",
             dimension = RecommendationDimension.GENRE,
-            text = "Any genres you want to lean toward?",
+            text = "The current matches cluster around these genres. Which is closer?",
             type = RecommendationQuestionType.MULTI_SELECT,
             options = available.map {
                 RecommendationOption(it.lowercase().replace(' ', '_'), it, it)
@@ -260,7 +304,7 @@ object RecommendationQuestionSelector {
     private fun eraQuestion() = RecommendationQuestion(
         id = "era",
         dimension = RecommendationDimension.ERA,
-        text = "Any era preference?",
+        text = "The leading matches come from different eras. Which feels closer?",
         type = RecommendationQuestionType.SINGLE_SELECT,
         options = listOf(
             RecommendationOption("modern", "2015 or newer", "min:2015"),
@@ -283,7 +327,7 @@ object RecommendationQuestionSelector {
         return RecommendationQuestion(
             id = "language",
             dimension = RecommendationDimension.LANGUAGE,
-            text = "Original language preference?",
+            text = "The leading matches split by original language. Which is closer?",
             type = RecommendationQuestionType.SINGLE_SELECT,
             options = languages.map {
                 RecommendationOption(it.lowercase().replace(' ', '_'), it, it)
@@ -294,7 +338,7 @@ object RecommendationQuestionSelector {
     private fun qualityQuestion() = RecommendationQuestion(
         id = "quality",
         dimension = RecommendationDimension.QUALITY,
-        text = "How selective should I be about ratings?",
+        text = "The leading matches split by rating profile. Which matters more?",
         type = RecommendationQuestionType.SINGLE_SELECT,
         options = listOf(
             RecommendationOption("imdb8", "IMDb 8+", "imdb:8"),
@@ -346,9 +390,17 @@ object RecommendationRanker {
         likes: List<Media> = emptyList(),
         taste: TasteProfile = TasteProfile(),
         similarityAnchor: Media? = null,
+        semanticScorer: SemanticTextScorer? = null,
     ): List<RecommendationCandidate> {
         val scored = candidates.map { candidate ->
-            scoreCandidate(preferences, candidate, likes, taste, similarityAnchor)
+            scoreCandidate(
+                preferences,
+                candidate,
+                likes,
+                taste,
+                similarityAnchor,
+                semanticScorer,
+            )
         }.sortedByDescending { it.score.total }
         return diversify(scored, scored.size)
     }
@@ -359,8 +411,16 @@ object RecommendationRanker {
         likes: List<Media> = emptyList(),
         taste: TasteProfile = TasteProfile(),
         similarityAnchor: Media? = null,
+        semanticScorer: SemanticTextScorer? = null,
     ): List<RecommendationCandidate> =
-        rank(preferences, candidates, likes, taste, similarityAnchor)
+        rank(
+            preferences,
+            candidates,
+            likes,
+            taste,
+            similarityAnchor,
+            semanticScorer,
+        )
 
     fun shouldRecommend(
         preferences: RecommendationPreferences,
@@ -533,6 +593,50 @@ object RecommendationRanker {
                 return false
             }
         }
+        preferences.requiredStatus
+            ?.takeIf { it.strength == ConstraintStrength.HARD }
+            ?.let { required ->
+                val status = metadata.status?.trim()
+                if (
+                    status.isNullOrBlank() ||
+                    !status.equals(required.value, ignoreCase = true)
+                ) {
+                    return false
+                }
+            }
+        val document = normalize(
+            listOf(
+                media.title,
+                media.overview,
+                media.genres.joinToString(" "),
+                media.cast.joinToString(" "),
+                metadata.director.orEmpty(),
+                candidate.evidence,
+            ).joinToString(" "),
+        )
+        val detectedFacetIds = RecommendationOntology.detect(document)
+            .map(SemanticFacet::id)
+            .toSet()
+        preferences.excludedFacets.forEach { signal ->
+            if (
+                signal.value.id in detectedFacetIds ||
+                signal.value.discoveryTerms.any { term ->
+                    document.contains(normalize(term))
+                }
+            ) {
+                return false
+            }
+        }
+        preferences.unmatchedPreferences
+            .filter { it.negated && it.confidence >= 0.85 }
+            .forEach { exclusion ->
+                val tokens = normalize(exclusion.text)
+                    .split(' ')
+                    .filter { it.length > 2 }
+                if (tokens.isNotEmpty() && tokens.all(document::contains)) {
+                    return false
+                }
+            }
         return true
     }
 
@@ -542,131 +646,149 @@ object RecommendationRanker {
         likes: List<Media>,
         taste: TasteProfile,
         anchor: Media?,
+        semanticScorer: SemanticTextScorer?,
     ): RecommendationCandidate {
         val media = candidate.media
         val genres = media.genres.map(::normalize).toSet()
-        val evidence = normalize(
-            listOf(media.overview, candidate.evidence, media.genres.joinToString(" "))
-                .joinToString(" "),
-        )
+        val document = listOf(
+            media.title,
+            media.overview,
+            media.genres.joinToString(" "),
+            media.cast.joinToString(" "),
+            candidate.metadata.director.orEmpty(),
+            candidate.evidence,
+        ).filter(String::isNotBlank).joinToString(". ")
+        val normalizedDocument = normalize(document)
+        val detectedFacets = RecommendationOntology.detect(document)
+            .map(SemanticFacet::id)
+            .toSet()
 
         val requestedGenres = preferences.includedGenres.map { normalize(it.value) }
-        val genreRatio = if (requestedGenres.isEmpty()) {
-            0.62
-        } else {
-            requestedGenres.count(genres::contains).toDouble() / requestedGenres.size
+        val genreFit = ratio(requestedGenres) { it in genres }
+        val moodFit = ratio(preferences.moods) { signal ->
+            moodKeywords[signal.value].orEmpty().any(normalizedDocument::contains)
         }
-        val moodRatio = if (preferences.moods.isEmpty()) {
-            0.62
-        } else {
-            preferences.moods.count { signal ->
-                moodKeywords[signal.value].orEmpty().any(evidence::contains)
-            }.toDouble() / preferences.moods.size
-        }
-        val contentScore = (genreRatio * 0.62 + moodRatio * 0.38) * 30.0
-
-        val similarityScore = if (anchor != null && media.key != anchor.key) {
-            (RelatedContentEngine.similarity(anchor, media) / 120.0)
-                .coerceIn(0.0, 1.0) * 18.0
-        } else {
-            9.0
-        }
-
-        val runtime = runtimeFor(candidate)
-        val runtimeFit = when {
-            preferences.preferredRuntimeMinutes != null && runtime != null ->
-                (1.0 - abs(runtime - preferences.preferredRuntimeMinutes.value) / 90.0)
-                    .coerceIn(0.0, 1.0)
-            preferences.runtimeMinimumMinutes != null && runtime != null ->
-                if (runtime >= preferences.runtimeMinimumMinutes.value) 1.0 else 0.0
-            preferences.runtimeMaximumMinutes != null && runtime != null ->
-                if (runtime <= preferences.runtimeMaximumMinutes.value) 1.0 else 0.0
-            else -> 0.62
-        }
-        val year = media.year.take(4).toIntOrNull()
-        val yearFit = when {
-            preferences.yearMinimum != null && year != null ->
-                if (year >= preferences.yearMinimum.value) 1.0 else 0.0
-            preferences.yearMaximum != null && year != null ->
-                if (year <= preferences.yearMaximum.value) 1.0 else 0.0
-            else -> 0.62
-        }
-        val languageFit = when {
-            preferences.originalLanguage != null &&
-                !candidate.metadata.originalLanguage.isNullOrBlank() ->
-                if (
-                    candidate.metadata.originalLanguage.equals(
-                        preferences.originalLanguage.value,
-                        ignoreCase = true,
-                    )
-                ) {
-                    1.0
-                } else {
-                    0.0
+        val facetFit = ratio(preferences.semanticFacets) {
+            it.value.id in detectedFacets ||
+                it.value.discoveryTerms.any { term ->
+                    normalizedDocument.contains(normalize(term))
                 }
-            else -> 0.62
         }
-        val contextualFit = (runtimeFit * 0.5 + yearFit * 0.25 + languageFit * 0.25) * 16.0
-
-        val availableRatings = buildList {
-            media.imdbRating?.let { add(it / 10.0) }
-            media.rottenTomatoesRating?.let { add(it / 100.0) }
-            media.rating.takeIf { it > 0.0 }?.let { add(it / 10.0) }
+        val unmatchedTerms = preferences.unmatchedPreferences
+            .filterNot(UnmatchedPreference::negated)
+            .flatMap { normalize(it.text).split(' ') }
+            .filter { it.length > 2 }
+            .distinct()
+        val unmatchedFit = ratio(unmatchedTerms, normalizedDocument::contains)
+        val contextFit = viewingContextFit(preferences.viewingContext?.value, normalizedDocument)
+        val activeLexical = buildList {
+            if (requestedGenres.isNotEmpty()) add(genreFit to 0.32)
+            if (preferences.moods.isNotEmpty()) add(moodFit to 0.18)
+            if (preferences.semanticFacets.isNotEmpty()) add(facetFit to 0.30)
+            if (unmatchedTerms.isNotEmpty()) add(unmatchedFit to 0.15)
+            if (preferences.viewingContext != null) add(contextFit to 0.05)
         }
-        val qualityCoverage = availableRatings.size / 3.0
-        val qualityMean = availableRatings.average().takeUnless(Double::isNaN) ?: 0.5
-        val qualityScore = qualityMean.coerceIn(0.0, 1.0) * 16.0
+        val lexicalValue = weightedAverage(activeLexical)
 
-        val personal = PersonalizationEngine.match(media, likes)?.score?.div(100.0) ?: 0.5
-        val tasteAffinity = media.genres.map { "genre:${normalize(it)}" }
+        val semanticQuery = RecommendationQueryBuilder.build(preferences)
+        val semanticValue = if (
+            semanticScorer != null &&
+            semanticQuery.isNotBlank() &&
+            document.isNotBlank()
+        ) {
+            semanticScorer.similarity(semanticQuery, document)
+                ?.coerceIn(0.0, 1.0)
+        } else {
+            null
+        }
+
+        val sourceRanks = if (candidate.sourceRanks.isNotEmpty()) {
+            candidate.sourceRanks
+        } else {
+            candidate.sources.associateWith { candidate.sourcePosition.coerceAtLeast(0) }
+        }
+        val sourceValue = reciprocalRankFusion(sourceRanks)
+
+        val ratings = listOf(
+            media.imdbRating?.let { rating ->
+                val voteConfidence = media.imdbVoteCount?.let {
+                    (log10(it.toDouble() + 1.0) / 6.0).coerceIn(0.35, 1.0)
+                } ?: 0.58
+                (rating / 10.0).coerceIn(0.0, 1.0) * voteConfidence
+            },
+            media.rottenTomatoesRating?.let { (it / 100.0).coerceIn(0.0, 1.0) },
+            media.rating.takeIf { it > 0.0 }?.let { (it / 10.0).coerceIn(0.0, 1.0) },
+        )
+        val qualityValue = ratings.filterNotNull().sum() / ratings.size
+
+        val anchorValue = anchor
+            ?.takeIf { media.key != it.key }
+            ?.let {
+                (RelatedContentEngine.similarity(it, media) / 120.0)
+                    .coerceIn(0.0, 1.0)
+            }
+
+        val personal = PersonalizationEngine.match(media, likes)
+            ?.score
+            ?.div(100.0)
+        val era = media.year.take(4).toIntOrNull()?.let { "${it / 10 * 10}s" }
+        val tasteKeys = buildList {
+            add("type:${media.type.routeName}")
+            addAll(media.genres.map { "genre:${normalize(it)}" })
+            era?.let { add("era:$it") }
+            addAll(detectedFacets.map { "facet:$it" })
+        }
+        val learnedTaste = tasteKeys
             .mapNotNull(taste.signals::get)
-            .map { signal -> (signal.affinity * signal.confidence + 1.0) / 2.0 }
+            .map { signal ->
+                ((signal.affinity * signal.confidence) + 1.0) / 2.0
+            }
             .average()
             .takeUnless(Double::isNaN)
-            ?: 0.5
-        val tasteScore = (personal * 0.55 + tasteAffinity * 0.45) * 10.0
+        val novelty = familiarityFit(preferences.familiarity?.value, media, candidate)
+        val tasteValue = listOfNotNull(personal, learnedTaste, novelty)
+            .average()
+            .takeUnless(Double::isNaN)
 
-        val consensus = (candidate.sourceCount.coerceAtMost(3) / 3.0) * 0.65
-        val position = (1.0 - candidate.sourcePosition.coerceAtMost(20) / 20.0) * 0.35
-        val discoveryScore = (consensus + position) * 6.0
-
-        val noveltyScore = when (preferences.familiarity?.value) {
-            FamiliarityPreference.HIDDEN_GEM,
-            FamiliarityPreference.OBSCURE,
-            -> (1.0 - (media.rating / 10.0).coerceIn(0.0, 1.0) * 0.25) * 4.0
-            FamiliarityPreference.POPULAR,
-            FamiliarityPreference.FAMILIAR,
-            -> ((candidate.sourceCount / 3.0).coerceIn(0.0, 1.0) * 0.6 + 0.4) * 4.0
-            null -> 2.5
+        val components = buildList {
+            semanticValue?.let { add(WeightedComponent("semantic", 35.0, it)) }
+            if (activeLexical.isNotEmpty()) {
+                add(WeightedComponent("lexical", 20.0, lexicalValue))
+            }
+            add(WeightedComponent("source", 15.0, sourceValue))
+            add(WeightedComponent("quality", 15.0, qualityValue))
+            anchorValue?.let { add(WeightedComponent("anchor", 10.0, it)) }
+            tasteValue?.let { add(WeightedComponent("taste", 5.0, it)) }
         }
-
-        val metadataSignals = listOf(
-            runtime != null,
-            year != null,
-            !candidate.metadata.originalLanguage.isNullOrBlank(),
-            media.imdbRating != null,
-            media.rottenTomatoesRating != null,
-            media.genres.isNotEmpty(),
-        )
-        val coverage = (
-            metadataSignals.count { it }.toDouble() / metadataSignals.size
-            ).coerceIn(0.0, 1.0)
-        val coveragePenalty = 0.85 + coverage * 0.15
+        val activeWeight = components.sumOf(WeightedComponent::weight).coerceAtLeast(1.0)
+        val negativeFacetHits = preferences.excludedFacets.count { signal ->
+            signal.value.id in detectedFacets ||
+                signal.value.discoveryTerms.any {
+                    normalizedDocument.contains(normalize(it))
+                }
+        }
+        val negativeTermHits = preferences.unmatchedPreferences
+            .filter(UnmatchedPreference::negated)
+            .count { normalizedDocument.contains(normalize(it.text)) }
+        val softExclusionPenalty = (
+            negativeFacetHits * 12.0 + negativeTermHits * 8.0
+            ).coerceAtMost(30.0)
         val total = (
-            contentScore + similarityScore + contextualFit + qualityScore +
-                tasteScore + discoveryScore + noveltyScore
-            ) * coveragePenalty
+            components.sumOf { it.weight * it.value } / activeWeight * 100.0 -
+                softExclusionPenalty
+            ).coerceIn(0.0, 100.0)
 
         val breakdown = RecommendationScoreBreakdown(
-            contentMatch = contentScore,
-            similarity = similarityScore,
-            contextualFit = contextualFit,
-            quality = qualityScore,
-            taste = tasteScore,
-            discovery = discoveryScore,
-            novelty = noveltyScore,
-            coverage = max(coverage, qualityCoverage),
-            total = total.coerceIn(0.0, 100.0),
+            contentMatch = lexicalValue * 20.0,
+            similarity = (anchorValue ?: semanticValue ?: 0.0) * 10.0,
+            contextualFit = contextFit * 5.0,
+            quality = qualityValue * 15.0,
+            taste = (tasteValue ?: 0.0) * 5.0,
+            discovery = sourceValue * 15.0,
+            novelty = novelty * 5.0,
+            coverage = components.count { it.value > 0.0 }.toDouble() /
+                components.size.coerceAtLeast(1),
+            total = total,
         )
         return candidate.copy(
             score = breakdown,
@@ -767,11 +889,91 @@ object RecommendationRanker {
         candidates: List<RecommendationCandidate>,
     ): Int = candidates.count { satisfiesHardConstraints(preferences, it) }
 
+    private fun <T> ratio(
+        values: List<T>,
+        matches: (T) -> Boolean,
+    ): Double = if (values.isEmpty()) {
+        0.0
+    } else {
+        values.count(matches).toDouble() / values.size
+    }
+
+    private fun weightedAverage(values: List<Pair<Double, Double>>): Double {
+        val weight = values.sumOf { it.second }
+        if (weight <= 0.0) return 0.0
+        return values.sumOf { (value, itemWeight) -> value * itemWeight } / weight
+    }
+
+    private fun viewingContextFit(
+        context: ViewingContext?,
+        document: String,
+    ): Double = when (context) {
+        ViewingContext.FRIENDS,
+        ViewingContext.GROUP,
+        -> lexicalAny(document, "comedy", "funny", "action", "mystery", "exciting")
+        ViewingContext.FAMILY,
+        ViewingContext.CHILDREN,
+        -> lexicalAny(document, "family", "animation", "adventure", "friendship")
+        ViewingContext.PARTNER ->
+            lexicalAny(document, "romance", "comedy", "mystery", "relationship", "drama")
+        ViewingContext.ALONE ->
+            lexicalAny(document, "psychological", "mystery", "drama", "documentary")
+        null -> 0.0
+    }
+
+    private fun lexicalAny(document: String, vararg words: String): Double {
+        if (words.isEmpty()) return 0.0
+        return words.count(document::contains).toDouble() / words.size
+    }
+
+    private fun reciprocalRankFusion(ranks: Map<String, Int>): Double {
+        if (ranks.isEmpty()) return 0.0
+        var total = 0.0
+        ranks.forEach { (source, rank) ->
+            val familyCap = when {
+                "REDDIT" in source.uppercase() -> 0.65
+                "SESSION" in source.uppercase() -> 0.40
+                else -> 1.0
+            }
+            total += familyCap / (60.0 + rank.coerceAtLeast(0) + 1.0)
+        }
+        val idealSources = minOf(4, ranks.size).coerceAtLeast(1)
+        val ideal = (0 until idealSources).sumOf { 1.0 / (61.0 + it) }
+        return (total / ideal).coerceIn(0.0, 1.0)
+    }
+
+    private fun familiarityFit(
+        preference: FamiliarityPreference?,
+        media: Media,
+        candidate: RecommendationCandidate,
+    ): Double {
+        val votes = media.imdbVoteCount ?: 0
+        val popularity = (
+            log10(votes.toDouble() + 1.0) / 6.0 * 0.75 +
+                (candidate.sourceCount.coerceAtMost(4) / 4.0) * 0.25
+            ).coerceIn(0.0, 1.0)
+        return when (preference) {
+            FamiliarityPreference.HIDDEN_GEM -> (1.0 - abs(popularity - 0.42) / 0.58)
+                .coerceIn(0.0, 1.0)
+            FamiliarityPreference.OBSCURE -> 1.0 - popularity
+            FamiliarityPreference.POPULAR,
+            FamiliarityPreference.FAMILIAR,
+            -> popularity
+            null -> 0.5
+        }
+    }
+
     private fun normalize(value: String): String =
         value.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
 
     private fun formatOneDecimal(value: Double): String =
         String.format(java.util.Locale.US, "%.1f", value)
+
+    private data class WeightedComponent(
+        val name: String,
+        val weight: Double,
+        val value: Double,
+    )
 
     private val moodKeywords = mapOf(
         RecommendationMood.FUNNY to setOf("comedy", "funny", "humor", "laugh"),

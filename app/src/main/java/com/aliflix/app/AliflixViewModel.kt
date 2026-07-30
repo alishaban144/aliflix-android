@@ -17,9 +17,12 @@ import com.aliflix.app.model.Season
 import com.aliflix.app.recommendation.CatalogRecommendationCandidateRepository
 import com.aliflix.app.recommendation.RecommendationOrchestrator
 import com.aliflix.app.recommendation.RecommendationMediaKind
+import com.aliflix.app.recommendation.PreferenceCorrection
 import com.aliflix.app.recommendation.RecommendationQuestion
 import com.aliflix.app.recommendation.RecommendationStore
 import com.aliflix.app.recommendation.RecommendationUiState
+import com.aliflix.app.recommendation.AndroidSemanticModelManager
+import com.aliflix.app.recommendation.SemanticModelState
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -75,12 +78,17 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private val library = LibraryStore(application)
     private val playbackProviderRepository = PlaybackProviderRepository(application)
     private val recommendationStore = RecommendationStore(application)
+    private val semanticModelManager = AndroidSemanticModelManager(
+        context = application,
+        scope = viewModelScope,
+    )
     private val recommendationOrchestrator = RecommendationOrchestrator(
         scope = viewModelScope,
         repository = CatalogRecommendationCandidateRepository(client),
         store = recommendationStore,
         likesProvider = { library.likes.value },
         recentlyPlayedProvider = { library.recent.value },
+        semanticScorerProvider = semanticModelManager::scorerOrNull,
     )
     private var searchJob: Job? = null
     private var detailJob: Job? = null
@@ -111,6 +119,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         recommendationOrchestrator.state
     val aiRecommendationsEnabled: StateFlow<Boolean> =
         recommendationStore.enabled
+    val semanticModelState: StateFlow<SemanticModelState> =
+        semanticModelManager.state
+    val shouldOfferSemanticModel: StateFlow<Boolean> =
+        semanticModelManager.shouldOfferDownload
 
     fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
         playbackProviderRepository.selectGeneralProvider(provider)
@@ -434,6 +446,20 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun acceptRecommendation(media: Media) =
         recommendationOrchestrator.accept(media)
 
+    fun moreLikeRecommendation(media: Media) =
+        recommendationOrchestrator.moreLike(media)
+
+    fun lessLikeRecommendation(media: Media) =
+        recommendationOrchestrator.lessLike(media)
+
+    fun markRecommendationSeen(media: Media) =
+        recommendationOrchestrator.alreadySeen(media)
+
+    fun correctRecommendationPreference(key: String) =
+        recommendationOrchestrator.applyCorrection(
+            PreferenceCorrection(key = key, replacement = null),
+        )
+
     fun relaxRecommendationConstraint(id: String) {
         pauseBackgroundHomeRefresh()
         recommendationOrchestrator.applyRelaxation(id)
@@ -450,6 +476,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun resetRecommendationTaste() = recommendationOrchestrator.resetTaste()
+
+    fun downloadSemanticModel() = semanticModelManager.download()
+
+    fun dismissSemanticModelOffer() = semanticModelManager.dismissOffer()
+
+    fun deleteSemanticModel() = semanticModelManager.delete()
 
     private fun pauseBackgroundHomeRefresh() {
         homeRefreshJob?.cancel()

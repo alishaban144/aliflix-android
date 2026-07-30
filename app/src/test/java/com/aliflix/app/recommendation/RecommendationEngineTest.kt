@@ -98,6 +98,37 @@ class RecommendationEngineTest {
     }
 
     @Test
+    fun finishedSeriesRequirementFailsClosedAndRejectsReturningShows() {
+        val preferences = RecommendationPreferences(
+            contentType = hard(RecommendationContentType.TV),
+            requiredStatus = hard("Ended"),
+        )
+        val ended = candidate(1, type = MediaType.TV).copy(
+            metadata = candidate(1, type = MediaType.TV).metadata.copy(
+                status = "Ended",
+            ),
+        )
+        val returning = candidate(2, type = MediaType.TV).copy(
+            metadata = candidate(2, type = MediaType.TV).metadata.copy(
+                status = "Returning Series",
+            ),
+        )
+        val unknown = candidate(3, type = MediaType.TV).copy(
+            metadata = candidate(3, type = MediaType.TV).metadata.copy(
+                status = null,
+            ),
+        )
+
+        assertEquals(
+            listOf(ended.media.key),
+            RecommendationRanker.hardFilter(
+                preferences,
+                listOf(ended, returning, unknown),
+            ).map { it.media.key },
+        )
+    }
+
+    @Test
     fun seenRecentlyPlayedShownAndRejectedTitlesNeverReturn() {
         val items = (1..5).map { candidate(it) }
         val preferences = RecommendationPreferences(
@@ -181,6 +212,35 @@ class RecommendationEngineTest {
             ranked.map { it.media.key }.toSet(),
         )
         assertNotEquals(ranked[0].media.key, ranked[1].media.key)
+    }
+
+    @Test
+    fun canonicalMergeRetainsLaterEditorialAndCommunityEvidence() {
+        val tmdb = candidate(1, overview = "Short synopsis.").copy(
+            sources = setOf("TMDB"),
+            sourceRanks = mapOf("TMDB" to 2),
+            sourceCount = 1,
+            evidence = "Structured catalogue",
+        )
+        val laterEvidence = tmdb.copy(
+            media = tmdb.media.copy(
+                overview = "A longer psychological slow-burn investigation.",
+                imdbRating = 8.2,
+                imdbVoteCount = 145_000,
+            ),
+            sources = setOf("EDITORIAL", "REDDIT"),
+            sourceRanks = mapOf("EDITORIAL" to 1, "REDDIT" to 4),
+            sourceCount = 2,
+            evidence = "Critic shortlist. Community nomination.",
+        )
+
+        val merged = mergeRecommendationCandidates(tmdb, laterEvidence)
+
+        assertEquals(setOf("TMDB", "EDITORIAL", "REDDIT"), merged.sources)
+        assertEquals(3, merged.sourceRanks.size)
+        assertEquals(8.2, merged.media.imdbRating ?: 0.0, 0.001)
+        assertTrue("slow-burn" in merged.media.overview)
+        assertTrue("Community nomination" in merged.evidence)
     }
 
     @Test

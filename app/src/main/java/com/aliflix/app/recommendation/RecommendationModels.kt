@@ -2,6 +2,7 @@ package com.aliflix.app.recommendation
 
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import java.security.MessageDigest
 
 enum class PreferenceOrigin {
     EXPLICIT,
@@ -20,6 +21,53 @@ data class PreferenceSignal<T>(
     val origin: PreferenceOrigin,
     val strength: ConstraintStrength,
     val confidence: Double = 1.0,
+)
+
+enum class SemanticFacetCategory {
+    SUBGENRE,
+    THEME,
+    TONE,
+    PACE,
+    SETTING,
+    PLOT_DEVICE,
+    STYLE,
+    NARRATIVE,
+    AUDIENCE,
+    CONTENT_INTENSITY,
+}
+
+data class SemanticFacet(
+    val id: String,
+    val label: String,
+    val category: SemanticFacetCategory,
+    val discoveryTerms: List<String> = listOf(label),
+)
+
+data class UnmatchedPreference(
+    val text: String,
+    val negated: Boolean = false,
+    val confidence: Double = 0.65,
+)
+
+data class ConstraintSignal(
+    val key: String,
+    val value: String,
+    val origin: PreferenceOrigin,
+    val strength: ConstraintStrength,
+    val confidence: Double = 1.0,
+)
+
+data class PreferenceCorrection(
+    val key: String,
+    val replacement: String?,
+)
+
+data class RecommendationIntentV2(
+    val mediaKind: RecommendationMediaKind,
+    val hardConstraints: List<ConstraintSignal>,
+    val softFacets: List<SemanticFacet>,
+    val excludedFacets: List<SemanticFacet>,
+    val unmatchedPreferences: List<UnmatchedPreference>,
 )
 
 enum class RecommendationContentType {
@@ -70,12 +118,17 @@ data class CatalogDiscoverySpec(
     val minimumRottenTomatoes: Int? = null,
     val minimumTmdb: Double? = null,
     val originalLanguage: String? = null,
+    val requiredStatus: String? = null,
     val moods: List<String> = emptyList(),
     val viewingContext: String? = null,
     val familiarity: String? = null,
     val similarityTitle: String? = null,
+    val semanticFacets: List<String> = emptyList(),
+    val excludedFacets: List<String> = emptyList(),
     val supplementalTerms: List<String> = emptyList(),
     val discoveryText: String = "",
+    val sourcePolicyVersion: Int = 2,
+    val semanticModelVersion: String = "use-v1",
 ) {
     /**
      * A stable, conversation-free key suitable for persistent page caches.
@@ -93,6 +146,16 @@ data class CatalogDiscoverySpec(
             minimumRottenTomatoes.orEmptyKey(),
             minimumTmdb?.toString().orEmpty(),
             originalLanguage.orEmpty().trim().lowercase(),
+            requiredStatus.orEmpty().trim().lowercase(),
+            moods.normalizedKey(),
+            viewingContext.orEmpty().trim().lowercase(),
+            familiarity.orEmpty().trim().lowercase(),
+            similarityTitle.orEmpty().trim().lowercase(),
+            semanticFacets.normalizedKey(),
+            excludedFacets.normalizedKey(),
+            stableHash(supplementalTerms.normalizedKey()),
+            sourcePolicyVersion.toString(),
+            semanticModelVersion,
         ).joinToString("|")
 
     private fun List<String>.normalizedKey(): String = asSequence()
@@ -103,6 +166,12 @@ data class CatalogDiscoverySpec(
         .joinToString(",")
 
     private fun Int?.orEmptyKey(): String = this?.toString().orEmpty()
+
+    private fun stableHash(value: String): String = MessageDigest
+        .getInstance("SHA-256")
+        .digest(value.toByteArray())
+        .take(10)
+        .joinToString("") { "%02x".format(it) }
 
     companion object {
         fun from(preferences: RecommendationPreferences): CatalogDiscoverySpec? {
@@ -115,9 +184,7 @@ data class CatalogDiscoverySpec(
             } ?: return null
             return CatalogDiscoverySpec(
                 mediaKind = kind,
-                includedGenres = preferences.includedGenres
-                    .filter { it.strength == ConstraintStrength.HARD }
-                    .map { it.value },
+                includedGenres = preferences.includedGenres.map { it.value },
                 excludedGenres = preferences.excludedGenres.map { it.value },
                 runtimeMinimumMinutes = preferences.runtimeMinimumMinutes?.value,
                 runtimeMaximumMinutes = preferences.runtimeMaximumMinutes?.value,
@@ -128,11 +195,18 @@ data class CatalogDiscoverySpec(
                     preferences.minimumRottenTomatoes?.value,
                 minimumTmdb = preferences.minimumTmdb?.value,
                 originalLanguage = preferences.originalLanguage?.value,
+                requiredStatus = preferences.requiredStatus?.value,
                 moods = preferences.moods.map { it.value.label },
                 viewingContext = preferences.viewingContext?.value?.label,
                 familiarity = preferences.familiarity?.value?.label,
                 similarityTitle = preferences.similarityTitle?.value,
-                supplementalTerms = preferences.unverifiedTerms,
+                semanticFacets = preferences.semanticFacets.map { it.value.label },
+                excludedFacets = preferences.excludedFacets.map { it.value.label },
+                supplementalTerms = (
+                    preferences.semanticFacets.flatMap { it.value.discoveryTerms } +
+                        preferences.unmatchedPreferences.map { it.text } +
+                        preferences.unverifiedTerms
+                    ).distinct(),
                 discoveryText = RecommendationQueryBuilder.build(preferences),
             )
         }
@@ -157,17 +231,16 @@ data class RequiredMetadataFields(
     val rottenTomatoesRating: Boolean = false,
     val tmdbRating: Boolean = false,
     val tvEpisodeRuntime: Boolean = false,
+    val status: Boolean = false,
 ) {
     val needsTitlePage: Boolean
-        get() = genres || runtime || originalLanguage || tvEpisodeRuntime
+        get() = genres || runtime || originalLanguage || tvEpisodeRuntime || status
 
     companion object {
         fun from(preferences: RecommendationPreferences): RequiredMetadataFields =
             RequiredMetadataFields(
                 genres = preferences.excludedGenres.isNotEmpty() ||
-                    preferences.includedGenres.any {
-                        it.strength == ConstraintStrength.HARD
-                    },
+                    preferences.includedGenres.isNotEmpty(),
                 runtime = preferences.runtimeMinimumMinutes?.strength ==
                     ConstraintStrength.HARD ||
                     preferences.runtimeMaximumMinutes?.strength == ConstraintStrength.HARD,
@@ -185,6 +258,8 @@ data class RequiredMetadataFields(
                             preferences.runtimeMaximumMinutes?.strength ==
                             ConstraintStrength.HARD
                         ),
+                status = preferences.requiredStatus?.strength ==
+                    ConstraintStrength.HARD,
             )
     }
 }
@@ -281,7 +356,9 @@ enum class RecommendationDimension {
     ERA,
     QUALITY,
     LANGUAGE,
+    STATUS,
     FAMILIARITY,
+    SUBJECTIVE_FACET,
     UNSUPPORTED_CONFIRMATION,
 }
 
@@ -300,9 +377,16 @@ data class RecommendationPreferences(
     val minimumRottenTomatoes: PreferenceSignal<Int>? = null,
     val minimumTmdb: PreferenceSignal<Double>? = null,
     val originalLanguage: PreferenceSignal<String>? = null,
+    val requiredStatus: PreferenceSignal<String>? = null,
     val similarityTitle: PreferenceSignal<String>? = null,
     val relativeRuntime: PreferenceSignal<RelativeRuntimePreference>? = null,
     val familiarity: PreferenceSignal<FamiliarityPreference>? = null,
+    val semanticFacets: List<PreferenceSignal<SemanticFacet>> = emptyList(),
+    val excludedFacets: List<PreferenceSignal<SemanticFacet>> = emptyList(),
+    val unmatchedPreferences: List<UnmatchedPreference> = emptyList(),
+    val creatorNames: List<PreferenceSignal<String>> = emptyList(),
+    val castNames: List<PreferenceSignal<String>> = emptyList(),
+    val countryPreferences: List<PreferenceSignal<String>> = emptyList(),
     val surpriseMe: Boolean = false,
     val unverifiedTerms: List<String> = emptyList(),
     val answeredDimensions: Set<RecommendationDimension> = emptySet(),
@@ -323,13 +407,19 @@ data class RecommendationPreferences(
             minimumRottenTomatoes,
             minimumTmdb,
             originalLanguage,
+            requiredStatus,
             similarityTitle,
             relativeRuntime,
             familiarity,
         ).count { it.origin == PreferenceOrigin.EXPLICIT } +
             moods.count { it.origin == PreferenceOrigin.EXPLICIT } +
             includedGenres.count { it.origin == PreferenceOrigin.EXPLICIT } +
-            excludedGenres.count { it.origin == PreferenceOrigin.EXPLICIT }
+            excludedGenres.count { it.origin == PreferenceOrigin.EXPLICIT } +
+            semanticFacets.count { it.origin == PreferenceOrigin.EXPLICIT } +
+            excludedFacets.count { it.origin == PreferenceOrigin.EXPLICIT } +
+            creatorNames.count { it.origin == PreferenceOrigin.EXPLICIT } +
+            castNames.count { it.origin == PreferenceOrigin.EXPLICIT } +
+            countryPreferences.count { it.origin == PreferenceOrigin.EXPLICIT }
 }
 
 data class VerifiedMediaMetadata(
@@ -360,10 +450,39 @@ data class RecommendationCandidate(
     val metadata: VerifiedMediaMetadata = VerifiedMediaMetadata(),
     val evidence: String = "",
     val sources: Set<String> = emptySet(),
+    val sourceRanks: Map<String, Int> = emptyMap(),
     val sourceCount: Int = 0,
     val sourcePosition: Int = 99,
     val score: RecommendationScoreBreakdown = RecommendationScoreBreakdown(),
     val explanation: String = "",
+)
+
+data class CandidateSourceEvidence(
+    val sourceFamily: String,
+    val rank: Int,
+    val evidence: String = "",
+)
+
+data class CandidateDocument(
+    val mediaKey: String,
+    val text: String,
+)
+
+data class CandidateAggregate(
+    val candidate: RecommendationCandidate,
+    val evidence: List<CandidateSourceEvidence>,
+)
+
+data class RecommendationQueryGeneration(
+    val id: Long,
+    val fingerprint: String,
+)
+
+data class RecommendationPageV2(
+    val generation: RecommendationQueryGeneration,
+    val items: List<RecommendationCandidate>,
+    val hasMore: Boolean,
+    val sourceHealth: RecommendationSourceHealth,
 )
 
 enum class RecommendationQuestionType {
@@ -439,6 +558,7 @@ sealed interface RecommendationUiState {
         val loadingMore: Boolean = false,
         val hasMore: Boolean = false,
         val pageError: String? = null,
+        val refinementQuestion: RecommendationQuestion? = null,
         val sourceHealth: RecommendationSourceHealth = RecommendationSourceHealth(),
         @Deprecated("Use sourceHealth")
         val webLimited: Boolean = false,

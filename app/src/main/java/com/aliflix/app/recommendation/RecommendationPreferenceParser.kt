@@ -29,22 +29,39 @@ object RecommendationPreferenceParser {
             return RecommendationParseResult(current)
         }
 
+        val correction = correctionWords.containsMatchIn(normalized)
         var updated = current
         val explicit = PreferenceOrigin.EXPLICIT
         val hard = ConstraintStrength.HARD
         val soft = ConstraintStrength.SOFT
+        if (correction) {
+            updated = updated.copy(
+                moods = emptyList(),
+                includedGenres = emptyList(),
+                semanticFacets = emptyList(),
+                excludedFacets = emptyList(),
+                unmatchedPreferences = emptyList(),
+            )
+        }
         val containsMovie = movieWords.containsMatchIn(clean)
         val containsTv = tvWords.containsMatchIn(clean)
-        if (containsMovie || containsTv) {
+        // Movie/Series is selected locally before free-text interpretation.
+        // The prose can clarify an unset legacy session, but must never turn
+        // a selected, cancellable catalogue stream back into the old EITHER
+        // universe or silently switch it mid-request.
+        if ((containsMovie || containsTv) && current.contentType == null) {
             val type = when {
-                containsMovie && containsTv -> RecommendationContentType.EITHER
+                containsMovie && containsTv -> null
                 containsTv -> RecommendationContentType.TV
                 else -> RecommendationContentType.MOVIE
             }
-            updated = updated.copy(
-                contentType = PreferenceSignal(type, explicit, hard),
-                answeredDimensions = updated.answeredDimensions + RecommendationDimension.CONTENT_TYPE,
-            )
+            if (type != null) {
+                updated = updated.copy(
+                    contentType = PreferenceSignal(type, explicit, hard),
+                    answeredDimensions =
+                        updated.answeredDimensions + RecommendationDimension.CONTENT_TYPE,
+                )
+            }
         }
 
         if (
@@ -104,6 +121,40 @@ object RecommendationPreferenceParser {
             }
         }
 
+        val facetMatches = RecommendationOntology.match(normalized)
+        if (facetMatches.isNotEmpty()) {
+            facetMatches.forEach { match ->
+                if (match.negated) {
+                    updated = updated.copy(
+                        excludedFacets = updated.excludedFacets.upsert(
+                            PreferenceSignal(
+                                match.facet,
+                                explicit,
+                                soft,
+                                confidence = 0.9,
+                            ),
+                        ) { it.value.id == match.facet.id },
+                        semanticFacets = updated.semanticFacets.filterNot {
+                            it.value.id == match.facet.id
+                        },
+                    )
+                } else {
+                    updated = updated.copy(
+                        semanticFacets = updated.semanticFacets.upsert(
+                            PreferenceSignal(match.facet, explicit, soft),
+                        ) { it.value.id == match.facet.id },
+                        excludedFacets = updated.excludedFacets.filterNot {
+                            it.value.id == match.facet.id
+                        },
+                    )
+                }
+            }
+            updated = updated.copy(
+                answeredDimensions =
+                    updated.answeredDimensions + RecommendationDimension.SUBJECTIVE_FACET,
+            )
+        }
+
         viewingAliases.firstNotNullOfOrNull { (context, patterns) ->
             context.takeIf { patterns.any { it.containsMatchIn(normalized) } }
         }?.let { context ->
@@ -143,10 +194,22 @@ object RecommendationPreferenceParser {
         }
 
         parseYears(normalized)?.let { range ->
+            val minimumYear = range.first
+            val maximumYear = range.second
+            if (
+                minimumYear != null &&
+                maximumYear != null &&
+                minimumYear > maximumYear
+            ) {
+                return RecommendationParseResult(
+                    preferences = updated,
+                    confirmation = yearConflictQuestion(minimumYear, maximumYear),
+                )
+            }
             updated = updated.copy(
-                yearMinimum = range.first?.let { PreferenceSignal(it, explicit, hard) }
+                yearMinimum = minimumYear?.let { PreferenceSignal(it, explicit, hard) }
                     ?: updated.yearMinimum,
-                yearMaximum = range.second?.let { PreferenceSignal(it, explicit, hard) }
+                yearMaximum = maximumYear?.let { PreferenceSignal(it, explicit, hard) }
                     ?: updated.yearMaximum,
                 answeredDimensions = updated.answeredDimensions + RecommendationDimension.ERA,
             )
@@ -198,13 +261,70 @@ object RecommendationPreferenceParser {
             )
         }
 
-        familiarityAliases.firstNotNullOfOrNull { (familiarity, patterns) ->
-            familiarity.takeIf { patterns.any { it.containsMatchIn(normalized) } }
-        }?.let { familiarity ->
+        val explicitlyNotMainstream = Regex(
+            """\b(?:not|no|avoid)\s+(?:too\s+)?(?:famous|popular|mainstream|well[- ]known)\b""",
+        ).containsMatchIn(normalized)
+        val familiarity = if (explicitlyNotMainstream) {
+            FamiliarityPreference.OBSCURE
+        } else {
+            familiarityAliases.firstNotNullOfOrNull { (value, patterns) ->
+                value.takeIf { patterns.any { it.containsMatchIn(normalized) } }
+            }
+        }
+        familiarity?.let {
             updated = updated.copy(
-                familiarity = PreferenceSignal(familiarity, explicit, soft),
+                familiarity = PreferenceSignal(it, explicit, soft),
                 answeredDimensions = updated.answeredDimensions + RecommendationDimension.FAMILIARITY,
             )
+        }
+
+        if (
+            containsTv &&
+            Regex(
+                """\b(?:finished|completed|complete|ended|concluded)\s+(?:\w+\s+){0,3}(?:show|series|miniseries)\b|\b(?:show|series|miniseries)\s+(?:that\s+)?(?:is\s+)?(?:finished|completed|ended|concluded)\b""",
+            ).containsMatchIn(normalized)
+        ) {
+            updated = updated.copy(
+                requiredStatus = PreferenceSignal("Ended", explicit, hard),
+                answeredDimensions =
+                    updated.answeredDimensions + RecommendationDimension.STATUS,
+            )
+        }
+
+        parseNamedValues(
+            clean,
+            Regex(
+                """\b(?:directed by|from director|made by)\s+([A-Za-z][A-Za-z .'-]{2,60})""",
+                RegexOption.IGNORE_CASE,
+            ),
+        ).takeIf(List<String>::isNotEmpty)?.let { names ->
+            updated = updated.copy(
+                creatorNames = names.map {
+                    PreferenceSignal(it, explicit, soft)
+                },
+            )
+        }
+        parseNamedValues(
+            clean,
+            Regex(
+                """\b(?:starring|with actor|with actress|featuring)\s+([A-Za-z][A-Za-z .'-]{2,60})""",
+                RegexOption.IGNORE_CASE,
+            ),
+        ).takeIf(List<String>::isNotEmpty)?.let { names ->
+            updated = updated.copy(
+                castNames = names.map {
+                    PreferenceSignal(it, explicit, soft)
+                },
+            )
+        }
+        countryAliases.forEach { (country, aliases) ->
+            if (aliases.any { Regex("""\b${Regex.escape(it)}\b""").containsMatchIn(normalized) }) {
+                updated = updated.copy(
+                    countryPreferences = updated.countryPreferences.upsert(
+                        PreferenceSignal(country, explicit, soft),
+                    ) { it.value.equals(country, ignoreCase = true) },
+                )
+            }
         }
 
         val unverified = unverifiablePatterns
@@ -227,6 +347,21 @@ object RecommendationPreferenceParser {
                             RecommendationOption("remove", "Remove it", "remove"),
                         ),
                     ),
+                )
+            }
+        }
+
+        val unmatched = extractUnmatchedPreferences(normalized, facetMatches)
+        if (unmatched.isNotEmpty()) {
+            updated = updated.copy(
+                unmatchedPreferences = (
+                    if (correction) emptyList() else updated.unmatchedPreferences
+                    ) + unmatched,
+            ).let { value ->
+                value.copy(
+                    unmatchedPreferences = value.unmatchedPreferences
+                        .distinctBy { "${it.negated}:${it.text}" }
+                        .takeLast(MAX_UNMATCHED_PREFERENCES),
                 )
             }
         }
@@ -282,8 +417,18 @@ object RecommendationPreferenceParser {
                 originalLanguage = null,
                 answeredDimensions = answered,
             )
+            RecommendationDimension.STATUS -> preferences.copy(
+                requiredStatus = null,
+                answeredDimensions = answered,
+            )
             RecommendationDimension.FAMILIARITY -> preferences.copy(
                 familiarity = null,
+                answeredDimensions = answered,
+            )
+            RecommendationDimension.SUBJECTIVE_FACET -> preferences.copy(
+                semanticFacets = emptyList(),
+                excludedFacets = emptyList(),
+                unmatchedPreferences = emptyList(),
                 answeredDimensions = answered,
             )
             RecommendationDimension.UNSUPPORTED_CONFIRMATION -> preferences.copy(
@@ -350,15 +495,27 @@ object RecommendationPreferenceParser {
     }
 
     private fun parseYears(text: String): Pair<Int?, Int?>? {
-        Regex("""\b(?:after|newer than)\s+((?:19|20)\d{2})\b""").find(text)?.let {
-            return (it.groupValues[1].toInt() + 1) to null
-        }
-        Regex("""\b(?:since|from)\s+((?:19|20)\d{2})\b""").find(text)?.let {
-            return it.groupValues[1].toInt() to null
-        }
-        Regex("""\b(?:before|older than)\s+((?:19|20)\d{2})\b""").find(text)?.let {
-            return null to (it.groupValues[1].toInt() - 1)
-        }
+        val minimum = Regex(
+            """\b(?:after|newer than|since|from|made after|released after)\s+((?:19|20)\d{2})\b""",
+        ).findAll(text).mapNotNull { match ->
+            val raw = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
+            if (
+                match.value.startsWith("after") ||
+                match.value.startsWith("newer") ||
+                match.value.startsWith("made after") ||
+                match.value.startsWith("released after")
+            ) {
+                raw + 1
+            } else {
+                raw
+            }
+        }.maxOrNull()
+        val maximum = Regex(
+            """\b(?:before|older than|made before|released before)\s+((?:19|20)\d{2})\b""",
+        ).findAll(text).mapNotNull { match ->
+            match.groupValues[1].toIntOrNull()?.minus(1)
+        }.minOrNull()
+        if (minimum != null || maximum != null) return minimum to maximum
         Regex("""\b((?:19|20)\d0)s\b""").find(text)?.let {
             val start = it.groupValues[1].toInt()
             return start to start + 9
@@ -374,9 +531,13 @@ object RecommendationPreferenceParser {
         percent: Boolean = false,
     ): Double? {
         val suffix = if (percent) """\s*%?""" else ""
-        val match = Regex(
+        val sourceFirst = Regex(
             """\b$source\s*(?:rating|score)?\s*(?:of|at least|minimum|>=|over|above|is)?\s*(\d{1,3}(?:\.\d+)?)\s*\+?$suffix\b""",
-        ).find(text) ?: return null
+        ).find(text)
+        val valueFirst = Regex(
+            """\b(?:rated?|rating|score)?\s*(?:at least|minimum|>=|over|above)?\s*(\d{1,3}(?:\.\d+)?)\s*\+?$suffix\s*(?:on|at|from)?\s*$source\b""",
+        ).find(text)
+        val match = sourceFirst ?: valueFirst ?: return null
         val value = match.groupValues[1].toDoubleOrNull() ?: return null
         return if (percent) value.takeIf { it in 1.0..100.0 } else value.takeIf { it in 0.1..10.0 }
     }
@@ -417,6 +578,90 @@ object RecommendationPreferenceParser {
             },
         )
 
+    private fun yearConflictQuestion(
+        minimum: Int,
+        maximum: Int,
+    ): RecommendationQuestion = RecommendationQuestion(
+        id = "year_conflict:$minimum:$maximum",
+        dimension = RecommendationDimension.ERA,
+        text = "Those release years conflict. Which limit should Aliflix keep?",
+        type = RecommendationQuestionType.SINGLE_SELECT,
+        options = listOf(
+            RecommendationOption("new_min", "$minimum or newer", "min:$minimum"),
+            RecommendationOption("new_max", "$maximum or older", "max:$maximum"),
+            RecommendationOption("any", "Any release year", "any"),
+        ),
+    )
+
+    private fun parseNamedValues(
+        text: String,
+        pattern: Regex,
+    ): List<String> = pattern.findAll(text)
+        .map { it.groupValues[1] }
+        .map {
+            it.replace(
+                Regex(
+                    """\s+(?:and|but|with|without|under|over|after|before)\b.*$""",
+                    RegexOption.IGNORE_CASE,
+                ),
+                "",
+            ).trim()
+        }
+        .filter { it.length in 2..60 }
+        .toList()
+
+    private fun extractUnmatchedPreferences(
+        normalized: String,
+        facetMatches: List<SemanticFacetMatch>,
+    ): List<UnmatchedPreference> {
+        val explicitNegatives = NEGATED_UNMATCHED_PATTERN
+            .findAll(normalized)
+            .map { match ->
+                match.groupValues[1]
+                    .trim()
+                    .split(Regex("\\s+"))
+                    .take(5)
+                    .joinToString(" ")
+            }
+            .filter { it.length >= 4 }
+            .map { phrase ->
+                UnmatchedPreference(
+                    text = phrase,
+                    negated = true,
+                    confidence = 0.9,
+                )
+            }
+            .toList()
+        var remainder = normalized
+        facetMatches.sortedByDescending(SemanticFacetMatch::start).forEach { match ->
+            if (match.start in 0..remainder.length && match.end <= remainder.length) {
+                remainder = remainder.replaceRange(match.start, match.end, " ")
+            }
+        }
+        remainder = unmatchedRemovalPatterns.fold(remainder) { value, pattern ->
+            value.replace(pattern, " ")
+        }
+        val tokens = remainder
+            .split(Regex("\\s+"))
+            .map { it.trim('.', ',', '\'', '"') }
+            .filter { it.length > 2 && it !in unmatchedStopWords }
+        val positive = tokens
+            .chunked(4)
+            .map { words -> words.joinToString(" ").trim() }
+            .filter { it.length >= 4 }
+            .take(4)
+            .map { phrase ->
+                UnmatchedPreference(
+                    text = phrase,
+                    negated = Regex("""\b(?:no|not|without|avoid)\b""")
+                        .containsMatchIn(phrase),
+                )
+            }
+        return (explicitNegatives + positive)
+            .distinctBy { "${it.negated}:${it.text}" }
+            .take(4)
+    }
+
     private fun normalize(value: String): String = value
         .lowercase(Locale.US)
         .replace(Regex("[^a-z0-9+%.' -]+"), " ")
@@ -442,6 +687,15 @@ object RecommendationPreferenceParser {
         "i do not know",
     )
 
+    private val correctionWords = Regex(
+        """\b(?:instead|actually|rather|change it to|make it|not that|scratch that)\b""",
+    )
+
+    private val NEGATED_UNMATCHED_PATTERN = Regex(
+        """\b(?:no|not|without|avoid|exclude)\s+""" +
+            """([a-z][a-z0-9' -]{2,55}?)(?=\s+(?:but|and|with|while)\b|[.!?]|$)""",
+    )
+
     private val numberWords = mapOf(
         "one" to 1.0,
         "one and a half" to 1.5,
@@ -463,6 +717,7 @@ object RecommendationPreferenceParser {
         "Fantasy" to listOf(Regex("""\bfantasy\b"""), Regex("""\bmagical\b""")),
         "History" to listOf(Regex("""\bhistor(?:y|ical)\b""")),
         "Horror" to listOf(Regex("""\bhorror\b"""), Regex("""\bscary\b""")),
+        "Music" to listOf(Regex("""\bmusic(?:al)?\b""")),
         "Mystery" to listOf(Regex("""\bmyster(?:y|ies|ious)\b""")),
         "Romance" to listOf(Regex("""\bromance\b"""), Regex("""\bromantic\b""")),
         "Science Fiction" to listOf(Regex("""\bsci[- ]?fi\b"""), Regex("""\bscience fiction\b""")),
@@ -547,6 +802,31 @@ object RecommendationPreferenceParser {
         "Spanish" to listOf("spanish"),
         "Italian" to listOf("italian"),
         "Hindi" to listOf("hindi"),
+        "Portuguese" to listOf("portuguese"),
+        "Chinese" to listOf("chinese", "mandarin", "cantonese"),
+        "Turkish" to listOf("turkish"),
+        "Persian" to listOf("persian", "farsi"),
+        "Swedish" to listOf("swedish"),
+        "Danish" to listOf("danish"),
+        "Norwegian" to listOf("norwegian"),
+        "Polish" to listOf("polish"),
+        "Russian" to listOf("russian"),
+    )
+
+    private val countryAliases = mapOf(
+        "Japan" to listOf("japanese", "from japan"),
+        "South Korea" to listOf("korean", "south korea"),
+        "France" to listOf("french", "from france"),
+        "Germany" to listOf("german", "from germany"),
+        "Spain" to listOf("spanish", "from spain"),
+        "Italy" to listOf("italian", "from italy"),
+        "India" to listOf("indian", "from india"),
+        "Egypt" to listOf("egyptian", "from egypt"),
+        "Lebanon" to listOf("lebanese", "from lebanon"),
+        "Iran" to listOf("iranian", "persian", "from iran"),
+        "Turkey" to listOf("turkish", "from turkey"),
+        "Ireland" to listOf("irish", "from ireland"),
+        "United Kingdom" to listOf("british", "from the uk"),
     )
 
     private val unverifiablePatterns = mapOf(
@@ -558,4 +838,24 @@ object RecommendationPreferenceParser {
         "ending type" to Regex("""\b(?:happy|sad|ambiguous|open[- ]ended) ending\b"""),
         "Rotten Tomatoes audience score" to Regex("""\b(?:rt|rotten tomatoes) audience\b"""),
     )
+
+    private val unmatchedRemovalPatterns = listOf(
+        movieWords,
+        tvWords,
+        Regex("""\b(?:want|watch|looking for|find me|show me|something|please|tonight|today)\b"""),
+        Regex("""\b(?:imdb|tmdb|rotten tomatoes|rt)\s*(?:rating|score)?\s*\d+(?:\.\d+)?\s*\+?"""),
+        Regex("""\b\d+(?:\.\d+)?\s*\+?\s*(?:imdb|tmdb|rotten tomatoes|rt)\b"""),
+        Regex("""\b(?:under|over|around|about|at least|at most|less than|more than)\s+\d+\s*(?:minutes?|mins?|hours?|hrs?)\b"""),
+        Regex("""\b(?:after|before|since|from|newer than|older than)\s+(?:19|20)\d{2}\b"""),
+        Regex("""\b(?:must|only|strictly|required|prefer|maybe|kind of|sort of)\b"""),
+    )
+
+    private val unmatchedStopWords = setOf(
+        "the", "and", "with", "without", "but", "for", "from", "that", "this",
+        "have", "has", "very", "more", "less", "than", "into", "where", "when",
+        "what", "which", "while", "like", "similar", "made", "released", "rated",
+        "movie", "film", "show", "series", "episode", "episodes",
+    )
+
+    private const val MAX_UNMATCHED_PREFERENCES = 12
 }

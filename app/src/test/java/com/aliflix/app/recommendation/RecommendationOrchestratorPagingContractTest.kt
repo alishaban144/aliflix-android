@@ -192,23 +192,23 @@ class RecommendationOrchestratorPagingContractTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun usefulQuestionAppearsBeforeSlowPreparationCompletes() = runTest {
+    fun retrievalStartsBeforeAnyCandidateInformedQuestion() = runTest {
         val repository = DelayedRepository()
         val orchestrator = orchestrator(repository)
 
         orchestrator.selectType(RecommendationMediaKind.MOVIE)
         orchestrator.submitText("a funny movie")
 
-        assertTrue(orchestrator.state.value is RecommendationUiState.Question)
+        assertTrue(orchestrator.state.value is RecommendationUiState.Discovering)
         assertEquals(0, repository.requests)
 
         runCurrent()
         assertTrue(repository.started.isCompleted)
-        assertTrue(orchestrator.state.value is RecommendationUiState.Question)
+        assertTrue(orchestrator.state.value is RecommendationUiState.Discovering)
 
         repository.release.complete(Unit)
         advanceUntilIdle()
-        assertTrue(orchestrator.state.value is RecommendationUiState.Question)
+        assertTrue(orchestrator.state.value is RecommendationUiState.Results)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -276,7 +276,7 @@ class RecommendationOrchestratorPagingContractTest {
         orchestrator.retryPage()
         advanceUntilIdle()
 
-        assertEquals(listOf(1, 2, 2), repository.requestedPages)
+        assertEquals(listOf(1, 2, 2, 2), repository.requestedPages)
         val recovered = orchestrator.state.value as RecommendationUiState.Results
         assertEquals((1..40).map(::key), recovered.candidates.map { it.media.key })
         assertFalse(recovered.hasMore)
@@ -547,7 +547,10 @@ class RecommendationOrchestratorPagingContractTest {
             requestedPages += cursor.page
             if (cursor.page == 1) return page(1..20, nextPage = 2)
             pageTwoAttempts += 1
-            if (pageTwoAttempts == 1) {
+            // The first failure is the nonterminal background prefetch. The
+            // second is the visible pagination failure; retry must make the
+            // third page-two attempt without advancing the cursor.
+            if (pageTwoAttempts <= 2) {
                 throw CatalogSourceException(
                     CatalogSource.TMDB,
                     "Temporary fixture outage",
