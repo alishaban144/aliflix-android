@@ -5,6 +5,7 @@ import android.util.AtomicFile
 import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
+import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.RecommendationPageCursor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,11 @@ interface CatalogCacheStore {
         page: Int,
         value: CachedRecommendationCatalogPage,
     ) = Unit
+    suspend fun loadLastGoodRecommendationItems(
+        mediaType: MediaType,
+        maxAgeMs: Long,
+        limit: Int = 120,
+    ): List<RecommendationDiscoveryItem> = emptyList()
     suspend fun loadVerifiedMetadata(
         mediaKey: String,
         maxAgeMs: Long,
@@ -72,7 +78,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
     private val homeFile = File(cacheDir, "home-v4.json")
     private val plotFile = File(cacheDir, "plot-v2.json")
     private val recommendationFile = File(cacheDir, "recommendations-v1.json")
-    private val recommendationPageFile = File(cacheDir, "recommendation-pages-v2.json")
+    private val recommendationPageFile = File(cacheDir, "recommendation-pages-v3.json")
     private val metadataFile = File(cacheDir, "recommendation-metadata-v1.json")
     private val mutex = Mutex()
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -281,24 +287,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                     return@runCatching null
                 }
                 val itemArray = entry.optJSONArray("items") ?: JSONArray()
-                val items = (0 until itemArray.length()).mapNotNull { index ->
-                    val json = itemArray.optJSONObject(index) ?: return@mapNotNull null
-                    val mediaJson = json.optJSONObject("media") ?: return@mapNotNull null
-                    RecommendationDiscoveryItem(
-                        media = Media.fromJson(mediaJson),
-                        metadata = json.optJSONObject("metadata")
-                            ?.let(::metadataFromJson)
-                            ?: CatalogVerifiedMetadata(),
-                        evidence = json.optString("evidence"),
-                        sources = json.optJSONArray("sources")?.let { sources ->
-                            (0 until sources.length()).mapNotNull { sourceIndex ->
-                                sources.optString(sourceIndex).takeIf(String::isNotBlank)
-                            }.toSet()
-                        }.orEmpty(),
-                        sourceCount = json.optInt("sourceCount"),
-                        sourcePosition = json.optInt("sourcePosition", 99),
-                    )
-                }
+                val items = recommendationItemsFromJson(itemArray)
                 CachedRecommendationCatalogPage(
                     items = items,
                     nextCursor = entry.optJSONObject("nextCursor")?.let(::cursorFromJson),
@@ -362,6 +351,71 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         }
     }
 
+    override suspend fun loadLastGoodRecommendationItems(
+        mediaType: MediaType,
+        maxAgeMs: Long,
+        limit: Int,
+    ): List<RecommendationDiscoveryItem> = mutex.withLock {
+        if (limit <= 0) return@withLock emptyList()
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val now = System.currentTimeMillis()
+                val fingerprintPrefix = when (mediaType) {
+                    MediaType.MOVIE -> "MOVIE|"
+                    MediaType.TV -> "SERIES|"
+                }
+                val pageEntries = JSONObject(recommendationPageFile.readText())
+                    .optJSONArray("entries")
+                    ?: return@runCatching emptyList()
+                val items = (0 until pageEntries.length())
+                    .mapNotNull(pageEntries::optJSONObject)
+                    .filter { entry ->
+                        entry.optString("fingerprint").startsWith(fingerprintPrefix) &&
+                            now - entry.optLong("savedAt") <= maxAgeMs
+                    }
+                    .sortedByDescending { it.optLong("savedAt") }
+                    .flatMap { entry ->
+                        recommendationItemsFromJson(
+                            entry.optJSONArray("items") ?: JSONArray(),
+                        )
+                    }
+                    .filter { it.media.type == mediaType }
+                    .distinctBy { it.media.key }
+                    .take(limit)
+
+                val verifiedByKey = linkedMapOf<String, VerifiedRecommendationItem>()
+                val metadataEntries = runCatching {
+                    JSONObject(metadataFile.readText()).optJSONArray("entries")
+                }.getOrNull()
+                if (metadataEntries != null) {
+                    (0 until metadataEntries.length())
+                        .mapNotNull(metadataEntries::optJSONObject)
+                        .filter { entry ->
+                            now - entry.optLong("savedAt") <= maxAgeMs
+                        }
+                        .mapNotNull(::verifiedItemFromJson)
+                        .forEach { item ->
+                            verifiedByKey.putIfAbsent(item.media.key, item)
+                        }
+                }
+                pendingMetadata.values
+                    .filter { item ->
+                        now - item.metadata.verifiedAtMillis <= maxAgeMs
+                    }
+                    .forEach { item -> verifiedByKey[item.media.key] = item }
+
+                items.map { item ->
+                    val verified = verifiedByKey[item.media.key]
+                        ?: return@map item
+                    item.copy(
+                        media = verified.media,
+                        metadata = mergeMetadata(item.metadata, verified.metadata),
+                    )
+                }
+            }.getOrDefault(emptyList())
+        }
+    }
+
     override suspend fun loadVerifiedMetadata(
         mediaKey: String,
         maxAgeMs: Long,
@@ -380,27 +434,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                 if (System.currentTimeMillis() - entry.optLong("savedAt") > maxAgeMs) {
                     return@runCatching null
                 }
-                val metadata = entry.optJSONObject("metadata") ?: JSONObject()
-                VerifiedRecommendationItem(
-                    media = Media.fromJson(entry.getJSONObject("media")),
-                    metadata = CatalogVerifiedMetadata(
-                        genresVerified = metadata.optBoolean("genresVerified"),
-                        runtimeMinutes = metadata.optInt("runtimeMinutes")
-                            .takeIf { metadata.has("runtimeMinutes") && it > 0 },
-                        originalLanguage = metadata.optString("originalLanguage")
-                            .takeIf(String::isNotBlank),
-                        status = metadata.optString("status").takeIf(String::isNotBlank),
-                        director = metadata.optString("director").takeIf(String::isNotBlank),
-                        seasonCount = metadata.optInt("seasonCount")
-                            .takeIf { metadata.has("seasonCount") && it > 0 },
-                        averageEpisodeRuntimeMinutes =
-                            metadata.optInt("averageEpisodeRuntimeMinutes")
-                                .takeIf {
-                                    metadata.has("averageEpisodeRuntimeMinutes") && it > 0
-                                },
-                        verifiedAtMillis = entry.optLong("savedAt"),
-                    ),
-                )
+                verifiedItemFromJson(entry)
             }.getOrNull()
         }
     }
@@ -453,6 +487,68 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         put("media", item.media.toJson())
         put("metadata", metadataToJson(item.metadata))
     }
+
+    private fun recommendationItemsFromJson(
+        items: JSONArray,
+    ): List<RecommendationDiscoveryItem> =
+        (0 until items.length()).mapNotNull { index ->
+            val json = items.optJSONObject(index) ?: return@mapNotNull null
+            val mediaJson = json.optJSONObject("media") ?: return@mapNotNull null
+            RecommendationDiscoveryItem(
+                media = Media.fromJson(mediaJson),
+                metadata = json.optJSONObject("metadata")
+                    ?.let(::metadataFromJson)
+                    ?: CatalogVerifiedMetadata(),
+                evidence = json.optString("evidence"),
+                sources = json.optJSONArray("sources")?.let { sources ->
+                    (0 until sources.length()).mapNotNull { sourceIndex ->
+                        sources.optString(sourceIndex).takeIf(String::isNotBlank)
+                    }.toSet()
+                }.orEmpty(),
+                sourceCount = json.optInt("sourceCount"),
+                sourcePosition = json.optInt("sourcePosition", 99),
+            )
+        }
+
+    private fun verifiedItemFromJson(
+        entry: JSONObject,
+    ): VerifiedRecommendationItem? {
+        val media = entry.optJSONObject("media")?.let(Media::fromJson)
+            ?: return null
+        val metadata = entry.optJSONObject("metadata")
+            ?.let(::metadataFromJson)
+            ?: CatalogVerifiedMetadata(
+                verifiedAtMillis = entry.optLong("savedAt"),
+            )
+        return VerifiedRecommendationItem(
+            media = media,
+            metadata = metadata.copy(
+                verifiedAtMillis = entry.optLong(
+                    "savedAt",
+                    metadata.verifiedAtMillis,
+                ),
+            ),
+        )
+    }
+
+    private fun mergeMetadata(
+        cached: CatalogVerifiedMetadata,
+        verified: CatalogVerifiedMetadata,
+    ): CatalogVerifiedMetadata = CatalogVerifiedMetadata(
+        genresVerified = cached.genresVerified || verified.genresVerified,
+        runtimeMinutes = verified.runtimeMinutes ?: cached.runtimeMinutes,
+        originalLanguage = verified.originalLanguage ?: cached.originalLanguage,
+        status = verified.status ?: cached.status,
+        director = verified.director ?: cached.director,
+        seasonCount = verified.seasonCount ?: cached.seasonCount,
+        averageEpisodeRuntimeMinutes =
+            verified.averageEpisodeRuntimeMinutes
+                ?: cached.averageEpisodeRuntimeMinutes,
+        verifiedAtMillis = maxOf(
+            cached.verifiedAtMillis,
+            verified.verifiedAtMillis,
+        ),
+    )
 
     private fun writeAtomically(target: File, value: String) {
         cacheDir.mkdirs()

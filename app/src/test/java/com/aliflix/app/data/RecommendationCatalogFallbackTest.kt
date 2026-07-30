@@ -25,12 +25,16 @@ class RecommendationCatalogFallbackTest {
             },
             pageLoader = { url ->
                 when {
-                    "imdb.com/search/title" in url ->
-                        throw IOException("IMDb HTML challenged")
                     "sg.media-imdb.com/suggestion" in url ->
                         """{"d":[{"id":"tt123","l":"Fallback","y":2020,"q":"feature"}]}"""
-                    "themoviedb.org/discover/movie" in url -> tmdbResult()
                     else -> throw IOException("Unexpected request: $url")
+                }
+            },
+            formTransport = CatalogFormTransport { url, _, _ ->
+                if (url.endsWith("/discover/movie")) {
+                    tmdbResult()
+                } else {
+                    throw IOException("Unexpected request: $url")
                 }
             },
         )

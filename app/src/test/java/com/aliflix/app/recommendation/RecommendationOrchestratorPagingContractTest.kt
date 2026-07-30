@@ -3,6 +3,8 @@ package com.aliflix.app.recommendation
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
+import com.aliflix.app.data.CatalogSource
+import com.aliflix.app.data.CatalogSourceException
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import java.lang.reflect.InvocationHandler
@@ -11,10 +13,12 @@ import java.lang.reflect.Proxy
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -207,6 +211,121 @@ class RecommendationOrchestratorPagingContractTest {
         assertTrue(orchestrator.state.value is RecommendationUiState.Question)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun speculativeProviderFailureIsRetriedByForegroundAtSameCursor() = runTest {
+        val repository = FailOnceRepository()
+        val orchestrator = orchestrator(repository)
+
+        orchestrator.selectType(RecommendationMediaKind.MOVIE)
+        orchestrator.surpriseMe()
+        advanceUntilIdle()
+
+        assertEquals(listOf(1, 1), repository.requestedPages)
+        val result = orchestrator.state.value as RecommendationUiState.Results
+        assertEquals(listOf("movie:9300"), result.candidates.map { it.media.key })
+        assertEquals(
+            RecommendationSourceStatus.AVAILABLE,
+            result.sourceHealth.catalogue,
+        )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun retryMakesARealRequestAndRecoversRequiredSourceHealth() = runTest {
+        val repository = FailUntilRetryRepository()
+        val orchestrator = orchestrator(repository)
+
+        orchestrator.selectType(RecommendationMediaKind.MOVIE)
+        orchestrator.surpriseMe()
+        advanceUntilIdle()
+
+        assertTrue(orchestrator.state.value is RecommendationUiState.SourceUnavailable)
+        assertEquals(listOf(1, 1), repository.requestedPages)
+
+        orchestrator.retryPage()
+        advanceUntilIdle()
+
+        assertEquals(listOf(1, 1, 1), repository.requestedPages)
+        val result = orchestrator.state.value as RecommendationUiState.Results
+        assertEquals(listOf("movie:9301"), result.candidates.map { it.media.key })
+        assertEquals(
+            RecommendationSourceStatus.AVAILABLE,
+            result.sourceHealth.catalogue,
+        )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun failedLoadMoreRetryPreservesCursorAndDisplayedOrder() = runTest {
+        val repository = RecoveringSecondPageRepository()
+        val orchestrator = orchestrator(repository)
+
+        orchestrator.selectType(RecommendationMediaKind.MOVIE)
+        orchestrator.surpriseMe()
+        advanceUntilIdle()
+        val first = orchestrator.state.value as RecommendationUiState.Results
+        assertEquals((1..20).map(::key), first.candidates.map { it.media.key })
+
+        orchestrator.loadMore()
+        advanceUntilIdle()
+        val failed = orchestrator.state.value as RecommendationUiState.Results
+        assertEquals((1..20).map(::key), failed.candidates.map { it.media.key })
+        assertTrue(failed.pageError != null)
+
+        orchestrator.retryPage()
+        advanceUntilIdle()
+
+        assertEquals(listOf(1, 2, 2), repository.requestedPages)
+        val recovered = orchestrator.state.value as RecommendationUiState.Results
+        assertEquals((1..40).map(::key), recovered.candidates.map { it.media.key })
+        assertFalse(recovered.hasMore)
+        assertEquals(
+            RecommendationSourceStatus.AVAILABLE,
+            recovered.sourceHealth.catalogue,
+        )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun duplicateRetryIsIgnoredAndLateCancelledResponseCannotMutateResults() = runTest {
+        val repository = LateCompletionRepository()
+        val orchestrator = orchestrator(repository)
+
+        orchestrator.selectType(RecommendationMediaKind.MOVIE)
+        orchestrator.surpriseMe()
+        runCurrent()
+        assertTrue(repository.firstStarted.isCompleted)
+
+        orchestrator.retryPage()
+        orchestrator.retryPage()
+        runCurrent()
+        assertEquals(2, repository.requests)
+
+        repository.releaseFirst.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(2, repository.requests)
+        val result = orchestrator.state.value as RecommendationUiState.Results
+        assertEquals(listOf("movie:9401"), result.candidates.map { it.media.key })
+        assertFalse(result.candidates.any { it.media.id == 9400 })
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun unexpectedRepositoryFailureUsesGeneralErrorState() = runTest {
+        val repository = UnexpectedFailureRepository()
+        val orchestrator = orchestrator(repository)
+
+        orchestrator.selectType(RecommendationMediaKind.MOVIE)
+        orchestrator.surpriseMe()
+        advanceUntilIdle()
+
+        assertEquals(2, repository.requests)
+        assertTrue(orchestrator.state.value is RecommendationUiState.Error)
+        assertFalse(orchestrator.state.value is RecommendationUiState.SourceUnavailable)
+    }
+
     private fun CoroutineScope.orchestrator(
         repository: RecommendationCandidateRepository,
     ) = RecommendationOrchestrator(
@@ -362,6 +481,122 @@ class RecommendationOrchestratorPagingContractTest {
                 hasMore = false,
                 sourceHealth = RecommendationSourceHealth(),
             )
+        }
+
+        override suspend fun resolveSimilarityAnchor(
+            title: String,
+        ): RecommendationCandidate? = null
+    }
+
+    private class FailOnceRepository : RecommendationCandidateRepository {
+        val requestedPages = mutableListOf<Int>()
+
+        override suspend fun discoverPage(
+            spec: CatalogDiscoverySpec,
+            cursor: RecommendationPageCursor,
+            requiredFields: RequiredMetadataFields,
+        ): RecommendationPage {
+            requestedPages += cursor.page
+            if (requestedPages.size == 1) {
+                throw CatalogSourceException(
+                    CatalogSource.TMDB,
+                    "Temporary fixture outage",
+                )
+            }
+            return page(9300..9300, nextPage = null)
+        }
+
+        override suspend fun resolveSimilarityAnchor(
+            title: String,
+        ): RecommendationCandidate? = null
+    }
+
+    private class FailUntilRetryRepository : RecommendationCandidateRepository {
+        val requestedPages = mutableListOf<Int>()
+
+        override suspend fun discoverPage(
+            spec: CatalogDiscoverySpec,
+            cursor: RecommendationPageCursor,
+            requiredFields: RequiredMetadataFields,
+        ): RecommendationPage {
+            requestedPages += cursor.page
+            if (requestedPages.size <= 2) {
+                throw CatalogSourceException(
+                    CatalogSource.TMDB,
+                    "Temporary fixture outage",
+                )
+            }
+            return page(9301..9301, nextPage = null)
+        }
+
+        override suspend fun resolveSimilarityAnchor(
+            title: String,
+        ): RecommendationCandidate? = null
+    }
+
+    private class RecoveringSecondPageRepository :
+        RecommendationCandidateRepository {
+        val requestedPages = mutableListOf<Int>()
+        private var pageTwoAttempts = 0
+
+        override suspend fun discoverPage(
+            spec: CatalogDiscoverySpec,
+            cursor: RecommendationPageCursor,
+            requiredFields: RequiredMetadataFields,
+        ): RecommendationPage {
+            requestedPages += cursor.page
+            if (cursor.page == 1) return page(1..20, nextPage = 2)
+            pageTwoAttempts += 1
+            if (pageTwoAttempts == 1) {
+                throw CatalogSourceException(
+                    CatalogSource.TMDB,
+                    "Temporary fixture outage",
+                )
+            }
+            return page(21..40, nextPage = null)
+        }
+
+        override suspend fun resolveSimilarityAnchor(
+            title: String,
+        ): RecommendationCandidate? = null
+    }
+
+    private class LateCompletionRepository : RecommendationCandidateRepository {
+        val firstStarted = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        var requests = 0
+
+        override suspend fun discoverPage(
+            spec: CatalogDiscoverySpec,
+            cursor: RecommendationPageCursor,
+            requiredFields: RequiredMetadataFields,
+        ): RecommendationPage {
+            requests += 1
+            if (requests == 1) {
+                firstStarted.complete(Unit)
+                withContext(NonCancellable) {
+                    releaseFirst.await()
+                }
+                return page(9400..9400, nextPage = null)
+            }
+            return page(9401..9401, nextPage = null)
+        }
+
+        override suspend fun resolveSimilarityAnchor(
+            title: String,
+        ): RecommendationCandidate? = null
+    }
+
+    private class UnexpectedFailureRepository : RecommendationCandidateRepository {
+        var requests = 0
+
+        override suspend fun discoverPage(
+            spec: CatalogDiscoverySpec,
+            cursor: RecommendationPageCursor,
+            requiredFields: RequiredMetadataFields,
+        ): RecommendationPage {
+            requests += 1
+            error("Fixture programming error")
         }
 
         override suspend fun resolveSimilarityAnchor(

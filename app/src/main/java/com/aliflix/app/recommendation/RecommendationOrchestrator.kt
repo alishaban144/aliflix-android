@@ -1,6 +1,8 @@
 package com.aliflix.app.recommendation
 
 import com.aliflix.app.data.CatalogClient
+import com.aliflix.app.data.CatalogSource
+import com.aliflix.app.data.CatalogSourceException
 import com.aliflix.app.data.CatalogVerifiedMetadata
 import com.aliflix.app.data.RecommendationDiscoveryItem
 import com.aliflix.app.model.Media
@@ -51,7 +53,11 @@ class CatalogRecommendationCandidateRepository(
         cursor: RecommendationPageCursor,
         requiredFields: RequiredMetadataFields,
     ): RecommendationPage = supervisorScope {
-        val page = client.recommendationPage(spec, cursor)
+        val page = client.recommendationPage(
+            spec = spec,
+            cursor = cursor,
+            requiredFields = requiredFields,
+        )
         val verificationGate = Semaphore(METADATA_CONCURRENCY)
         val candidates = page.items.map { seed ->
             async {
@@ -248,6 +254,8 @@ class RecommendationOrchestrator(
     private var preparationJob: Job? = null
     private var preparationFingerprint: String? = null
     private var preparationSeedReady: CompletableDeferred<Unit>? = null
+    private var attemptGeneration = 0L
+    private var retryGenerationInFlight: Long? = null
     private val history = mutableListOf<RecommendationPreferences>()
 
     /**
@@ -331,23 +339,54 @@ class RecommendationOrchestrator(
             _state.value = RecommendationUiState.SelectType(preferences)
             return
         }
+        if (retryGenerationInFlight != null) return
         loadForResults(targetAdditionalItems = RESULT_PAGE_SIZE)
     }
 
     fun loadMore() {
         val current = _state.value as? RecommendationUiState.Results ?: return
-        if (current.loadingMore || !current.hasMore) return
+        if (
+            retryGenerationInFlight != null ||
+            current.refreshing ||
+            current.loadingMore ||
+            !current.hasMore
+        ) {
+            return
+        }
         loadForResults(targetAdditionalItems = RESULT_PAGE_SIZE)
     }
 
     fun retryPage() {
+        if (retryGenerationInFlight != null) return
+
+        job?.cancel()
+        job = null
+        preparationJob?.cancel()
+        preparationJob = null
+        preparationFingerprint = null
+        preparationSeedReady = null
+        attemptGeneration += 1
+        retryGenerationInFlight = attemptGeneration
+        // A failed page never exhausts the cursor. Re-open it explicitly so
+        // retry also repairs sessions produced by the old terminal-failure
+        // behavior without discarding already displayed titles.
+        hasMore = true
+        sourceHealth = RecommendationSourceHealth()
+
         when (val current = _state.value) {
-            is RecommendationUiState.Results -> {
-                _state.value = current.copy(pageError = null)
-                loadForResults(RESULT_PAGE_SIZE)
-            }
-            else -> loadForResults(RESULT_PAGE_SIZE)
+            is RecommendationUiState.Results -> _state.value = current.copy(
+                refreshing = true,
+                loadingMore = false,
+                hasMore = true,
+                pageError = null,
+                sourceHealth = sourceHealth,
+            )
+            else -> _state.value = RecommendationUiState.Discovering(
+                preferences = preferences,
+                message = "Finding matches…",
+            )
         }
+        loadForResults(RESULT_PAGE_SIZE, forceNetwork = true)
     }
 
     fun goBack() {
@@ -451,22 +490,26 @@ class RecommendationOrchestrator(
         }
         preparationJob?.cancel()
         preparationFingerprint = spec.fingerprint
+        val generation = attemptGeneration
         val seedReady = CompletableDeferred<Unit>()
         preparationSeedReady = seedReady
         preparationJob = scope.launch {
             try {
-                ensureSimilarityAnchor()
+                ensureSimilarityAnchor(generation)
+                if (!isActiveAttempt(generation)) return@launch
                 val effectiveSpec = CatalogDiscoverySpec.from(preferences)
                     ?: return@launch
                 preparationFingerprint = effectiveSpec.fingerprint
-                repository.seedCandidates(
+                val seeds = repository.seedCandidates(
                     spec = effectiveSpec,
                     requiredFields = RequiredMetadataFields.from(preferences),
-                ).forEach { candidate ->
+                )
+                if (!isActiveAttempt(generation)) return@launch
+                seeds.forEach { candidate ->
                     candidatePool.putIfAbsent(candidate.media.key, candidate)
                 }
                 seedReady.complete(Unit)
-                fetchOnePage(effectiveSpec)
+                fetchOnePage(effectiveSpec, generation)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -478,10 +521,15 @@ class RecommendationOrchestrator(
         }
     }
 
-    private fun loadForResults(targetAdditionalItems: Int) {
+    private fun loadForResults(
+        targetAdditionalItems: Int,
+        forceNetwork: Boolean = false,
+    ) {
         job?.cancel()
+        val generation = attemptGeneration
         val spec = CatalogDiscoverySpec.from(preferences)
         if (spec == null) {
+            completeRetry(generation)
             _state.value = RecommendationUiState.SelectType(preferences)
             return
         }
@@ -505,8 +553,12 @@ class RecommendationOrchestrator(
                 message = "Finding matches…",
             )
         }
-        if (displayed.size - beforeCount >= targetAdditionalItems || !hasMore) {
+        if (
+            !forceNetwork &&
+            (displayed.size - beforeCount >= targetAdditionalItems || !hasMore)
+        ) {
             finishResultLoad()
+            completeRetry(generation)
             return
         }
 
@@ -516,6 +568,7 @@ class RecommendationOrchestrator(
                 val preparedJob = preparationJob
                 val seedReady = preparationSeedReady
                 seedReady?.await()
+                if (!isActiveAttempt(generation)) return@launch
                 appendRanked(
                     eligibleCandidates(),
                     targetAdditionalItems - (displayed.size - beforeCount),
@@ -527,7 +580,9 @@ class RecommendationOrchestrator(
                     )
                 }
                 preparedJob?.join()
-                ensureSimilarityAnchor()
+                if (!isActiveAttempt(generation)) return@launch
+                ensureSimilarityAnchor(generation)
+                if (!isActiveAttempt(generation)) return@launch
                 val activeSpec = CatalogDiscoverySpec.from(preferences) ?: spec
                 if (activeFingerprint != activeSpec.fingerprint) return@launch
                 appendRanked(
@@ -547,7 +602,7 @@ class RecommendationOrchestrator(
                     hasMore
                 ) {
                     if (beforeCount > 0 && scanned >= MAX_PAGES_PER_ACTION) break
-                    fetchOnePage(activeSpec)
+                    if (!fetchOnePage(activeSpec, generation)) return@launch
                     scanned += 1
                     appendRanked(
                         eligibleCandidates(),
@@ -578,17 +633,18 @@ class RecommendationOrchestrator(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                if (displayed.isNotEmpty()) {
-                    publishResults(pageError = "Couldn't load more titles. Try again.")
-                } else {
-                    sourceFailure(error)
-                }
+                publishFailure(error)
+            } finally {
+                completeRetry(generation)
             }
         }
     }
 
-    private suspend fun fetchOnePage(spec: CatalogDiscoverySpec) {
-        if (!hasMore) return
+    private suspend fun fetchOnePage(
+        spec: CatalogDiscoverySpec,
+        generation: Long,
+    ): Boolean {
+        if (!hasMore || !isActiveAttempt(generation)) return false
         val requestedCursor = cursor
         val page = repository.discoverPage(
             spec = spec,
@@ -596,22 +652,33 @@ class RecommendationOrchestrator(
             requiredFields = RequiredMetadataFields.from(preferences),
         )
         // A cancelled/stale request cannot mutate the active session.
-        if (activeFingerprint != spec.fingerprint) return
+        if (
+            !isActiveAttempt(generation) ||
+            activeFingerprint != spec.fingerprint
+        ) {
+            return false
+        }
+        page.sourceHealth.requiredFailureOrNull()?.let { throw it }
         page.candidates.forEach { candidate ->
             candidatePool.putIfAbsent(candidate.media.key, candidate)
         }
-        sourceHealth = sourceHealth.merge(page.sourceHealth)
+        // Health represents the latest completed request. A successful page
+        // therefore recovers a source that was unavailable on an earlier try.
+        sourceHealth = page.sourceHealth
         cursor = page.nextCursor ?: cursor.copy(
             page = cursor.page + 1,
             seenKeys = cursor.seenKeys + page.candidates.map { it.media.key },
         )
         hasMore = page.hasMore && page.nextCursor != null
+        return true
     }
 
-    private suspend fun ensureSimilarityAnchor() {
+    private suspend fun ensureSimilarityAnchor(generation: Long) {
         val title = preferences.similarityTitle?.value ?: return
         if (similarityAnchor?.media?.title.equals(title, ignoreCase = true)) return
-        similarityAnchor = repository.resolveSimilarityAnchor(title)
+        val resolved = repository.resolveSimilarityAnchor(title)
+        if (!isActiveAttempt(generation)) return
+        similarityAnchor = resolved
         if (preferences.relativeRuntime != null && similarityAnchor == null) {
             throw IllegalStateException(
                 "The comparison title's runtime could not be verified.",
@@ -622,7 +689,10 @@ class RecommendationOrchestrator(
         if (fingerprint != activeFingerprint) {
             // This runs inside the preparation/action coroutine, so preserve
             // the current job while resetting its now-more-specific cursor.
-            resetPaging(cancelPreparation = false)
+            resetPaging(
+                cancelPreparation = false,
+                invalidateAttempt = false,
+            )
             activeFingerprint = fingerprint
         }
     }
@@ -703,11 +773,66 @@ class RecommendationOrchestrator(
         )
     }
 
-    private fun sourceFailure(error: Throwable) {
+    private fun publishFailure(error: Throwable) {
+        if (error !is CatalogSourceException) {
+            _state.value = RecommendationUiState.Error(
+                preferences = preferences,
+                message = error.message ?: "Something went wrong while loading recommendations.",
+                canRetry = true,
+            )
+            return
+        }
+        sourceHealth = when (error.source) {
+            CatalogSource.TMDB -> sourceHealth.copy(
+                catalogue = RecommendationSourceStatus.UNAVAILABLE,
+            )
+            CatalogSource.IMDB -> sourceHealth.copy(
+                imdb = RecommendationSourceStatus.UNAVAILABLE,
+            )
+        }
+        if (displayed.isNotEmpty()) {
+            publishResults(pageError = sourceFailureMessage(error.source))
+        } else {
+            sourceFailure(error)
+        }
+    }
+
+    private fun sourceFailure(error: CatalogSourceException) {
         _state.value = RecommendationUiState.SourceUnavailable(
             preferences = preferences,
-            message = error.message ?: "The catalogue is temporarily unavailable.",
+            message = sourceFailureMessage(error.source),
         )
+    }
+
+    private fun sourceFailureMessage(source: CatalogSource): String =
+        if (source == CatalogSource.IMDB) {
+            "IMDb is temporarily unavailable. Try again."
+        } else {
+            "The catalogue is temporarily unavailable. Try again."
+        }
+
+    private fun RecommendationSourceHealth.requiredFailureOrNull():
+        CatalogSourceException? = when {
+        imdb == RecommendationSourceStatus.UNAVAILABLE ->
+            CatalogSourceException(
+                source = CatalogSource.IMDB,
+                message = "IMDb is temporarily unavailable.",
+            )
+        catalogue == RecommendationSourceStatus.UNAVAILABLE ->
+            CatalogSourceException(
+                source = CatalogSource.TMDB,
+                message = "The catalogue is temporarily unavailable.",
+            )
+        else -> null
+    }
+
+    private fun isActiveAttempt(generation: Long): Boolean =
+        generation == attemptGeneration
+
+    private fun completeRetry(generation: Long) {
+        if (retryGenerationInFlight == generation) {
+            retryGenerationInFlight = null
+        }
     }
 
     private fun resetPagingIfNeeded(force: Boolean = false) {
@@ -718,7 +843,16 @@ class RecommendationOrchestrator(
         }
     }
 
-    private fun resetPaging(cancelPreparation: Boolean = true) {
+    private fun resetPaging(
+        cancelPreparation: Boolean = true,
+        invalidateAttempt: Boolean = true,
+    ) {
+        if (invalidateAttempt) {
+            attemptGeneration += 1
+            retryGenerationInFlight = null
+            job?.cancel()
+            job = null
+        }
         if (cancelPreparation) {
             preparationJob?.cancel()
             preparationJob = null

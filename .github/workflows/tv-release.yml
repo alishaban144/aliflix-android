@@ -19,8 +19,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "34"
-  RELEASE_VERSION_NAME: "2.7.15"
+  RELEASE_VERSION_CODE: "35"
+  RELEASE_VERSION_NAME: "2.7.16"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
   PRESERVED_TV_RELEASE_TAG: "v2.7.13"
   PRESERVED_TV_APK_SHA256: "11509224e3b05e81ef75216f6aa3028e433cf5d8a1cefc00bd4b970f73893c01"
@@ -115,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Rebuilds What should I watch with Movie or Series selection, an extensive paged catalogue, progressive poster results, reliable IMDb filtering, indexed Reddit discovery, resilient source fallbacks, and correct Back navigation between details and genre pages."
+            RELEASE_NOTES="Repairs What should I watch catalogue discovery after TMDB's route change, restores filtered pagination, makes Try again perform a real retry, and adds resilient source and cache fallbacks."
           fi
           mkdir -p dist
           cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/aliflix-mobile-release.apk
@@ -227,7 +227,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Rebuilds What should I watch with Movie or Series selection, an extensive paged catalogue, progressive poster results, reliable IMDb filtering, indexed Reddit discovery, resilient source fallbacks, and correct Back navigation between details and genre pages."
+            RELEASE_NOTES="Repairs What should I watch catalogue discovery after TMDB's route change, restores filtered pagination, makes Try again perform a real retry, and adds resilient source and cache fallbacks."
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; refusing to overwrite it." >&2

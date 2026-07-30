@@ -110,6 +110,50 @@ data class CatalogRecommendationPage(
     val fromCache: Boolean = false,
 )
 
+enum class CatalogSource {
+    TMDB,
+    IMDB,
+}
+
+sealed interface CatalogPageOutcome {
+    data class Results(
+        val page: CatalogRecommendationPage,
+    ) : CatalogPageOutcome
+
+    data class Empty(
+        val page: CatalogRecommendationPage,
+    ) : CatalogPageOutcome
+
+    data class Unavailable(
+        val source: CatalogSource,
+        val cause: Throwable? = null,
+    ) : CatalogPageOutcome
+}
+
+open class CatalogSourceException(
+    val source: CatalogSource,
+    message: String,
+    cause: Throwable? = null,
+) : IOException(message, cause)
+
+class TmdbCatalogSourceException(
+    message: String = "TMDB catalogue is unavailable.",
+    cause: Throwable? = null,
+) : CatalogSourceException(CatalogSource.TMDB, message, cause)
+
+class ImdbCatalogSourceException(
+    message: String = "IMDb catalogue is unavailable.",
+    cause: Throwable? = null,
+) : CatalogSourceException(CatalogSource.IMDB, message, cause)
+
+fun interface CatalogFormTransport {
+    suspend fun postForm(
+        url: String,
+        fields: Map<String, String>,
+        headers: Map<String, String>,
+    ): String
+}
+
 internal data class ImdbAdvancedTitle(
     val imdbId: String,
     val title: String,
@@ -152,6 +196,43 @@ private data class GenreFetch(
 private data class WikipediaConceptGroup(
     val triggers: Set<String>,
     val searchTerms: List<String>,
+)
+
+private sealed interface TmdbCatalogueResponse {
+    data class Results(
+        val items: List<Media>,
+        val hasNextPage: Boolean?,
+        val rawItemCount: Int,
+    ) : TmdbCatalogueResponse
+    data object Empty : TmdbCatalogueResponse
+    data class Unavailable(val cause: Throwable? = null) : TmdbCatalogueResponse
+}
+
+private sealed interface TmdbSearchOutcome {
+    data class Success(val items: List<Media>) : TmdbSearchOutcome
+    data class Unavailable(val cause: Throwable? = null) : TmdbSearchOutcome
+}
+
+private sealed interface ImdbTitleResolution {
+    data class Resolved(
+        val item: RecommendationDiscoveryItem,
+    ) : ImdbTitleResolution
+
+    data object NoMatch : ImdbTitleResolution
+    data class Unavailable(val cause: Throwable? = null) : ImdbTitleResolution
+}
+
+private fun CatalogDiscoverySpec.requiredFieldsForCacheFallback():
+    RequiredMetadataFields = RequiredMetadataFields(
+    genres = includedGenres.isNotEmpty() || excludedGenres.isNotEmpty(),
+    runtime = mediaKind == RecommendationMediaKind.MOVIE &&
+        (runtimeMinimumMinutes != null || runtimeMaximumMinutes != null),
+    originalLanguage = originalLanguage != null,
+    imdbRating = minimumImdb != null,
+    rottenTomatoesRating = minimumRottenTomatoes != null,
+    tmdbRating = minimumTmdb != null,
+    tvEpisodeRuntime = mediaKind == RecommendationMediaKind.SERIES &&
+        (runtimeMinimumMinutes != null || runtimeMaximumMinutes != null),
 )
 
 internal fun allocateUniqueHomeRails(
@@ -282,6 +363,76 @@ private class CatalogRequestScheduler {
     }
 }
 
+private object HttpCatalogFormTransport : CatalogFormTransport {
+    override suspend fun postForm(
+        url: String,
+        fields: Map<String, String>,
+        headers: Map<String, String>,
+    ): String = withContext(Dispatchers.IO) {
+        val payload = fields.entries.joinToString("&") { (key, value) ->
+            "${formEncode(key)}=${formEncode(value)}"
+        }.toByteArray(StandardCharsets.UTF_8)
+        suspendCancellableCoroutine { continuation ->
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 8_000
+                readTimeout = 12_000
+                instanceFollowRedirects = false
+                doOutput = true
+                setFixedLengthStreamingMode(payload.size)
+                setRequestProperty(
+                    "Content-Type",
+                    "application/x-www-form-urlencoded; charset=UTF-8",
+                )
+                headers.forEach(::setRequestProperty)
+            }
+            continuation.invokeOnCancellation { connection.disconnect() }
+            try {
+                connection.outputStream.use { it.write(payload) }
+                val status = connection.responseCode
+                val stream = if (status in 200..299) {
+                    connection.inputStream
+                } else {
+                    connection.errorStream
+                }
+                val response = stream?.bufferedReader(StandardCharsets.UTF_8)
+                    ?.use { it.readText() }
+                    .orEmpty()
+                if (status !in 200..299) {
+                    throw TmdbCatalogSourceException(
+                        "TMDB catalogue request failed ($status).",
+                    )
+                }
+                if (response.isBlank()) {
+                    throw TmdbCatalogSourceException(
+                        "TMDB catalogue response was empty.",
+                    )
+                }
+                if (continuation.isActive) continuation.resume(response)
+            } catch (error: Throwable) {
+                if (continuation.isActive) {
+                    continuation.resumeWithException(
+                        when (error) {
+                            is CatalogSourceException -> error
+                            is IOException -> TmdbCatalogSourceException(
+                                cause = error,
+                            )
+                            else -> error
+                        },
+                    )
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+    }
+
+    private fun formEncode(value: String): String = URLEncoder.encode(
+        value,
+        StandardCharsets.UTF_8.toString(),
+    )
+}
+
 /**
  * Builds the native catalogue from public, server-rendered movie metadata pages.
  *
@@ -291,9 +442,11 @@ private class CatalogRequestScheduler {
 class CatalogClient(
     private val cacheStore: CatalogCacheStore? = null,
     jsonPoster: suspend (String, String) -> String = ::postJson,
+    formTransport: CatalogFormTransport = HttpCatalogFormTransport,
     pageLoader: suspend (String) -> String = ::downloadPage,
 ) {
     private val rawJsonPoster = jsonPoster
+    private val rawFormTransport = formTransport
     private val rawPageLoader = pageLoader
     private val requestScheduler = CatalogRequestScheduler()
     @Volatile
@@ -327,6 +480,18 @@ class CatalogClient(
         ) {
             rawJsonPoster(url, body)
         }
+
+    private suspend fun formPoster(
+        url: String,
+        fields: Map<String, String>,
+        headers: Map<String, String>,
+    ): String = requestScheduler.execute(
+        url = url,
+        foreground =
+            coroutineContext[RecommendationRequestPriorityKey] != null,
+    ) {
+        rawFormTransport.postForm(url, fields, headers)
+    }
 
     suspend fun home(
         onProgress: suspend (HomeContent) -> Unit = {},
@@ -904,6 +1069,60 @@ class CatalogClient(
     suspend fun recommendationPage(
         spec: CatalogDiscoverySpec,
         cursor: RecommendationPageCursor = RecommendationPageCursor(),
+        requiredFields: RequiredMetadataFields =
+            spec.requiredFieldsForCacheFallback(),
+    ): CatalogRecommendationPage = when (
+        val outcome = recommendationPageOutcome(spec, cursor, requiredFields)
+    ) {
+        is CatalogPageOutcome.Results -> outcome.page
+        is CatalogPageOutcome.Empty -> outcome.page
+        is CatalogPageOutcome.Unavailable -> throw (
+            outcome.cause as? CatalogSourceException
+                ?: CatalogSourceException(
+                    source = outcome.source,
+                    message = "${outcome.source.name} catalogue is unavailable.",
+                    cause = outcome.cause,
+                )
+            )
+    }
+
+    suspend fun recommendationPageOutcome(
+        spec: CatalogDiscoverySpec,
+        cursor: RecommendationPageCursor = RecommendationPageCursor(),
+        requiredFields: RequiredMetadataFields =
+            spec.requiredFieldsForCacheFallback(),
+    ): CatalogPageOutcome {
+        val page = try {
+            recommendationPageInternal(spec, cursor, requiredFields)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (sourceError: CatalogSourceException) {
+            return CatalogPageOutcome.Unavailable(
+                source = sourceError.source,
+                cause = sourceError,
+            )
+        }
+        return when {
+            page.items.isNotEmpty() || page.hasMore ->
+                CatalogPageOutcome.Results(page)
+            page.sourceHealth.imdb == RecommendationSourceStatus.UNAVAILABLE ->
+                CatalogPageOutcome.Unavailable(
+                    source = CatalogSource.IMDB,
+                    cause = ImdbCatalogSourceException(),
+                )
+            page.sourceHealth.catalogue == RecommendationSourceStatus.UNAVAILABLE ->
+                CatalogPageOutcome.Unavailable(
+                    source = CatalogSource.TMDB,
+                    cause = TmdbCatalogSourceException(),
+                )
+            else -> CatalogPageOutcome.Empty(page)
+        }
+    }
+
+    private suspend fun recommendationPageInternal(
+        spec: CatalogDiscoverySpec,
+        cursor: RecommendationPageCursor = RecommendationPageCursor(),
+        requiredFields: RequiredMetadataFields,
     ): CatalogRecommendationPage = withContext(RecommendationRequestPriorityElement) {
         supervisorScope {
         cacheStore?.loadRecommendationCatalogPage(
@@ -930,15 +1149,41 @@ class CatalogClient(
             )
         }
 
+        var liveFailure: CatalogSourceException? = null
         val live = try {
             if (spec.minimumImdb != null) {
                 loadImdbRecommendationPage(spec, cursor)
             } else {
-                loadTmdbRecommendationPage(spec, cursor)
+                try {
+                    loadTmdbRecommendationPage(spec, cursor)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: TmdbCatalogSourceException) {
+                    // IMDb's credential-free GraphQL catalogue is an
+                    // independent structured fallback. It is intentionally
+                    // available even when the user did not ask for an IMDb
+                    // rating constraint.
+                    val fallback = try {
+                        loadImdbRecommendationPage(spec, cursor)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (fallbackFailure: CatalogSourceException) {
+                        throw TmdbCatalogSourceException(
+                            message = "Recommendation catalogues are unavailable.",
+                            cause = fallbackFailure,
+                        )
+                    }
+                    fallback.copy(
+                        sourceHealth = fallback.sourceHealth.copy(
+                            catalogue = RecommendationSourceStatus.DEGRADED,
+                        ),
+                    )
+                }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (sourceError: CatalogSourceException) {
+            liveFailure = sourceError
             null
         }
 
@@ -963,22 +1208,58 @@ class CatalogClient(
                     fromCache = true,
                 )
             }
-            return@supervisorScope CatalogRecommendationPage(
-                items = emptyList(),
-                nextCursor = null,
-                hasMore = false,
-                sourceHealth = RecommendationSourceHealth(
-                    catalogue = if (spec.minimumImdb == null) {
-                        RecommendationSourceStatus.UNAVAILABLE
-                    } else {
-                        RecommendationSourceStatus.DEGRADED
-                    },
-                    imdb = if (spec.minimumImdb != null) {
-                        RecommendationSourceStatus.UNAVAILABLE
-                    } else {
-                        RecommendationSourceStatus.NOT_REQUIRED
-                    },
-                ),
+            val lastGoodItems = cacheStore
+                ?.loadLastGoodRecommendationItems(
+                    mediaType = spec.mediaKind.mediaType,
+                    maxAgeMs = RECOMMENDATION_STALE_CACHE_MAX_AGE_MS,
+                    limit = RECOMMENDATION_KNOWN_SEED_LIMIT,
+                )
+                .orEmpty()
+                .asSequence()
+                .filter { item -> item.media.type == spec.mediaKind.mediaType }
+                .filter { item -> isSafeTrendingItem(item.media) }
+                .filterNot { item -> item.media.key in cursor.seenKeys }
+                .filter { item ->
+                    item.satisfiesKnownRequirements(spec, requiredFields)
+                }
+                .distinctBy { item -> item.media.key }
+                .take(RECOMMENDATION_PAGE_CANDIDATE_LIMIT)
+                .map { item ->
+                    val sources = item.sources + "LAST_GOOD_CACHE"
+                    item.copy(
+                        sources = sources,
+                        sourceCount = maxOf(item.sourceCount, sources.size),
+                    )
+                }
+                .toList()
+            if (lastGoodItems.isNotEmpty()) {
+                rememberRecommendationItems(lastGoodItems)
+                catalogue = (
+                    lastGoodItems.map(RecommendationDiscoveryItem::media) +
+                        catalogue
+                    ).distinctBy(Media::key)
+                return@supervisorScope CatalogRecommendationPage(
+                    items = lastGoodItems,
+                    nextCursor = null,
+                    hasMore = false,
+                    sourceHealth = RecommendationSourceHealth(
+                        catalogue = RecommendationSourceStatus.DEGRADED,
+                        imdb = if (requiredFields.imdbRating) {
+                            RecommendationSourceStatus.DEGRADED
+                        } else {
+                            RecommendationSourceStatus.NOT_REQUIRED
+                        },
+                    ),
+                    fromCache = true,
+                )
+            }
+            throw liveFailure ?: CatalogSourceException(
+                source = if (spec.minimumImdb != null) {
+                    CatalogSource.IMDB
+                } else {
+                    CatalogSource.TMDB
+                },
+                message = "Recommendation catalogue is unavailable.",
             )
         }
 
@@ -1074,45 +1355,57 @@ class CatalogClient(
         spec: CatalogDiscoverySpec,
         cursor: RecommendationPageCursor,
     ): CatalogRecommendationPage = supervisorScope {
-        val paths = listOf("popularity.desc", "vote_average.desc").map { sort ->
-            buildTmdbRecommendationPath(spec, cursor.page, sort)
-        }
-        val requests = paths.map { path ->
+        val type = spec.mediaKind.mediaType
+        val endpoint = buildTmdbRecommendationEndpoint(type, cursor.page)
+        val requests = listOf("popularity.desc", "vote_average.desc").map { sort ->
             async {
-                try {
-                    loadStructuredTmdbPage(path)
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (_: Throwable) {
-                    null
-                }
+                loadStructuredTmdbPage(
+                    endpoint = endpoint,
+                    fields = buildTmdbRecommendationFields(spec, cursor.page, sort),
+                    expectedType = type,
+                )
             }
         }
-        val results = requests.awaitAll()
-        val groups = results.filterNotNull()
-        if (groups.isEmpty()) throw IOException("TMDB catalogue is unavailable.")
+        val outcomes = requests.awaitAll()
+        val groups = outcomes.filterIsInstance<TmdbCatalogueResponse.Results>()
+        val failures = outcomes.filterIsInstance<TmdbCatalogueResponse.Unavailable>()
+        if (failures.size == outcomes.size) {
+            throw TmdbCatalogSourceException(
+                cause = failures.firstNotNullOfOrNull(
+                    TmdbCatalogueResponse.Unavailable::cause,
+                ),
+            )
+        }
         val genres = spec.includedGenres.map(String::trim).filter(String::isNotBlank)
         val items = groups
-            .flatMap { it }
+            .flatMap(TmdbCatalogueResponse.Results::items)
             .asSequence()
-            .filter { item -> item.type == spec.mediaKind.mediaType }
             .map { item ->
                 RecommendationDiscoveryItem(
                     media = item.copy(genres = (genres + item.genres).distinct()),
-                    metadata = CatalogVerifiedMetadata(genresVerified = true),
+                    // The current TMDB form honours with_genres but silently
+                    // ignores without_genres. Exclusions therefore force
+                    // native title-page verification before a hard-valid
+                    // candidate can be displayed.
+                    metadata = CatalogVerifiedMetadata(
+                        genresVerified =
+                            genres.isNotEmpty() && spec.excludedGenres.isEmpty(),
+                    ),
                     sources = setOf("TMDB"),
                     sourceCount = 1,
                 )
             }
             .distinctBy { it.media.key }
             .toList()
-        val hasMore = groups.any { it.size >= TMDB_PAGE_RESULT_FLOOR }
+        val hasMore = groups.any { group ->
+            group.hasNextPage ?: (group.rawItemCount >= TMDB_PAGE_RESULT_FLOOR)
+        }
         CatalogRecommendationPage(
             items = items,
             nextCursor = if (hasMore) cursor.copy(page = cursor.page + 1) else null,
             hasMore = hasMore,
             sourceHealth = RecommendationSourceHealth(
-                catalogue = if (results.any { it == null }) {
+                catalogue = if (failures.isNotEmpty()) {
                     RecommendationSourceStatus.DEGRADED
                 } else {
                     RecommendationSourceStatus.AVAILABLE
@@ -1121,36 +1414,53 @@ class CatalogClient(
         )
     }
 
-    private suspend fun loadStructuredTmdbPage(path: String): List<Media> {
+    private suspend fun loadStructuredTmdbPage(
+        endpoint: String,
+        fields: Map<String, String>,
+        expectedType: MediaType,
+    ): TmdbCatalogueResponse {
         var lastFailure: Throwable? = null
         repeat(CATALOG_REQUEST_ATTEMPTS) { attempt ->
             try {
-                val result = parseSearchResults(
-                    pageLoader("$TMDB_SITE_URL$path"),
+                val response = parseTmdbCatalogueResponse(
+                    html = formPoster(
+                        url = "$TMDB_SITE_URL$endpoint",
+                        fields = fields,
+                        headers = TMDB_FORM_HEADERS,
+                    ),
+                    expectedType = expectedType,
                 )
-                return result
+                if (response !is TmdbCatalogueResponse.Unavailable) {
+                    return response
+                }
+                lastFailure = response.cause
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (error: Throwable) {
+            } catch (error: CatalogSourceException) {
                 lastFailure = error
-                if (attempt + 1 < CATALOG_REQUEST_ATTEMPTS) {
-                    delay(CATALOG_RETRY_DELAY_MS * (attempt + 1))
-                }
+            } catch (error: IOException) {
+                lastFailure = TmdbCatalogSourceException(cause = error)
+            }
+            if (attempt + 1 < CATALOG_REQUEST_ATTEMPTS) {
+                delay(CATALOG_RETRY_DELAY_MS * (attempt + 1))
             }
         }
-        throw IOException("TMDB catalogue is unavailable.", lastFailure)
+        return TmdbCatalogueResponse.Unavailable(lastFailure)
     }
 
-    private fun buildTmdbRecommendationPath(
+    private fun buildTmdbRecommendationEndpoint(
+        type: MediaType,
+        page: Int,
+    ): String = "/discover/${type.routeName}" +
+        if (page.coerceAtLeast(1) == 1) "" else "/items"
+
+    internal fun buildTmdbRecommendationFields(
         spec: CatalogDiscoverySpec,
         page: Int,
         sort: String,
-    ): String {
+    ): Map<String, String> {
         val type = spec.mediaKind.mediaType
         val includedIds = spec.includedGenres.flatMap { genre ->
-            GenreCatalog.specFor(genre, type)?.genreIds.orEmpty()
-        }.distinct()
-        val excludedIds = spec.excludedGenres.flatMap { genre ->
             GenreCatalog.specFor(genre, type)?.genreIds.orEmpty()
         }.distinct()
         val datePrefix = if (type == MediaType.MOVIE) {
@@ -1158,28 +1468,28 @@ class CatalogClient(
         } else {
             "first_air_date"
         }
-        val parameters = buildList {
-            add("include_adult=false")
-            add("sort_by=${urlEncode(sort)}")
-            add("page=${page.coerceAtLeast(1)}")
+        return linkedMapOf<String, String>().apply {
+            put("include_adult", "false")
+            put("sort_by", sort)
+            put("page", page.coerceAtLeast(1).toString())
             if (includedIds.isNotEmpty()) {
-                add("with_genres=${urlEncode(includedIds.joinToString(","))}")
+                put("with_genres", includedIds.joinToString(","))
             }
-            if (excludedIds.isNotEmpty()) {
-                add("without_genres=${urlEncode(excludedIds.joinToString(","))}")
+            spec.yearMinimum?.let { put("$datePrefix.gte", "$it-01-01") }
+            put("$datePrefix.lte", "${spec.yearMaximum ?: currentYear()}-12-31")
+            spec.runtimeMinimumMinutes?.let {
+                put("with_runtime.gte", it.toString())
             }
-            spec.yearMinimum?.let { add("$datePrefix.gte=$it-01-01") }
-            add("$datePrefix.lte=${spec.yearMaximum ?: currentYear()}-12-31")
-            spec.runtimeMinimumMinutes?.let { add("with_runtime.gte=$it") }
-            spec.runtimeMaximumMinutes?.let { add("with_runtime.lte=$it") }
-            spec.minimumTmdb?.let { add("vote_average.gte=$it") }
+            spec.runtimeMaximumMinutes?.let {
+                put("with_runtime.lte", it.toString())
+            }
+            spec.minimumTmdb?.let { put("vote_average.gte", it.toString()) }
             spec.originalLanguage?.let { language ->
-                add("with_original_language=${languageCode(language)}")
+                put("with_original_language", languageCode(language))
             }
-            if (sort == "vote_average.desc") add("vote_count.gte=50")
-            add("language=en-US")
+            if (sort == "vote_average.desc") put("vote_count.gte", "50")
+            put("language", "en-US")
         }
-        return "/discover/${type.routeName}?${parameters.joinToString("&")}"
     }
 
     private suspend fun loadImdbRecommendationPage(
@@ -1191,9 +1501,8 @@ class CatalogClient(
         }
         val popularityExhausted = "imdb_popularity" in cursor.exhaustedSources
         val ratingExhausted = "imdb_rating" in cursor.exhaustedSources
-        val useHtmlFallback = cursor.imdbHtmlFallback
-        val popularityAttempted = !useHtmlFallback && !popularityExhausted
-        val ratingAttempted = !useHtmlFallback && !ratingExhausted
+        val popularityAttempted = !popularityExhausted
+        val ratingAttempted = !ratingExhausted
         val popularity = async {
             if (!popularityAttempted) {
                 null
@@ -1207,7 +1516,7 @@ class CatalogClient(
                 )
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (_: CatalogSourceException) {
                 null
             }
         }
@@ -1224,7 +1533,7 @@ class CatalogClient(
                 )
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (_: CatalogSourceException) {
                 null
             }
         }
@@ -1238,18 +1547,7 @@ class CatalogClient(
             (!popularityAttempted || popularityFailed) &&
             (!ratingAttempted || ratingFailed)
         val graphPartial = popularityFailed || ratingFailed
-        val htmlPages = if (
-            useHtmlFallback ||
-            allAttemptedFailed
-        ) {
-            loadImdbAdvancedHtmlFallback(spec, cursor)
-        } else {
-            null
-        }
-        if (
-            (useHtmlFallback || allAttemptedFailed) &&
-            htmlPages == null
-        ) {
+        if (allAttemptedFailed) {
             return@supervisorScope loadTmdbImdbFallbackPage(
                 spec = spec,
                 cursor = cursor,
@@ -1265,8 +1563,8 @@ class CatalogClient(
             endCursor = cursor.imdbRatingCursor,
             hasNextPage = ratingFailed,
         )
-        val pages = htmlPages ?: (popularityPage to ratingPage)
-        val imdbSourceStatus = if (graphPartial || htmlPages != null) {
+        val pages = popularityPage to ratingPage
+        val imdbSourceStatus = if (graphPartial) {
             RecommendationSourceStatus.DEGRADED
         } else {
             RecommendationSourceStatus.AVAILABLE
@@ -1277,72 +1575,89 @@ class CatalogClient(
             limit = IMDB_RESOLUTION_CANDIDATE_LIMIT,
         )
         val requestGate = Semaphore(RECOMMENDATION_RESOLUTION_CONCURRENCY)
-        val resolved = imdbTitles.map { title ->
+        val resolutions = imdbTitles.map { title ->
             async {
                 requestGate.withPermit {
-                    try {
-                        val results = searchTmdb(
+                    when (
+                        val search = searchTmdbOutcome(
                             query = title.title,
                             types = listOf(spec.mediaKind.mediaType.routeName),
                             retryEmpty = true,
                         )
-                        selectResolvedPlotMatch(
-                            PlotCandidate(
-                                title = title.title,
-                                year = title.year?.toString(),
-                                type = spec.mediaKind.mediaType,
-                                evidence = title.overview,
-                                source = PlotSource.IMDB,
-                                position = title.position,
-                            ),
-                            results,
-                        )?.let { match ->
-                            RecommendationDiscoveryItem(
-                                media = match.media.copy(
-                                    overview = match.media.overview.ifBlank {
-                                        title.overview
-                                    },
-                                    year = match.media.year.ifBlank {
-                                        title.year?.toString().orEmpty()
-                                    },
-                                    imdbRating = title.rating,
-                                    genres = (
-                                        title.genres + spec.includedGenres +
-                                            match.media.genres
-                                        ).distinct(),
+                    ) {
+                        is TmdbSearchOutcome.Unavailable ->
+                            ImdbTitleResolution.Unavailable(search.cause)
+                        is TmdbSearchOutcome.Success -> {
+                            val match = selectResolvedPlotMatch(
+                                PlotCandidate(
+                                    title = title.title,
+                                    year = title.year?.toString(),
+                                    type = spec.mediaKind.mediaType,
+                                    evidence = title.overview,
+                                    source = PlotSource.IMDB,
+                                    position = title.position,
                                 ),
-                                metadata = CatalogVerifiedMetadata(
-                                    genresVerified = true,
-                                    runtimeMinutes = title.runtimeMinutes
-                                        .takeIf {
-                                            spec.mediaKind ==
-                                                RecommendationMediaKind.MOVIE
+                                search.items,
+                            ) ?: return@withPermit ImdbTitleResolution.NoMatch
+                            ImdbTitleResolution.Resolved(
+                                RecommendationDiscoveryItem(
+                                    media = match.media.copy(
+                                        overview = match.media.overview.ifBlank {
+                                            title.overview
                                         },
-                                    averageEpisodeRuntimeMinutes = title.runtimeMinutes
-                                        .takeIf {
-                                            spec.mediaKind ==
-                                                RecommendationMediaKind.SERIES
+                                        year = match.media.year.ifBlank {
+                                            title.year?.toString().orEmpty()
                                         },
+                                        imdbRating = title.rating,
+                                        genres = (
+                                            title.genres + spec.includedGenres +
+                                                match.media.genres
+                                            ).distinct(),
+                                    ),
+                                    metadata = CatalogVerifiedMetadata(
+                                        genresVerified = true,
+                                        runtimeMinutes = title.runtimeMinutes
+                                            .takeIf {
+                                                spec.mediaKind ==
+                                                    RecommendationMediaKind.MOVIE
+                                            },
+                                        averageEpisodeRuntimeMinutes =
+                                            title.runtimeMinutes.takeIf {
+                                                spec.mediaKind ==
+                                                    RecommendationMediaKind.SERIES
+                                            },
+                                    ),
+                                    evidence = title.overview,
+                                    sources = setOf("IMDB"),
+                                    sourceCount = 1,
+                                    sourcePosition = title.position,
                                 ),
-                                evidence = title.overview,
-                                sources = setOf("IMDB"),
-                                sourceCount = 1,
-                                sourcePosition = title.position,
                             )
                         }
-                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                        throw cancelled
-                    } catch (_: Throwable) {
-                        null
                     }
                 }
             }
-        }.awaitAll().filterNotNull()
+        }.awaitAll()
+        val resolved = resolutions
+            .filterIsInstance<ImdbTitleResolution.Resolved>()
+            .map(ImdbTitleResolution.Resolved::item)
+        val resolverFailures = resolutions
+            .filterIsInstance<ImdbTitleResolution.Unavailable>()
+        if (
+            resolved.isEmpty() &&
+            resolverFailures.size * 2 > imdbTitles.size
+        ) {
+            throw TmdbCatalogSourceException(
+                "TMDB title resolution is unavailable.",
+                resolverFailures.firstNotNullOfOrNull(
+                    ImdbTitleResolution.Unavailable::cause,
+                ),
+            )
+        }
         val hasMore = pages.first.hasNextPage || pages.second.hasNextPage
         val exhausted = buildSet {
             addAll(cursor.exhaustedSources)
             if (
-                htmlPages == null &&
                 popularityAttempted &&
                 !popularityFailed &&
                 !pages.first.hasNextPage
@@ -1350,7 +1665,6 @@ class CatalogClient(
                 add("imdb_popularity")
             }
             if (
-                htmlPages == null &&
                 ratingAttempted &&
                 !ratingFailed &&
                 !pages.second.hasNextPage
@@ -1365,7 +1679,7 @@ class CatalogClient(
                     page = cursor.page + 1,
                     imdbPopularityCursor = pages.first.endCursor,
                     imdbRatingCursor = pages.second.endCursor,
-                    imdbHtmlFallback = htmlPages != null,
+                    imdbHtmlFallback = false,
                     exhaustedSources = exhausted,
                 )
             } else {
@@ -1373,7 +1687,11 @@ class CatalogClient(
             },
             hasMore = hasMore,
             sourceHealth = RecommendationSourceHealth(
-                catalogue = RecommendationSourceStatus.AVAILABLE,
+                catalogue = if (resolverFailures.isEmpty()) {
+                    RecommendationSourceStatus.AVAILABLE
+                } else {
+                    RecommendationSourceStatus.DEGRADED
+                },
                 imdb = imdbSourceStatus,
             ),
         )
@@ -1411,8 +1729,8 @@ class CatalogClient(
             loadTmdbRecommendationPage(spec, cursor)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
-        } catch (catalogueError: Throwable) {
-            throw IOException(
+        } catch (catalogueError: CatalogSourceException) {
+            throw ImdbCatalogSourceException(
                 "IMDb and TMDB catalogues are unavailable.",
                 catalogueError,
             )
@@ -1594,7 +1912,12 @@ class CatalogClient(
                     }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
-                } catch (error: Throwable) {
+                } catch (error: IOException) {
+                    lastFailure = error
+                    if (attempt + 1 < IMDB_ADVANCED_REQUEST_ATTEMPTS) {
+                        delay(IMDB_ADVANCED_RETRY_DELAY_MS * (attempt + 1))
+                    }
+                } catch (error: org.json.JSONException) {
                     lastFailure = error
                     if (attempt + 1 < IMDB_ADVANCED_REQUEST_ATTEMPTS) {
                         delay(IMDB_ADVANCED_RETRY_DELAY_MS * (attempt + 1))
@@ -1604,7 +1927,10 @@ class CatalogClient(
             null
         }
         if (result != null) return result
-        throw IOException("IMDb advanced-title search is unavailable.", lastFailure)
+        throw ImdbCatalogSourceException(
+            "IMDb advanced-title search is unavailable.",
+            lastFailure,
+        )
     }
 
     internal fun parseImdbAdvancedGraphql(payload: String): ImdbAdvancedPage {
@@ -3175,45 +3501,90 @@ class CatalogClient(
         query: String,
         types: List<String> = listOf("movie", "tv"),
         retryEmpty: Boolean = false,
-    ): List<Media> = supervisorScope {
+    ): List<Media> = when (
+        val outcome = searchTmdbOutcome(query, types, retryEmpty)
+    ) {
+        is TmdbSearchOutcome.Success -> outcome.items
+        is TmdbSearchOutcome.Unavailable -> emptyList()
+    }
+
+    private suspend fun searchTmdbOutcome(
+        query: String,
+        types: List<String>,
+        retryEmpty: Boolean,
+    ): TmdbSearchOutcome = supervisorScope {
         val encoded = URLEncoder.encode(
             query.trim(),
             StandardCharsets.UTF_8.toString(),
         )
-        val resultGroups = types.map { type ->
+        val typeOutcomes = types.map { type ->
             async {
                 val cacheKey = "$type:${normalizeText(query)}"
-                tmdbSearchCache[cacheKey]?.let { return@async it }
+                tmdbSearchCache[cacheKey]?.let {
+                    return@async TmdbSearchOutcome.Success(it)
+                }
+                var requestSucceeded = false
+                var lastFailure: Throwable? = null
                 repeat(if (retryEmpty) PLOT_TMDB_SEARCH_ATTEMPTS else 1) { attempt ->
                     try {
+                        val html = pageLoader(
+                            "$TMDB_SITE_URL/search/$type" +
+                                "?query=$encoded&language=en-US",
+                        )
+                        if (html.isBlank() ||
+                            TMDB_WAF_MARKERS.any(html.lowercase()::contains)
+                        ) {
+                            throw TmdbCatalogSourceException(
+                                "TMDB title search returned an invalid response.",
+                            )
+                        }
+                        requestSucceeded = true
                         val parsed = parseSearchResults(
-                            pageLoader(
-                                "$TMDB_SITE_URL/search/$type" +
-                                    "?query=$encoded&language=en-US",
-                            ),
+                            html,
                         ).filter { item -> item.type.routeName == type }
                         if (parsed.isNotEmpty()) {
                             tmdbSearchCache[cacheKey] = parsed
-                            return@async parsed
+                            return@async TmdbSearchOutcome.Success(parsed)
                         }
                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
                         throw cancelled
-                    } catch (_: Throwable) {
-                        // Retry below for external plot candidates.
+                    } catch (error: CatalogSourceException) {
+                        lastFailure = error
+                    } catch (error: IOException) {
+                        lastFailure = TmdbCatalogSourceException(
+                            "TMDB title search is unavailable.",
+                            error,
+                        )
                     }
                     if (retryEmpty && attempt < PLOT_TMDB_SEARCH_ATTEMPTS - 1) {
                         delay(PLOT_TMDB_RETRY_DELAY_MS * (attempt + 1))
                     }
                 }
-                emptyList()
+                if (requestSucceeded) {
+                    TmdbSearchOutcome.Success(emptyList())
+                } else {
+                    TmdbSearchOutcome.Unavailable(lastFailure)
+                }
             }
         }.awaitAll()
-        val largestGroup = resultGroups.maxOfOrNull(List<Media>::size) ?: 0
-        (0 until largestGroup)
+        val successfulGroups = typeOutcomes
+            .filterIsInstance<TmdbSearchOutcome.Success>()
+            .map(TmdbSearchOutcome.Success::items)
+        if (successfulGroups.isEmpty()) {
+            return@supervisorScope TmdbSearchOutcome.Unavailable(
+                typeOutcomes
+                    .filterIsInstance<TmdbSearchOutcome.Unavailable>()
+                    .firstNotNullOfOrNull(TmdbSearchOutcome.Unavailable::cause),
+            )
+        }
+        val largestGroup = successfulGroups.maxOfOrNull(List<Media>::size) ?: 0
+        TmdbSearchOutcome.Success(
+            (0 until largestGroup)
             .flatMap { index ->
-                resultGroups.mapNotNull { results -> results.getOrNull(index) }
+                successfulGroups.mapNotNull { results -> results.getOrNull(index) }
             }
-            .distinctBy(Media::key)
+                .distinctBy(Media::key),
+        )
     }
 
     private suspend fun predictiveTitleSuggestion(
@@ -3393,19 +3764,91 @@ class CatalogClient(
         )
     }
 
+    private fun parseTmdbCatalogueResponse(
+        html: String,
+        expectedType: MediaType,
+    ): TmdbCatalogueResponse {
+        if (html.isBlank()) {
+            return TmdbCatalogueResponse.Unavailable(
+                TmdbCatalogSourceException("TMDB catalogue response was empty."),
+            )
+        }
+        val normalized = html.lowercase()
+        if (TMDB_WAF_MARKERS.any(normalized::contains)) {
+            return TmdbCatalogueResponse.Unavailable(
+                TmdbCatalogSourceException(
+                    "TMDB catalogue request was blocked by an upstream challenge.",
+                ),
+            )
+        }
+        if (TMDB_EXPLICIT_EMPTY_MESSAGE.lowercase() in normalized) {
+            return TmdbCatalogueResponse.Empty
+        }
+        val document = Jsoup.parse(html, TMDB_SITE_URL)
+        val rawCards = document.select("div[data-object-id]")
+        val hasNextPage = parseTmdbHasNextPage(document)
+        val items = parseSearchResults(html)
+            .filter { it.type == expectedType }
+        if (items.isNotEmpty()) {
+            return TmdbCatalogueResponse.Results(
+                items = items,
+                hasNextPage = hasNextPage,
+                rawItemCount = rawCards.size,
+            )
+        }
+        if (rawCards.isNotEmpty() && rawCards.all(::isAdultTmdbCard)) {
+            return TmdbCatalogueResponse.Results(
+                items = emptyList(),
+                hasNextPage = hasNextPage,
+                rawItemCount = rawCards.size,
+            )
+        }
+        return TmdbCatalogueResponse.Unavailable(
+            TmdbCatalogSourceException(
+                "TMDB catalogue response did not contain valid " +
+                    "${expectedType.routeName} cards.",
+            ),
+        )
+    }
+
     internal fun parseSearchResults(html: String): List<Media> {
         val document = Jsoup.parse(html, TMDB_SITE_URL)
-        return document.select("main div[data-object-id]").mapNotNull { card ->
-            val titleLink = card.selectFirst("a[data-media-type][href] h2")?.parent()
+        return document.select("div[data-object-id]")
+            .filterNot(::isAdultTmdbCard)
+            .mapNotNull { card ->
+            val titleLink = card.select("a[href]").firstOrNull { link ->
+                tmdbTitleRoute.find(link.attr("href")) != null &&
+                    (
+                        link.selectFirst("h2, h3") != null ||
+                            link.hasAttr("data-media-type") ||
+                            link.attr("class").split(' ').any {
+                                it == "result" || it == "title"
+                            }
+                        )
+            } ?: card.select("a[href]").firstOrNull { link ->
+                tmdbTitleRoute.find(link.attr("href")) != null
+            }
                 ?: return@mapNotNull null
             val match = tmdbTitleRoute.find(titleLink.attr("href")) ?: return@mapNotNull null
-            val heading = titleLink.selectFirst("h2") ?: return@mapNotNull null
-            val title = (heading.selectFirst("span")?.text() ?: heading.text()).trim()
-                .takeIf(String::isNotBlank)
+            val heading = titleLink.selectFirst("h2, h3")
+                ?: card.selectFirst("h2, h3")
+            val title = sequenceOf(
+                heading?.selectFirst("span")?.text(),
+                heading?.text(),
+                titleLink.attr("title"),
+                card.selectFirst("img[alt]")?.attr("alt"),
+            ).filterNotNull()
+                .map(String::trim)
+                .firstOrNull(String::isNotBlank)
                 ?: return@mapNotNull null
-            val poster = card.selectFirst("img.poster, img[alt=\"$title\"]")
-                ?.attr("src")
-                ?.takeIf(String::isNotBlank)
+            val poster = sequenceOf(
+                card.selectFirst("img.poster")?.attr("src"),
+                card.select("img[alt]").firstOrNull {
+                    it.attr("alt").equals(title, ignoreCase = true)
+                }?.attr("src"),
+                card.selectFirst("img[src]")?.attr("src"),
+                card.selectFirst("img[data-src]")?.attr("data-src"),
+            ).filterNotNull().firstOrNull(String::isNotBlank)
             val tmdbRating = sequenceOf(
                 card.selectFirst(".user_score_chart[data-percent]")?.attr("data-percent"),
                 card.selectFirst("[data-percent]")?.attr("data-percent"),
@@ -3429,6 +3872,42 @@ class CatalogClient(
                 rating = tmdbRating ?: 0.0,
             )
         }.distinctBy(Media::key)
+    }
+
+    private fun isAdultTmdbCard(card: org.jsoup.nodes.Element): Boolean =
+        card.attr("data-media-adult").equals("true", ignoreCase = true) ||
+            card.select("[data-media-adult=true]").isNotEmpty()
+
+    private fun parseTmdbHasNextPage(document: Document): Boolean? {
+        val candidates = document.select(
+            "a.next_page, a[rel=next], a.load_more, button.load_more, " +
+                ".load_more a, .load_more button, [data-next-page]",
+        )
+        val hasActiveNext = candidates.any { element ->
+            val disabled = element.hasAttr("disabled") ||
+                element.attr("aria-disabled").equals("true", ignoreCase = true) ||
+                "disabled" in element.classNames()
+            if (disabled) {
+                false
+            } else {
+                val nextValue = element.attr("data-next-page").trim()
+                when {
+                    nextValue.isNotBlank() ->
+                        nextValue != "0" &&
+                            !nextValue.equals("false", ignoreCase = true)
+                    element.tagName() == "a" -> element.attr("href").isNotBlank()
+                    element.tagName() == "button" -> true
+                    else -> element.text().contains("load more", ignoreCase = true)
+                }
+            }
+        }
+        if (hasActiveNext) return true
+        val hasPaginationMarker = candidates.isNotEmpty() ||
+            document.select(
+                ".pagination, .pagination_wrapper, .pagination-container, " +
+                    "[data-role=pagination]",
+            ).isNotEmpty()
+        return false.takeIf { hasPaginationMarker }
     }
 
     internal fun parseRelatedResults(html: String): List<Media> {
@@ -3937,6 +4416,23 @@ class CatalogClient(
         const val IMDB_ADVANCED_TOTAL_TIMEOUT_MS = 8_000L
         const val IMDB_EARLIEST_YEAR = 1870
         const val IMDB_MAX_RUNTIME_MINUTES = 600
+        const val TMDB_EXPLICIT_EMPTY_MESSAGE =
+            "No items were found that match your query."
+        val TMDB_FORM_HEADERS = linkedMapOf(
+            "User-Agent" to (
+                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/126 Mobile Safari/537.36"
+                ),
+            "Accept" to "text/html,application/xhtml+xml",
+            "Accept-Language" to "en-US,en;q=0.9",
+            "X-Requested-With" to "XMLHttpRequest",
+        )
+        val TMDB_WAF_MARKERS = setOf(
+            "captcha",
+            "cloudflare",
+            "challenge-platform",
+            "x-amzn-waf",
+        )
         val genericWebResultTerms = listOf(
             "best movies",
             "movies where",
