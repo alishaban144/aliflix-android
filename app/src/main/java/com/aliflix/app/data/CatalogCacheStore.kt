@@ -1,10 +1,17 @@
 package com.aliflix.app.data
 
 import android.content.Context
+import android.util.AtomicFile
 import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
+import com.aliflix.app.recommendation.RecommendationPageCursor
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -25,6 +32,27 @@ interface CatalogCacheStore {
         queryKey: String,
         items: List<RecommendationDiscoveryItem>,
     ) = Unit
+    suspend fun loadRecommendationPage(
+        fingerprint: String,
+        page: Int,
+        maxAgeMs: Long,
+    ): List<RecommendationDiscoveryItem>? =
+        loadRecommendations("$fingerprint:page:$page", maxAgeMs)
+    suspend fun saveRecommendationPage(
+        fingerprint: String,
+        page: Int,
+        items: List<RecommendationDiscoveryItem>,
+    ) = saveRecommendations("$fingerprint:page:$page", items)
+    suspend fun loadRecommendationCatalogPage(
+        fingerprint: String,
+        page: Int,
+        maxAgeMs: Long,
+    ): CachedRecommendationCatalogPage? = null
+    suspend fun saveRecommendationCatalogPage(
+        fingerprint: String,
+        page: Int,
+        value: CachedRecommendationCatalogPage,
+    ) = Unit
     suspend fun loadVerifiedMetadata(
         mediaKey: String,
         maxAgeMs: Long,
@@ -32,13 +60,24 @@ interface CatalogCacheStore {
     suspend fun saveVerifiedMetadata(item: VerifiedRecommendationItem) = Unit
 }
 
+data class CachedRecommendationCatalogPage(
+    val items: List<RecommendationDiscoveryItem>,
+    val nextCursor: RecommendationPageCursor?,
+    val hasMore: Boolean,
+    val savedAtMillis: Long = System.currentTimeMillis(),
+)
+
 class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
     private val cacheDir = File(context.filesDir, "catalog-cache")
     private val homeFile = File(cacheDir, "home-v4.json")
     private val plotFile = File(cacheDir, "plot-v2.json")
     private val recommendationFile = File(cacheDir, "recommendations-v1.json")
+    private val recommendationPageFile = File(cacheDir, "recommendation-pages-v2.json")
     private val metadataFile = File(cacheDir, "recommendation-metadata-v1.json")
     private val mutex = Mutex()
+    private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val pendingMetadata = linkedMapOf<String, VerifiedRecommendationItem>()
+    private var metadataFlushJob: Job? = null
 
     override suspend fun loadHome(): HomeContent? = mutex.withLock {
         withContext(Dispatchers.IO) {
@@ -222,10 +261,114 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         }
     }
 
+    override suspend fun loadRecommendationCatalogPage(
+        fingerprint: String,
+        page: Int,
+        maxAgeMs: Long,
+    ): CachedRecommendationCatalogPage? = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val entries = JSONObject(recommendationPageFile.readText())
+                    .optJSONArray("entries") ?: return@runCatching null
+                val entry = (0 until entries.length())
+                    .mapNotNull(entries::optJSONObject)
+                    .firstOrNull {
+                        it.optString("fingerprint") == fingerprint &&
+                            it.optInt("page") == page
+                    } ?: return@runCatching null
+                val savedAt = entry.optLong("savedAt")
+                if (System.currentTimeMillis() - savedAt > maxAgeMs) {
+                    return@runCatching null
+                }
+                val itemArray = entry.optJSONArray("items") ?: JSONArray()
+                val items = (0 until itemArray.length()).mapNotNull { index ->
+                    val json = itemArray.optJSONObject(index) ?: return@mapNotNull null
+                    val mediaJson = json.optJSONObject("media") ?: return@mapNotNull null
+                    RecommendationDiscoveryItem(
+                        media = Media.fromJson(mediaJson),
+                        metadata = json.optJSONObject("metadata")
+                            ?.let(::metadataFromJson)
+                            ?: CatalogVerifiedMetadata(),
+                        evidence = json.optString("evidence"),
+                        sources = json.optJSONArray("sources")?.let { sources ->
+                            (0 until sources.length()).mapNotNull { sourceIndex ->
+                                sources.optString(sourceIndex).takeIf(String::isNotBlank)
+                            }.toSet()
+                        }.orEmpty(),
+                        sourceCount = json.optInt("sourceCount"),
+                        sourcePosition = json.optInt("sourcePosition", 99),
+                    )
+                }
+                CachedRecommendationCatalogPage(
+                    items = items,
+                    nextCursor = entry.optJSONObject("nextCursor")?.let(::cursorFromJson),
+                    hasMore = entry.optBoolean("hasMore"),
+                    savedAtMillis = savedAt,
+                )
+            }.getOrNull()
+        }
+    }
+
+    override suspend fun saveRecommendationCatalogPage(
+        fingerprint: String,
+        page: Int,
+        value: CachedRecommendationCatalogPage,
+    ) = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            val previous = runCatching {
+                JSONObject(recommendationPageFile.readText()).optJSONArray("entries")
+            }.getOrNull()
+            val entries = buildList {
+                add(
+                    JSONObject().apply {
+                        put("fingerprint", fingerprint)
+                        put("page", page)
+                        put("savedAt", value.savedAtMillis)
+                        put("hasMore", value.hasMore)
+                        value.nextCursor?.let { put("nextCursor", cursorToJson(it)) }
+                        put(
+                            "items",
+                            JSONArray().apply {
+                                value.items.forEach { item ->
+                                    put(
+                                        JSONObject()
+                                            .put("media", item.media.toJson())
+                                            .put("metadata", metadataToJson(item.metadata))
+                                            .put("evidence", item.evidence)
+                                            .put("sources", JSONArray(item.sources.toList()))
+                                            .put("sourceCount", item.sourceCount)
+                                            .put("sourcePosition", item.sourcePosition),
+                                    )
+                                }
+                            },
+                        )
+                    },
+                )
+                if (previous != null) {
+                    (0 until previous.length())
+                        .mapNotNull(previous::optJSONObject)
+                        .filterNot {
+                            it.optString("fingerprint") == fingerprint &&
+                                it.optInt("page") == page
+                        }
+                        .take(MAX_RECOMMENDATION_PAGE_CACHE_ENTRIES - 1)
+                        .forEach(::add)
+                }
+            }
+            writeAtomically(
+                recommendationPageFile,
+                JSONObject().put("entries", JSONArray(entries)).toString(),
+            )
+        }
+    }
+
     override suspend fun loadVerifiedMetadata(
         mediaKey: String,
         maxAgeMs: Long,
     ): VerifiedRecommendationItem? = mutex.withLock {
+        pendingMetadata[mediaKey]?.takeIf { item ->
+            System.currentTimeMillis() - item.metadata.verifiedAtMillis <= maxAgeMs
+        }?.let { return@withLock it }
         withContext(Dispatchers.IO) {
             runCatching {
                 val entries = JSONObject(metadataFile.readText()).optJSONArray("entries")
@@ -241,6 +384,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                 VerifiedRecommendationItem(
                     media = Media.fromJson(entry.getJSONObject("media")),
                     metadata = CatalogVerifiedMetadata(
+                        genresVerified = metadata.optBoolean("genresVerified"),
                         runtimeMinutes = metadata.optInt("runtimeMinutes")
                             .takeIf { metadata.has("runtimeMinutes") && it > 0 },
                         originalLanguage = metadata.optString("originalLanguage")
@@ -264,43 +408,36 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
     override suspend fun saveVerifiedMetadata(
         item: VerifiedRecommendationItem,
     ) = mutex.withLock {
+        pendingMetadata[item.media.key] = item
+        if (metadataFlushJob?.isActive != true) {
+            metadataFlushJob = cacheScope.launch {
+                delay(METADATA_WRITE_DEBOUNCE_MS)
+                flushPendingMetadata()
+            }
+        }
+    }
+
+    private suspend fun flushPendingMetadata() = mutex.withLock {
+        if (pendingMetadata.isEmpty()) return@withLock
+        val batch = pendingMetadata.values.toList()
+        pendingMetadata.clear()
         withContext(Dispatchers.IO) {
             val previous = runCatching {
                 JSONObject(metadataFile.readText()).optJSONArray("entries")
             }.getOrNull()
+            val batchKeys = batch.mapTo(hashSetOf()) { it.media.key }
             val entries = buildList {
-                add(
-                    JSONObject().apply {
-                        put("key", item.media.key)
-                        put("savedAt", item.metadata.verifiedAtMillis)
-                        put("media", item.media.toJson())
-                        put(
-                            "metadata",
-                            JSONObject().apply {
-                                item.metadata.runtimeMinutes?.let {
-                                    put("runtimeMinutes", it)
-                                }
-                                item.metadata.originalLanguage?.let {
-                                    put("originalLanguage", it)
-                                }
-                                item.metadata.status?.let { put("status", it) }
-                                item.metadata.director?.let { put("director", it) }
-                                item.metadata.seasonCount?.let { put("seasonCount", it) }
-                                item.metadata.averageEpisodeRuntimeMinutes?.let {
-                                    put("averageEpisodeRuntimeMinutes", it)
-                                }
-                            },
-                        )
-                    },
-                )
+                batch.asReversed().forEach { item ->
+                    add(metadataEntryToJson(item))
+                }
                 if (previous != null) {
                     (0 until previous.length())
                         .mapNotNull(previous::optJSONObject)
-                        .filterNot { it.optString("key") == item.media.key }
-                        .take(MAX_METADATA_CACHE_ENTRIES - 1)
+                        .filterNot { it.optString("key") in batchKeys }
+                        .take((MAX_METADATA_CACHE_ENTRIES - batch.size).coerceAtLeast(0))
                         .forEach(::add)
                 }
-            }
+            }.take(MAX_METADATA_CACHE_ENTRIES)
             writeAtomically(
                 metadataFile,
                 JSONObject().put("entries", JSONArray(entries)).toString(),
@@ -308,20 +445,101 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         }
     }
 
+    private fun metadataEntryToJson(
+        item: VerifiedRecommendationItem,
+    ): JSONObject = JSONObject().apply {
+        put("key", item.media.key)
+        put("savedAt", item.metadata.verifiedAtMillis)
+        put("media", item.media.toJson())
+        put("metadata", metadataToJson(item.metadata))
+    }
+
     private fun writeAtomically(target: File, value: String) {
         cacheDir.mkdirs()
-        val temporary = File(cacheDir, "${target.name}.tmp")
-        temporary.writeText(value)
-        if (target.exists()) target.delete()
-        if (!temporary.renameTo(target)) {
-            target.writeText(value)
-            temporary.delete()
+        val atomic = AtomicFile(target)
+        val output = atomic.startWrite()
+        try {
+            output.write(value.toByteArray(Charsets.UTF_8))
+            output.flush()
+            atomic.finishWrite(output)
+        } catch (error: Throwable) {
+            atomic.failWrite(output)
+            throw error
         }
     }
 
+    private fun cursorToJson(cursor: RecommendationPageCursor): JSONObject =
+        JSONObject()
+            .put("page", cursor.page)
+            .put("seenKeys", JSONArray(cursor.seenKeys.toList()))
+            .put("imdbPopularityCursor", cursor.imdbPopularityCursor)
+            .put("imdbRatingCursor", cursor.imdbRatingCursor)
+            .put("imdbHtmlFallback", cursor.imdbHtmlFallback)
+            .put("imdbTmdbFallback", cursor.imdbTmdbFallback)
+            .put("exhaustedSources", JSONArray(cursor.exhaustedSources.toList()))
+
+    private fun cursorFromJson(json: JSONObject): RecommendationPageCursor =
+        RecommendationPageCursor(
+            page = json.optInt("page", 1),
+            seenKeys = json.optJSONArray("seenKeys")?.let { values ->
+                (0 until values.length()).mapNotNull { index ->
+                    values.optString(index).takeIf(String::isNotBlank)
+                }.toSet()
+            }.orEmpty(),
+            imdbPopularityCursor = json.optString("imdbPopularityCursor")
+                .takeIf(String::isNotBlank),
+            imdbRatingCursor = json.optString("imdbRatingCursor")
+                .takeIf(String::isNotBlank),
+            imdbHtmlFallback = json.optBoolean("imdbHtmlFallback"),
+            imdbTmdbFallback = json.optBoolean("imdbTmdbFallback"),
+            exhaustedSources = json.optJSONArray("exhaustedSources")?.let { values ->
+                (0 until values.length()).mapNotNull { index ->
+                    values.optString(index).takeIf(String::isNotBlank)
+                }.toSet()
+            }.orEmpty(),
+        )
+
+    private fun metadataToJson(metadata: CatalogVerifiedMetadata): JSONObject =
+        JSONObject().apply {
+            put("genresVerified", metadata.genresVerified)
+            metadata.runtimeMinutes?.let { put("runtimeMinutes", it) }
+            metadata.originalLanguage?.let { put("originalLanguage", it) }
+            metadata.status?.let { put("status", it) }
+            metadata.director?.let { put("director", it) }
+            metadata.seasonCount?.let { put("seasonCount", it) }
+            metadata.averageEpisodeRuntimeMinutes?.let {
+                put("averageEpisodeRuntimeMinutes", it)
+            }
+            put("verifiedAtMillis", metadata.verifiedAtMillis)
+        }
+
+    private fun metadataFromJson(json: JSONObject): CatalogVerifiedMetadata =
+        CatalogVerifiedMetadata(
+            genresVerified = json.optBoolean("genresVerified"),
+            runtimeMinutes = json.optInt("runtimeMinutes")
+                .takeIf { json.has("runtimeMinutes") && it > 0 },
+            originalLanguage = json.optString("originalLanguage")
+                .takeIf(String::isNotBlank),
+            status = json.optString("status").takeIf(String::isNotBlank),
+            director = json.optString("director").takeIf(String::isNotBlank),
+            seasonCount = json.optInt("seasonCount")
+                .takeIf { json.has("seasonCount") && it > 0 },
+            averageEpisodeRuntimeMinutes =
+                json.optInt("averageEpisodeRuntimeMinutes")
+                    .takeIf {
+                        json.has("averageEpisodeRuntimeMinutes") && it > 0
+                    },
+            verifiedAtMillis = json.optLong(
+                "verifiedAtMillis",
+                System.currentTimeMillis(),
+            ),
+        )
+
     private companion object {
         const val MAX_PLOT_CACHE_ENTRIES = 24
-        const val MAX_RECOMMENDATION_CACHE_ENTRIES = 32
-        const val MAX_METADATA_CACHE_ENTRIES = 240
+        const val MAX_RECOMMENDATION_CACHE_ENTRIES = 80
+        const val MAX_RECOMMENDATION_PAGE_CACHE_ENTRIES = 72
+        const val MAX_METADATA_CACHE_ENTRIES = 600
+        const val METADATA_WRITE_DEBOUNCE_MS = 250L
     }
 }

@@ -14,9 +14,10 @@ class SearchRecommendationUiTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun thirdSearchPageOpensAndAcceptsFreeText() {
+    fun thirdSearchPageRequiresTypeBeforeAcceptingFreeText() {
         composeRule.onNodeWithText("Search", useUnmergedTree = true).performClick()
         composeRule.onNodeWithTag("search-mode-ai").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("ai-type-movie").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag("ai-recommendation-input")
             .assertIsDisplayed()
             .performTextInput("Funny movie with friends")

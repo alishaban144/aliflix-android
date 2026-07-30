@@ -6,20 +6,30 @@ import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.Season
+import com.aliflix.app.recommendation.CatalogDiscoverySpec
+import com.aliflix.app.recommendation.RecommendationMediaKind
+import com.aliflix.app.recommendation.RecommendationPageCursor
+import com.aliflix.app.recommendation.RecommendationSourceHealth
+import com.aliflix.app.recommendation.RecommendationSourceStatus
+import com.aliflix.app.recommendation.RequiredMetadataFields
 import com.aliflix.app.recommendation.RelatedContentEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
@@ -29,6 +39,12 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlin.math.roundToInt
 
 internal data class PlotCandidate(
@@ -49,13 +65,16 @@ internal data class PlotCandidate(
 }
 
 internal enum class PlotSource(val priority: Int) {
+    IMDB(34),
     BRAVE(30),
     WIKIPEDIA(24),
     DUCKDUCKGO(20),
+    REDDIT(12),
 }
 
 data class RecommendationDiscoveryItem(
     val media: Media,
+    val metadata: CatalogVerifiedMetadata = CatalogVerifiedMetadata(),
     val evidence: String = "",
     val sources: Set<String> = emptySet(),
     val sourceCount: Int = 0,
@@ -63,6 +82,7 @@ data class RecommendationDiscoveryItem(
 )
 
 data class CatalogVerifiedMetadata(
+    val genresVerified: Boolean = false,
     val runtimeMinutes: Int? = null,
     val originalLanguage: String? = null,
     val status: String? = null,
@@ -80,6 +100,32 @@ data class VerifiedRecommendationItem(
 data class RecommendationDiscoveryBatch(
     val items: List<RecommendationDiscoveryItem>,
     val webAvailable: Boolean,
+)
+
+data class CatalogRecommendationPage(
+    val items: List<RecommendationDiscoveryItem>,
+    val nextCursor: RecommendationPageCursor?,
+    val hasMore: Boolean,
+    val sourceHealth: RecommendationSourceHealth,
+    val fromCache: Boolean = false,
+)
+
+internal data class ImdbAdvancedTitle(
+    val imdbId: String,
+    val title: String,
+    val year: Int?,
+    val rating: Double?,
+    val voteCount: Int?,
+    val runtimeMinutes: Int?,
+    val genres: List<String>,
+    val overview: String,
+    val position: Int,
+)
+
+internal data class ImdbAdvancedPage(
+    val items: List<ImdbAdvancedTitle>,
+    val endCursor: String?,
+    val hasNextPage: Boolean,
 )
 
 private data class PlotDiscovery(
@@ -188,6 +234,54 @@ internal fun isSafeTrendingItem(item: Media): Boolean {
         explicitTrendingPhrases.none(searchable::contains)
 }
 
+private object RecommendationRequestPriorityKey :
+    CoroutineContext.Key<RecommendationRequestPriorityElement>
+
+private object RecommendationRequestPriorityElement :
+    AbstractCoroutineContextElement(RecommendationRequestPriorityKey)
+
+/**
+ * One bounded scheduler for all catalogue traffic. Foreground recommendation
+ * requests announce themselves before waiting for a permit, so queued Home
+ * refresh work yields instead of filling the next available slots.
+ */
+private class CatalogRequestScheduler {
+    private val globalGate = Semaphore(MAX_CONCURRENT_REQUESTS)
+    private val hostGates = ConcurrentHashMap<String, Semaphore>()
+    private val foregroundWaiters = AtomicInteger(0)
+
+    suspend fun <T> execute(
+        url: String,
+        foreground: Boolean,
+        block: suspend () -> T,
+    ): T {
+        if (foreground) foregroundWaiters.incrementAndGet()
+        try {
+            if (!foreground) {
+                while (foregroundWaiters.get() > 0) {
+                    delay(BACKGROUND_YIELD_DELAY_MS)
+                }
+            }
+            val host = runCatching { URL(url).host.lowercase() }
+                .getOrDefault("unknown")
+            val hostGate = hostGates.computeIfAbsent(host) {
+                Semaphore(MAX_CONCURRENT_REQUESTS_PER_HOST)
+            }
+            return globalGate.withPermit {
+                hostGate.withPermit { block() }
+            }
+        } finally {
+            if (foreground) foregroundWaiters.decrementAndGet()
+        }
+    }
+
+    private companion object {
+        const val MAX_CONCURRENT_REQUESTS = 4
+        const val MAX_CONCURRENT_REQUESTS_PER_HOST = 4
+        const val BACKGROUND_YIELD_DELAY_MS = 30L
+    }
+}
+
 /**
  * Builds the native catalogue from public, server-rendered movie metadata pages.
  *
@@ -196,13 +290,18 @@ internal fun isSafeTrendingItem(item: Media): Boolean {
  */
 class CatalogClient(
     private val cacheStore: CatalogCacheStore? = null,
-    private val jsonPoster: suspend (String, String) -> String = ::postJson,
-    private val pageLoader: suspend (String) -> String = ::downloadPage,
+    jsonPoster: suspend (String, String) -> String = ::postJson,
+    pageLoader: suspend (String) -> String = ::downloadPage,
 ) {
+    private val rawJsonPoster = jsonPoster
+    private val rawPageLoader = pageLoader
+    private val requestScheduler = CatalogRequestScheduler()
     @Volatile
     private var catalogue: List<Media> = fallbackItems
     private val imdbRatingsCache = ConcurrentHashMap<String, Double>()
     private val rottenTomatoesRatingsCache = ConcurrentHashMap<String, Int>()
+    private val recommendationMetadata =
+        ConcurrentHashMap<String, CatalogVerifiedMetadata>()
     private val tmdbSearchCache = ConcurrentHashMap<String, List<Media>>()
     private val verifiedGenrePageCache = ConcurrentHashMap<String, List<Media>>()
     private val verifiedGenrePageLocks = ConcurrentHashMap<String, Mutex>()
@@ -210,6 +309,24 @@ class CatalogClient(
     private val genreBrowseSeenKeys = ConcurrentHashMap.newKeySet<String>()
     @Volatile
     private var homeShownKeys: Set<String> = emptySet()
+
+    private suspend fun pageLoader(url: String): String =
+        requestScheduler.execute(
+            url = url,
+            foreground =
+                coroutineContext[RecommendationRequestPriorityKey] != null,
+        ) {
+            rawPageLoader(url)
+        }
+
+    private suspend fun jsonPoster(url: String, body: String): String =
+        requestScheduler.execute(
+            url = url,
+            foreground =
+                coroutineContext[RecommendationRequestPriorityKey] != null,
+        ) {
+            rawJsonPoster(url, body)
+        }
 
     suspend fun home(
         onProgress: suspend (HomeContent) -> Unit = {},
@@ -759,6 +876,1297 @@ class CatalogClient(
         ranked
     }
 
+    /**
+     * Retrieves one deterministic catalogue page. Structured providers are
+     * authoritative; web and indexed Reddit results are supplemental only.
+     */
+    fun knownRecommendationSeeds(
+        spec: CatalogDiscoverySpec,
+        requiredFields: RequiredMetadataFields,
+    ): List<RecommendationDiscoveryItem> = catalogue
+        .asSequence()
+        .filter { it.type == spec.mediaKind.mediaType }
+        .filter(::isSafeTrendingItem)
+        .map { media ->
+            RecommendationDiscoveryItem(
+                media = media,
+                metadata = recommendationMetadata[media.key]
+                    ?: CatalogVerifiedMetadata(),
+                sources = setOf("SESSION_CATALOG"),
+                sourceCount = 1,
+            )
+        }
+        .filter { it.satisfiesKnownRequirements(spec, requiredFields) }
+        .distinctBy { it.media.key }
+        .take(RECOMMENDATION_KNOWN_SEED_LIMIT)
+        .toList()
+
+    suspend fun recommendationPage(
+        spec: CatalogDiscoverySpec,
+        cursor: RecommendationPageCursor = RecommendationPageCursor(),
+    ): CatalogRecommendationPage = withContext(RecommendationRequestPriorityElement) {
+        supervisorScope {
+        cacheStore?.loadRecommendationCatalogPage(
+            spec.fingerprint,
+            cursor.page,
+            RECOMMENDATION_CACHE_MAX_AGE_MS,
+        )?.let { cached ->
+            rememberRecommendationItems(cached.items)
+            catalogue = (cached.items.map(RecommendationDiscoveryItem::media) + catalogue)
+                .distinctBy(Media::key)
+            return@supervisorScope CatalogRecommendationPage(
+                items = cached.items.filterNot { it.media.key in cursor.seenKeys },
+                nextCursor = cached.nextCursor,
+                hasMore = cached.hasMore,
+                sourceHealth = RecommendationSourceHealth(
+                    catalogue = RecommendationSourceStatus.AVAILABLE,
+                    imdb = if (spec.minimumImdb != null) {
+                        RecommendationSourceStatus.AVAILABLE
+                    } else {
+                        RecommendationSourceStatus.NOT_REQUIRED
+                    },
+                ),
+                fromCache = true,
+            )
+        }
+
+        val live = try {
+            if (spec.minimumImdb != null) {
+                loadImdbRecommendationPage(spec, cursor)
+            } else {
+                loadTmdbRecommendationPage(spec, cursor)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            null
+        }
+
+        if (live == null) {
+            cacheStore?.loadRecommendationCatalogPage(
+                spec.fingerprint,
+                cursor.page,
+                RECOMMENDATION_STALE_CACHE_MAX_AGE_MS,
+            )?.let { stale ->
+                return@supervisorScope CatalogRecommendationPage(
+                    items = stale.items.filterNot { it.media.key in cursor.seenKeys },
+                    nextCursor = stale.nextCursor,
+                    hasMore = stale.hasMore,
+                    sourceHealth = RecommendationSourceHealth(
+                        catalogue = RecommendationSourceStatus.DEGRADED,
+                        imdb = if (spec.minimumImdb != null) {
+                            RecommendationSourceStatus.DEGRADED
+                        } else {
+                            RecommendationSourceStatus.NOT_REQUIRED
+                        },
+                    ),
+                    fromCache = true,
+                )
+            }
+            return@supervisorScope CatalogRecommendationPage(
+                items = emptyList(),
+                nextCursor = null,
+                hasMore = false,
+                sourceHealth = RecommendationSourceHealth(
+                    catalogue = if (spec.minimumImdb == null) {
+                        RecommendationSourceStatus.UNAVAILABLE
+                    } else {
+                        RecommendationSourceStatus.DEGRADED
+                    },
+                    imdb = if (spec.minimumImdb != null) {
+                        RecommendationSourceStatus.UNAVAILABLE
+                    } else {
+                        RecommendationSourceStatus.NOT_REQUIRED
+                    },
+                ),
+            )
+        }
+
+        var items = live.items
+        var health = live.sourceHealth
+        if (cursor.page >= RECOMMENDATION_SUPPLEMENTAL_START_PAGE) {
+            val redditRequest = async {
+                withTimeoutOrNull(RECOMMENDATION_SUPPLEMENTAL_TIMEOUT_MS) {
+                    runCatching {
+                        indexedRedditRecommendationItems(spec)
+                    }.getOrNull()
+                }
+            }
+            val webRequest = async {
+                withTimeoutOrNull(RECOMMENDATION_SUPPLEMENTAL_TIMEOUT_MS) {
+                    runCatching {
+                        recommendationCandidates(
+                            request = spec.discoveryText,
+                            requestedType = spec.mediaKind.mediaType,
+                        )
+                    }.getOrNull()
+                }
+            }
+            val reddit = redditRequest.await()
+            val web = webRequest.await()
+            if (reddit == null) {
+                health = health.copy(reddit = RecommendationSourceStatus.UNAVAILABLE)
+            } else {
+                health = health.copy(reddit = RecommendationSourceStatus.AVAILABLE)
+            }
+            val webItems = web?.items
+                .orEmpty()
+                // recommendationCandidates also supplies local seeds for its
+                // legacy caller. Only externally discovered, TMDB-resolved
+                // candidates are valid supplementation here.
+                .filter { it.sources.isNotEmpty() }
+                .map { item ->
+                    item.copy(
+                        sources = item.sources + "WEB_DISCOVERY",
+                        sourceCount = (item.sourceCount + 1).coerceAtMost(3),
+                    )
+                }
+            health = health.copy(
+                web = when {
+                    web == null -> RecommendationSourceStatus.UNAVAILABLE
+                    web.webAvailable -> RecommendationSourceStatus.AVAILABLE
+                    else -> RecommendationSourceStatus.DEGRADED
+                },
+            )
+            items = (items + reddit.orEmpty() + webItems)
+                .groupBy { it.media.key }
+                .map { (_, matches) ->
+                    matches.reduce(::mergeRecommendationDiscoveryItems)
+                }
+        }
+
+        items = items
+            .asSequence()
+            .filter { it.media.type == spec.mediaKind.mediaType }
+            .filter { isSafeTrendingItem(it.media) }
+            .filterNot { it.media.key in cursor.seenKeys }
+            .distinctBy { it.media.key }
+            .take(RECOMMENDATION_PAGE_CANDIDATE_LIMIT)
+            .toList()
+        rememberRecommendationItems(items)
+        catalogue = (items.map(RecommendationDiscoveryItem::media) + catalogue)
+            .distinctBy(Media::key)
+
+        val nextSeen = cursor.seenKeys + items.map { it.media.key }
+        val nextCursor = live.nextCursor?.copy(seenKeys = nextSeen)
+        val result = CatalogRecommendationPage(
+            items = items,
+            nextCursor = nextCursor,
+            hasMore = live.hasMore,
+            sourceHealth = health,
+        )
+        if (items.isNotEmpty()) {
+            cacheStore?.saveRecommendationCatalogPage(
+                spec.fingerprint,
+                cursor.page,
+                CachedRecommendationCatalogPage(
+                    items = items,
+                    nextCursor = nextCursor,
+                    hasMore = result.hasMore,
+                ),
+            )
+        }
+            result
+        }
+    }
+
+    private suspend fun loadTmdbRecommendationPage(
+        spec: CatalogDiscoverySpec,
+        cursor: RecommendationPageCursor,
+    ): CatalogRecommendationPage = supervisorScope {
+        val paths = listOf("popularity.desc", "vote_average.desc").map { sort ->
+            buildTmdbRecommendationPath(spec, cursor.page, sort)
+        }
+        val requests = paths.map { path ->
+            async {
+                try {
+                    loadStructuredTmdbPage(path)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    null
+                }
+            }
+        }
+        val results = requests.awaitAll()
+        val groups = results.filterNotNull()
+        if (groups.isEmpty()) throw IOException("TMDB catalogue is unavailable.")
+        val genres = spec.includedGenres.map(String::trim).filter(String::isNotBlank)
+        val items = groups
+            .flatMap { it }
+            .asSequence()
+            .filter { item -> item.type == spec.mediaKind.mediaType }
+            .map { item ->
+                RecommendationDiscoveryItem(
+                    media = item.copy(genres = (genres + item.genres).distinct()),
+                    metadata = CatalogVerifiedMetadata(genresVerified = true),
+                    sources = setOf("TMDB"),
+                    sourceCount = 1,
+                )
+            }
+            .distinctBy { it.media.key }
+            .toList()
+        val hasMore = groups.any { it.size >= TMDB_PAGE_RESULT_FLOOR }
+        CatalogRecommendationPage(
+            items = items,
+            nextCursor = if (hasMore) cursor.copy(page = cursor.page + 1) else null,
+            hasMore = hasMore,
+            sourceHealth = RecommendationSourceHealth(
+                catalogue = if (results.any { it == null }) {
+                    RecommendationSourceStatus.DEGRADED
+                } else {
+                    RecommendationSourceStatus.AVAILABLE
+                },
+            ),
+        )
+    }
+
+    private suspend fun loadStructuredTmdbPage(path: String): List<Media> {
+        var lastFailure: Throwable? = null
+        repeat(CATALOG_REQUEST_ATTEMPTS) { attempt ->
+            try {
+                val result = parseSearchResults(
+                    pageLoader("$TMDB_SITE_URL$path"),
+                )
+                return result
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                lastFailure = error
+                if (attempt + 1 < CATALOG_REQUEST_ATTEMPTS) {
+                    delay(CATALOG_RETRY_DELAY_MS * (attempt + 1))
+                }
+            }
+        }
+        throw IOException("TMDB catalogue is unavailable.", lastFailure)
+    }
+
+    private fun buildTmdbRecommendationPath(
+        spec: CatalogDiscoverySpec,
+        page: Int,
+        sort: String,
+    ): String {
+        val type = spec.mediaKind.mediaType
+        val includedIds = spec.includedGenres.flatMap { genre ->
+            GenreCatalog.specFor(genre, type)?.genreIds.orEmpty()
+        }.distinct()
+        val excludedIds = spec.excludedGenres.flatMap { genre ->
+            GenreCatalog.specFor(genre, type)?.genreIds.orEmpty()
+        }.distinct()
+        val datePrefix = if (type == MediaType.MOVIE) {
+            "primary_release_date"
+        } else {
+            "first_air_date"
+        }
+        val parameters = buildList {
+            add("include_adult=false")
+            add("sort_by=${urlEncode(sort)}")
+            add("page=${page.coerceAtLeast(1)}")
+            if (includedIds.isNotEmpty()) {
+                add("with_genres=${urlEncode(includedIds.joinToString(","))}")
+            }
+            if (excludedIds.isNotEmpty()) {
+                add("without_genres=${urlEncode(excludedIds.joinToString(","))}")
+            }
+            spec.yearMinimum?.let { add("$datePrefix.gte=$it-01-01") }
+            add("$datePrefix.lte=${spec.yearMaximum ?: currentYear()}-12-31")
+            spec.runtimeMinimumMinutes?.let { add("with_runtime.gte=$it") }
+            spec.runtimeMaximumMinutes?.let { add("with_runtime.lte=$it") }
+            spec.minimumTmdb?.let { add("vote_average.gte=$it") }
+            spec.originalLanguage?.let { language ->
+                add("with_original_language=${languageCode(language)}")
+            }
+            if (sort == "vote_average.desc") add("vote_count.gte=50")
+            add("language=en-US")
+        }
+        return "/discover/${type.routeName}?${parameters.joinToString("&")}"
+    }
+
+    private suspend fun loadImdbRecommendationPage(
+        spec: CatalogDiscoverySpec,
+        cursor: RecommendationPageCursor,
+    ): CatalogRecommendationPage = supervisorScope {
+        if (cursor.imdbTmdbFallback) {
+            return@supervisorScope loadTmdbImdbFallbackPage(spec, cursor)
+        }
+        val popularityExhausted = "imdb_popularity" in cursor.exhaustedSources
+        val ratingExhausted = "imdb_rating" in cursor.exhaustedSources
+        val useHtmlFallback = cursor.imdbHtmlFallback
+        val popularityAttempted = !useHtmlFallback && !popularityExhausted
+        val ratingAttempted = !useHtmlFallback && !ratingExhausted
+        val popularity = async {
+            if (!popularityAttempted) {
+                null
+            } else try {
+                loadImdbAdvancedPage(
+                    spec = spec,
+                    after = cursor.imdbPopularityCursor,
+                    sortBy = "POPULARITY",
+                    sortOrder = "ASC",
+                    minimumVotes = 0,
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        val rating = async {
+            if (!ratingAttempted) {
+                null
+            } else try {
+                loadImdbAdvancedPage(
+                    spec = spec,
+                    after = cursor.imdbRatingCursor,
+                    sortBy = "USER_RATING",
+                    sortOrder = "DESC",
+                    minimumVotes = IMDB_RATING_STREAM_MIN_VOTES,
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        val graphPopularity = popularity.await()
+        val graphRating = rating.await()
+        val popularityFailed = popularityAttempted && graphPopularity == null
+        val ratingFailed = ratingAttempted && graphRating == null
+        val attemptedCount =
+            listOf(popularityAttempted, ratingAttempted).count { it }
+        val allAttemptedFailed = attemptedCount > 0 &&
+            (!popularityAttempted || popularityFailed) &&
+            (!ratingAttempted || ratingFailed)
+        val graphPartial = popularityFailed || ratingFailed
+        val htmlPages = if (
+            useHtmlFallback ||
+            allAttemptedFailed
+        ) {
+            loadImdbAdvancedHtmlFallback(spec, cursor)
+        } else {
+            null
+        }
+        if (
+            (useHtmlFallback || allAttemptedFailed) &&
+            htmlPages == null
+        ) {
+            return@supervisorScope loadTmdbImdbFallbackPage(
+                spec = spec,
+                cursor = cursor,
+            )
+        }
+        val popularityPage = graphPopularity ?: ImdbAdvancedPage(
+            items = emptyList(),
+            endCursor = cursor.imdbPopularityCursor,
+            hasNextPage = popularityFailed,
+        )
+        val ratingPage = graphRating ?: ImdbAdvancedPage(
+            items = emptyList(),
+            endCursor = cursor.imdbRatingCursor,
+            hasNextPage = ratingFailed,
+        )
+        val pages = htmlPages ?: (popularityPage to ratingPage)
+        val imdbSourceStatus = if (graphPartial || htmlPages != null) {
+            RecommendationSourceStatus.DEGRADED
+        } else {
+            RecommendationSourceStatus.AVAILABLE
+        }
+        val imdbTitles = interleaveImdbTitles(
+            popularity = pages.first.items,
+            rating = pages.second.items,
+            limit = IMDB_RESOLUTION_CANDIDATE_LIMIT,
+        )
+        val requestGate = Semaphore(RECOMMENDATION_RESOLUTION_CONCURRENCY)
+        val resolved = imdbTitles.map { title ->
+            async {
+                requestGate.withPermit {
+                    try {
+                        val results = searchTmdb(
+                            query = title.title,
+                            types = listOf(spec.mediaKind.mediaType.routeName),
+                            retryEmpty = true,
+                        )
+                        selectResolvedPlotMatch(
+                            PlotCandidate(
+                                title = title.title,
+                                year = title.year?.toString(),
+                                type = spec.mediaKind.mediaType,
+                                evidence = title.overview,
+                                source = PlotSource.IMDB,
+                                position = title.position,
+                            ),
+                            results,
+                        )?.let { match ->
+                            RecommendationDiscoveryItem(
+                                media = match.media.copy(
+                                    overview = match.media.overview.ifBlank {
+                                        title.overview
+                                    },
+                                    year = match.media.year.ifBlank {
+                                        title.year?.toString().orEmpty()
+                                    },
+                                    imdbRating = title.rating,
+                                    genres = (
+                                        title.genres + spec.includedGenres +
+                                            match.media.genres
+                                        ).distinct(),
+                                ),
+                                metadata = CatalogVerifiedMetadata(
+                                    genresVerified = true,
+                                    runtimeMinutes = title.runtimeMinutes
+                                        .takeIf {
+                                            spec.mediaKind ==
+                                                RecommendationMediaKind.MOVIE
+                                        },
+                                    averageEpisodeRuntimeMinutes = title.runtimeMinutes
+                                        .takeIf {
+                                            spec.mediaKind ==
+                                                RecommendationMediaKind.SERIES
+                                        },
+                                ),
+                                evidence = title.overview,
+                                sources = setOf("IMDB"),
+                                sourceCount = 1,
+                                sourcePosition = title.position,
+                            )
+                        }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        null
+                    }
+                }
+            }
+        }.awaitAll().filterNotNull()
+        val hasMore = pages.first.hasNextPage || pages.second.hasNextPage
+        val exhausted = buildSet {
+            addAll(cursor.exhaustedSources)
+            if (
+                htmlPages == null &&
+                popularityAttempted &&
+                !popularityFailed &&
+                !pages.first.hasNextPage
+            ) {
+                add("imdb_popularity")
+            }
+            if (
+                htmlPages == null &&
+                ratingAttempted &&
+                !ratingFailed &&
+                !pages.second.hasNextPage
+            ) {
+                add("imdb_rating")
+            }
+        }
+        CatalogRecommendationPage(
+            items = resolved,
+            nextCursor = if (hasMore) {
+                cursor.copy(
+                    page = cursor.page + 1,
+                    imdbPopularityCursor = pages.first.endCursor,
+                    imdbRatingCursor = pages.second.endCursor,
+                    imdbHtmlFallback = htmlPages != null,
+                    exhaustedSources = exhausted,
+                )
+            } else {
+                null
+            },
+            hasMore = hasMore,
+            sourceHealth = RecommendationSourceHealth(
+                catalogue = RecommendationSourceStatus.AVAILABLE,
+                imdb = imdbSourceStatus,
+            ),
+        )
+    }
+
+    internal fun interleaveImdbTitles(
+        popularity: List<ImdbAdvancedTitle>,
+        rating: List<ImdbAdvancedTitle>,
+        limit: Int = IMDB_RESOLUTION_CANDIDATE_LIMIT,
+    ): List<ImdbAdvancedTitle> {
+        if (limit <= 0) return emptyList()
+        val streamLength = maxOf(popularity.size, rating.size)
+        return (0 until streamLength)
+            .flatMap { index ->
+                listOfNotNull(
+                    popularity.getOrNull(index),
+                    rating.getOrNull(index),
+                )
+            }
+            .distinctBy(ImdbAdvancedTitle::imdbId)
+            .take(limit)
+    }
+
+    /**
+     * IMDb can challenge its public search surfaces. In that case keep walking
+     * the structured TMDB catalogue and verify only the IMDb field needed by
+     * the hard filter. Unknown ratings remain unknown and therefore fail
+     * closed in RecommendationRanker.
+     */
+    private suspend fun loadTmdbImdbFallbackPage(
+        spec: CatalogDiscoverySpec,
+        cursor: RecommendationPageCursor,
+    ): CatalogRecommendationPage = supervisorScope {
+        val tmdbPage = try {
+            loadTmdbRecommendationPage(spec, cursor)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (catalogueError: Throwable) {
+            throw IOException(
+                "IMDb and TMDB catalogues are unavailable.",
+                catalogueError,
+            )
+        }
+        val gate = Semaphore(RECOMMENDATION_RESOLUTION_CONCURRENCY)
+        val verified = tmdbPage.items.map { seed ->
+            async {
+                gate.withPermit {
+                    try {
+                        val item = clientSafeImdbVerification(seed.media)
+                        seed.copy(
+                            media = item?.media ?: seed.media,
+                            sources = seed.sources + "IMDB_SCAN",
+                            sourceCount = (seed.sources + "IMDB_SCAN").size,
+                        )
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        seed
+                    }
+                }
+            }
+        }.awaitAll()
+        val imdbStatus = if (verified.any { it.media.imdbRating != null }) {
+            RecommendationSourceStatus.DEGRADED
+        } else {
+            RecommendationSourceStatus.UNAVAILABLE
+        }
+        tmdbPage.copy(
+            items = verified,
+            nextCursor = tmdbPage.nextCursor?.copy(
+                imdbHtmlFallback = false,
+                imdbTmdbFallback = true,
+            ),
+            sourceHealth = tmdbPage.sourceHealth.copy(imdb = imdbStatus),
+        )
+    }
+
+    private suspend fun clientSafeImdbVerification(
+        media: Media,
+    ): VerifiedRecommendationItem? = verifyRecommendationItem(
+        item = media,
+        requiredFields = RequiredMetadataFields(imdbRating = true),
+    ).takeIf { it.media.imdbRating != null }
+
+    private suspend fun loadImdbAdvancedPage(
+        spec: CatalogDiscoverySpec,
+        after: String?,
+        sortBy: String,
+        sortOrder: String,
+        minimumVotes: Int,
+    ): ImdbAdvancedPage {
+        val constraints = buildList {
+            val titleTypes = if (spec.mediaKind == RecommendationMediaKind.MOVIE) {
+                listOf("movie")
+            } else {
+                listOf("tvSeries", "tvMiniSeries")
+            }
+            add(
+                "titleTypeConstraint:{anyTitleTypeIds:[" +
+                    titleTypes.joinToString(",") { JSONObject.quote(it) } +
+                    "]}",
+            )
+            val genres = spec.includedGenres
+                .map(::canonicalImdbGenre)
+                .filter(String::isNotBlank)
+                .distinctBy(String::lowercase)
+            val excludedGenres = spec.excludedGenres
+                .map(::canonicalImdbGenre)
+                .filter(String::isNotBlank)
+                .distinctBy(String::lowercase)
+            if (genres.isNotEmpty() || excludedGenres.isNotEmpty()) {
+                add(
+                    "genreConstraint:{" +
+                        if (genres.isNotEmpty()) {
+                            "allGenreIds:[" +
+                                genres.joinToString(",") {
+                                    JSONObject.quote(it)
+                                } +
+                                "]"
+                        } else {
+                            ""
+                        } +
+                        if (genres.isNotEmpty() && excludedGenres.isNotEmpty()) {
+                            ","
+                        } else {
+                            ""
+                        } +
+                        if (excludedGenres.isNotEmpty()) {
+                            "excludeGenreIds:[" +
+                                excludedGenres.joinToString(",") {
+                                    JSONObject.quote(it)
+                                } +
+                                "]"
+                        } else {
+                            ""
+                        } +
+                        "}",
+                )
+            }
+            val start = spec.yearMinimum ?: IMDB_EARLIEST_YEAR
+            val end = spec.yearMaximum ?: currentYear()
+            add(
+                "releaseDateConstraint:{releaseDateRange:{" +
+                    "start:\"$start-01-01\",end:\"$end-12-31\"}}",
+            )
+            spec.minimumImdb?.let { minimum ->
+                add(
+                    "userRatingsConstraint:{aggregateRatingRange:{min:$minimum}," +
+                        "ratingsCountRange:{min:$minimumVotes}}",
+                )
+            }
+            if (spec.runtimeMinimumMinutes != null ||
+                spec.runtimeMaximumMinutes != null
+            ) {
+                val minimum = spec.runtimeMinimumMinutes ?: 0
+                val maximum = spec.runtimeMaximumMinutes ?: IMDB_MAX_RUNTIME_MINUTES
+                add(
+                    "runtimeConstraint:{runtimeRangeMinutes:{" +
+                        "min:$minimum,max:$maximum}}",
+                )
+            }
+            add(
+                "explicitContentConstraint:{" +
+                    "explicitContentFilter:EXCLUDE_ADULT}",
+            )
+            spec.originalLanguage?.let { language ->
+                add(
+                    "languageConstraint:{anyPrimaryLanguages:[" +
+                        JSONObject.quote(languageCode(language)) +
+                        "]}",
+                )
+            }
+        }.joinToString(",")
+        val afterArgument = after
+            ?.takeIf(String::isNotBlank)
+            ?.let { ",after:${JSONObject.quote(it)}" }
+            .orEmpty()
+        val query = """
+            query {
+              advancedTitleSearch(
+                first:$IMDB_GRAPH_PAGE_SIZE$afterArgument,
+                constraints:{$constraints},
+                sort:{sortBy:$sortBy,sortOrder:$sortOrder}
+              ) {
+                edges {
+                  node {
+                    title {
+                      id
+                      titleText { text }
+                      releaseYear { year }
+                      runtime { seconds }
+                      titleGenres { genres { genre { text } } }
+                      ratingsSummary { aggregateRating voteCount }
+                      plots(first:1) {
+                        edges { node { plotText { plainText } } }
+                      }
+                    }
+                  }
+                }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+        """.trimIndent()
+        val body = JSONObject().put("query", query).toString()
+        var lastFailure: Throwable? = null
+        val result = withTimeoutOrNull(IMDB_ADVANCED_TOTAL_TIMEOUT_MS) {
+            repeat(IMDB_ADVANCED_REQUEST_ATTEMPTS) { attempt ->
+                try {
+                    return@withTimeoutOrNull parseImdbAdvancedGraphql(
+                        withTimeout(IMDB_GRAPH_REQUEST_TIMEOUT_MS) {
+                            jsonPoster(IMDB_GRAPHQL_URL, body)
+                        },
+                    )
+                } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
+                    lastFailure = timeout
+                    if (attempt + 1 < IMDB_ADVANCED_REQUEST_ATTEMPTS) {
+                        delay(IMDB_ADVANCED_RETRY_DELAY_MS * (attempt + 1))
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    lastFailure = error
+                    if (attempt + 1 < IMDB_ADVANCED_REQUEST_ATTEMPTS) {
+                        delay(IMDB_ADVANCED_RETRY_DELAY_MS * (attempt + 1))
+                    }
+                }
+            }
+            null
+        }
+        if (result != null) return result
+        throw IOException("IMDb advanced-title search is unavailable.", lastFailure)
+    }
+
+    internal fun parseImdbAdvancedGraphql(payload: String): ImdbAdvancedPage {
+        val root = JSONObject(payload)
+        val result = root.optJSONObject("data")
+            ?.optJSONObject("advancedTitleSearch")
+            ?: throw IOException(
+                root.optJSONArray("errors")
+                    ?.optJSONObject(0)
+                    ?.optString("message")
+                    .orEmpty()
+                    .ifBlank { "IMDb returned no advanced-title response." },
+            )
+        val edges = result.optJSONArray("edges") ?: JSONArray()
+        val items = (0 until edges.length()).mapNotNull { index ->
+            val title = edges.optJSONObject(index)
+                ?.optJSONObject("node")
+                ?.optJSONObject("title")
+                ?: return@mapNotNull null
+            val id = title.optString("id").takeIf { it.startsWith("tt") }
+                ?: return@mapNotNull null
+            val text = title.optJSONObject("titleText")
+                ?.optString("text")
+                ?.trim()
+                ?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            val ratingSummary = title.optJSONObject("ratingsSummary")
+            val runtimeSeconds = title.optJSONObject("runtime")
+                ?.optInt("seconds")
+                ?.takeIf { it > 0 }
+            val genreArray = title.optJSONObject("titleGenres")
+                ?.optJSONArray("genres")
+            val genres = if (genreArray == null) {
+                emptyList()
+            } else {
+                (0 until genreArray.length()).mapNotNull { genreIndex ->
+                    genreArray.optJSONObject(genreIndex)
+                        ?.optJSONObject("genre")
+                        ?.optString("text")
+                        ?.trim()
+                        ?.takeIf(String::isNotBlank)
+                }
+            }
+            val overview = title.optJSONObject("plots")
+                ?.optJSONArray("edges")
+                ?.optJSONObject(0)
+                ?.optJSONObject("node")
+                ?.optJSONObject("plotText")
+                ?.optString("plainText")
+                .orEmpty()
+            ImdbAdvancedTitle(
+                imdbId = id,
+                title = text,
+                year = title.optJSONObject("releaseYear")
+                    ?.optInt("year")
+                    ?.takeIf { it > 0 },
+                rating = ratingSummary?.optDouble("aggregateRating")
+                    ?.takeIf { it in 0.1..10.0 },
+                voteCount = ratingSummary?.optInt("voteCount")
+                    ?.takeIf { it >= 0 },
+                runtimeMinutes = runtimeSeconds
+                    ?.let { seconds -> (seconds / 60.0).roundToInt() },
+                genres = genres,
+                overview = overview,
+                position = index,
+            )
+        }
+        val pageInfo = result.optJSONObject("pageInfo")
+        return ImdbAdvancedPage(
+            items = items,
+            endCursor = pageInfo?.optString("endCursor")?.takeIf(String::isNotBlank),
+            hasNextPage = pageInfo?.optBoolean("hasNextPage") == true,
+        )
+    }
+
+    private suspend fun loadImdbAdvancedHtmlFallback(
+        spec: CatalogDiscoverySpec,
+        cursor: RecommendationPageCursor,
+    ): Pair<ImdbAdvancedPage, ImdbAdvancedPage>? = supervisorScope {
+        val requests = listOf(
+            "moviemeter,asc" to 0,
+            "user_rating,desc" to IMDB_RATING_STREAM_MIN_VOTES,
+        ).map { (sort, minimumVotes) ->
+            async {
+                try {
+                    parseImdbAdvancedHtml(
+                        pageLoader(
+                            buildImdbAdvancedHtmlUrl(
+                                spec = spec,
+                                page = cursor.page,
+                                sort = sort,
+                                minimumVotes = minimumVotes,
+                            ),
+                        ),
+                    )
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    null
+                }
+            }
+        }.awaitAll()
+        val popularity = requests.getOrNull(0)
+        val rating = requests.getOrNull(1)
+        if (popularity == null && rating == null) return@supervisorScope null
+        (popularity ?: ImdbAdvancedPage(emptyList(), null, false)) to
+            (rating ?: ImdbAdvancedPage(emptyList(), null, false))
+    }
+
+    private fun buildImdbAdvancedHtmlUrl(
+        spec: CatalogDiscoverySpec,
+        page: Int,
+        sort: String,
+        minimumVotes: Int,
+    ): String {
+        val parameters = buildList {
+            add(
+                "title_type=" +
+                    if (spec.mediaKind == RecommendationMediaKind.MOVIE) {
+                        "feature"
+                    } else {
+                        "tv_series,tv_miniseries"
+                    },
+            )
+            val genres = spec.includedGenres.map {
+                it.trim().lowercase().replace(' ', '-')
+            } + spec.excludedGenres.map {
+                "!" + it.trim().lowercase().replace(' ', '-')
+            }
+            if (genres.isNotEmpty()) {
+                add(
+                    "genres=" + urlEncode(genres.joinToString(",")),
+                )
+            }
+            val start = (spec.yearMinimum ?: IMDB_EARLIEST_YEAR).let { "$it-01-01" }
+            val end = (spec.yearMaximum ?: currentYear()).let { "$it-12-31" }
+            add("release_date=$start,$end")
+            spec.minimumImdb?.let { add("user_rating=$it,10") }
+            if (minimumVotes > 0) add("num_votes=$minimumVotes,")
+            if (spec.runtimeMinimumMinutes != null ||
+                spec.runtimeMaximumMinutes != null
+            ) {
+                add(
+                    "runtime=${spec.runtimeMinimumMinutes?.toString().orEmpty()}," +
+                        spec.runtimeMaximumMinutes?.toString().orEmpty(),
+                )
+            }
+            add("adult=exclude")
+            add("sort=$sort")
+            add("count=$IMDB_GRAPH_PAGE_SIZE")
+            add("start=${(page - 1).coerceAtLeast(0) * IMDB_GRAPH_PAGE_SIZE + 1}")
+        }
+        return "$IMDB_ADVANCED_TITLE_URL?${parameters.joinToString("&")}"
+    }
+
+    internal fun parseImdbAdvancedHtml(html: String): ImdbAdvancedPage {
+        if (html.isBlank()) throw IOException("IMDb returned an empty response.")
+        val document = Jsoup.parse(html, IMDB_SITE_URL)
+        if (html.contains("x-amzn-waf-action", ignoreCase = true) ||
+            html.contains("captcha", ignoreCase = true)
+        ) {
+            throw IOException("IMDb returned an anti-bot challenge.")
+        }
+        val cards = document.select(
+            "li.ipc-metadata-list-summary-item, .lister-item, " +
+                "[data-testid=advanced-search-title-result]",
+        )
+        if (cards.isEmpty() &&
+            document.select("[data-testid=results-section-empty], .no-results").isEmpty() &&
+            !document.text().contains("no results", ignoreCase = true)
+        ) {
+            throw IOException("IMDb returned no parseable title results.")
+        }
+        val items = cards.mapIndexedNotNull { index, card ->
+            val link = card.selectFirst("a[href*=/title/tt]") ?: return@mapIndexedNotNull null
+            val imdbId = imdbTitleIdPattern.find(link.attr("href"))
+                ?.groupValues
+                ?.getOrNull(1)
+                ?: return@mapIndexedNotNull null
+            val rawTitle = sequenceOf(
+                card.selectFirst("h3")?.text(),
+                card.selectFirst(".ipc-title__text")?.text(),
+                link.text(),
+            ).filterNotNull().firstOrNull(String::isNotBlank)
+                ?.replace(Regex("^\\d+\\.\\s*"), "")
+                ?.trim()
+                ?: return@mapIndexedNotNull null
+            val metadata = card.select(".dli-title-metadata-item, .lister-item-year")
+                .map { it.text().trim() }
+            val ratingText = card.selectFirst(
+                "[data-testid=ratingGroup--imdb-rating] .ipc-rating-star--rating, " +
+                    ".ratings-imdb-rating strong, .ipc-rating-star--rating",
+            )?.text().orEmpty()
+            val runtimeText = metadata.firstOrNull {
+                it.contains("min", ignoreCase = true) ||
+                    Regex("""\d+\s*h""", RegexOption.IGNORE_CASE).containsMatchIn(it)
+            }.orEmpty()
+            ImdbAdvancedTitle(
+                imdbId = imdbId,
+                title = rawTitle,
+                year = metadata.firstNotNullOfOrNull { value ->
+                    fourDigitYear.find(value)?.value?.toIntOrNull()
+                },
+                rating = Regex("""\d+(?:\.\d+)?""").find(ratingText)
+                    ?.value
+                    ?.toDoubleOrNull()
+                    ?.takeIf { it in 0.1..10.0 },
+                voteCount = card.selectFirst(".ipc-rating-star--voteCount")
+                    ?.text()
+                    ?.let(::parseAbbreviatedCount),
+                runtimeMinutes = parseDurationMinutes(runtimeText),
+                genres = card.select(".ipc-chip__text")
+                    .map { it.text().trim() }
+                    .filter(String::isNotBlank),
+                overview = card.selectFirst(
+                    ".ipc-html-content-inner-div, .lister-item-content p.text-muted",
+                )?.text()?.trim().orEmpty(),
+                position = index,
+            )
+        }.distinctBy(ImdbAdvancedTitle::imdbId)
+        return ImdbAdvancedPage(
+            items = items,
+            endCursor = null,
+            hasNextPage = items.size >= IMDB_HTML_PAGE_RESULT_FLOOR,
+        )
+    }
+
+    private suspend fun indexedRedditRecommendationItems(
+        spec: CatalogDiscoverySpec,
+    ): List<RecommendationDiscoveryItem> = supervisorScope {
+        val communities = if (spec.mediaKind == RecommendationMediaKind.MOVIE) {
+            listOf("MovieSuggestions", "movies")
+        } else {
+            listOf("televisionsuggestions", "television")
+        }
+        val requests = communities.flatMap { community ->
+            val encoded = urlEncode(
+                "site:reddit.com/r/$community ${spec.discoveryText}",
+            )
+            listOf(
+                async {
+                    try {
+                        parseIndexedRedditCandidates(
+                            html = pageLoader(
+                                "$BRAVE_SEARCH_URL?q=$encoded&source=web&" +
+                                    "spellcheck=1&safesearch=strict",
+                            ),
+                            source = PlotSource.BRAVE,
+                        )
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        null
+                    }
+                },
+                async {
+                    try {
+                        parseIndexedRedditCandidates(
+                            html = pageLoader(
+                                "$DUCKDUCKGO_HTML_URL/?q=$encoded&kp=1",
+                            ),
+                            source = PlotSource.DUCKDUCKGO,
+                        )
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        null
+                    }
+                },
+            )
+        }
+        val discovered = requests.awaitAll()
+        if (discovered.all { it == null }) {
+            throw IOException("Indexed Reddit search is unavailable.")
+        }
+        val candidates = discovered.filterNotNull().flatten()
+            .distinctBy(PlotCandidate::cacheKey)
+            .take(RECOMMENDATION_REDDIT_TITLE_LIMIT)
+        val gate = Semaphore(RECOMMENDATION_RESOLUTION_CONCURRENCY)
+        candidates.map { candidate ->
+            async {
+                gate.withPermit {
+                    try {
+                        val results = searchTmdb(
+                            candidate.title,
+                            listOf(spec.mediaKind.mediaType.routeName),
+                            retryEmpty = true,
+                        )
+                        selectResolvedPlotMatch(candidate, results)?.let { match ->
+                            RecommendationDiscoveryItem(
+                                media = match.media,
+                                evidence = "",
+                                sources = setOf("REDDIT_INDEX"),
+                                sourceCount = 1,
+                                sourcePosition = candidate.position,
+                            )
+                        }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        null
+                    }
+                }
+            }
+        }.awaitAll().filterNotNull()
+    }
+
+    internal fun parseIndexedRedditCandidates(
+        html: String,
+        source: PlotSource,
+    ): List<PlotCandidate> {
+        val baseUrl = if (source == PlotSource.DUCKDUCKGO) {
+            DUCKDUCKGO_HTML_URL
+        } else {
+            BRAVE_SEARCH_URL
+        }
+        val document = Jsoup.parse(html, baseUrl)
+        val blocks = if (source == PlotSource.DUCKDUCKGO) {
+            document.select(".result")
+        } else {
+            document.select("div.snippet[data-type=web]")
+        }
+        return blocks.flatMapIndexed { index, block ->
+            val link = if (source == PlotSource.DUCKDUCKGO) {
+                block.selectFirst("a.result__a")
+            } else {
+                block.selectFirst("a[href]")
+            }
+            val rawUrl = link?.attr("abs:href")
+                ?.takeIf(String::isNotBlank)
+                ?: link?.attr("href").orEmpty()
+            val url = unwrapSearchRedirect(rawUrl)
+            if (!isIndexedRedditUrl(url)) return@flatMapIndexed emptyList()
+            val heading = sequenceOf(
+                block.selectFirst(
+                    ".title, .snippet-title, .search-snippet-title, " +
+                        "[data-testid=result-title], h3",
+                )?.text(),
+                link?.text(),
+            ).filterNotNull().firstOrNull(String::isNotBlank).orEmpty()
+            val snippet = block.selectFirst(
+                ".snippet-description, .description, .snippet-content, " +
+                    ".result__snippet, p",
+            )?.text().orEmpty()
+            val named = (
+                extractNamedTitles(block) +
+                    extractCapitalizedTitles("$heading. $snippet")
+                ).distinct()
+                .mapNotNull { value ->
+                    plotCandidateFromTitle(
+                        value = value,
+                        evidence = "$heading. $snippet",
+                        source = PlotSource.REDDIT,
+                        position = index,
+                    )
+                }
+            val direct = webResultCandidates(
+                heading = heading,
+                url = url,
+                snippet = snippet,
+                source = PlotSource.REDDIT,
+                position = index,
+            )
+            (named + direct).filterNot { candidate ->
+                normalizeText(candidate.title) in redditNonTitleTerms
+            }
+        }.filterNot { isGenericPlotResult(it.title) }
+            .distinctBy(PlotCandidate::cacheKey)
+    }
+
+    private fun unwrapSearchRedirect(value: String): String {
+        if (value.isBlank()) return value
+        val decoded = runCatching { URLDecoder.decode(value, "UTF-8") }
+            .getOrDefault(value)
+        val uddg = Regex("""[?&]uddg=([^&]+)""").find(value)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let { runCatching { URLDecoder.decode(it, "UTF-8") }.getOrNull() }
+        return uddg ?: decoded
+    }
+
+    private fun isIndexedRedditUrl(value: String): Boolean = runCatching {
+        val host = URL(value).host.lowercase()
+        (host == "reddit.com" || host.endsWith(".reddit.com")) &&
+            URL(value).path.startsWith("/r/")
+    }.getOrDefault(false)
+
+    private fun mergeRecommendationDiscoveryItems(
+        first: RecommendationDiscoveryItem,
+        second: RecommendationDiscoveryItem,
+    ): RecommendationDiscoveryItem {
+        val preferred = if (
+            second.media.imdbRating != null && first.media.imdbRating == null
+        ) {
+            second
+        } else {
+            first
+        }
+        return preferred.copy(
+            sources = first.sources + second.sources,
+            sourceCount = (first.sources + second.sources).size,
+            sourcePosition = minOf(first.sourcePosition, second.sourcePosition),
+            evidence = "",
+        )
+    }
+
+    private fun rememberRecommendationItems(
+        items: List<RecommendationDiscoveryItem>,
+    ) {
+        items.forEach { item ->
+            recommendationMetadata.merge(item.media.key, item.metadata) { current, update ->
+                CatalogVerifiedMetadata(
+                    genresVerified =
+                        current.genresVerified || update.genresVerified,
+                    runtimeMinutes =
+                        update.runtimeMinutes ?: current.runtimeMinutes,
+                    originalLanguage =
+                        update.originalLanguage ?: current.originalLanguage,
+                    status = update.status ?: current.status,
+                    director = update.director ?: current.director,
+                    seasonCount = update.seasonCount ?: current.seasonCount,
+                    averageEpisodeRuntimeMinutes =
+                        update.averageEpisodeRuntimeMinutes
+                            ?: current.averageEpisodeRuntimeMinutes,
+                    verifiedAtMillis = maxOf(
+                        current.verifiedAtMillis,
+                        update.verifiedAtMillis,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun RecommendationDiscoveryItem.satisfiesKnownRequirements(
+        spec: CatalogDiscoverySpec,
+        required: RequiredMetadataFields,
+    ): Boolean {
+        if (required.genres && !metadata.genresVerified) return false
+        val normalizedGenres = media.genres.mapTo(hashSetOf(), ::normalizeText)
+        if (spec.includedGenres.any { normalizeText(it) !in normalizedGenres }) {
+            return false
+        }
+        if (spec.excludedGenres.any { normalizeText(it) in normalizedGenres }) {
+            return false
+        }
+        val year = fourDigitYear.find(media.year)?.value?.toIntOrNull()
+        if (spec.yearMinimum != null &&
+            (year == null || year < spec.yearMinimum)
+        ) {
+            return false
+        }
+        if (spec.yearMaximum != null &&
+            (year == null || year > spec.yearMaximum)
+        ) {
+            return false
+        }
+        val runtime = if (media.type == MediaType.TV) {
+            metadata.averageEpisodeRuntimeMinutes
+        } else {
+            metadata.runtimeMinutes
+        }
+        if ((required.runtime || required.tvEpisodeRuntime) &&
+            runtime == null
+        ) {
+            return false
+        }
+        if (spec.runtimeMinimumMinutes != null &&
+            required.runtimeOrEpisodeRuntime() &&
+            (runtime == null || runtime < spec.runtimeMinimumMinutes)
+        ) {
+            return false
+        }
+        if (spec.runtimeMaximumMinutes != null &&
+            required.runtimeOrEpisodeRuntime() &&
+            (runtime == null || runtime > spec.runtimeMaximumMinutes)
+        ) {
+            return false
+        }
+        if (required.originalLanguage) {
+            val actualLanguage = metadata.originalLanguage
+                ?.takeIf(String::isNotBlank)
+                ?: return false
+            val wanted = spec.originalLanguage ?: return false
+            val matches = normalizeText(actualLanguage) == normalizeText(wanted) ||
+                languageCode(actualLanguage) == languageCode(wanted)
+            if (!matches) return false
+        }
+        if (required.imdbRating &&
+            (media.imdbRating ?: return false) < (spec.minimumImdb ?: 0.0)
+        ) {
+            return false
+        }
+        if (required.rottenTomatoesRating &&
+            (media.rottenTomatoesRating ?: return false) <
+            (spec.minimumRottenTomatoes ?: 0)
+        ) {
+            return false
+        }
+        if (required.tmdbRating &&
+            media.rating < (spec.minimumTmdb ?: 0.0)
+        ) {
+            return false
+        }
+        return true
+    }
+
+    private fun RequiredMetadataFields.runtimeOrEpisodeRuntime(): Boolean =
+        runtime || tvEpisodeRuntime
+
+    private fun parseAbbreviatedCount(value: String): Int? {
+        val normalized = value.lowercase().replace(",", "").trim()
+        val number = Regex("""\d+(?:\.\d+)?""").find(normalized)
+            ?.value
+            ?.toDoubleOrNull()
+            ?: return null
+        val multiplier = when {
+            "m" in normalized -> 1_000_000
+            "k" in normalized -> 1_000
+            else -> 1
+        }
+        return (number * multiplier).roundToInt()
+    }
+
+    private fun urlEncode(value: String): String = URLEncoder.encode(
+        value,
+        StandardCharsets.UTF_8.toString(),
+    )
+
+    private fun languageCode(value: String): String = when (
+        normalizeText(value)
+    ) {
+        "english" -> "en"
+        "spanish" -> "es"
+        "french" -> "fr"
+        "german" -> "de"
+        "italian" -> "it"
+        "japanese" -> "ja"
+        "korean" -> "ko"
+        "chinese", "mandarin" -> "zh"
+        "arabic" -> "ar"
+        "hindi" -> "hi"
+        "portuguese" -> "pt"
+        else -> value.trim().lowercase().take(3)
+    }
+
+    private fun canonicalImdbGenre(value: String): String = when (
+        normalizeText(value)
+    ) {
+        "sci fi", "science fiction", "science fiction and fantasy" -> "Sci-Fi"
+        "reality", "reality tv" -> "Reality-TV"
+        "action and adventure", "action adventure" -> "Action"
+        else -> value.trim()
+            .lowercase()
+            .split(Regex("\\s+"))
+            .joinToString(" ") { word ->
+                word.replaceFirstChar(Char::uppercase)
+            }
+    }
+
+    private fun currentYear(): Int =
+        java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+
     suspend fun recommendationCandidates(
         request: String,
         requestedType: MediaType? = null,
@@ -860,36 +2268,85 @@ class CatalogClient(
 
     suspend fun verifyRecommendationItem(
         item: Media,
+    ): VerifiedRecommendationItem = verifyRecommendationItem(
+        item = item,
+        requiredFields = RequiredMetadataFields(
+            runtime = true,
+            originalLanguage = true,
+            imdbRating = true,
+            rottenTomatoesRating = true,
+            tvEpisodeRuntime = item.type == MediaType.TV,
+        ),
+    )
+
+    suspend fun verifyRecommendationItem(
+        item: Media,
+        requiredFields: RequiredMetadataFields,
     ): VerifiedRecommendationItem = supervisorScope {
         cacheStore?.loadVerifiedMetadata(
             item.key,
             RECOMMENDATION_METADATA_CACHE_MAX_AGE_MS,
-        )?.let { cached ->
+        )?.takeIf { cached -> cached.satisfies(requiredFields) }?.let { cached ->
+            recommendationMetadata[cached.media.key] = cached.metadata
             catalogue = (listOf(cached.media) + catalogue.filterNot {
                 it.key == cached.media.key
             })
             return@supervisorScope cached
         }
 
-        val pageHtml = loadTitlePageWithRetry(item)
+        if (!requiredFields.needsTitlePage &&
+            (!requiredFields.imdbRating || item.imdbRating != null) &&
+            (!requiredFields.rottenTomatoesRating ||
+                item.rottenTomatoesRating != null)
+        ) {
+            return@supervisorScope VerifiedRecommendationItem(
+                media = item,
+                metadata = CatalogVerifiedMetadata(),
+            )
+        }
+
+        val pageHtml = if (requiredFields.needsTitlePage) {
+            loadTitlePageWithRetry(item)
+        } else {
+            null
+        }
         val parsed = pageHtml?.let {
             runCatching { parseTitleDetails(it, item) }.getOrDefault(item)
         } ?: item
-        val ratingsRequest = async { ratingsFor(parsed) }
+        val imdbRequest = async {
+            if (requiredFields.imdbRating && parsed.imdbRating == null) {
+                runCatching { loadImdbRating(parsed) }.getOrNull()
+            } else {
+                parsed.imdbRating
+            }
+        }
+        val rottenTomatoesRequest = async {
+            if (
+                requiredFields.rottenTomatoesRating &&
+                parsed.rottenTomatoesRating == null
+            ) {
+                runCatching { loadRottenTomatoesRating(parsed) }.getOrNull()
+            } else {
+                parsed.rottenTomatoesRating
+            }
+        }
         val seasonsRequest = async {
-            if (item.type == MediaType.TV) seasons(parsed) else emptyList()
+            if (item.type == MediaType.TV && requiredFields.tvEpisodeRuntime) {
+                seasons(parsed)
+            } else {
+                emptyList()
+            }
         }
         val seasons = seasonsRequest.await()
-        val episodes = if (item.type == MediaType.TV) {
+        val episodes = if (item.type == MediaType.TV && requiredFields.tvEpisodeRuntime) {
             val firstSeason = seasons.firstOrNull()?.number
             if (firstSeason != null) episodes(parsed, firstSeason) else emptyList()
         } else {
             emptyList()
         }
-        val ratings = ratingsRequest.await()
         val enriched = parsed.copy(
-            imdbRating = ratings.imdb ?: parsed.imdbRating,
-            rottenTomatoesRating = ratings.rottenTomatoes
+            imdbRating = imdbRequest.await() ?: parsed.imdbRating,
+            rottenTomatoesRating = rottenTomatoesRequest.await()
                 ?: parsed.rottenTomatoesRating,
         )
         val metadata = parseVerifiedRecommendationMetadata(
@@ -899,9 +2356,37 @@ class CatalogClient(
             episodes = episodes,
         )
         val verified = VerifiedRecommendationItem(enriched, metadata)
+        recommendationMetadata[enriched.key] = metadata
         catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
         cacheStore?.saveVerifiedMetadata(verified)
         verified
+    }
+
+    private fun VerifiedRecommendationItem.satisfies(
+        required: RequiredMetadataFields,
+    ): Boolean {
+        if (required.genres && !metadata.genresVerified) return false
+        if (required.runtime && media.type == MediaType.MOVIE &&
+            metadata.runtimeMinutes == null
+        ) {
+            return false
+        }
+        if (required.tvEpisodeRuntime && media.type == MediaType.TV &&
+            metadata.averageEpisodeRuntimeMinutes == null
+        ) {
+            return false
+        }
+        if (required.originalLanguage && metadata.originalLanguage.isNullOrBlank()) {
+            return false
+        }
+        if (required.imdbRating && media.imdbRating == null) return false
+        if (required.rottenTomatoesRating &&
+            media.rottenTomatoesRating == null
+        ) {
+            return false
+        }
+        if (required.tmdbRating && media.rating <= 0.0) return false
+        return true
     }
 
     suspend fun resolveRecommendationAnchor(
@@ -945,6 +2430,7 @@ class CatalogClient(
             parseDurationMinutes(episode.runtime)
         }
         return CatalogVerifiedMetadata(
+            genresVerified = document.select("a[href^=/genre/]").isNotEmpty(),
             runtimeMinutes = runtime.takeIf { type == MediaType.MOVIE },
             originalLanguage = fact("Original Language"),
             status = fact("Status"),
@@ -1920,6 +3406,16 @@ class CatalogClient(
             val poster = card.selectFirst("img.poster, img[alt=\"$title\"]")
                 ?.attr("src")
                 ?.takeIf(String::isNotBlank)
+            val tmdbRating = sequenceOf(
+                card.selectFirst(".user_score_chart[data-percent]")?.attr("data-percent"),
+                card.selectFirst("[data-percent]")?.attr("data-percent"),
+                Regex("""\b(\d{1,3})%""").find(card.text())
+                    ?.groupValues
+                    ?.getOrNull(1),
+            ).filterNotNull()
+                .mapNotNull(String::toDoubleOrNull)
+                .firstOrNull { it in 1.0..100.0 }
+                ?.div(10.0)
             Media(
                 id = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null,
                 type = MediaType.from(match.groupValues[1]),
@@ -1930,6 +3426,7 @@ class CatalogClient(
                 year = fourDigitYear.find(
                     card.selectFirst(".release_date")?.text().orEmpty(),
                 )?.value.orEmpty(),
+                rating = tmdbRating ?: 0.0,
             )
         }.distinctBy(Media::key)
     }
@@ -2366,6 +3863,9 @@ class CatalogClient(
         const val TMDB_SITE_URL = "https://www.themoviedb.org"
         const val IMDB_SUGGESTION_URL =
             "https://v3.sg.media-imdb.com/suggestion/x"
+        const val IMDB_GRAPHQL_URL = "https://api.graphql.imdb.com/"
+        const val IMDB_SITE_URL = "https://www.imdb.com"
+        const val IMDB_ADVANCED_TITLE_URL = "$IMDB_SITE_URL/search/title/"
         const val BRAVE_SEARCH_URL = "https://search.brave.com/search"
         const val WIKIPEDIA_SEARCH_URL = "https://en.wikipedia.org/w/api.php"
         const val DUCKDUCKGO_HTML_URL = "https://html.duckduckgo.com/html"
@@ -2410,6 +3910,8 @@ class CatalogClient(
         const val WIKIPEDIA_FALLBACK_TERM_LIMIT = 8
         const val PLOT_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000L
         const val RECOMMENDATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000L
+        const val RECOMMENDATION_STALE_CACHE_MAX_AGE_MS =
+            7 * 24 * 60 * 60 * 1_000L
         const val RECOMMENDATION_METADATA_CACHE_MAX_AGE_MS =
             7 * 24 * 60 * 60 * 1_000L
         const val RECOMMENDATION_LOCAL_SEED_LIMIT = 28
@@ -2419,6 +3921,22 @@ class CatalogClient(
         const val RECOMMENDATION_METADATA_ATTEMPTS = 2
         const val RECOMMENDATION_METADATA_RETRY_DELAY_MS = 350L
         const val RECOMMENDATION_DDG_LIMIT = 24
+        const val RECOMMENDATION_KNOWN_SEED_LIMIT = 120
+        const val RECOMMENDATION_PAGE_CANDIDATE_LIMIT = 48
+        const val RECOMMENDATION_SUPPLEMENTAL_START_PAGE = 2
+        const val RECOMMENDATION_SUPPLEMENTAL_TIMEOUT_MS = 2_500L
+        const val RECOMMENDATION_REDDIT_TITLE_LIMIT = 12
+        const val TMDB_PAGE_RESULT_FLOOR = 15
+        const val IMDB_GRAPH_PAGE_SIZE = 18
+        const val IMDB_HTML_PAGE_RESULT_FLOOR = 15
+        const val IMDB_RESOLUTION_CANDIDATE_LIMIT = 36
+        const val IMDB_RATING_STREAM_MIN_VOTES = 250
+        const val IMDB_ADVANCED_REQUEST_ATTEMPTS = 3
+        const val IMDB_ADVANCED_RETRY_DELAY_MS = 250L
+        const val IMDB_GRAPH_REQUEST_TIMEOUT_MS = 3_000L
+        const val IMDB_ADVANCED_TOTAL_TIMEOUT_MS = 8_000L
+        const val IMDB_EARLIEST_YEAR = 1870
+        const val IMDB_MAX_RUNTIME_MINUTES = 600
         val genericWebResultTerms = listOf(
             "best movies",
             "movies where",
@@ -2434,6 +3952,15 @@ class CatalogClient(
             "bing",
             "moviepilot",
             "watch free movies",
+        )
+        val redditNonTitleTerms = setOf(
+            "reddit",
+            "movie suggestions",
+            "movies",
+            "television suggestions",
+            "television",
+            "what are you watching",
+            "recommendations",
         )
         val plotQueryStopWords = setOf(
             "about", "after", "also", "and", "are", "film", "goes", "into", "movie",
@@ -2568,6 +4095,7 @@ class CatalogClient(
         val tmdbTitleRoute = Regex("^/(movie|tv)/(\\d+)(?:-|\\?|$)")
         val yearText = Regex("^\\d{4}(?:-\\d{2}-\\d{2})?$")
         val fourDigitYear = Regex("\\b(?:18|19|20|21)\\d{2}\\b")
+        val imdbTitleIdPattern = Regex("""(?:/title/)?(tt\d+)""")
         val matchPercent = Regex("(\\d{1,3})%\\s*Match", RegexOption.IGNORE_CASE)
         val episodeCount = Regex("(\\d+)\\s+Episodes?", RegexOption.IGNORE_CASE)
         val scoreText = Regex("\\d{1,3}")
@@ -2919,65 +4447,95 @@ class CatalogClient(
             val isWikipediaApi = runCatching {
                 URL(url).host.equals("en.wikipedia.org", ignoreCase = true)
             }.getOrDefault(false)
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 12_000
-                readTimeout = 18_000
-                instanceFollowRedirects = true
-                setRequestProperty(
-                    "User-Agent",
-                    if (isWikipediaApi) {
-                        "AliflixAndroid/2.7.8 " +
-                            "(https://github.com/alishaban144/aliflix-android)"
+            suspendCancellableCoroutine { continuation ->
+                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 12_000
+                    readTimeout = 18_000
+                    instanceFollowRedirects = true
+                    setRequestProperty(
+                        "User-Agent",
+                        if (isWikipediaApi) {
+                            "AliflixAndroid/2.7.8 " +
+                                "(https://github.com/alishaban144/aliflix-android)"
+                        } else {
+                            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+                                "(KHTML, like Gecko) Chrome/126 Mobile Safari/537.36"
+                        },
+                    )
+                    setRequestProperty(
+                        "Accept",
+                        if (isWikipediaApi) {
+                            "application/json"
+                        } else {
+                            "text/html,application/xhtml+xml"
+                        },
+                    )
+                    setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+                }
+                continuation.invokeOnCancellation { connection.disconnect() }
+                try {
+                    val status = connection.responseCode
+                    val stream = if (status in 200..299) {
+                        connection.inputStream
                     } else {
-                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
-                            "(KHTML, like Gecko) Chrome/126 Mobile Safari/537.36"
-                    },
-                )
-                setRequestProperty(
-                    "Accept",
-                    if (isWikipediaApi) {
-                        "application/json"
-                    } else {
-                        "text/html,application/xhtml+xml"
-                    },
-                )
-                setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-            }
-            try {
-                val status = connection.responseCode
-                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-                val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                if (status !in 200..299) throw IOException("Catalogue request failed ($status)")
-                if (body.isBlank()) throw IOException("Catalogue response was empty")
-                body
-            } finally {
-                connection.disconnect()
+                        connection.errorStream
+                    }
+                    val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    if (status !in 200..299) {
+                        throw IOException("Catalogue request failed ($status)")
+                    }
+                    if (response.isBlank()) {
+                        throw IOException("Catalogue response was empty")
+                    }
+                    if (continuation.isActive) continuation.resume(response)
+                } catch (error: Throwable) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(error)
+                    }
+                } finally {
+                    connection.disconnect()
+                }
             }
         }
 
         suspend fun postJson(url: String, body: String): String = withContext(Dispatchers.IO) {
             val payload = body.toByteArray(StandardCharsets.UTF_8)
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 12_000
-                readTimeout = 18_000
-                doOutput = true
-                setFixedLengthStreamingMode(payload.size)
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("User-Agent", "Aliflix/1.5 (personal Android app)")
-            }
-            try {
-                connection.outputStream.use { it.write(payload) }
-                val status = connection.responseCode
-                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-                val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                if (status !in 200..299) throw IOException("Metadata request failed ($status)")
-                if (response.isBlank()) throw IOException("Metadata response was empty")
-                response
-            } finally {
-                connection.disconnect()
+            suspendCancellableCoroutine { continuation ->
+                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 8_000
+                    readTimeout = 10_000
+                    doOutput = true
+                    setFixedLengthStreamingMode(payload.size)
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("User-Agent", "Aliflix/1.5 (personal Android app)")
+                }
+                continuation.invokeOnCancellation { connection.disconnect() }
+                try {
+                    connection.outputStream.use { it.write(payload) }
+                    val status = connection.responseCode
+                    val stream = if (status in 200..299) {
+                        connection.inputStream
+                    } else {
+                        connection.errorStream
+                    }
+                    val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    if (status !in 200..299) {
+                        throw IOException("Metadata request failed ($status)")
+                    }
+                    if (response.isBlank()) {
+                        throw IOException("Metadata response was empty")
+                    }
+                    if (continuation.isActive) continuation.resume(response)
+                } catch (error: Throwable) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(error)
+                    }
+                } finally {
+                    connection.disconnect()
+                }
             }
         }
     }

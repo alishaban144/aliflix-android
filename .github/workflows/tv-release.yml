@@ -18,12 +18,52 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_VERSION_CODE: "34"
+  RELEASE_VERSION_NAME: "2.7.15"
+  EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
+  PRESERVED_TV_RELEASE_TAG: "v2.7.13"
+  PRESERVED_TV_APK_SHA256: "11509224e3b05e81ef75216f6aa3028e433cf5d8a1cefc00bd4b970f73893c01"
+  PRESERVED_TV_MANIFEST_SHA256: "a98b6a41a74db43d8f0078f6bc80ba776a0eaecee638f168c6ac66141483445a"
+
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate release version and tag
+        env:
+          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          EXPECTED_TAG="v${RELEASE_VERSION_NAME}"
+          GRADLE_VERSION_CODE="$(
+            sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' \
+              app/build.gradle.kts
+          )"
+          GRADLE_VERSION_NAME="$(
+            sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' \
+              app/build.gradle.kts
+          )"
+
+          test "$GRADLE_VERSION_CODE" = "$RELEASE_VERSION_CODE"
+          test "$GRADLE_VERSION_NAME" = "$RELEASE_VERSION_NAME"
+          test "$REQUESTED_TAG" = "$EXPECTED_TAG"
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            test "${GITHUB_REF_TYPE}" = "tag"
+            test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
+          fi
+
+          if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then
+            test "$(git rev-list -n 1 "refs/tags/${EXPECTED_TAG}")" = "$GITHUB_SHA"
+          fi
+
+          echo "RELEASE_TAG=${EXPECTED_TAG}" >> "$GITHUB_ENV"
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -35,36 +75,55 @@ jobs:
       - name: Restore release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.ALIFLIX_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ALIFLIX_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ALIFLIX_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ALIFLIX_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
           test -n "$KEYSTORE_BASE64"
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/aliflix-release.jks"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/aliflix-release.jks"
+          keytool \
+            -list \
+            -keystore "$RUNNER_TEMP/aliflix-release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" >/dev/null
 
-      - name: Build signed Android APK
+      - name: Test and build mobile only
         env:
           ALIFLIX_KEYSTORE_FILE: ${{ runner.temp }}/aliflix-release.jks
           ALIFLIX_KEYSTORE_PASSWORD: ${{ secrets.ALIFLIX_KEYSTORE_PASSWORD }}
           ALIFLIX_KEY_ALIAS: ${{ secrets.ALIFLIX_KEY_ALIAS }}
           ALIFLIX_KEY_PASSWORD: ${{ secrets.ALIFLIX_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
           chmod +x gradlew
           ./gradlew \
             -Dorg.gradle.java.home="$JAVA_HOME" \
             -PALIFLIX_MOBILE_UPDATE_MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update-mobile.json" \
             testMobileDebugUnitTest \
             lintMobileDebug \
+            compileMobileDebugAndroidTestKotlin \
+            assembleMobileDebug \
             assembleMobileRelease
 
       - name: Prepare release assets
         env:
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
+          set -euo pipefail
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Polishes Search with swipeable Title and Describe Plot modes, removes redundant discovery copy and genre footers, adds a compact Moviepire Beta label, and replaces oversized Trending numbers with refined rank badges."
+            RELEASE_NOTES="Rebuilds What should I watch with Movie or Series selection, an extensive paged catalogue, progressive poster results, reliable IMDb filtering, indexed Reddit discovery, resilient source fallbacks, and correct Back navigation between details and genre pages."
           fi
           mkdir -p dist
           cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/aliflix-mobile-release.apk
+          test -s app/build/outputs/apk/mobile/debug/app-mobile-debug.apk
           MOBILE_VERSION_CODE="$(jq -r '.elements[0].versionCode' app/build/outputs/apk/mobile/release/output-metadata.json)"
           MOBILE_VERSION_NAME="$(jq -r '.elements[0].versionName' app/build/outputs/apk/mobile/release/output-metadata.json)"
+          test "$MOBILE_VERSION_CODE" = "$RELEASE_VERSION_CODE"
+          test "$MOBILE_VERSION_NAME" = "$RELEASE_VERSION_NAME"
           MOBILE_SHA256="$(sha256sum dist/aliflix-mobile-release.apk | cut -d ' ' -f 1)"
           jq -n \
             --argjson versionCode "$MOBILE_VERSION_CODE" \
@@ -80,21 +139,99 @@ jobs:
               minimumSdk: 29,
               notes: $notes
             }' > dist/update-mobile.json
-          curl --fail --location \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/aliflix-tv-release.apk" \
+
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --retry-all-errors \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${PRESERVED_TV_RELEASE_TAG}/aliflix-tv-release.apk" \
             --output dist/aliflix-tv-release.apk
-          curl --fail --location \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update-tv.json" \
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --retry-all-errors \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${PRESERVED_TV_RELEASE_TAG}/update-tv.json" \
             --output dist/update-tv.json
+
+      - name: Verify signatures, manifests, and preserved TV assets
+        run: |
+          set -euo pipefail
+
+          APKSIGNER="$(
+            find "$ANDROID_HOME/build-tools" -type f -name apksigner -print |
+              sort -V |
+              tail -n 1
+          )"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs dist/aliflix-mobile-release.apk
+
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --retry-all-errors \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/v2.7.13/aliflix-mobile-release.apk" \
+            --output "$RUNNER_TEMP/aliflix-mobile-v2.7.13.apk"
+          "$APKSIGNER" verify --verbose --print-certs "$RUNNER_TEMP/aliflix-mobile-v2.7.13.apk"
+
+          CURRENT_CERT="$(
+            "$APKSIGNER" verify --print-certs dist/aliflix-mobile-release.apk |
+              awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print tolower($2); exit}'
+          )"
+          PREVIOUS_CERT="$(
+            "$APKSIGNER" verify --print-certs "$RUNNER_TEMP/aliflix-mobile-v2.7.13.apk" |
+              awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print tolower($2); exit}'
+          )"
+          test -n "$CURRENT_CERT"
+          test "$CURRENT_CERT" = "$PREVIOUS_CERT"
+          test "$CURRENT_CERT" = "$EXPECTED_MOBILE_SIGNER_SHA256"
+
+          MOBILE_SHA256="$(sha256sum dist/aliflix-mobile-release.apk | cut -d ' ' -f 1)"
+          jq -e \
+            --argjson versionCode "$RELEASE_VERSION_CODE" \
+            --arg versionName "$RELEASE_VERSION_NAME" \
+            --arg apkUrl "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/aliflix-mobile-release.apk" \
+            --arg sha256 "$MOBILE_SHA256" \
+            '(
+              .versionCode == $versionCode and
+              .versionName == $versionName and
+              .apkUrl == $apkUrl and
+              .sha256 == $sha256 and
+              .minimumSdk == 29 and
+              (.notes | type == "string" and length > 0)
+            )' dist/update-mobile.json
+
+          printf '%s  %s\n' \
+            "$PRESERVED_TV_APK_SHA256" \
+            "dist/aliflix-tv-release.apk" |
+            sha256sum --check --strict
+          printf '%s  %s\n' \
+            "$PRESERVED_TV_MANIFEST_SHA256" \
+            "dist/update-tv.json" |
+            sha256sum --check --strict
+          jq -e \
+            --arg sha256 "$PRESERVED_TV_APK_SHA256" \
+            '(
+              .versionCode == 24 and
+              .versionName == "2.7.5-tv" and
+              .sha256 == $sha256 and
+              .minimumSdk == 30
+            )' dist/update-tv.json
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           RELEASE_NOTES: ${{ inputs.notes }}
         run: |
+          set -euo pipefail
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Polishes Search with swipeable Title and Describe Plot modes, removes redundant discovery copy and genre footers, adds a compact Moviepire Beta label, and replaces oversized Trending numbers with refined rank badges."
+            RELEASE_NOTES="Rebuilds What should I watch with Movie or Series selection, an extensive paged catalogue, progressive poster results, reliable IMDb filtering, indexed Reddit discovery, resilient source fallbacks, and correct Back navigation between details and genre pages."
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
+            exit 1
           fi
           VERSION_NAME="$(jq -r '.versionName' dist/update-mobile.json)"
           gh release create "$RELEASE_TAG" \
@@ -103,4 +240,55 @@ jobs:
             dist/update-mobile.json \
             dist/update-tv.json \
             --title "Aliflix ${VERSION_NAME}" \
-            --notes "$RELEASE_NOTES"
+            --notes "$RELEASE_NOTES" \
+            --latest \
+            --target "$GITHUB_SHA"
+
+      - name: Verify published release and latest-download endpoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERIFY_DIR="$RUNNER_TEMP/published-release"
+          mkdir -p "$VERIFY_DIR/tag" "$VERIFY_DIR/latest"
+
+          for ASSET in \
+            aliflix-mobile-release.apk \
+            aliflix-tv-release.apk \
+            update-mobile.json \
+            update-tv.json
+          do
+            curl \
+              --fail \
+              --location \
+              --retry 6 \
+              --retry-all-errors \
+              --retry-delay 5 \
+              "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${ASSET}" \
+              --output "$VERIFY_DIR/tag/$ASSET"
+            cmp "dist/$ASSET" "$VERIFY_DIR/tag/$ASSET"
+
+            MATCHED_LATEST=false
+            for ATTEMPT in $(seq 1 12)
+            do
+              curl \
+                --fail \
+                --location \
+                --retry 3 \
+                --retry-all-errors \
+                --retry-delay 2 \
+                "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/${ASSET}" \
+                --output "$VERIFY_DIR/latest/$ASSET"
+              if cmp --silent "dist/$ASSET" "$VERIFY_DIR/latest/$ASSET"; then
+                MATCHED_LATEST=true
+                break
+              fi
+              echo "Latest endpoint for $ASSET has not updated yet (attempt $ATTEMPT/12)."
+              sleep 5
+            done
+            test "$MATCHED_LATEST" = true
+          done
+
+          test "$(gh release view "$RELEASE_TAG" --json tagName --jq .tagName)" = "$RELEASE_TAG"
+          test "$(jq -r .versionCode "$VERIFY_DIR/latest/update-mobile.json")" = "$RELEASE_VERSION_CODE"
+          test "$(jq -r .versionName "$VERIFY_DIR/latest/update-mobile.json")" = "$RELEASE_VERSION_NAME"

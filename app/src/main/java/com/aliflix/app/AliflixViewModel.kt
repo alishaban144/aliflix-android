@@ -16,6 +16,7 @@ import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.Season
 import com.aliflix.app.recommendation.CatalogRecommendationCandidateRepository
 import com.aliflix.app.recommendation.RecommendationOrchestrator
+import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationQuestion
 import com.aliflix.app.recommendation.RecommendationStore
 import com.aliflix.app.recommendation.RecommendationUiState
@@ -377,32 +378,66 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearRecent() = library.clearRecent()
 
-    fun submitRecommendationText(text: String) =
+    fun submitRecommendationText(text: String) {
+        pauseBackgroundHomeRefresh()
         recommendationOrchestrator.submitText(text)
+    }
 
-    fun surpriseRecommendation() = recommendationOrchestrator.surpriseMe()
+    fun selectRecommendationType(type: RecommendationMediaKind) =
+        recommendationOrchestrator.selectType(type)
+
+    fun showRecommendationMatches() {
+        pauseBackgroundHomeRefresh()
+        recommendationOrchestrator.showMatches()
+    }
+
+    fun loadMoreRecommendations() {
+        pauseBackgroundHomeRefresh()
+        recommendationOrchestrator.loadMore()
+    }
+
+    fun retryRecommendationPage() {
+        pauseBackgroundHomeRefresh()
+        recommendationOrchestrator.retryPage()
+    }
+
+    fun surpriseRecommendation() {
+        pauseBackgroundHomeRefresh()
+        recommendationOrchestrator.surpriseMe()
+    }
 
     fun answerRecommendation(
         question: RecommendationQuestion,
         values: List<String>,
-    ) = recommendationOrchestrator.answer(question, values)
+    ) {
+        pauseBackgroundHomeRefresh()
+        recommendationOrchestrator.answer(question, values)
+    }
 
     fun previousRecommendationStep() = recommendationOrchestrator.goBack()
 
     fun restartRecommendations() = recommendationOrchestrator.restart()
 
-    fun retryRecommendations() = recommendationOrchestrator.retry()
+    fun retryRecommendations() {
+        pauseBackgroundHomeRefresh()
+        recommendationOrchestrator.retry()
+    }
 
     fun requestAnotherRecommendation(
         media: Media,
         reason: String? = null,
-    ) = recommendationOrchestrator.requestAnother(media, reason)
+    ) {
+        pauseBackgroundHomeRefresh()
+        recommendationOrchestrator.requestAnother(media, reason)
+    }
 
     fun acceptRecommendation(media: Media) =
         recommendationOrchestrator.accept(media)
 
-    fun relaxRecommendationConstraint(id: String) =
+    fun relaxRecommendationConstraint(id: String) {
+        pauseBackgroundHomeRefresh()
         recommendationOrchestrator.applyRelaxation(id)
+    }
 
     fun setAiRecommendationsEnabled(enabled: Boolean) {
         recommendationStore.setEnabled(enabled)
@@ -415,6 +450,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun resetRecommendationTaste() = recommendationOrchestrator.resetTaste()
+
+    private fun pauseBackgroundHomeRefresh() {
+        homeRefreshJob?.cancel()
+        homeRefreshJob = null
+    }
 
     private companion object {
         const val MIN_GENRE_RESULTS = 20
