@@ -5857,6 +5857,7 @@ private fun DetailScreen(
                     listOf(
                         item.year,
                         if (item.type == MediaType.MOVIE) "Movie" else "Series",
+                        item.runtime,
                     ).filter { it.isNotBlank() }.forEach { label ->
                         Box(
                             modifier = Modifier

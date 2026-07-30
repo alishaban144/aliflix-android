@@ -35,6 +35,7 @@ data class Media(
     val rottenTomatoesRating: Int? = null,
     val genres: List<String> = emptyList(),
     val cast: List<String> = emptyList(),
+    val runtime: String = "",
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
@@ -58,6 +59,7 @@ data class Media(
         rottenTomatoesRating?.let { put("rottenTomatoesRating", it) }
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
+        put("runtime", runtime)
     }
 
     companion object {
@@ -107,6 +109,7 @@ data class Media(
                         array.optString(index).takeIf(String::isNotBlank)
                     }
                 }.orEmpty(),
+                runtime = json.optString("runtime", ""),
             )
         }
     }

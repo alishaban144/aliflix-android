@@ -4286,6 +4286,7 @@ class CatalogClient(
                     ?.getOrNull(1)
             }
             ?: fallback.imdbId
+        val runtime = document.selectFirst(".runtime")?.text()?.trim().orEmpty().ifBlank { fallback.runtime }
         return fallback.copy(
             title = title,
             overview = overview,
@@ -4296,6 +4297,7 @@ class CatalogClient(
             imdbId = imdbId,
             genres = genres,
             cast = cast,
+            runtime = runtime,
         )
     }
 

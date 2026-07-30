@@ -619,6 +619,7 @@ private fun TvHero(
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (item.year.isNotBlank()) TvMeta(item.year)
                 TvMeta(if (item.type == MediaType.TV) "Series" else "Movie")
+                if (item.runtime.isNotBlank()) TvMeta(item.runtime)
                 if (item.rating > 0) TvMeta("★ %.1f".format(item.rating))
             }
             Text(
@@ -722,6 +723,7 @@ private fun TvPosterCard(
                 text = listOf(
                     item.year,
                     if (item.type == MediaType.TV) "Series" else "Movie",
+                    item.runtime,
                 ).filter(String::isNotBlank).joinToString(" • "),
                 color = AliflixMuted,
                 fontSize = 11.sp,
@@ -1660,6 +1662,7 @@ private fun TvDetailScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         if (item.year.isNotBlank()) TvMeta(item.year)
                         TvMeta(if (item.type == MediaType.TV) "Series" else "Movie")
+                        if (item.runtime.isNotBlank()) TvMeta(item.runtime)
                         if (item.rating > 0) TvMeta("★ %.1f".format(item.rating))
                         item.genres.take(2).forEach { TvMeta(it) }
                     }
