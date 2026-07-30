@@ -198,12 +198,11 @@ object RecommendationQuestionSelector {
     private fun contentTypeQuestion() = RecommendationQuestion(
         id = "content_type",
         dimension = RecommendationDimension.CONTENT_TYPE,
-        text = "Movie, series, or either?",
+        text = "Movie or series?",
         type = RecommendationQuestionType.SINGLE_SELECT,
         options = listOf(
             RecommendationOption("movie", "Movie", RecommendationContentType.MOVIE.name),
             RecommendationOption("tv", "Series", RecommendationContentType.TV.name),
-            RecommendationOption("either", "Either", RecommendationContentType.EITHER.name),
         ),
     )
 
@@ -351,17 +350,26 @@ object RecommendationRanker {
         val scored = candidates.map { candidate ->
             scoreCandidate(preferences, candidate, likes, taste, similarityAnchor)
         }.sortedByDescending { it.score.total }
-        return diversify(scored, 3)
+        return diversify(scored, scored.size)
     }
+
+    fun rankAll(
+        preferences: RecommendationPreferences,
+        candidates: List<RecommendationCandidate>,
+        likes: List<Media> = emptyList(),
+        taste: TasteProfile = TasteProfile(),
+        similarityAnchor: Media? = null,
+    ): List<RecommendationCandidate> =
+        rank(preferences, candidates, likes, taste, similarityAnchor)
 
     fun shouldRecommend(
         preferences: RecommendationPreferences,
         ranked: List<RecommendationCandidate>,
         nextQuestion: RecommendationQuestion?,
     ): Boolean {
-        if (ranked.size < 3) return false
-        if (preferences.surpriseMe) return ranked.first().score.total >= RECOMMEND_THRESHOLD
-        return ranked.first().score.total >= EARLY_STOP_THRESHOLD && nextQuestion == null
+        if (ranked.isEmpty()) return false
+        if (preferences.surpriseMe) return true
+        return nextQuestion == null
     }
 
     fun relaxationOptions(
@@ -476,6 +484,11 @@ object RecommendationRanker {
             if (!it.value.accepts(media.type)) return false
         }
         val genres = media.genres.map(::normalize).toSet()
+        val hardGenreKnowledgeRequired =
+            preferences.includedGenres.any {
+                it.strength == ConstraintStrength.HARD
+            } || preferences.excludedGenres.isNotEmpty()
+        if (hardGenreKnowledgeRequired && !metadata.genresVerified) return false
         preferences.includedGenres.filter { it.strength == ConstraintStrength.HARD }.forEach {
             if (normalize(it.value) !in genres) return false
         }
@@ -667,14 +680,10 @@ object RecommendationRanker {
     ): List<RecommendationCandidate> {
         if (sorted.size <= 1) return sorted.take(limit)
         val chosen = mutableListOf(sorted.first())
-        val minimumWildcardScore = sorted.first().score.total * 0.75
         while (chosen.size < limit) {
             val next = sorted
                 .asSequence()
                 .filterNot { candidate -> chosen.any { it.media.key == candidate.media.key } }
-                .filter { candidate ->
-                    chosen.size < 2 || candidate.score.total >= minimumWildcardScore
-                }
                 .maxByOrNull { candidate ->
                     val similarity = chosen.maxOf { selected ->
                         candidateSimilarity(candidate, selected)

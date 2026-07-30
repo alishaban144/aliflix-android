@@ -161,7 +161,7 @@ class RecommendationEngineTest {
     }
 
     @Test
-    fun mmrReturnsDistinctAlternativesAndWildcardAboveFloor() {
+    fun rankingKeepsAllDistinctCandidatesWhileDiversifyingOrder() {
         val preferences = RecommendationPreferences(
             surpriseMe = true,
             includedGenres = listOf(soft("Drama")),
@@ -174,9 +174,12 @@ class RecommendationEngineTest {
         )
         val ranked = RecommendationRanker.rank(preferences, candidates)
 
-        assertEquals(3, ranked.size)
-        assertEquals(3, ranked.map { it.media.key }.distinct().size)
-        assertTrue(ranked.last().score.total >= ranked.first().score.total * 0.75)
+        assertEquals(4, ranked.size)
+        assertEquals(4, ranked.map { it.media.key }.distinct().size)
+        assertEquals(
+            candidates.map { it.media.key }.toSet(),
+            ranked.map { it.media.key }.toSet(),
+        )
         assertNotEquals(ranked[0].media.key, ranked[1].media.key)
     }
 
