@@ -178,11 +178,11 @@ jobs:
 
           CURRENT_CERT="$(
             "$APKSIGNER" verify --print-certs dist/aliflix-mobile-release.apk |
-              awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print tolower($2); exit}'
+              awk -F': ' '/certificate SHA-256 digest/ && !seen {print tolower($NF); seen=1}'
           )"
           PREVIOUS_CERT="$(
             "$APKSIGNER" verify --print-certs "$RUNNER_TEMP/aliflix-mobile-v2.7.13.apk" |
-              awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print tolower($2); exit}'
+              awk -F': ' '/certificate SHA-256 digest/ && !seen {print tolower($NF); seen=1}'
           )"
           test -n "$CURRENT_CERT"
           test "$CURRENT_CERT" = "$PREVIOUS_CERT"
