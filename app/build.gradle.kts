@@ -25,8 +25,8 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 39
-        versionName = "2.7.20"
+        versionCode = 40
+        versionName = "2.7.21"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

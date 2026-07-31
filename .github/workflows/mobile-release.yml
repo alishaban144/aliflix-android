@@ -19,12 +19,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "39"
-  RELEASE_VERSION_NAME: "2.7.20"
+  RELEASE_VERSION_CODE: "40"
+  RELEASE_VERSION_NAME: "2.7.21"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
-  PRESERVED_TV_RELEASE_TAG: "v2.7.13"
-  PRESERVED_TV_APK_SHA256: "11509224e3b05e81ef75216f6aa3028e433cf5d8a1cefc00bd4b970f73893c01"
-  PRESERVED_TV_MANIFEST_SHA256: "a98b6a41a74db43d8f0078f6bc80ba776a0eaecee638f168c6ac66141483445a"
 
 jobs:
   release:
@@ -140,22 +137,9 @@ jobs:
               notes: $notes
             }' > dist/update-mobile.json
 
-          curl \
-            --fail \
-            --location \
-            --retry 3 \
-            --retry-all-errors \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${PRESERVED_TV_RELEASE_TAG}/aliflix-tv-release.apk" \
-            --output dist/aliflix-tv-release.apk
-          curl \
-            --fail \
-            --location \
-            --retry 3 \
-            --retry-all-errors \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${PRESERVED_TV_RELEASE_TAG}/update-tv.json" \
-            --output dist/update-tv.json
 
-      - name: Verify signatures, manifests, and preserved TV assets
+
+      - name: Verify signatures, manifests, and preserved assets
         run: |
           set -euo pipefail
 
@@ -203,22 +187,7 @@ jobs:
               (.notes | type == "string" and length > 0)
             )' dist/update-mobile.json
 
-          printf '%s  %s\n' \
-            "$PRESERVED_TV_APK_SHA256" \
-            "dist/aliflix-tv-release.apk" |
-            sha256sum --check --strict
-          printf '%s  %s\n' \
-            "$PRESERVED_TV_MANIFEST_SHA256" \
-            "dist/update-tv.json" |
-            sha256sum --check --strict
-          jq -e \
-            --arg sha256 "$PRESERVED_TV_APK_SHA256" \
-            '(
-              .versionCode == 24 and
-              .versionName == "2.7.5-tv" and
-              .sha256 == $sha256 and
-              .minimumSdk == 30
-            )' dist/update-tv.json
+
 
       - name: Publish GitHub Release
         env:
@@ -236,9 +205,7 @@ jobs:
           VERSION_NAME="$(jq -r '.versionName' dist/update-mobile.json)"
           gh release create "$RELEASE_TAG" \
             dist/aliflix-mobile-release.apk \
-            dist/aliflix-tv-release.apk \
             dist/update-mobile.json \
-            dist/update-tv.json \
             --title "Aliflix ${VERSION_NAME}" \
             --notes "$RELEASE_NOTES" \
             --latest \
@@ -254,9 +221,7 @@ jobs:
 
           for ASSET in \
             aliflix-mobile-release.apk \
-            aliflix-tv-release.apk \
-            update-mobile.json \
-            update-tv.json
+            update-mobile.json
           do
             curl \
               --fail \
