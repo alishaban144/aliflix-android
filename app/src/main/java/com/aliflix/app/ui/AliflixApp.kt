@@ -224,7 +224,7 @@ import java.io.File
 
 internal enum class AppTab(val label: String) {
     HOME("Home"),
-    SEARCH("Search"),
+    SEARCH("Discover"),
     MY_SPACE("My Space"),
 }
 
@@ -1091,17 +1091,17 @@ private fun HomeFeed(
             .take(6)
             .ifEmpty { listOf(content.hero) }
     }
-    var heroIndex by remember { mutableIntStateOf(0) }
-    val hero = heroCandidates.getOrElse(heroIndex % heroCandidates.size) {
-        heroCandidates.first()
-    }
+    val pagerState = rememberPagerState(
+        initialPage = 0,
+        pageCount = { heroCandidates.size }
+    )
 
-    LaunchedEffect(heroCandidates) {
-        heroIndex = 0
+    LaunchedEffect(pagerState, heroCandidates) {
         if (heroCandidates.size > 1) {
             while (true) {
                 kotlinx.coroutines.delay(6000L)
-                heroIndex = (heroIndex + 1) % heroCandidates.size
+                val next = (pagerState.currentPage + 1) % heroCandidates.size
+                pagerState.animateScrollToPage(next)
             }
         }
     }
@@ -1115,69 +1115,22 @@ private fun HomeFeed(
     ) {
         item {
             Box {
-                AnimatedContent(
-                    targetState = hero,
-                    contentKey = Media::key,
-                    transitionSpec = {
-                        val enterMotion = tween<IntOffset>(
-                            durationMillis = 440,
-                            easing = FastOutSlowInEasing,
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxWidth(),
+                    key = { page -> heroCandidates.getOrNull(page)?.key ?: page }
+                ) { page ->
+                    val featured = heroCandidates.getOrNull(page)
+                    if (featured != null) {
+                        HeroBanner(
+                            item = featured,
+                            personalMatch = PersonalizationEngine.match(featured, likes),
+                            onPlay = { onPlay(featured) },
+                            onInfo = { onOpen(featured) },
                         )
-                        val enterFade = tween<Float>(
-                            durationMillis = 400,
-                            easing = FastOutSlowInEasing,
-                        )
-                        val exitMotion = tween<IntOffset>(
-                            durationMillis = 300,
-                            easing = FastOutSlowInEasing,
-                        )
-                        val exitFade = tween<Float>(
-                            durationMillis = 260,
-                            easing = FastOutSlowInEasing,
-                        )
-                        (
-                            fadeIn(enterFade) +
-                                slideInHorizontally(enterMotion) { fullWidth -> fullWidth / 24 } +
-                                scaleIn(enterFade, initialScale = 0.992f)
-                            ).togetherWith(
-                            fadeOut(exitFade) +
-                                slideOutHorizontally(exitMotion) { fullWidth -> -fullWidth / 32 } +
-                                scaleOut(exitFade, targetScale = 0.996f),
-                        )
-                    },
-                    label = "home-featured-transition",
-                ) { featured ->
-                    HeroBanner(
-                        item = featured,
-                        personalMatch = PersonalizationEngine.match(featured, likes),
-                        onPlay = { onPlay(featured) },
-                        onInfo = { onOpen(featured) },
-                    )
-                }
-                if (heroCandidates.size > 1) {
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        heroCandidates.forEachIndexed { index, _ ->
-                            val active = index == heroIndex % heroCandidates.size
-                            Box(
-                                modifier = Modifier
-                                    .size(if (active) 8.dp else 6.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (active) AliflixAccentSecondary
-                                        else Color.White.copy(alpha = 0.35f),
-                                    )
-                                    .clickable {
-                                        heroIndex = index
-                                    },
-                            )
-                        }
                     }
                 }
+
                 HomeHeader(
                     onSearch = onSearch,
                     modifier = Modifier
@@ -2306,9 +2259,11 @@ private fun SearchScreen(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    0f to AliflixBackgroundImmersive,
-                    0.36f to AliflixBlack,
-                    1f to AliflixBlack,
+                    listOf(
+                        AliflixAccentPrimary.copy(alpha = 0.16f),
+                        AliflixBackgroundImmersive,
+                        AliflixBlack,
+                    ),
                 ),
             )
             .windowInsetsPadding(WindowInsets.statusBars)
@@ -2324,8 +2279,8 @@ private fun SearchScreen(
         )
         Text(
             text = when {
-                aiMode -> "What should I watch?"
-                plotMode -> "Find it from the story"
+                aiMode -> "AI Recommendations"
+                plotMode -> "Describe a plot"
                 else -> "Search movies & series"
             },
             style = MaterialTheme.typography.headlineMedium,
@@ -4959,18 +4914,7 @@ private fun MobileSettingsDialog(
                                 ),
                             )
                         }
-                        TextButton(
-                            onClick = onResetRecommendationTaste,
-                            modifier = Modifier.heightIn(min = 48.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                        ) {
-                            Text(
-                                text = "Reset learned taste",
-                                color = AliflixAccentSecondary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -5497,14 +5441,14 @@ private fun HistoryCollection(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(5.dp)
-                            .size(40.dp)
+                            .size(24.dp)
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.75f)),
                     ) {
                         Icon(
                             Icons.Filled.Close,
                             contentDescription = "Remove from viewing history",
-                            modifier = Modifier.size(17.dp),
+                            modifier = Modifier.size(12.dp),
                         )
                     }
                 }
