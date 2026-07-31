@@ -3161,6 +3161,17 @@ class CatalogClient(
     private suspend fun discoverPlotCandidates(
         description: String,
     ): PlotDiscovery {
+        val directCandidates = try {
+            val directQuery = URLEncoder.encode(
+                "$description movie OR show",
+                StandardCharsets.UTF_8.toString(),
+            )
+            parseDirectWebCandidates(
+                pageLoader("$BRAVE_SEARCH_URL?q=$directQuery&source=web&spellcheck=1"),
+            )
+        } catch (_: Throwable) {
+            emptyList()
+        }
         val result = WebTitleDiscovery(
             brave = {
                 val query = URLEncoder.encode(
@@ -3177,10 +3188,43 @@ class CatalogClient(
             merge = ::mergePlotCandidates,
             sortScore = { plotCandidateDiscoveryScore(description, it) },
         ).discover(WebDiscoveryMode.DESCRIBE_PLOT)
+        val merged = directCandidates + result.items
+        val successCount = result.successfulSources +
+            if (directCandidates.isNotEmpty()) 1 else 0
         return PlotDiscovery(
-            candidates = result.items,
-            successfulSources = result.successfulSources,
+            candidates = merged.distinctBy(PlotCandidate::cacheKey),
+            successfulSources = successCount.coerceAtLeast(result.successfulSources),
         )
+    }
+
+    private val siteNamePattern = Regex(
+        "\\s*[-–—|]\\s*(?:Wikipedia|Rotten Tomatoes|IMDb|Metacritic|" +
+            "Letterboxd|TV Guide|The Movie Database|TMDB|JustWatch|" +
+            "Fandom|Wiki|\\w+\\.com)\\s*$",
+        RegexOption.IGNORE_CASE,
+    )
+
+    internal fun parseDirectWebCandidates(html: String): List<PlotCandidate> {
+        val document = Jsoup.parse(html, BRAVE_SEARCH_URL)
+        val results = document.select("div.snippet[data-type=web]")
+        return results.take(5).mapIndexedNotNull { index, result ->
+            val rawHeading = result.selectFirst(
+                ".title, .snippet-title, .search-snippet-title, " +
+                    "[data-testid=result-title], h3",
+            )?.text().orEmpty()
+            val cleaned = siteNamePattern.replace(rawHeading, "").trim()
+            if (cleaned.isBlank() || isGenericPlotResult(cleaned)) return@mapIndexedNotNull null
+            val yearMatch = Regex("\\((\\d{4})\\)").find(cleaned)
+            val title = cleaned.replace(Regex("\\s*\\(\\d{4}\\)"), "").trim()
+            if (title.isBlank()) return@mapIndexedNotNull null
+            PlotCandidate(
+                title = title,
+                year = yearMatch?.groupValues?.getOrNull(1),
+                evidence = rawHeading,
+                source = PlotSource.BRAVE,
+                position = -(5 - index),
+            )
+        }
     }
 
     internal fun parseBravePlotCandidates(html: String): List<PlotCandidate> {
@@ -3966,7 +4010,18 @@ class CatalogClient(
 
     suspend fun episodes(item: Media, seasonNumber: Int): List<Episode> {
         if (item.type != MediaType.TV) return emptyList()
+        val result = runCatching {
+            parseEpisodes(
+                html = pageLoader(
+                    "$TMDB_SITE_URL/tv/${item.id}/season/$seasonNumber?language=en-US",
+                ),
+                mediaId = item.id,
+                seasonNumber = seasonNumber,
+            )
+        }.getOrDefault(emptyList())
+        if (result.isNotEmpty()) return result
         return runCatching {
+            kotlinx.coroutines.delay(600L)
             parseEpisodes(
                 html = pageLoader(
                     "$TMDB_SITE_URL/tv/${item.id}/season/$seasonNumber?language=en-US",
@@ -4336,15 +4391,30 @@ class CatalogClient(
             Regex(
                 "^/tv/$mediaId(?:-[^/]*)?/season/$seasonNumber/episode/(\\d+)(?:\\?.*)?$",
             )
-        return document.select("main div.episode").mapNotNull { container ->
+        val episodeNumberPattern = Regex("(?:^|\\D)(\\d{1,3})(?:\\D|$)")
+        val containers = document.select("main div.episode").ifEmpty {
+            document.select("main div.card").filter { card ->
+                card.selectFirst("a[href*=\"/episode/\"]") != null
+            }
+        }.ifEmpty {
+            document.select("main [class*=episode]").filter { el ->
+                el.selectFirst("a[href]") != null
+            }
+        }
+        val fromContainers = containers.mapNotNull { container ->
             val link = container.selectFirst(
                 "a[data-episode-number][href], a[href*=\"/episode/\"]",
             ) ?: return@mapNotNull null
-            val match = routePattern.matchEntire(link.attr("href")) ?: return@mapNotNull null
-            val number = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
+            val href = link.attr("href")
+            val number = routePattern.matchEntire(href)?.groupValues?.getOrNull(1)
+                ?.toIntOrNull()
+                ?: link.attr("data-episode-number").toIntOrNull()
+                ?: episodeNumberPattern.find(href)?.groupValues?.getOrNull(1)
+                    ?.toIntOrNull()
+                ?: return@mapNotNull null
             val image = container.selectFirst("img.backdrop, img[src]")
             val title = container
-                .selectFirst("h3 a, .title a, a[data-episode-number]")
+                .selectFirst("h3 a, .title a, a[data-episode-number], h4 a")
                 ?.text()
                 ?.trim()
                 ?.takeIf(String::isNotBlank)
@@ -4370,7 +4440,26 @@ class CatalogClient(
                 stillPath = normalizeTmdbImage(image?.attr("src")),
                 runtime = container.selectFirst(".runtime")?.text()?.trim().orEmpty(),
             )
-        }.distinctBy(Episode::number).sortedBy(Episode::number)
+        }
+        if (fromContainers.isNotEmpty()) {
+            return fromContainers.distinctBy(Episode::number).sortedBy(Episode::number)
+        }
+        val linkFallback = document.select("main a[href]").mapNotNull { link ->
+            val match = routePattern.matchEntire(link.attr("href"))
+                ?: return@mapNotNull null
+            val number = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
+            val text = link.text().trim().takeIf(String::isNotBlank)
+                ?: "Episode $number"
+            Episode(
+                seasonNumber = seasonNumber,
+                number = number,
+                title = text,
+                overview = "",
+                stillPath = null,
+                runtime = "",
+            )
+        }
+        return linkFallback.distinctBy(Episode::number).sortedBy(Episode::number)
     }
 
     private suspend fun ratingsFor(item: Media): ExternalRatings {

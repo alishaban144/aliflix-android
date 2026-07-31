@@ -81,6 +81,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
@@ -107,6 +108,8 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -1081,11 +1084,27 @@ private fun HomeFeed(
             selectedRails
         }
     }
-    val hero = filteredRails.firstNotNullOfOrNull { rail ->
-        rail.items.firstOrNull { it.backdropPath != null }
+    val heroCandidates = remember(filteredRails, content.hero) {
+        filteredRails.flatMap { rail -> rail.items }
+            .filter { it.backdropPath != null }
+            .distinctBy { it.key }
+            .take(6)
+            .ifEmpty { listOf(content.hero) }
     }
-        ?: filteredRails.firstNotNullOfOrNull { rail -> rail.items.firstOrNull() }
-        ?: content.hero
+    var heroIndex by remember { mutableIntStateOf(0) }
+    val hero = heroCandidates.getOrElse(heroIndex % heroCandidates.size) {
+        heroCandidates.first()
+    }
+
+    LaunchedEffect(heroCandidates) {
+        heroIndex = 0
+        if (heroCandidates.size > 1) {
+            while (true) {
+                kotlinx.coroutines.delay(6000L)
+                heroIndex = (heroIndex + 1) % heroCandidates.size
+            }
+        }
+    }
 
     LazyColumn(
         state = listState,
@@ -1134,6 +1153,30 @@ private fun HomeFeed(
                         onPlay = { onPlay(featured) },
                         onInfo = { onOpen(featured) },
                     )
+                }
+                if (heroCandidates.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        heroCandidates.forEachIndexed { index, _ ->
+                            val active = index == heroIndex % heroCandidates.size
+                            Box(
+                                modifier = Modifier
+                                    .size(if (active) 8.dp else 6.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (active) AliflixAccentSecondary
+                                        else Color.White.copy(alpha = 0.35f),
+                                    )
+                                    .clickable {
+                                        heroIndex = index
+                                    },
+                            )
+                        }
+                    }
                 }
                 HomeHeader(
                     onSearch = onSearch,
@@ -2290,92 +2333,129 @@ private fun SearchScreen(
             color = AliflixContentPrimary,
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
         )
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(AliflixSurface)
-                .border(
-                    1.dp,
-                    AliflixBorderSubtle,
-                    RoundedCornerShape(16.dp),
-                )
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            searchModes.map { mode ->
-                mode to when (mode) {
-                    SearchMode.TITLE -> "Title"
-                    SearchMode.PLOT -> "Describe"
-                    SearchMode.AI -> "AI"
-                }
-            }.forEachIndexed { index, (mode, label) ->
-                val selected = state.mode == mode
-                val tabColor by animateColorAsState(
-                    targetValue = if (selected) {
-                        AliflixSurfacePressed
-                    } else {
-                        Color.Transparent
-                    },
-                    animationSpec = tween(240, easing = FastOutSlowInEasing),
-                    label = "search-mode-color",
-                )
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("search-mode-${mode.name.lowercase()}")
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(tabColor)
-                        .border(
-                            width = 1.dp,
-                            color = if (selected) {
-                                AliflixAccentPrimary.copy(alpha = 0.62f)
-                            } else {
-                                Color.Transparent
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                        )
-                        .selectable(
-                            selected = selected,
-                            onClick = {
-                                coroutineScope.launch {
-                                    pagerState.animateScrollToPage(index)
-                                }
-                            },
-                        ),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = label,
-                        color = if (selected) AliflixContentPrimary else AliflixContentSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
+            val titleIndex = searchModes.indexOf(SearchMode.TITLE).coerceAtLeast(0)
+            val titleSelected = state.mode == SearchMode.TITLE
+            val titleTabColor by animateColorAsState(
+                targetValue = if (titleSelected) AliflixSurfacePressed else Color.Transparent,
+                animationSpec = tween(240, easing = FastOutSlowInEasing),
+                label = "title-tab-color",
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(
+                        if (titleSelected) {
+                            Brush.horizontalGradient(
+                                listOf(
+                                    AliflixAccentPrimary.copy(alpha = 0.22f),
+                                    AliflixSurfacePressed,
+                                ),
+                            )
+                        } else {
+                            Brush.horizontalGradient(
+                                listOf(AliflixSurface, AliflixSurface),
+                            )
+                        },
                     )
-                    if (mode == SearchMode.PLOT || mode == SearchMode.AI) {
-                        Spacer(Modifier.width(5.dp))
+                    .border(
+                        width = 1.dp,
+                        color = if (titleSelected) AliflixAccentPrimary.copy(alpha = 0.62f)
+                        else AliflixBorderSubtle,
+                        shape = RoundedCornerShape(16.dp),
+                    )
+                    .testTag("search-mode-title")
+                    .selectable(
+                        selected = titleSelected,
+                        onClick = {
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(titleIndex)
+                            }
+                        },
+                    ),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Search,
+                    contentDescription = null,
+                    tint = if (titleSelected) AliflixContentPrimary else AliflixContentSecondary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Search by Title",
+                    color = if (titleSelected) AliflixContentPrimary else AliflixContentSecondary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                searchModes.filter { it != SearchMode.TITLE }.forEachIndexed { _, mode ->
+                    val modeIndex = searchModes.indexOf(mode).coerceAtLeast(0)
+                    val selected = state.mode == mode
+                    val label = when (mode) {
+                        SearchMode.PLOT -> "Describe"
+                        SearchMode.AI -> "AI"
+                        else -> ""
+                    }
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("search-mode-${mode.name.lowercase()}")
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (selected) AliflixSurfacePressed else AliflixSurface,
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (selected) AliflixAccentPrimary.copy(alpha = 0.62f)
+                                else AliflixBorderSubtle,
+                                shape = RoundedCornerShape(12.dp),
+                            )
+                            .selectable(
+                                selected = selected,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        pagerState.animateScrollToPage(modeIndex)
+                                    }
+                                },
+                            ),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (selected) AliflixContentPrimary else AliflixContentTertiary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                        Spacer(Modifier.width(4.dp))
                         Box(
                             modifier = Modifier
                                 .clip(CircleShape)
                                 .background(
-                                    if (selected) {
-                                        AliflixAccentPrimary.copy(alpha = 0.34f)
-                                    } else {
-                                        AliflixAccentPrimary.copy(alpha = 0.18f)
-                                    },
+                                    if (selected) AliflixAccentPrimary.copy(alpha = 0.34f)
+                                    else AliflixAccentPrimary.copy(alpha = 0.18f),
                                 )
-                                .padding(horizontal = 5.dp, vertical = 2.dp),
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
                         ) {
                             Text(
                                 text = "BETA",
-                                color = if (selected) {
-                                    AliflixContentPrimary
-                                } else {
-                                    AliflixAccentSecondary
-                                },
+                                color = if (selected) AliflixContentPrimary else AliflixAccentSecondary,
                                 fontSize = 7.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 0.5.sp,
@@ -2724,6 +2804,7 @@ private fun AliflixAiScreen(
             RecommendationUiState.Idle -> AiIdleContent(
                 onSubmit = onSubmit,
                 onSurprise = onSurprise,
+                selectedType = selectedType,
                 modifier = Modifier.weight(1f),
             )
             is RecommendationUiState.SelectType -> {
@@ -2733,6 +2814,7 @@ private fun AliflixAiScreen(
                     AiIdleContent(
                         onSubmit = onSubmit,
                         onSurprise = onSurprise,
+                        selectedType = selectedType,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -3079,8 +3161,18 @@ private fun AiTypePrompt(
 private fun AiIdleContent(
     onSubmit: (String) -> Unit,
     onSurprise: () -> Unit,
+    selectedType: RecommendationMediaKind? = null,
     modifier: Modifier = Modifier,
 ) {
+    var shuffleSeed by remember { mutableIntStateOf(0) }
+    val visiblePrompts = remember(selectedType, shuffleSeed) {
+        val pool = when (selectedType) {
+            RecommendationMediaKind.MOVIE -> movieStarterPrompts
+            RecommendationMediaKind.SERIES -> seriesStarterPrompts
+            null -> generalStarterPrompts
+        }
+        pool.shuffled(java.util.Random(shuffleSeed.toLong())).take(4)
+    }
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(16.dp),
@@ -3120,19 +3212,36 @@ private fun AiIdleContent(
             }
         }
         item {
-            Text(
-                "Try one",
-                color = AliflixContentPrimary,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Try one",
+                    color = AliflixContentPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                IconButton(
+                    onClick = { shuffleSeed++ },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = "Shuffle",
+                        tint = AliflixContentSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
         }
         item {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                aiStarterPrompts.forEach { prompt ->
+                visiblePrompts.forEach { prompt ->
                     AssistChip(
                         onClick = { onSubmit(prompt) },
                         label = { Text(prompt) },
@@ -3980,11 +4089,57 @@ private fun aiPreferenceChips(
     }
 }.distinctBy { it.key to it.label }.take(16)
 
-private val aiStarterPrompts = listOf(
+private val movieStarterPrompts = listOf(
+    "Something scary under 100 minutes",
+    "A mind-bending thriller",
+    "Heartwarming animated film",
+    "An underrated sci-fi gem",
+    "A gripping courtroom drama",
+    "Feel-good road trip movie",
+    "Dark comedy about everyday life",
+    "A beautiful foreign language film",
+    "Epic historical war movie",
+    "Something with a twist ending",
+    "A classic heist film",
+    "Romantic movie that isn't cheesy",
+    "Intense survival movie",
+    "A visually stunning fantasy",
+    "Movie that will make me cry",
+    "Something like Inception",
+    "A short and sharp horror film",
+    "An inspiring true story",
+)
+
+private val seriesStarterPrompts = listOf(
+    "A strong hidden-gem series",
+    "Binge-worthy limited series",
+    "A dark mystery thriller series",
+    "Funny sitcom to unwind with",
+    "Epic fantasy series",
+    "Political drama with twists",
+    "Sci-fi series with great world building",
+    "Crime series with great characters",
+    "Anime series with a deep story",
+    "A slow-burn drama series",
+    "Something like Breaking Bad",
+    "An underrated series nobody talks about",
+    "Short episodes, easy to binge",
+    "A suspenseful miniseries",
+    "A feel-good comedy series",
+    "Period drama with stunning visuals",
+    "An addictive K-drama",
+    "Series with a satisfying ending",
+)
+
+private val generalStarterPrompts = listOf(
     "Something scary under 100 minutes",
     "Funny to watch with friends",
     "Mind-bending but not too long",
     "A strong hidden-gem series",
+    "An underrated masterpiece",
+    "Something like Interstellar",
+    "A gripping true crime story",
+    "Beautiful animation for adults",
 )
 
 @Composable
@@ -4641,11 +4796,87 @@ private fun MobileSettingsDialog(
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.2.sp,
                     )
-                    PlaybackProviderSelector(
-                        selectedProvider = generalProvider,
-                        onSelectProvider = onSelectProvider,
-                        onEditProviderUrl = onEditProviderUrl,
-                    )
+                    var sourceExpanded by remember { mutableStateOf(false) }
+                    val providers = PlaybackProviderId.entries
+                        .filter(PlaybackProviderId::supportsGeneralPlayback)
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(AliflixSurfaceSecondary)
+                                .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(14.dp))
+                                .clickable { sourceExpanded = true }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Streaming source",
+                                    color = AliflixContentPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    text = generalProvider.displayName,
+                                    color = AliflixAccentSecondary,
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            IconButton(
+                                onClick = { onEditProviderUrl(generalProvider) },
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Edit,
+                                    contentDescription = "Edit URL",
+                                    tint = AliflixContentSecondary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Filled.ArrowDropDown,
+                                contentDescription = "Choose source",
+                                tint = AliflixContentSecondary,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = sourceExpanded,
+                            onDismissRequest = { sourceExpanded = false },
+                            modifier = Modifier.background(AliflixSurfaceRaised),
+                        ) {
+                            providers.forEach { provider ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            Text(
+                                                text = provider.displayName,
+                                                color = AliflixContentPrimary,
+                                                fontWeight = if (provider == generalProvider) {
+                                                    FontWeight.Bold
+                                                } else FontWeight.Normal,
+                                            )
+                                            if (provider == generalProvider) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = AliflixAccentSecondary,
+                                                    modifier = Modifier.size(16.dp),
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        onSelectProvider(provider)
+                                        sourceExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
