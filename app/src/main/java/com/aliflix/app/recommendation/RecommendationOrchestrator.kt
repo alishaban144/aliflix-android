@@ -679,7 +679,7 @@ class RecommendationOrchestrator(
         val generation = attemptGeneration
         val seedReady = CompletableDeferred<Unit>()
         preparationSeedReady = seedReady
-        preparationJob = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        preparationJob = scope.launch {
             try {
                 ensureSimilarityAnchor(generation)
                 if (!isActiveAttempt(generation)) return@launch
@@ -762,7 +762,7 @@ class RecommendationOrchestrator(
             return
         }
 
-        job = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        job = scope.launch {
             var scanned = 0
             val startedAt = System.currentTimeMillis()
             try {
@@ -1034,7 +1034,7 @@ class RecommendationOrchestrator(
     ) {
         if (!hasMore || !isActiveAttempt(generation)) return
         prefetchJob?.cancel()
-        prefetchJob = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        prefetchJob = scope.launch {
             val startedAt = System.currentTimeMillis()
             var pages = 0
             try {
