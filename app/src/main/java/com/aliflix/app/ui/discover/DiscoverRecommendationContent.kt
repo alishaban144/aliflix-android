@@ -318,7 +318,7 @@ private fun RecommendationIdle(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     DiscoverSectionHeader(
                         title = "Try one",
-                        subtitle = "Suggestions change with each app session",
+                        subtitle = null,
                     )
                     TryOneCarousel(
                         suggestions = suggestions,
