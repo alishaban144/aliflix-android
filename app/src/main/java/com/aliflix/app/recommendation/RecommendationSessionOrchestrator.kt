@@ -492,11 +492,13 @@ class RecommendationOrchestrator(
         var health = RecommendationSourceHealth()
         var pages = 0
         var noProgressPages = 0
+        val minimumDiscoveryPages = effectivePreferences.minimumBroadDiscoveryPages()
         val startedAt = clockMillis()
         while (
             hasMore &&
-            hardEligibleCount(effectivePreferences, pool.values, input.rankingContext) <
-            RESULT_PAGE_SIZE &&
+            (pages < minimumDiscoveryPages ||
+                hardEligibleCount(effectivePreferences, pool.values, input.rankingContext) <
+                RESULT_PAGE_SIZE) &&
             pages < MAX_INITIAL_PAGES &&
             clockMillis() - startedAt < MAX_INITIAL_DURATION_MS
         ) {
@@ -572,14 +574,16 @@ class RecommendationOrchestrator(
         var health = request.sourceHealth
         var pages = 0
         var noProgressPages = 0
+        val minimumDiscoveryPages = request.preferences.minimumBroadDiscoveryPages()
         val startedAt = clockMillis()
         while (
             hasMore &&
-            hardEligibleCount(
-                request.preferences,
-                newCandidates.values,
-                request.rankingContext,
-            ) < RESULT_PAGE_SIZE &&
+            (pages < minimumDiscoveryPages ||
+                hardEligibleCount(
+                    request.preferences,
+                    newCandidates.values,
+                    request.rankingContext,
+                ) < RESULT_PAGE_SIZE) &&
             pages < MAX_APPEND_PAGES &&
             clockMillis() - startedAt < MAX_APPEND_DURATION_MS
         ) {
@@ -993,6 +997,16 @@ class RecommendationOrchestrator(
             this[incoming.media.key],
             incoming,
         )
+    }
+
+    private fun RecommendationPreferences.minimumBroadDiscoveryPages(): Int = if (
+        similarityTitle == null &&
+        (includedGenres.isNotEmpty() || semanticFacets.isNotEmpty() ||
+            unmatchedPreferences.isNotEmpty())
+    ) {
+        2
+    } else {
+        0
     }
 
     private fun RecommendationPageCursor.advance(

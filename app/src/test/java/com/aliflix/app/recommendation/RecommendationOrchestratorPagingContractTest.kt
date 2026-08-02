@@ -77,6 +77,37 @@ class RecommendationOrchestratorPagingContractTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
+    fun generalTagRequestScansTwoBoundedPagesAndKeepsEveryTagMatch() = runTest {
+        val repository = FixturePageRepository(
+            pages = mapOf(
+                1 to page(1..20, nextPage = 2),
+                2 to page(21..40, nextPage = null),
+            ),
+        )
+        val orchestrator = orchestrator(repository)
+
+        orchestrator.selectType(RecommendationMediaKind.MOVIE)
+        orchestrator.submitText("thriller movie")
+        advanceUntilIdle()
+        if (orchestrator.state.value is RecommendationUiState.Question) {
+            orchestrator.showMatches()
+            advanceUntilIdle()
+        }
+
+        val first = orchestrator.state.value as RecommendationUiState.Results
+        assertEquals(listOf(1, 2), repository.requestedPages)
+        assertEquals(20, first.candidates.size)
+        assertTrue(first.candidates.all { "Thriller" in it.media.genres })
+
+        orchestrator.loadMore()
+        advanceUntilIdle()
+        val expanded = orchestrator.state.value as RecommendationUiState.Results
+        assertEquals(40, expanded.candidates.size)
+        assertEquals(listOf(1, 2), repository.requestedPages)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
     fun changingTypeCancelsOldRequestAndRestartsAtFirstCursor() = runTest {
         val repository = CancellingRepository()
         val orchestrator = orchestrator(repository)

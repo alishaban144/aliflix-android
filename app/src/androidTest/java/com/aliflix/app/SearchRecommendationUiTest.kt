@@ -89,6 +89,7 @@ class SearchRecommendationUiTest {
     @Test
     fun tappingTryOneStartsTheRecommendationFlowImmediately() {
         openDiscover()
+        composeRule.onAllNodesWithTag("discover-try-one-card").assertCountEquals(0)
         composeRule.onNodeWithTag("discover-mode-recommend").performClick()
         composeRule.onNodeWithTag("discover-type-movie").performClick()
         composeRule.onAllNodesWithTag("discover-try-one-card")[0].performClick()

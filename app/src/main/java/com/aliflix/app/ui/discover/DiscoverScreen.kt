@@ -435,11 +435,6 @@ internal fun DiscoverScreen(
                     mediaFilter = mediaFilter,
                     homeContent = homeContent,
                     recent = recent,
-                    suggestions = suggestions,
-                    aiEnabled = aiEnabled,
-                    onSuggestion = { suggestion ->
-                        submitRecommendation(suggestion.prompt, suggestion.mediaKind)
-                    },
                     onOpen = onOpen,
                     gridState = catalogGridState,
                     modifier = Modifier.fillMaxSize(),
@@ -644,9 +639,6 @@ private fun CatalogueContent(
     mediaFilter: String,
     homeContent: HomeContent?,
     recent: List<Media>,
-    suggestions: List<DiscoverSuggestion>,
-    aiEnabled: Boolean,
-    onSuggestion: (DiscoverSuggestion) -> Unit,
     onOpen: (Media) -> Unit,
     gridState: LazyGridState,
     modifier: Modifier = Modifier,
@@ -666,9 +658,6 @@ private fun CatalogueContent(
             homeContent = homeContent,
             recent = recent,
             mediaFilter = mediaFilter,
-            suggestions = suggestions,
-            showTryOne = aiEnabled,
-            onSuggestion = onSuggestion,
             onOpen = onOpen,
             modifier = modifier.testTag("discover-idle"),
         )
@@ -787,9 +776,6 @@ private fun DiscoverIdleContent(
     homeContent: HomeContent?,
     recent: List<Media>,
     mediaFilter: String,
-    suggestions: List<DiscoverSuggestion>,
-    showTryOne: Boolean,
-    onSuggestion: (DiscoverSuggestion) -> Unit,
     onOpen: (Media) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -815,23 +801,6 @@ private fun DiscoverIdleContent(
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        if (showTryOne && suggestions.isNotEmpty()) {
-            item(key = "try-one", contentType = "suggestion-carousel") {
-                Column(
-                    modifier = Modifier.padding(top = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    DiscoverSectionHeader(
-                        title = "Try one",
-                        subtitle = "A fresh starting point — tap to run it now",
-                    )
-                    TryOneCarousel(
-                        suggestions = suggestions,
-                        onSuggestion = onSuggestion,
-                    )
-                }
-            }
-        }
         if (recentItems.isNotEmpty()) {
             item(key = "recent", contentType = "media-rail") {
                 DiscoverMediaRail(
@@ -854,7 +823,7 @@ private fun DiscoverIdleContent(
                 onOpen = onOpen,
             )
         }
-        if (!showTryOne && recentItems.isEmpty() && rails.isEmpty()) {
+        if (recentItems.isEmpty() && rails.isEmpty()) {
             item(key = "catalogue-warming", contentType = "status") {
                 InlineNotice(
                     title = "Discovery is warming up",
