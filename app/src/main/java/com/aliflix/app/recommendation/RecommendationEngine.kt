@@ -367,7 +367,12 @@ object RecommendationQuestionSelector {
 object RecommendationRanker {
     const val RECOMMEND_THRESHOLD = 60.0
     const val EARLY_STOP_THRESHOLD = 70.0
+    const val DEFAULT_DIVERSIFICATION_POOL = 24
+    const val SIMILARITY_CONFIDENCE_THRESHOLD = 0.44
+    const val SUBJECTIVE_CONFIDENCE_THRESHOLD = 0.32
+    const val GENERAL_CONFIDENCE_THRESHOLD = 0.26
     private const val DIVERSITY_LAMBDA = 0.78
+    private const val SIMILARITY_DIVERSITY_LAMBDA = 0.92
 
     fun hardFilter(
         preferences: RecommendationPreferences,
@@ -391,19 +396,18 @@ object RecommendationRanker {
         taste: TasteProfile = TasteProfile(),
         similarityAnchor: Media? = null,
         semanticScorer: SemanticTextScorer? = null,
-    ): List<RecommendationCandidate> {
-        val scored = candidates.map { candidate ->
-            scoreCandidate(
-                preferences,
-                candidate,
-                likes,
-                taste,
-                similarityAnchor,
-                semanticScorer,
-            )
-        }.sortedByDescending { it.score.total }
-        return diversify(scored, scored.size)
-    }
+        precomputedSemanticScores: Map<String, Double> = emptyMap(),
+        diversificationLimit: Int = DEFAULT_DIVERSIFICATION_POOL,
+    ): List<RecommendationCandidate> = rankWithDiagnostics(
+        preferences = preferences,
+        candidates = candidates,
+        likes = likes,
+        taste = taste,
+        similarityAnchor = similarityAnchor,
+        semanticScorer = semanticScorer,
+        precomputedSemanticScores = precomputedSemanticScores,
+        diversificationLimit = diversificationLimit,
+    ).ranked
 
     fun rankAll(
         preferences: RecommendationPreferences,
@@ -412,6 +416,8 @@ object RecommendationRanker {
         taste: TasteProfile = TasteProfile(),
         similarityAnchor: Media? = null,
         semanticScorer: SemanticTextScorer? = null,
+        precomputedSemanticScores: Map<String, Double> = emptyMap(),
+        diversificationLimit: Int = DEFAULT_DIVERSIFICATION_POOL,
     ): List<RecommendationCandidate> =
         rank(
             preferences,
@@ -420,7 +426,70 @@ object RecommendationRanker {
             taste,
             similarityAnchor,
             semanticScorer,
+            precomputedSemanticScores,
+            diversificationLimit,
         )
+
+    fun rankWithDiagnostics(
+        preferences: RecommendationPreferences,
+        candidates: List<RecommendationCandidate>,
+        likes: List<Media> = emptyList(),
+        taste: TasteProfile = TasteProfile(),
+        similarityAnchor: Media? = null,
+        semanticScorer: SemanticTextScorer? = null,
+        precomputedSemanticScores: Map<String, Double> = emptyMap(),
+        diversificationLimit: Int = DEFAULT_DIVERSIFICATION_POOL,
+    ): RecommendationRankingSnapshot {
+        val intent = RecommendationIntent.fromResolvedAnchor(preferences, similarityAnchor)
+        val eligible = candidates
+            .asSequence()
+            .distinctBy { it.media.key }
+            .filter { satisfiesHardConstraints(preferences, it) }
+            .filterNot { it.media.key == similarityAnchor?.key }
+            .toList()
+        val scored = eligible.map { candidate ->
+            scoreCandidate(
+                preferences = preferences,
+                intent = intent,
+                candidate = candidate,
+                likes = likes,
+                taste = taste,
+                anchor = similarityAnchor,
+                semanticScorer = semanticScorer,
+                precomputedSemanticScore = precomputedSemanticScores[candidate.media.key]
+                    ?: candidate.precomputedSemanticScore,
+            )
+        }.sortedWith(
+            compareByDescending<RecommendationCandidate> { it.score.total }
+                .thenByDescending { it.score.anchorRelevance }
+                .thenByDescending { it.score.confidence }
+                .thenBy { it.media.title },
+        )
+        val threshold = confidenceThreshold(intent)
+        val confident = if (intent.surpriseMe) {
+            scored
+        } else {
+            scored.filter { it.score.confidence >= threshold }
+        }
+        val rejected = if (intent.surpriseMe) {
+            emptyList()
+        } else {
+            scored.filter { it.score.confidence < threshold }
+        }
+        val diversified = diversifyBounded(
+            sorted = confident,
+            maximumPoolSize = diversificationLimit.coerceAtLeast(0),
+            titleSimilarityRequest = intent.isTitleSimilarityRequest,
+        )
+        val poolSize = relevantDiversificationPoolSize(confident, diversificationLimit)
+        return RecommendationRankingSnapshot(
+            ranked = diversified,
+            rejectedLowConfidence = rejected,
+            confidenceThreshold = threshold,
+            scoredCandidateCount = scored.size,
+            diversificationPoolSize = poolSize,
+        )
+    }
 
     fun shouldRecommend(
         preferences: RecommendationPreferences,
@@ -642,11 +711,13 @@ object RecommendationRanker {
 
     private fun scoreCandidate(
         preferences: RecommendationPreferences,
+        intent: RecommendationIntent,
         candidate: RecommendationCandidate,
         likes: List<Media>,
         taste: TasteProfile,
         anchor: Media?,
         semanticScorer: SemanticTextScorer?,
+        precomputedSemanticScore: Double?,
     ): RecommendationCandidate {
         val media = candidate.media
         val genres = media.genres.map(::normalize).toSet()
@@ -681,26 +752,41 @@ object RecommendationRanker {
             .distinct()
         val unmatchedFit = ratio(unmatchedTerms, normalizedDocument::contains)
         val contextFit = viewingContextFit(preferences.viewingContext?.value, normalizedDocument)
+        val creatorFit = ratio(intent.creators.map(::normalize)) { creator ->
+            normalizedDocument.contains(creator)
+        }
+        val castFit = ratio(intent.cast.map(::normalize)) { actor ->
+            normalizedDocument.contains(actor)
+        }
+        val countryFit = ratio(intent.countries.map(::normalize)) { country ->
+            normalizedDocument.contains(country)
+        }
         val activeLexical = buildList {
-            if (requestedGenres.isNotEmpty()) add(genreFit to 0.32)
-            if (preferences.moods.isNotEmpty()) add(moodFit to 0.18)
-            if (preferences.semanticFacets.isNotEmpty()) add(facetFit to 0.30)
+            if (requestedGenres.isNotEmpty()) add(genreFit to 0.26)
+            if (preferences.moods.isNotEmpty()) add(moodFit to 0.24)
+            if (preferences.semanticFacets.isNotEmpty()) add(facetFit to 0.24)
             if (unmatchedTerms.isNotEmpty()) add(unmatchedFit to 0.15)
             if (preferences.viewingContext != null) add(contextFit to 0.05)
+            if (intent.creators.isNotEmpty()) add(creatorFit to 0.18)
+            if (intent.cast.isNotEmpty()) add(castFit to 0.16)
+            if (intent.countries.isNotEmpty()) add(countryFit to 0.08)
         }
         val lexicalValue = weightedAverage(activeLexical)
 
-        val semanticQuery = RecommendationQueryBuilder.build(preferences)
-        val semanticValue = if (
-            semanticScorer != null &&
-            semanticQuery.isNotBlank() &&
-            document.isNotBlank()
-        ) {
-            semanticScorer.similarity(semanticQuery, document)
-                ?.coerceIn(0.0, 1.0)
-        } else {
-            null
-        }
+        // A precomputed request snapshot always wins. The compatibility scorer
+        // remains only for callers that have not yet moved inference out of the
+        // per-candidate ranking loop.
+        val semanticValue = precomputedSemanticScore?.coerceIn(0.0, 1.0)
+            ?: if (
+                semanticScorer != null &&
+                intent.semanticQuery.isNotBlank() &&
+                document.isNotBlank()
+            ) {
+                semanticScorer.similarity(intent.semanticQuery, document)
+                    ?.coerceIn(0.0, 1.0)
+            } else {
+                null
+            }
 
         val sourceRanks = if (candidate.sourceRanks.isNotEmpty()) {
             candidate.sourceRanks
@@ -709,7 +795,7 @@ object RecommendationRanker {
         }
         val sourceValue = reciprocalRankFusion(sourceRanks)
 
-        val ratings = listOf(
+        val ratings = listOfNotNull(
             media.imdbRating?.let { rating ->
                 val voteConfidence = media.imdbVoteCount?.let {
                     (log10(it.toDouble() + 1.0) / 6.0).coerceIn(0.35, 1.0)
@@ -719,14 +805,35 @@ object RecommendationRanker {
             media.rottenTomatoesRating?.let { (it / 100.0).coerceIn(0.0, 1.0) },
             media.rating.takeIf { it > 0.0 }?.let { (it / 10.0).coerceIn(0.0, 1.0) },
         )
-        val qualityValue = ratings.filterNotNull().sum() / ratings.size
+        val ratingCoverage = ratings.size / 3.0
+        val qualityValue = if (ratings.isEmpty()) {
+            0.0
+        } else {
+            ratings.average() * (0.72 + ratingCoverage * 0.28)
+        }
 
-        val anchorValue = anchor
-            ?.takeIf { media.key != it.key }
-            ?.let {
-                (RelatedContentEngine.similarity(it, media) / 120.0)
-                    .coerceIn(0.0, 1.0)
-            }
+        val relationshipSignals = anchor?.let { RelatedContentEngine.signals(it, media) }
+        val relevanceEvidence = effectiveEvidence(candidate, anchor, relationshipSignals)
+        val graphEvidence = relevanceEvidence.filter(RecommendationEvidence::isAnchorGraphEvidence)
+        val strongestGraph = graphEvidence.maxOfOrNull { evidence ->
+            evidence.normalizedStrength * graphEvidenceReliability(evidence.type) *
+                rankDecay(evidence.sourceRank)
+        } ?: 0.0
+        val combinedGraph = graphEvidence.combinedStrength { evidence ->
+            graphEvidenceReliability(evidence.type) * rankDecay(evidence.sourceRank) * 0.72
+        }
+        val graphValue = (strongestGraph * 0.78 + combinedGraph * 0.22).coerceIn(0.0, 1.0)
+        val structuralValue = relationshipSignals?.normalizedScore
+            ?.takeIf { it.isFinite() }
+            ?: 0.0
+        val anchorValue = when {
+            anchor == null -> 0.0
+            graphEvidence.any { it.type == RecommendationEvidenceType.DIRECT_RELATED_TITLE } ->
+                (graphValue * 0.86 + structuralValue * 0.14).coerceIn(0.0, 1.0)
+            graphValue > 0.0 ->
+                (graphValue * 0.78 + structuralValue * 0.22).coerceIn(0.0, 1.0)
+            else -> (structuralValue * 0.58).coerceIn(0.0, 1.0)
+        }
 
         val personal = PersonalizationEngine.match(media, likes)
             ?.score
@@ -746,21 +853,11 @@ object RecommendationRanker {
             .average()
             .takeUnless(Double::isNaN)
         val novelty = familiarityFit(preferences.familiarity?.value, media, candidate)
-        val tasteValue = listOfNotNull(personal, learnedTaste, novelty)
+        val tasteValue = listOfNotNull(personal, learnedTaste)
             .average()
             .takeUnless(Double::isNaN)
 
-        val components = buildList {
-            semanticValue?.let { add(WeightedComponent("semantic", 35.0, it)) }
-            if (activeLexical.isNotEmpty()) {
-                add(WeightedComponent("lexical", 20.0, lexicalValue))
-            }
-            add(WeightedComponent("source", 15.0, sourceValue))
-            add(WeightedComponent("quality", 15.0, qualityValue))
-            anchorValue?.let { add(WeightedComponent("anchor", 10.0, it)) }
-            tasteValue?.let { add(WeightedComponent("taste", 5.0, it)) }
-        }
-        val activeWeight = components.sumOf(WeightedComponent::weight).coerceAtLeast(1.0)
+        val weights = RankingWeights.forIntent(intent)
         val negativeFacetHits = preferences.excludedFacets.count { signal ->
             signal.value.id in detectedFacets ||
                 signal.value.discoveryTerms.any {
@@ -773,49 +870,522 @@ object RecommendationRanker {
         val softExclusionPenalty = (
             negativeFacetHits * 12.0 + negativeTermHits * 8.0
             ).coerceAtMost(30.0)
+        val anchorPoints = weights.anchor * anchorValue
+        val contentPoints = weights.content * lexicalValue
+        val semanticPoints = weights.semantic * (semanticValue ?: 0.0)
+        val sourcePoints = weights.source * sourceValue
+        val qualityPoints = weights.quality * qualityValue
+        val tastePoints = weights.taste * (tasteValue ?: 0.0)
+        val noveltyPoints = weights.novelty * novelty
         val total = (
-            components.sumOf { it.weight * it.value } / activeWeight * 100.0 -
-                softExclusionPenalty
+            anchorPoints + contentPoints + semanticPoints + sourcePoints +
+                qualityPoints + tastePoints + noveltyPoints - softExclusionPenalty
             ).coerceIn(0.0, 100.0)
+        val metadataCoverage = metadataCoverage(candidate)
+        val confidence = confidenceFor(
+            intent = intent,
+            anchorValue = anchorValue,
+            graphValue = graphValue,
+            lexicalValue = lexicalValue,
+            semanticValue = semanticValue ?: 0.0,
+            sourceValue = sourceValue,
+            qualityValue = qualityValue,
+            noveltyValue = novelty,
+            metadataCoverage = metadataCoverage,
+        )
+        val scoringEvidence = buildList {
+            addAll(relevanceEvidence)
+            if ((semanticValue ?: 0.0) > 0.0) {
+                add(
+                    RecommendationEvidence(
+                        type = RecommendationEvidenceType.SEMANTIC_MATCH,
+                        strength = semanticValue ?: 0.0,
+                        source = if (precomputedSemanticScore != null) {
+                            "PRECOMPUTED_SEMANTIC"
+                        } else {
+                            "SEMANTIC_MODEL"
+                        },
+                        description = "Semantic intent match",
+                    ),
+                )
+            }
+            if (moodFit > 0.0) {
+                add(
+                    RecommendationEvidence(
+                        RecommendationEvidenceType.MOOD_MATCH,
+                        moodFit,
+                        "CANDIDATE_METADATA",
+                        "Mood and tone match",
+                    ),
+                )
+            }
+            if (sourceRanks.size > 1) {
+                add(
+                    RecommendationEvidence(
+                        RecommendationEvidenceType.SOURCE_AGREEMENT,
+                        sourceValue,
+                        "SOURCE_MERGE",
+                        "Supported by ${sourceRanks.size} discovery sources",
+                    ),
+                )
+            }
+        }.distinctBy { listOf(it.type.name, it.source, it.description) }
+        val reasons = buildMatchReasons(
+            preferences = preferences,
+            intent = intent,
+            candidate = candidate,
+            anchor = anchor,
+            evidence = scoringEvidence,
+            weights = weights,
+            genreFit = genreFit,
+            moodFit = moodFit,
+            facetFit = facetFit,
+            semanticValue = semanticValue ?: 0.0,
+            sourceValue = sourceValue,
+            qualityValue = qualityValue,
+            anchorValue = anchorValue,
+        )
 
         val breakdown = RecommendationScoreBreakdown(
-            contentMatch = lexicalValue * 20.0,
-            similarity = (anchorValue ?: semanticValue ?: 0.0) * 10.0,
-            contextualFit = contextFit * 5.0,
-            quality = qualityValue * 15.0,
-            taste = (tasteValue ?: 0.0) * 5.0,
-            discovery = sourceValue * 15.0,
-            novelty = novelty * 5.0,
-            coverage = components.count { it.value > 0.0 }.toDouble() /
-                components.size.coerceAtLeast(1),
+            contentMatch = contentPoints,
+            similarity = if (intent.isTitleSimilarityRequest) anchorPoints else semanticPoints,
+            contextualFit = contextFit * weights.content.coerceAtMost(16.0),
+            quality = qualityPoints,
+            taste = tastePoints,
+            discovery = sourcePoints,
+            novelty = noveltyPoints,
+            coverage = metadataCoverage,
             total = total,
+            anchorRelevance = anchorPoints,
+            semanticRelevance = semanticPoints,
+            confidence = confidence,
         )
         return candidate.copy(
             score = breakdown,
-            explanation = explanationFor(preferences, candidate, anchor),
+            explanation = explanationFor(reasons),
+            relevanceEvidence = scoringEvidence,
+            precomputedSemanticScore = precomputedSemanticScore
+                ?: candidate.precomputedSemanticScore,
+            matchReasons = reasons,
         )
     }
 
-    private fun diversify(
+    private fun effectiveEvidence(
+        candidate: RecommendationCandidate,
+        anchor: Media?,
+        signals: RelatedContentSignals?,
+    ): List<RecommendationEvidence> = buildList {
+        addAll(candidate.relevanceEvidence)
+        if (anchor != null) {
+            candidate.sources
+                .filter { source ->
+                    val normalized = source.uppercase()
+                    "ANCHOR_RELATED" in normalized ||
+                        "TITLE_RELATED" in normalized ||
+                        "SIMILAR_TITLE" in normalized
+                }
+                .forEach { source ->
+                    add(
+                        RecommendationEvidence(
+                            type = RecommendationEvidenceType.DIRECT_RELATED_TITLE,
+                            strength = 1.0,
+                            source = source,
+                            description = "Related-title data connects it to ${anchor.title}",
+                            sourceRank = candidate.sourceRanks[source]
+                                ?: candidate.sourcePosition.takeIf { it >= 0 },
+                        ),
+                    )
+                }
+            signals?.let { relationship ->
+                if (relationship.sharedCast.isNotEmpty()) {
+                    add(
+                        RecommendationEvidence(
+                            RecommendationEvidenceType.SHARED_CAST,
+                            (relationship.sharedCast.size / 3.0).coerceIn(0.45, 1.0),
+                            "CATALOGUE_METADATA",
+                            "Shares ${relationship.sharedCast.take(2).joinToString(" and ")} with ${anchor.title}",
+                        ),
+                    )
+                }
+                if (relationship.sharedStoryTokens.size >= 3) {
+                    add(
+                        RecommendationEvidence(
+                            RecommendationEvidenceType.THEME_MATCH,
+                            (relationship.sharedStoryTokens.size / 8.0)
+                                .coerceIn(0.30, 0.62),
+                            "CATALOGUE_TEXT",
+                            "Shares story themes with ${anchor.title}",
+                        ),
+                    )
+                }
+                if (relationship.sharedGenres.isNotEmpty()) {
+                    add(
+                        RecommendationEvidence(
+                            RecommendationEvidenceType.SHARED_GENRE,
+                            (relationship.sharedGenres.size / 3.0).coerceIn(0.25, 0.82),
+                            "CATALOGUE_METADATA",
+                            "Shares ${relationship.sharedGenres.take(2).joinToString(" and ")} with ${anchor.title}",
+                        ),
+                    )
+                }
+            }
+        }
+    }.distinctBy { listOf(it.type.name, it.source, it.description) }
+
+    private fun graphEvidenceReliability(type: RecommendationEvidenceType): Double = when (type) {
+        RecommendationEvidenceType.DIRECT_RELATED_TITLE -> 1.0
+        RecommendationEvidenceType.SAME_FRANCHISE -> 0.98
+        RecommendationEvidenceType.SHARED_CREATOR -> 0.90
+        RecommendationEvidenceType.SHARED_WRITER -> 0.88
+        RecommendationEvidenceType.SHARED_CAST -> 0.76
+        RecommendationEvidenceType.SHARED_COMPANY -> 0.68
+        RecommendationEvidenceType.SHARED_NETWORK -> 0.62
+        RecommendationEvidenceType.SHARED_KEYWORD -> 0.56
+        RecommendationEvidenceType.SHARED_GENRE -> 0.34
+        else -> 0.0
+    }
+
+    private fun rankDecay(rank: Int?): Double = rank?.let {
+        (1.0 / (1.0 + it.coerceAtLeast(0) / 18.0)).coerceAtLeast(0.35)
+    } ?: 1.0
+
+    private fun confidenceThreshold(intent: RecommendationIntent): Double = when {
+        intent.surpriseMe -> 0.0
+        intent.isTitleSimilarityRequest -> SIMILARITY_CONFIDENCE_THRESHOLD
+        intent.hasSubjectiveIntent -> SUBJECTIVE_CONFIDENCE_THRESHOLD
+        else -> GENERAL_CONFIDENCE_THRESHOLD
+    }
+
+    private fun confidenceFor(
+        intent: RecommendationIntent,
+        anchorValue: Double,
+        graphValue: Double,
+        lexicalValue: Double,
+        semanticValue: Double,
+        sourceValue: Double,
+        qualityValue: Double,
+        noveltyValue: Double,
+        metadataCoverage: Double,
+    ): Double = when {
+        intent.isTitleSimilarityRequest &&
+            intent.titleAnchor !is TitleAnchorResolution.Resolved -> (
+            semanticValue * 0.18 + lexicalValue * 0.06 + metadataCoverage * 0.04
+            ).coerceAtMost(SIMILARITY_CONFIDENCE_THRESHOLD - 0.01)
+        intent.isTitleSimilarityRequest -> (
+            graphValue * 0.66 +
+                anchorValue * 0.17 +
+                max(lexicalValue, semanticValue) * 0.08 +
+                sourceValue * 0.05 +
+                metadataCoverage * 0.04
+            )
+        intent.familiarity == FamiliarityPreference.HIDDEN_GEM ||
+            intent.familiarity == FamiliarityPreference.OBSCURE -> (
+            noveltyValue * 0.48 +
+                max(lexicalValue, semanticValue) * 0.28 +
+                qualityValue * 0.12 +
+                metadataCoverage * 0.08 +
+                sourceValue * 0.04
+            )
+        intent.hasSubjectiveIntent -> (
+            max(lexicalValue, semanticValue) * 0.68 +
+                sourceValue * 0.12 +
+                qualityValue * 0.08 +
+                metadataCoverage * 0.12
+            )
+        else -> (
+            max(lexicalValue, semanticValue) * 0.38 +
+                sourceValue * 0.27 +
+                qualityValue * 0.18 +
+                metadataCoverage * 0.17
+            )
+    }.coerceIn(0.0, 1.0)
+
+    private fun metadataCoverage(candidate: RecommendationCandidate): Double {
+        val media = candidate.media
+        val fields = listOf(
+            media.title.isNotBlank(),
+            media.overview.isNotBlank(),
+            candidate.metadata.genresVerified && media.genres.isNotEmpty(),
+            media.year.take(4).toIntOrNull() != null,
+            runtimeFor(candidate) != null,
+            media.imdbRating != null || media.rottenTomatoesRating != null || media.rating > 0.0,
+            media.cast.isNotEmpty() || !candidate.metadata.director.isNullOrBlank(),
+        )
+        return fields.count { it }.toDouble() / fields.size
+    }
+
+    private fun buildMatchReasons(
+        preferences: RecommendationPreferences,
+        intent: RecommendationIntent,
+        candidate: RecommendationCandidate,
+        anchor: Media?,
+        evidence: List<RecommendationEvidence>,
+        weights: RankingWeights,
+        genreFit: Double,
+        moodFit: Double,
+        facetFit: Double,
+        semanticValue: Double,
+        sourceValue: Double,
+        qualityValue: Double,
+        anchorValue: Double,
+    ): List<RecommendationMatchReason> = buildList {
+        if (anchor != null) {
+            evidence
+                .filter(RecommendationEvidence::isAnchorGraphEvidence)
+                .sortedByDescending { item ->
+                    item.normalizedStrength * graphEvidenceReliability(item.type) *
+                        rankDecay(item.sourceRank)
+                }
+                .take(2)
+                .forEach { item ->
+                    add(
+                        RecommendationMatchReason(
+                            evidenceType = item.type,
+                            text = item.description.ifBlank {
+                                "Relationship evidence connects it to ${anchor.title}"
+                            },
+                            contribution = weights.anchor * anchorValue *
+                                graphEvidenceReliability(item.type),
+                            source = item.source,
+                        ),
+                    )
+                }
+        }
+
+        runtimeFor(candidate)?.let { runtime ->
+            val runtimeSignal = listOfNotNull(
+                preferences.runtimeMaximumMinutes?.takeIf { runtime <= it.value },
+                preferences.runtimeMinimumMinutes?.takeIf { runtime >= it.value },
+                preferences.preferredRuntimeMinutes,
+            ).firstOrNull()
+            if (runtimeSignal != null) {
+                add(
+                    RecommendationMatchReason(
+                        RecommendationEvidenceType.RUNTIME_MATCH,
+                        "$runtime minutes fits your runtime request",
+                        contribution = if (runtimeSignal.strength == ConstraintStrength.HARD) 0.0 else 1.0,
+                        source = "VERIFIED_RUNTIME",
+                        hardConstraint = runtimeSignal.strength == ConstraintStrength.HARD,
+                    ),
+                )
+            }
+        }
+        candidate.media.imdbRating?.let { rating ->
+            preferences.minimumImdb?.takeIf { rating >= it.value }?.let { signal ->
+                add(
+                    RecommendationMatchReason(
+                        RecommendationEvidenceType.QUALITY,
+                        "IMDb ${formatOneDecimal(rating)} meets your minimum",
+                        contribution = weights.quality * qualityValue,
+                        source = "IMDB",
+                        hardConstraint = signal.strength == ConstraintStrength.HARD,
+                    ),
+                )
+            }
+        }
+        candidate.media.rottenTomatoesRating?.let { rating ->
+            preferences.minimumRottenTomatoes?.takeIf { rating >= it.value }?.let { signal ->
+                add(
+                    RecommendationMatchReason(
+                        RecommendationEvidenceType.QUALITY,
+                        "RT critic score is $rating%",
+                        contribution = weights.quality * qualityValue,
+                        source = "ROTTEN_TOMATOES",
+                        hardConstraint = signal.strength == ConstraintStrength.HARD,
+                    ),
+                )
+            }
+        }
+        candidate.metadata.originalLanguage?.let { language ->
+            preferences.originalLanguage?.takeIf {
+                language.equals(it.value, ignoreCase = true)
+            }?.let { signal ->
+                add(
+                    RecommendationMatchReason(
+                        RecommendationEvidenceType.LANGUAGE_MATCH,
+                        "Its verified original language is $language",
+                        contribution = 0.0,
+                        source = "VERIFIED_LANGUAGE",
+                        hardConstraint = signal.strength == ConstraintStrength.HARD,
+                    ),
+                )
+            }
+        }
+
+        val requestedGenres = preferences.includedGenres.map { normalize(it.value) }.toSet()
+        val matchingGenres = candidate.media.genres.filter { normalize(it) in requestedGenres }
+        if (matchingGenres.isNotEmpty() && genreFit > 0.0) {
+            add(
+                RecommendationMatchReason(
+                    RecommendationEvidenceType.SHARED_GENRE,
+                    "${matchingGenres.take(2).joinToString(" and ")} matches your genre request",
+                    contribution = weights.content * genreFit,
+                    source = "CATALOGUE_GENRES",
+                ),
+            )
+        }
+        if (intent.moods.isNotEmpty() && moodFit > 0.0) {
+            add(
+                RecommendationMatchReason(
+                    RecommendationEvidenceType.MOOD_MATCH,
+                    "Its tone matches ${intent.moods.take(2).joinToString(" and ") { it.label.lowercase() }}",
+                    contribution = weights.content * moodFit,
+                    source = "CANDIDATE_TEXT",
+                ),
+            )
+        }
+        if (intent.themes.isNotEmpty() && facetFit > 0.0) {
+            add(
+                RecommendationMatchReason(
+                    RecommendationEvidenceType.THEME_MATCH,
+                    "Its themes match ${intent.themes.take(2).joinToString(" and ") { it.label.lowercase() }}",
+                    contribution = weights.content * facetFit,
+                    source = "CANDIDATE_TEXT",
+                ),
+            )
+        }
+        if (semanticValue > 0.0) {
+            add(
+                RecommendationMatchReason(
+                    RecommendationEvidenceType.SEMANTIC_MATCH,
+                    "Its story is a semantic match for your request",
+                    contribution = weights.semantic * semanticValue,
+                    source = evidence.firstOrNull {
+                        it.type == RecommendationEvidenceType.SEMANTIC_MATCH
+                    }?.source ?: "SEMANTIC_MODEL",
+                ),
+            )
+        }
+        evidence.firstOrNull {
+            it.type == RecommendationEvidenceType.SOURCE_AGREEMENT
+        }?.let { sourceAgreement ->
+            add(
+                RecommendationMatchReason(
+                    RecommendationEvidenceType.SOURCE_AGREEMENT,
+                    sourceAgreement.description,
+                    contribution = weights.source * sourceValue,
+                    source = sourceAgreement.source,
+                ),
+            )
+        }
+        if (isEmpty() && qualityValue > 0.0) {
+            val rating = candidate.media.imdbRating ?: candidate.media.rating.takeIf { it > 0.0 }
+            rating?.let {
+                add(
+                    RecommendationMatchReason(
+                        RecommendationEvidenceType.QUALITY,
+                        "Its verified rating is ${formatOneDecimal(it)}",
+                        contribution = weights.quality * qualityValue,
+                        source = if (candidate.media.imdbRating != null) "IMDB" else "CATALOGUE",
+                    ),
+                )
+            }
+        }
+        if (isEmpty() && sourceValue > 0.0) {
+            add(
+                RecommendationMatchReason(
+                    RecommendationEvidenceType.SOURCE_AGREEMENT,
+                    "Discovery-source evidence supports this match",
+                    contribution = weights.source * sourceValue,
+                    source = "SOURCE_RANKING",
+                ),
+            )
+        }
+    }.distinctBy { listOf(it.evidenceType.name, it.text, it.source) }
+
+    private data class RankingWeights(
+        val anchor: Double,
+        val content: Double,
+        val semantic: Double,
+        val source: Double,
+        val quality: Double,
+        val taste: Double,
+        val novelty: Double,
+    ) {
+        companion object {
+            fun forIntent(intent: RecommendationIntent): RankingWeights = when {
+                intent.isTitleSimilarityRequest -> RankingWeights(
+                    anchor = 72.0,
+                    content = 10.0,
+                    semantic = 7.0,
+                    source = 3.0,
+                    quality = 3.0,
+                    taste = 2.0,
+                    novelty = 3.0,
+                )
+                intent.familiarity == FamiliarityPreference.HIDDEN_GEM ||
+                    intent.familiarity == FamiliarityPreference.OBSCURE -> RankingWeights(
+                    anchor = 0.0,
+                    content = 24.0,
+                    semantic = 22.0,
+                    source = 8.0,
+                    quality = 10.0,
+                    taste = 8.0,
+                    novelty = 28.0,
+                )
+                intent.hasSubjectiveIntent -> RankingWeights(
+                    anchor = 0.0,
+                    content = 30.0,
+                    semantic = 33.0,
+                    source = 10.0,
+                    quality = 6.0,
+                    taste = 9.0,
+                    novelty = 12.0,
+                )
+                else -> RankingWeights(
+                    anchor = 0.0,
+                    content = 28.0,
+                    semantic = 25.0,
+                    source = 16.0,
+                    quality = 12.0,
+                    taste = 9.0,
+                    novelty = 10.0,
+                )
+            }
+        }
+    }
+
+    private fun diversifyBounded(
         sorted: List<RecommendationCandidate>,
-        limit: Int,
+        maximumPoolSize: Int,
+        titleSimilarityRequest: Boolean,
     ): List<RecommendationCandidate> {
-        if (sorted.size <= 1) return sorted.take(limit)
-        val chosen = mutableListOf(sorted.first())
-        while (chosen.size < limit) {
-            val next = sorted
+        val poolSize = relevantDiversificationPoolSize(sorted, maximumPoolSize)
+        if (poolSize <= 1) return sorted
+        val relevantPool = sorted.take(poolSize)
+        val chosen = mutableListOf(relevantPool.first())
+        val lambda = if (titleSimilarityRequest) {
+            SIMILARITY_DIVERSITY_LAMBDA
+        } else {
+            DIVERSITY_LAMBDA
+        }
+        while (chosen.size < relevantPool.size) {
+            val next = relevantPool
                 .asSequence()
                 .filterNot { candidate -> chosen.any { it.media.key == candidate.media.key } }
                 .maxByOrNull { candidate ->
                     val similarity = chosen.maxOf { selected ->
                         candidateSimilarity(candidate, selected)
                     }
-                    DIVERSITY_LAMBDA * candidate.score.total -
-                        (1.0 - DIVERSITY_LAMBDA) * similarity * 100.0
+                    lambda * candidate.score.total -
+                        (1.0 - lambda) * similarity * 100.0
                 } ?: break
             chosen += next
         }
-        return chosen
+        return chosen + sorted.drop(poolSize)
+    }
+
+    private fun relevantDiversificationPoolSize(
+        sorted: List<RecommendationCandidate>,
+        maximumPoolSize: Int,
+    ): Int {
+        if (sorted.isEmpty() || maximumPoolSize <= 0) return 0
+        val scoreFloor = (sorted.first().score.total - 14.0).coerceAtLeast(0.0)
+        return sorted
+            .take(maximumPoolSize)
+            .takeWhile { it.score.total >= scoreFloor }
+            .size
+            .coerceAtLeast(1)
     }
 
     private fun candidateSimilarity(
@@ -837,45 +1407,16 @@ object RecommendationRanker {
         return genre * 0.65 + era * 0.2 + type * 0.15
     }
 
-    private fun explanationFor(
-        preferences: RecommendationPreferences,
-        candidate: RecommendationCandidate,
-        anchor: Media?,
-    ): String {
-        val facts = buildList {
-            val requested = preferences.includedGenres.map { normalize(it.value) }.toSet()
-            val matchingGenres = candidate.media.genres.filter { normalize(it) in requested }
-            if (matchingGenres.isNotEmpty()) {
-                add("${matchingGenres.take(2).joinToString(" and ")} matches your genre preference")
+    private fun explanationFor(reasons: List<RecommendationMatchReason>): String = reasons
+        .take(3)
+        .joinToString(". ") { it.text.trim().trimEnd('.') }
+        .let { explanation ->
+            if (explanation.isBlank()) {
+                "Evidence is limited; this is a lower-confidence match."
+            } else {
+                explanation.replaceFirstChar(Char::uppercase) + "."
             }
-            runtimeFor(candidate)?.let { runtime ->
-                if (
-                    preferences.runtimeMaximumMinutes?.value?.let { runtime <= it } == true ||
-                    preferences.runtimeMinimumMinutes?.value?.let { runtime >= it } == true ||
-                    preferences.preferredRuntimeMinutes != null
-                ) {
-                    add("${runtime} minutes fits your available time")
-                }
-            }
-            candidate.media.imdbRating?.let { rating ->
-                if (preferences.minimumImdb != null) add("IMDb ${formatOneDecimal(rating)} meets your minimum")
-            }
-            candidate.media.rottenTomatoesRating?.let { rating ->
-                if (preferences.minimumRottenTomatoes != null) add("RT critic score is $rating%")
-            }
-            candidate.metadata.originalLanguage?.let { language ->
-                if (preferences.originalLanguage != null) add("its original language is $language")
-            }
-            if (anchor != null) add("it shares concrete genre and story signals with ${anchor.title}")
         }
-        return when {
-            facts.isNotEmpty() -> facts.take(3).joinToString(". ").replaceFirstChar(Char::uppercase) + "."
-            candidate.media.genres.isNotEmpty() ->
-                "${candidate.media.genres.take(2).joinToString(" and ")} plus verified catalog quality made this a strong match."
-            else ->
-                "Its verified catalog metadata and agreement across discovery sources made it one of the strongest matches."
-        }
-    }
 
     private fun runtimeFor(candidate: RecommendationCandidate): Int? =
         if (candidate.media.type == MediaType.TV) {
@@ -968,12 +1509,6 @@ object RecommendationRanker {
 
     private fun formatOneDecimal(value: Double): String =
         String.format(java.util.Locale.US, "%.1f", value)
-
-    private data class WeightedComponent(
-        val name: String,
-        val weight: Double,
-        val value: Double,
-    )
 
     private val moodKeywords = mapOf(
         RecommendationMood.FUNNY to setOf("comedy", "funny", "humor", "laugh"),

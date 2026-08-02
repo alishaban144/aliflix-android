@@ -19,8 +19,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "41"
-  RELEASE_VERSION_NAME: "2.7.22"
+  RELEASE_VERSION_CODE: "42"
+  RELEASE_VERSION_NAME: "2.7.23"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -112,7 +112,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Repairs IMDb ratings and rebuilds What should I watch with nuanced free-text preferences, candidate-informed questions, multi-source ranking, progressive results, and an optional on-device semantic model."
+            RELEASE_NOTES="Rebuilds Discover around one search-first surface, removes Describe, adds session-fresh Try one prompts, and makes AI recommendations anchor-aware, evidence-ranked, cancellation-safe, and smoothly paged."
           fi
           mkdir -p dist
           cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/aliflix-mobile-release.apk
@@ -196,7 +196,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Repairs IMDb ratings and rebuilds What should I watch with nuanced free-text preferences, candidate-informed questions, multi-source ranking, progressive results, and an optional on-device semantic model."
+            RELEASE_NOTES="Rebuilds Discover around one search-first surface, removes Describe, adds session-fresh Try one prompts, and makes AI recommendations anchor-aware, evidence-ranked, cancellation-safe, and smoothly paged."
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; refusing to overwrite it." >&2

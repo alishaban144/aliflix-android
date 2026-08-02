@@ -14,8 +14,10 @@ import com.aliflix.app.recommendation.RecommendationSourceHealth
 import com.aliflix.app.recommendation.RecommendationSourceStatus
 import com.aliflix.app.recommendation.RequiredMetadataFields
 import com.aliflix.app.recommendation.RelatedContentEngine
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -52,6 +54,21 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.roundToInt
 
+private suspend fun <T> suspendOrNull(
+    block: suspend () -> T,
+): T? = try {
+    block()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Throwable) {
+    null
+}
+
+private suspend fun <T> suspendOrDefault(
+    defaultValue: T,
+    block: suspend () -> T,
+): T = suspendOrNull(block) ?: defaultValue
+
 internal data class PlotCandidate(
     val title: String,
     val year: String? = null,
@@ -84,6 +101,12 @@ data class RecommendationDiscoveryItem(
     val sources: Set<String> = emptySet(),
     val sourceCount: Int = 0,
     val sourcePosition: Int = 99,
+)
+
+data class CatalogRelatedItem(
+    val media: Media,
+    val directProviderRelation: Boolean,
+    val sourceRank: Int,
 )
 
 data class CatalogVerifiedMetadata(
@@ -380,11 +403,11 @@ private object HttpCatalogFormTransport : CatalogFormTransport {
         url: String,
         fields: Map<String, String>,
         headers: Map<String, String>,
-    ): String = withContext(Dispatchers.IO) {
+    ): String {
         val payload = fields.entries.joinToString("&") { (key, value) ->
             "${formEncode(key)}=${formEncode(value)}"
         }.toByteArray(StandardCharsets.UTF_8)
-        suspendCancellableCoroutine { continuation ->
+        return suspendCancellableCoroutine { continuation ->
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 8_000
@@ -455,17 +478,29 @@ class CatalogClient(
     private val cacheStore: CatalogCacheStore? = null,
     jsonPoster: suspend (String, String) -> String = ::postJson,
     formTransport: CatalogFormTransport = HttpCatalogFormTransport,
-    imdbGraphQlTransport: ImdbGraphQlTransport = HttpImdbGraphQlTransport,
+    imdbGraphQlTransport: ImdbGraphQlTransport? = null,
     pageLoader: suspend (String) -> String = ::downloadPage,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
+    constructor(pageLoader: suspend (String) -> String) : this(
+        pageLoader = pageLoader,
+        ioDispatcher = Dispatchers.IO,
+    )
+
     private val rawJsonPoster = jsonPoster
     private val rawFormTransport = formTransport
     private val rawPageLoader = pageLoader
     private val rawImdbGraphQlTransport = imdbGraphQlTransport
+        ?: HttpImdbGraphQlTransport(ioDispatcher)
     private val requestScheduler = CatalogRequestScheduler()
-    private val supplementScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val supplementSupervisor = SupervisorJob()
+    private val supplementScope = CoroutineScope(supplementSupervisor + computationDispatcher)
     private val recommendationSupplementResults =
         ConcurrentHashMap<String, RecommendationSupplementBatch>()
+    private val supplementGeneration = AtomicInteger(0)
+    @Volatile
+    private var supplementsClosed = false
     @Volatile
     private var activeSupplementFingerprint: String? = null
     @Volatile
@@ -486,46 +521,68 @@ class CatalogClient(
     private val imdbRatingRepository: ImdbRatingRepository =
         DefaultImdbRatingRepository(
             cacheStore = cacheStore,
-            pageLoader = { url -> pageLoader(url) },
+            pageLoader = { url -> this@CatalogClient.pageLoader(url) },
             graphQlTransport = ImdbGraphQlTransport { url, body, headers ->
-                requestScheduler.execute(
-                    url = url,
-                    foreground =
-                        coroutineContext[RecommendationRequestPriorityKey] != null,
-                ) {
-                    rawImdbGraphQlTransport.postJson(url, body, headers)
+                withContext(ioDispatcher) {
+                    requestScheduler.execute(
+                        url = url,
+                        foreground =
+                            coroutineContext[RecommendationRequestPriorityKey] != null,
+                    ) {
+                        rawImdbGraphQlTransport.postJson(url, body, headers)
+                    }
                 }
             },
         )
 
+    /** Cancels optional recommendation discovery owned by this client. */
+    fun close() {
+        val jobToCancel = synchronized(recommendationSupplementResults) {
+            if (supplementsClosed) return
+            supplementsClosed = true
+            supplementGeneration.incrementAndGet()
+            recommendationSupplementResults.clear()
+            activeSupplementFingerprint = null
+            activeSupplementJob.also { activeSupplementJob = null }
+        }
+        jobToCancel?.cancel(CancellationException("Catalogue client closed"))
+        supplementSupervisor.cancel(CancellationException("Catalogue client closed"))
+    }
+
     private suspend fun pageLoader(url: String): String =
-        requestScheduler.execute(
-            url = url,
-            foreground =
-                coroutineContext[RecommendationRequestPriorityKey] != null,
-        ) {
-            rawPageLoader(url)
+        withContext(ioDispatcher) {
+            requestScheduler.execute(
+                url = url,
+                foreground =
+                    coroutineContext[RecommendationRequestPriorityKey] != null,
+            ) {
+                rawPageLoader(url)
+            }
         }
 
     private suspend fun jsonPoster(url: String, body: String): String =
-        requestScheduler.execute(
-            url = url,
-            foreground =
-                coroutineContext[RecommendationRequestPriorityKey] != null,
-        ) {
-            rawJsonPoster(url, body)
+        withContext(ioDispatcher) {
+            requestScheduler.execute(
+                url = url,
+                foreground =
+                    coroutineContext[RecommendationRequestPriorityKey] != null,
+            ) {
+                rawJsonPoster(url, body)
+            }
         }
 
     private suspend fun formPoster(
         url: String,
         fields: Map<String, String>,
         headers: Map<String, String>,
-    ): String = requestScheduler.execute(
-        url = url,
-        foreground =
-            coroutineContext[RecommendationRequestPriorityKey] != null,
-    ) {
-        rawFormTransport.postForm(url, fields, headers)
+    ): String = withContext(ioDispatcher) {
+        requestScheduler.execute(
+            url = url,
+            foreground =
+                coroutineContext[RecommendationRequestPriorityKey] != null,
+        ) {
+            rawFormTransport.postForm(url, fields, headers)
+        }
     }
 
     suspend fun home(
@@ -952,7 +1009,8 @@ class CatalogClient(
         }
     }
 
-    suspend fun search(query: String): List<Media> = supervisorScope {
+    suspend fun search(query: String): List<Media> = withContext(computationDispatcher) {
+        supervisorScope {
         val cleanQuery = query.trim()
         if (cleanQuery.isBlank()) return@supervisorScope emptyList()
         val intent = SearchRanker.parseIntent(cleanQuery)
@@ -995,85 +1053,8 @@ class CatalogClient(
         if (online.isNotEmpty()) {
             catalogue = (online + catalogue).distinctBy(Media::key)
         }
-        sorted
-    }
-
-    /**
-     * Finds likely titles from a natural-language plot description.
-     *
-     * Only titles discovered by an external web lookup may become candidates.
-     * The in-memory home catalogue is never used as a fallback.
-     */
-    suspend fun searchByPlot(description: String): List<Media> = supervisorScope {
-        val cleanDescription = description.trim()
-        if (cleanDescription.isBlank()) return@supervisorScope emptyList()
-        val queryKey = normalizeText(cleanDescription)
-        cacheStore?.loadPlot(queryKey, PLOT_CACHE_MAX_AGE_MS)?.let { cached ->
-            catalogue = (cached + catalogue).distinctBy(Media::key)
-            return@supervisorScope cached
+            sorted
         }
-
-        val intent = SearchRanker.parseIntent(cleanDescription)
-        val discovery = discoverPlotCandidates(cleanDescription)
-        if (discovery.successfulSources == 0) {
-            throw IOException("Web lookup unavailable—try again.")
-        }
-
-        val requestGate = Semaphore(PLOT_RESOLUTION_CONCURRENCY)
-        val candidatesToResolve = discovery.candidates
-            .groupBy(PlotCandidate::source)
-            .values
-            .flatMap { sourceCandidates ->
-                sourceCandidates
-                    .sortedWith(
-                        compareByDescending<PlotCandidate> { candidate ->
-                            plotCandidateDiscoveryScore(
-                                cleanDescription,
-                                candidate,
-                            )
-                        }.thenBy(PlotCandidate::position),
-                    )
-                    .take(PLOT_CANDIDATES_PER_SOURCE_LIMIT)
-            }
-            .distinctBy(PlotCandidate::cacheKey)
-            .take(PLOT_TITLE_SUGGESTION_LIMIT)
-        val resolved = candidatesToResolve
-            .map { candidate ->
-                async {
-                    requestGate.withPermit {
-                        val types = candidate.type?.let { listOf(it.routeName) }
-                            ?: intent.type?.let { listOf(it.routeName) }
-                            ?: listOf("movie", "tv")
-                        val results = try {
-                            searchTmdb(
-                                query = candidate.title,
-                                types = types,
-                                retryEmpty = true,
-                            )
-                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                            throw cancelled
-                        } catch (_: Throwable) {
-                            emptyList()
-                        }
-                        selectResolvedPlotMatch(candidate, results)
-                    }
-                }
-            }
-            .awaitAll()
-            .filterNotNull()
-            .filter { match -> intent.type == null || match.media.type == intent.type }
-
-        val ranked = resolved
-            .groupBy { match -> match.media.key }
-            .map { (_, matches) ->
-                matches.maxBy { match -> resolvedPlotScore(cleanDescription, match) }
-            }
-            .sortedByDescending { match -> resolvedPlotScore(cleanDescription, match) }
-            .map(ResolvedPlotCandidate::media)
-            .take(PLOT_RESULT_LIMIT)
-        catalogue = (ranked + catalogue).distinctBy(Media::key)
-        if (ranked.isNotEmpty()) cacheStore?.savePlot(queryKey, ranked)
-        ranked
     }
 
     /**
@@ -1158,7 +1139,9 @@ class CatalogClient(
         spec: CatalogDiscoverySpec,
         cursor: RecommendationPageCursor = RecommendationPageCursor(),
         requiredFields: RequiredMetadataFields,
-    ): CatalogRecommendationPage = withContext(RecommendationRequestPriorityElement) {
+    ): CatalogRecommendationPage = withContext(
+        computationDispatcher + RecommendationRequestPriorityElement,
+    ) {
         supervisorScope {
         cacheStore?.loadRecommendationCatalogPage(
             spec.fingerprint,
@@ -2232,23 +2215,29 @@ class CatalogClient(
         }.awaitAll().filterNotNull()
     }
 
-    private fun startRecommendationSupplementDiscovery(
+    private suspend fun startRecommendationSupplementDiscovery(
         spec: CatalogDiscoverySpec,
     ) {
-        if (recommendationSupplementResults.containsKey(spec.fingerprint)) return
-        synchronized(recommendationSupplementResults) {
-            if (recommendationSupplementResults.containsKey(spec.fingerprint)) return
+        val requestJob = coroutineContext[Job]
+        val supplementJob = synchronized(recommendationSupplementResults) {
             if (
-                activeSupplementFingerprint == spec.fingerprint &&
-                activeSupplementJob?.isActive == true
+                supplementsClosed ||
+                recommendationSupplementResults.containsKey(spec.fingerprint)
             ) {
-                return
+                return@synchronized null
             }
-            if (activeSupplementFingerprint != spec.fingerprint) {
-                activeSupplementJob?.cancel()
-            }
+            activeSupplementJob
+                ?.takeIf {
+                    activeSupplementFingerprint == spec.fingerprint && it.isActive
+                }
+                ?.let { return@synchronized it }
+
+            activeSupplementJob?.cancel(
+                CancellationException("A newer recommendation request started"),
+            )
+            val generation = supplementGeneration.incrementAndGet()
             activeSupplementFingerprint = spec.fingerprint
-            activeSupplementJob = supplementScope.launch {
+            supplementScope.launch {
                 val batch = supervisorScope {
                     val redditRequest = async {
                         withTimeoutOrNull(RECOMMENDATION_OPTIONAL_SOURCE_TIMEOUT_MS) {
@@ -2322,20 +2311,47 @@ class CatalogClient(
                         },
                     )
                 }
-                if (activeSupplementFingerprint == spec.fingerprint) {
-                    recommendationSupplementResults[spec.fingerprint] = batch
+                synchronized(recommendationSupplementResults) {
                     if (
-                        recommendationSupplementResults.size >
-                        RECOMMENDATION_SUPPLEMENT_CACHE_LIMIT
+                        !supplementsClosed &&
+                        supplementGeneration.get() == generation &&
+                        activeSupplementFingerprint == spec.fingerprint
                     ) {
-                        recommendationSupplementResults.keys
-                            .filterNot { it == spec.fingerprint }
-                            .take(
-                                recommendationSupplementResults.size -
-                                    RECOMMENDATION_SUPPLEMENT_CACHE_LIMIT,
-                            )
-                            .forEach(recommendationSupplementResults::remove)
+                        recommendationSupplementResults[spec.fingerprint] = batch
+                        if (
+                            recommendationSupplementResults.size >
+                            RECOMMENDATION_SUPPLEMENT_CACHE_LIMIT
+                        ) {
+                            recommendationSupplementResults.keys
+                                .filterNot { it == spec.fingerprint }
+                                .take(
+                                    recommendationSupplementResults.size -
+                                        RECOMMENDATION_SUPPLEMENT_CACHE_LIMIT,
+                                )
+                                .forEach(recommendationSupplementResults::remove)
+                        }
                     }
+                }
+            }.also { activeSupplementJob = it }
+        } ?: return
+
+        requestJob?.invokeOnCompletion { cause ->
+            if (cause is CancellationException) {
+                synchronized(recommendationSupplementResults) {
+                    if (activeSupplementJob === supplementJob) {
+                        supplementGeneration.incrementAndGet()
+                        activeSupplementJob = null
+                        activeSupplementFingerprint = null
+                        supplementJob.cancel(cause)
+                    }
+                }
+            }
+        }
+        supplementJob.invokeOnCompletion {
+            synchronized(recommendationSupplementResults) {
+                if (activeSupplementJob === supplementJob) {
+                    activeSupplementJob = null
+                    activeSupplementFingerprint = null
                 }
             }
         }
@@ -2736,7 +2752,8 @@ class CatalogClient(
     suspend fun recommendationCandidates(
         request: String,
         requestedType: MediaType? = null,
-    ): RecommendationDiscoveryBatch = supervisorScope {
+    ): RecommendationDiscoveryBatch = withContext(computationDispatcher) {
+        supervisorScope {
         val cleanRequest = request.trim()
         if (cleanRequest.isBlank()) {
             val local = catalogue
@@ -2824,10 +2841,11 @@ class CatalogClient(
         if (items.isNotEmpty() && discovery.successfulSources > 0) {
             cacheStore?.saveRecommendations(queryKey, items)
         }
-        RecommendationDiscoveryBatch(
-            items = items,
-            webAvailable = discovery.successfulSources > 0,
-        )
+            RecommendationDiscoveryBatch(
+                items = items,
+                webAvailable = discovery.successfulSources > 0,
+            )
+        }
     }
 
     suspend fun verifyRecommendationItem(
@@ -2846,7 +2864,8 @@ class CatalogClient(
     suspend fun verifyRecommendationItem(
         item: Media,
         requiredFields: RequiredMetadataFields,
-    ): VerifiedRecommendationItem = supervisorScope {
+    ): VerifiedRecommendationItem = withContext(computationDispatcher) {
+        supervisorScope {
         cacheStore?.loadVerifiedMetadata(
             item.key,
             RECOMMENDATION_METADATA_CACHE_MAX_AGE_MS,
@@ -2879,7 +2898,7 @@ class CatalogClient(
         } ?: item
         val imdbRequest = async {
             if (requiredFields.imdbRating && parsed.imdbRating == null) {
-                runCatching { loadImdbRating(parsed) }.getOrNull()
+                suspendOrNull { loadImdbRating(parsed) }
             } else {
                 parsed.imdbRating
             }
@@ -2889,7 +2908,7 @@ class CatalogClient(
                 requiredFields.rottenTomatoesRating &&
                 parsed.rottenTomatoesRating == null
             ) {
-                runCatching { loadRottenTomatoesRating(parsed) }.getOrNull()
+                suspendOrNull { loadRottenTomatoesRating(parsed) }
             } else {
                 parsed.rottenTomatoesRating
             }
@@ -2923,7 +2942,8 @@ class CatalogClient(
         recommendationMetadata[enriched.key] = metadata
         catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
         cacheStore?.saveVerifiedMetadata(verified)
-        verified
+            verified
+        }
     }
 
     private fun VerifiedRecommendationItem.satisfies(
@@ -2956,32 +2976,93 @@ class CatalogClient(
 
     suspend fun resolveRecommendationAnchor(
         title: String,
-    ): Media? = searchTmdb(title.trim(), retryEmpty = true)
-        .maxByOrNull { result ->
-            PlotSearchRanker.literalTextRelevanceScore(title, result.title)
+    ): Media? = withContext(computationDispatcher) {
+        searchTmdb(title.trim(), retryEmpty = true)
+            .maxByOrNull { result ->
+                PlotSearchRanker.literalTextRelevanceScore(title, result.title)
+            }
+    }
+
+    suspend fun recommendationAlternativeTitles(item: Media): Set<String> =
+        withContext(computationDispatcher) {
+            suspendOrDefault(emptySet()) {
+                parseRecommendationAlternativeTitles(
+                    html = pageLoader(
+                        "$TMDB_SITE_URL/${item.type.routeName}/${item.id}?language=en-US",
+                    ),
+                    canonicalTitle = item.title,
+                )
+            }
         }
 
-    suspend fun relatedRecommendationItems(item: Media): List<Media> {
-        val pageRecommendations = runCatching {
+    internal fun parseRecommendationAlternativeTitles(
+        html: String,
+        canonicalTitle: String,
+    ): Set<String> {
+        if (html.isBlank()) return emptySet()
+        val document = Jsoup.parse(html, TMDB_SITE_URL)
+        val labels = setOf("original title", "original name", "also known as")
+        return document.select("p")
+            .asSequence()
+            .mapNotNull { paragraph ->
+                val label = paragraph.selectFirst("strong")?.text()
+                    ?.trim()
+                    ?.trimEnd(':')
+                    ?.lowercase()
+                    ?: return@mapNotNull null
+                if (label !in labels) return@mapNotNull null
+                paragraph.text()
+                    .replaceFirst(
+                        Regex("^${Regex.escape(label)}:?\\s*", RegexOption.IGNORE_CASE),
+                        "",
+                    )
+                    .trim()
+                    .takeIf(String::isNotBlank)
+            }
+            .flatMap { value -> value.split(';', '/', '|').asSequence() }
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .filterNot { it.equals(canonicalTitle, ignoreCase = true) }
+            .toSet()
+    }
+
+    suspend fun relatedRecommendationItems(
+        item: Media,
+    ): List<CatalogRelatedItem> = withContext(computationDispatcher) {
+        val pageRecommendations = suspendOrDefault(emptyList()) {
             parseRelatedResults(
                 pageLoader(
                     "$TMDB_SITE_URL/${item.type.routeName}/${item.id}?language=en-US",
                 ),
             )
-        }.getOrDefault(emptyList())
+        }
         val localRecommendations = RelatedContentEngine.rank(
-            item,
-            catalogue.filter { candidate ->
-                candidate.type == item.type && candidate.key != item.key
-            },
+            source = item,
+            candidates = catalogue,
+            candidateScoreLimit = RECOMMENDATION_LOCAL_RELATED_SCORE_LIMIT,
+            resultLimit = RECOMMENDATION_RELATED_LIMIT,
         )
-        return (pageRecommendations + localRecommendations)
-            .filter { candidate ->
-                candidate.type == item.type &&
-                    candidate.key != item.key &&
-                    isSafeTrendingItem(candidate)
+        val direct = pageRecommendations.mapIndexed { index, media ->
+            CatalogRelatedItem(
+                media = media,
+                directProviderRelation = true,
+                sourceRank = index,
+            )
+        }
+        val heuristic = localRecommendations.mapIndexed { index, media ->
+            CatalogRelatedItem(
+                media = media,
+                directProviderRelation = false,
+                sourceRank = index,
+            )
+        }
+        (direct + heuristic)
+            .filter { related ->
+                related.media.type == item.type &&
+                    related.media.key != item.key &&
+                    isSafeTrendingItem(related.media)
             }
-            .distinctBy(Media::key)
+            .distinctBy { it.media.key }
             .take(RECOMMENDATION_RELATED_LIMIT)
     }
 
@@ -3088,7 +3169,8 @@ class CatalogClient(
             keyOf = PlotCandidate::cacheKey,
             merge = ::mergePlotCandidates,
             sortScore = { plotCandidateDiscoveryScore(request, it) },
-        ).discover(WebDiscoveryMode.RECOMMENDATION)
+            computationDispatcher = computationDispatcher,
+        ).discover()
         return PlotDiscovery(
             candidates = result.items,
             successfulSources = result.successfulSources,
@@ -3129,8 +3211,8 @@ class CatalogClient(
     suspend fun browseGenre(
         genre: String,
         type: MediaType,
-    ): List<Media> {
-        val spec = GenreCatalog.specFor(genre, type) ?: return emptyList()
+    ): List<Media> = withContext(computationDispatcher) {
+        val spec = GenreCatalog.specFor(genre, type) ?: return@withContext emptyList()
         val cursorKey = "${type.routeName}:${spec.genreIds.sorted()}:${spec.matchMode}"
         val startPage = genreBrowsePageCursor.getOrDefault(
             cursorKey,
@@ -3155,76 +3237,7 @@ class CatalogClient(
         genreBrowsePageCursor[cursorKey] = startPage + fetched.pagesLoaded
         genreBrowseSeenKeys += fetched.items.map(Media::key)
         catalogue = (fetched.items + catalogue).distinctBy(Media::key)
-        return fetched.items
-    }
-
-    private suspend fun discoverPlotCandidates(
-        description: String,
-    ): PlotDiscovery {
-        val directCandidates = try {
-            val directQuery = URLEncoder.encode(
-                "$description movie OR show",
-                StandardCharsets.UTF_8.toString(),
-            )
-            parseDirectWebCandidates(
-                pageLoader("$BRAVE_SEARCH_URL?q=$directQuery&source=web&spellcheck=1"),
-            )
-        } catch (_: Throwable) {
-            emptyList()
-        }
-        val result = WebTitleDiscovery(
-            brave = {
-                val query = URLEncoder.encode(
-                    "what movie or tv show is this plot $description",
-                    StandardCharsets.UTF_8.toString(),
-                )
-                parseBravePlotCandidates(
-                    pageLoader("$BRAVE_SEARCH_URL?q=$query&source=web&spellcheck=1"),
-                )
-            },
-            wikipedia = { wikipediaPlotCandidates(description) },
-            duckDuckGo = { duckDuckGoPlotCandidates(description) },
-            keyOf = PlotCandidate::cacheKey,
-            merge = ::mergePlotCandidates,
-            sortScore = { plotCandidateDiscoveryScore(description, it) },
-        ).discover(WebDiscoveryMode.DESCRIBE_PLOT)
-        val merged = directCandidates + result.items
-        val successCount = result.successfulSources +
-            if (directCandidates.isNotEmpty()) 1 else 0
-        return PlotDiscovery(
-            candidates = merged.distinctBy(PlotCandidate::cacheKey),
-            successfulSources = successCount.coerceAtLeast(result.successfulSources),
-        )
-    }
-
-    private val siteNamePattern = Regex(
-        "\\s*[-–—|]\\s*(?:Wikipedia|Rotten Tomatoes|IMDb|Metacritic|" +
-            "Letterboxd|TV Guide|The Movie Database|TMDB|JustWatch|" +
-            "Fandom|Wiki|\\w+\\.com)\\s*$",
-        RegexOption.IGNORE_CASE,
-    )
-
-    internal fun parseDirectWebCandidates(html: String): List<PlotCandidate> {
-        val document = Jsoup.parse(html, BRAVE_SEARCH_URL)
-        val results = document.select("div.snippet[data-type=web]")
-        return results.take(5).mapIndexedNotNull { index, result ->
-            val rawHeading = result.selectFirst(
-                ".title, .snippet-title, .search-snippet-title, " +
-                    "[data-testid=result-title], h3",
-            )?.text().orEmpty()
-            val cleaned = siteNamePattern.replace(rawHeading, "").trim()
-            if (cleaned.isBlank() || isGenericPlotResult(cleaned)) return@mapIndexedNotNull null
-            val yearMatch = Regex("\\((\\d{4})\\)").find(cleaned)
-            val title = cleaned.replace(Regex("\\s*\\(\\d{4}\\)"), "").trim()
-            if (title.isBlank()) return@mapIndexedNotNull null
-            PlotCandidate(
-                title = title,
-                year = yearMatch?.groupValues?.getOrNull(1),
-                evidence = rawHeading,
-                source = PlotSource.BRAVE,
-                position = -(5 - index),
-            )
-        }
+        fetched.items
     }
 
     internal fun parseBravePlotCandidates(html: String): List<PlotCandidate> {
@@ -3341,7 +3354,7 @@ class CatalogClient(
         val elapsed = System.currentTimeMillis() - wikipediaLastRequestAt
         val waitBeforeRequest = WIKIPEDIA_MIN_REQUEST_INTERVAL_MS - elapsed
         if (waitBeforeRequest > 0) {
-            withContext(Dispatchers.IO) { delay(waitBeforeRequest) }
+            delay(waitBeforeRequest)
         }
         val query = URLEncoder.encode(
             rawQuery,
@@ -3381,9 +3394,7 @@ class CatalogClient(
                 lastFailure = error
                 wikipediaLastRequestAt = System.currentTimeMillis()
                 if (attempt + 1 < WIKIPEDIA_REQUEST_ATTEMPTS) {
-                    withContext(Dispatchers.IO) {
-                        delay(WIKIPEDIA_RETRY_DELAY_MS * (attempt + 1))
-                    }
+                    delay(WIKIPEDIA_RETRY_DELAY_MS * (attempt + 1))
                 }
             }
         }
@@ -3429,53 +3440,6 @@ class CatalogClient(
                 )
             }
             .distinctBy(PlotCandidate::cacheKey)
-    }
-
-    private suspend fun duckDuckGoPlotCandidates(
-        description: String,
-    ): List<PlotCandidate> {
-        val query = URLEncoder.encode(
-            "movie or tv show where $description",
-            StandardCharsets.UTF_8.toString(),
-        )
-        val document = Jsoup.parse(
-            pageLoader("$DUCKDUCKGO_HTML_URL/?q=$query"),
-            DUCKDUCKGO_HTML_URL,
-        )
-        val resultBlocks = document.select(".result")
-        val fromBlocks = resultBlocks.flatMapIndexed { index, result ->
-            val link = result.selectFirst("a.result__a")
-            webResultCandidates(
-                heading = link?.text().orEmpty(),
-                url = link?.attr("abs:href").orEmpty(),
-                snippet = result.selectFirst(".result__snippet")?.text().orEmpty(),
-                source = PlotSource.DUCKDUCKGO,
-                position = index,
-            )
-        }
-        val legacy = if (resultBlocks.isEmpty()) {
-            document.select("a.result__a").mapIndexedNotNull { index, result ->
-                plotCandidateFromTitle(
-                    value = result.text(),
-                    evidence = result.text(),
-                    source = PlotSource.DUCKDUCKGO,
-                    position = index,
-                )
-            }
-        } else {
-            emptyList()
-        }
-        if (
-            fromBlocks.isEmpty() &&
-            legacy.isEmpty() &&
-            document.select(".no-results, .no-results__message").isEmpty()
-        ) {
-            throw IOException("DuckDuckGo returned no parseable result page.")
-        }
-        return (fromBlocks + legacy)
-            .filterNot { isGenericPlotResult(it.title) }
-            .distinctBy(PlotCandidate::cacheKey)
-            .take(20)
     }
 
     private fun webResultCandidates(
@@ -3733,40 +3697,6 @@ class CatalogClient(
             candidate.sourceCount * 8.0 -
             candidate.position.coerceAtMost(20) * 0.8
 
-    private fun resolvedPlotScore(
-        description: String,
-        resolved: ResolvedPlotCandidate,
-    ): Double {
-        val resolvedMediaEvidence = listOf(
-            resolved.media.title,
-            resolved.media.overview,
-            resolved.media.genres.joinToString(" "),
-            resolved.media.cast.joinToString(" "),
-        ).joinToString(" ")
-        val score = PlotSearchRanker.relevanceScore(description, resolved.media) * 1.7 +
-            PlotSearchRanker.textRelevanceScore(
-                description,
-                resolved.candidate.evidence,
-            ) * 1.1 +
-            PlotSearchRanker.literalTextRelevanceScore(
-                description,
-                resolvedMediaEvidence,
-            ) * 2.4 +
-            PlotSearchRanker.literalTextRelevanceScore(
-                description,
-                resolved.candidate.evidence,
-            ) * 1.2 +
-            resolved.resolutionScore * 0.25 +
-            resolved.candidate.source.priority +
-            resolved.candidate.sourceCount * 6.0 -
-            resolved.candidate.position.coerceAtMost(20) * 0.5 +
-            (
-                PLOT_SOURCE_POSITION_WINDOW -
-                    resolved.candidate.position.coerceAtMost(PLOT_SOURCE_POSITION_WINDOW)
-                ) * PLOT_SOURCE_POSITION_WEIGHT
-        return score
-    }
-
     private fun selectResolvedPlotMatch(
         candidate: PlotCandidate,
         results: List<Media>,
@@ -3897,49 +3827,51 @@ class CatalogClient(
     private suspend fun predictiveTitleSuggestion(
         query: String,
         intent: SearchRanker.SearchIntent,
-    ): String? = runCatching {
+    ): String? = suspendOrNull {
         val encoded = URLEncoder.encode(
             query.trim(),
             StandardCharsets.UTF_8.toString(),
         )
         val candidates = JSONObject(
             pageLoader("$IMDB_SUGGESTION_URL/$encoded.json"),
-        ).optJSONArray("d") ?: return@runCatching null
+        ).optJSONArray("d")
 
-        (0 until candidates.length())
-            .mapNotNull { index -> candidates.optJSONObject(index) }
-            .asSequence()
-            .filter { candidate -> candidate.optString("id").startsWith("tt") }
-            .mapNotNull { candidate ->
-                val title = candidate.optString("l").trim()
-                    .takeIf(String::isNotBlank)
-                    ?: return@mapNotNull null
-                val qualifier = candidate.optString("q").lowercase()
-                val type = when {
-                    "tv" in qualifier || "series" in qualifier -> MediaType.TV
-                    "feature" in qualifier || "movie" in qualifier -> MediaType.MOVIE
-                    else -> intent.type ?: MediaType.MOVIE
+        candidates?.let { values ->
+            (0 until values.length())
+                .mapNotNull { index -> values.optJSONObject(index) }
+                .asSequence()
+                .filter { candidate -> candidate.optString("id").startsWith("tt") }
+                .mapNotNull { candidate ->
+                    val title = candidate.optString("l").trim()
+                        .takeIf(String::isNotBlank)
+                        ?: return@mapNotNull null
+                    val qualifier = candidate.optString("q").lowercase()
+                    val type = when {
+                        "tv" in qualifier || "series" in qualifier -> MediaType.TV
+                        "feature" in qualifier || "movie" in qualifier -> MediaType.MOVIE
+                        else -> intent.type ?: MediaType.MOVIE
+                    }
+                    if (intent.type != null && type != intent.type) {
+                        return@mapNotNull null
+                    }
+                    val year = candidate.optInt("y").takeIf { it > 0 }
+                    if (intent.year != null && year != null && year != intent.year) {
+                        return@mapNotNull null
+                    }
+                    val suggestion = Media(
+                        id = candidate.optString("id").hashCode(),
+                        type = type,
+                        title = title,
+                        year = year?.toString().orEmpty(),
+                    )
+                    title to SearchRanker.confidence(intent, suggestion)
                 }
-                if (intent.type != null && type != intent.type) {
-                    return@mapNotNull null
+                .firstOrNull { (_, confidence) ->
+                    confidence.ordinal >= SearchRanker.SearchConfidence.LIKELY.ordinal
                 }
-                val year = candidate.optInt("y").takeIf { it > 0 }
-                if (intent.year != null && year != null && year != intent.year) {
-                    return@mapNotNull null
-                }
-                val suggestion = Media(
-                    id = candidate.optString("id").hashCode(),
-                    type = type,
-                    title = title,
-                    year = year?.toString().orEmpty(),
-                )
-                title to SearchRanker.confidence(intent, suggestion)
-            }
-            .firstOrNull { (_, confidence) ->
-                confidence.ordinal >= SearchRanker.SearchConfidence.LIKELY.ordinal
-            }
-            ?.first
-    }.getOrNull()
+                ?.first
+        }
+    }
 
     private fun Media.matchesExplicitQualifiers(
         intent: SearchRanker.SearchIntent,
@@ -3955,11 +3887,11 @@ class CatalogClient(
     suspend fun details(item: Media): Pair<Media, List<Media>> = supervisorScope {
         val current = catalogue.firstOrNull { it.key == item.key } ?: item
         val pageRequest = async {
-            runCatching {
+            suspendOrNull {
                 pageLoader(
                     "$TMDB_SITE_URL/${item.type.routeName}/${item.id}?language=en-US",
                 )
-            }.getOrNull()
+            }
         }
         val ratingsRequest = async {
             ratingsFor(current)
@@ -3989,8 +3921,12 @@ class CatalogClient(
         )
         catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
 
-        val sameType = catalogue.filter { it.type == item.type && it.key != item.key }
-        val locallyRelated = RelatedContentEngine.rank(enriched, sameType)
+        val locallyRelated = RelatedContentEngine.rank(
+            source = enriched,
+            candidates = catalogue,
+            candidateScoreLimit = RECOMMENDATION_LOCAL_RELATED_SCORE_LIMIT,
+            resultLimit = 18,
+        )
         val recommendations = (pageRecommendations + locallyRelated)
             .filter { it.type == item.type && it.key != item.key }
             .distinctBy(Media::key)
@@ -4000,17 +3936,17 @@ class CatalogClient(
 
     suspend fun seasons(item: Media): List<Season> {
         if (item.type != MediaType.TV) return emptyList()
-        return runCatching {
+        return suspendOrDefault(emptyList()) {
             parseSeasons(
                 html = pageLoader("$TMDB_SITE_URL/tv/${item.id}/seasons?language=en-US"),
                 mediaId = item.id,
             )
-        }.getOrDefault(emptyList())
+        }
     }
 
     suspend fun episodes(item: Media, seasonNumber: Int): List<Episode> {
         if (item.type != MediaType.TV) return emptyList()
-        val result = runCatching {
+        val result = suspendOrDefault(emptyList()) {
             parseEpisodes(
                 html = pageLoader(
                     "$TMDB_SITE_URL/tv/${item.id}/season/$seasonNumber?language=en-US",
@@ -4018,9 +3954,9 @@ class CatalogClient(
                 mediaId = item.id,
                 seasonNumber = seasonNumber,
             )
-        }.getOrDefault(emptyList())
+        }
         if (result.isNotEmpty()) return result
-        return runCatching {
+        return suspendOrDefault(emptyList()) {
             kotlinx.coroutines.delay(600L)
             parseEpisodes(
                 html = pageLoader(
@@ -4029,7 +3965,7 @@ class CatalogClient(
                 mediaId = item.id,
                 seasonNumber = seasonNumber,
             )
-        }.getOrDefault(emptyList())
+        }
     }
 
     internal fun parsePage(html: String, titlePrefix: String = ""): ParsedPage {
@@ -4476,7 +4412,7 @@ class CatalogClient(
             }
             val rottenTomatoes = async {
                 cachedRottenTomatoes
-                    ?: runCatching { loadRottenTomatoesRating(item) }.getOrNull()
+                    ?: suspendOrNull { loadRottenTomatoesRating(item) }
             }
             val imdbSnapshot = imdb.await()
             ExternalRatings(
@@ -4521,9 +4457,9 @@ class CatalogClient(
             year?.let { add("$expectedPrefix${slug}_$it") }
         }.distinct()
         directPaths.forEach { path ->
-            val direct = runCatching {
+            val direct = suspendOrNull {
                 pageLoader("$ROTTEN_TOMATOES_URL$path")
-            }.getOrNull()
+            }
             parseRottenTomatoesRating(direct.orEmpty())?.let { return it }
         }
 
@@ -4533,9 +4469,9 @@ class CatalogClient(
             .filterNot(directPaths::contains)
             .take(5)
         candidatePaths.forEach { path ->
-            val page = runCatching {
+            val page = suspendOrNull {
                 pageLoader("$ROTTEN_TOMATOES_URL$path")
-            }.getOrNull()
+            }
             parseRottenTomatoesRating(page.orEmpty())?.let { return it }
         }
         return null
@@ -4703,16 +4639,10 @@ class CatalogClient(
         const val CATALOG_RETRY_DELAY_MS = 400L
         const val GENRE_ASSEMBLY_ATTEMPTS = 2
         const val GENRE_ASSEMBLY_RETRY_DELAY_MS = 750L
-        const val PLOT_TITLE_SUGGESTION_LIMIT = 18
-        const val PLOT_CANDIDATES_PER_SOURCE_LIMIT = 6
-        const val PLOT_RESULT_LIMIT = 20
-        const val PLOT_RESOLUTION_CONCURRENCY = 2
         const val PLOT_TMDB_SEARCH_ATTEMPTS = 3
         const val PLOT_TMDB_RETRY_DELAY_MS = 300L
         const val MIN_PLOT_TITLE_MATCH_SCORE = 62
         const val PLOT_EVIDENCE_LIMIT = 1_400
-        const val PLOT_SOURCE_POSITION_WINDOW = 10
-        const val PLOT_SOURCE_POSITION_WEIGHT = 40.0
         const val WIKIPEDIA_RESULT_BATCH_SIZE = 24
         const val WIKIPEDIA_QUERY_LIMIT = 2
         const val WIKIPEDIA_QUERY_POSITION_PENALTY = 3
@@ -4721,7 +4651,6 @@ class CatalogClient(
         const val WIKIPEDIA_RETRY_DELAY_MS = 900L
         const val WIKIPEDIA_CONTEXT_TERM_LIMIT = 3
         const val WIKIPEDIA_FALLBACK_TERM_LIMIT = 8
-        const val PLOT_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000L
         const val RECOMMENDATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000L
         const val RECOMMENDATION_STALE_CACHE_MAX_AGE_MS =
             7 * 24 * 60 * 60 * 1_000L
@@ -4739,6 +4668,7 @@ class CatalogClient(
         const val RECOMMENDATION_SUPPLEMENTAL_START_PAGE = 1
         const val RECOMMENDATION_FIRST_PAGE_SUPPLEMENTAL_TIMEOUT_MS = 800L
         const val RECOMMENDATION_RELATED_LIMIT = 60
+        const val RECOMMENDATION_LOCAL_RELATED_SCORE_LIMIT = 180
         const val RECOMMENDATION_SUPPLEMENTAL_TIMEOUT_MS = 2_500L
         const val RECOMMENDATION_OPTIONAL_SOURCE_TIMEOUT_MS = 8_000L
         const val RECOMMENDATION_SUPPLEMENT_CACHE_LIMIT = 16
@@ -5287,11 +5217,11 @@ class CatalogClient(
             ),
         )
 
-        suspend fun downloadPage(url: String): String = withContext(Dispatchers.IO) {
+        suspend fun downloadPage(url: String): String {
             val isWikipediaApi = runCatching {
                 URL(url).host.equals("en.wikipedia.org", ignoreCase = true)
             }.getOrDefault(false)
-            suspendCancellableCoroutine { continuation ->
+            return suspendCancellableCoroutine { continuation ->
                 val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 12_000
@@ -5343,9 +5273,9 @@ class CatalogClient(
             }
         }
 
-        suspend fun postJson(url: String, body: String): String = withContext(Dispatchers.IO) {
+        suspend fun postJson(url: String, body: String): String {
             val payload = body.toByteArray(StandardCharsets.UTF_8)
-            suspendCancellableCoroutine { continuation ->
+            return suspendCancellableCoroutine { continuation ->
                 val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 8_000

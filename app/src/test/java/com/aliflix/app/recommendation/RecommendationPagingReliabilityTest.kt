@@ -4,6 +4,7 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -69,7 +70,7 @@ class RecommendationPagingReliabilityTest {
     }
 
     @Test
-    fun catalogFingerprintIsNormalizedAndNeverContainsRawConversationText() {
+    fun catalogFingerprintIsNormalizedAndNeverExposesRawDiscoveryText() {
         val first = CatalogDiscoverySpec(
             mediaKind = RecommendationMediaKind.MOVIE,
             includedGenres = listOf(" Thriller ", "Crime"),
@@ -81,12 +82,41 @@ class RecommendationPagingReliabilityTest {
         val equivalent = first.copy(
             includedGenres = listOf("crime", "thriller"),
             excludedGenres = listOf(" HORROR "),
-            discoveryText = "This raw conversation must not enter the cache key",
+            discoveryText = " I WANT A TENSE MOVIE FOR TONIGHT ",
         )
 
         assertEquals(first.fingerprint, equivalent.fingerprint)
         assertFalse(first.fingerprint.contains("tense movie", ignoreCase = true))
-        assertFalse(equivalent.fingerprint.contains("raw conversation", ignoreCase = true))
+    }
+
+    @Test
+    fun catalogFingerprintChangesForEveryCandidateShapingInput() {
+        val baseline = CatalogDiscoverySpec(
+            mediaKind = RecommendationMediaKind.MOVIE,
+            creatorNames = listOf("Greta Gerwig"),
+            castNames = listOf("Saoirse Ronan"),
+            countries = listOf("United States"),
+            discoveryText = "A warm coming-of-age story",
+            surpriseMe = false,
+        )
+        val variants = mapOf(
+            "creator" to baseline.copy(creatorNames = listOf("Jordan Peele")),
+            "cast" to baseline.copy(castNames = listOf("Daniel Kaluuya")),
+            "country" to baseline.copy(countries = listOf("South Korea")),
+            "discovery text" to baseline.copy(
+                discoveryText = "A tense political conspiracy",
+            ),
+            "surprise mode" to baseline.copy(surpriseMe = true),
+        )
+
+        variants.forEach { (field, variant) ->
+            assertNotEquals(
+                "$field must participate in the persistent catalogue cache key",
+                baseline.fingerprint,
+                variant.fingerprint,
+            )
+        }
+        assertFalse(baseline.fingerprint.contains("coming-of-age", ignoreCase = true))
     }
 
     @Test

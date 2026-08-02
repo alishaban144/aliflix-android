@@ -19,6 +19,7 @@ import com.aliflix.app.recommendation.RecommendationOrchestrator
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.PreferenceCorrection
 import com.aliflix.app.recommendation.RecommendationQuestion
+import com.aliflix.app.recommendation.RecommendationDispatchers
 import com.aliflix.app.recommendation.RecommendationStore
 import com.aliflix.app.recommendation.RecommendationUiState
 import com.aliflix.app.recommendation.AndroidSemanticModelManager
@@ -40,13 +41,22 @@ data class HomeUiState(
 
 enum class SearchMode {
     TITLE,
-    PLOT,
     AI,
+}
+
+enum class SearchPhase {
+    IDLE,
+    TYPING,
+    LOADING,
+    RESULTS,
+    EMPTY,
+    ERROR,
 }
 
 data class SearchUiState(
     val query: String = "",
     val mode: SearchMode = SearchMode.TITLE,
+    val phase: SearchPhase = SearchPhase.IDLE,
     val loading: Boolean = false,
     val results: List<Media> = emptyList(),
     val error: String? = null,
@@ -72,15 +82,27 @@ data class GenreUiState(
 )
 
 class AliflixViewModel(application: Application) : AndroidViewModel(application) {
+    private val recommendationDispatchers = RecommendationDispatchers.Default
     private val client = CatalogClient(
-        cacheStore = AndroidCatalogCacheStore(application),
+        cacheStore = AndroidCatalogCacheStore(
+            context = application,
+            ioDispatcher = recommendationDispatchers.io,
+            computationDispatcher = recommendationDispatchers.computation,
+        ),
+        ioDispatcher = recommendationDispatchers.io,
+        computationDispatcher = recommendationDispatchers.computation,
     )
     private val library = LibraryStore(application)
     private val playbackProviderRepository = PlaybackProviderRepository(application)
-    private val recommendationStore = RecommendationStore(application)
+    private val recommendationStore = RecommendationStore(
+        context = application,
+        scope = viewModelScope,
+        dispatchers = recommendationDispatchers,
+    )
     private val semanticModelManager = AndroidSemanticModelManager(
         context = application,
         scope = viewModelScope,
+        ioDispatcher = recommendationDispatchers.io,
     )
     private val recommendationOrchestrator = RecommendationOrchestrator(
         scope = viewModelScope,
@@ -88,7 +110,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         store = recommendationStore,
         likesProvider = { library.likes.value },
         recentlyPlayedProvider = { library.recent.value },
-        semanticScorerProvider = semanticModelManager::scorerOrNull,
+        semanticBatchScorerProvider = semanticModelManager::batchScorerOrNull,
+        dispatchers = recommendationDispatchers,
     )
     private var searchJob: Job? = null
     private var detailJob: Job? = null
@@ -195,38 +218,53 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun updateSearch(query: String) {
-        val mode = _search.value.mode
-        val pending = _search.value.copy(
-            query = query,
-            loading = query.isNotBlank(),
-            results = emptyList(),
-            error = null,
-        )
-        _search.value = pending
         searchJob?.cancel()
-        if (query.isBlank()) {
-            _search.value = SearchUiState(mode = mode)
+        val current = _search.value
+        val mode = current.mode
+        if (mode == SearchMode.AI) {
+            _search.value = current.copy(
+                query = query,
+                phase = if (query.isBlank()) SearchPhase.IDLE else SearchPhase.TYPING,
+                loading = false,
+                error = null,
+            )
             return
         }
+        if (query.isBlank()) {
+            _search.value = current.copy(
+                query = "",
+                phase = SearchPhase.IDLE,
+                loading = false,
+                error = null,
+            )
+            return
+        }
+        _search.value = current.copy(
+            query = query,
+            phase = SearchPhase.TYPING,
+            loading = false,
+            error = null,
+        )
         searchJob = viewModelScope.launch {
             try {
-                delay(if (mode == SearchMode.PLOT) 650 else 220)
+                delay(220)
                 if (_search.value.query != query || _search.value.mode != mode) {
                     return@launch
                 }
-                val loading = _search.value.copy(loading = true)
+                val loading = _search.value.copy(
+                    phase = SearchPhase.LOADING,
+                    loading = true,
+                )
                 _search.value = loading
-                val results = if (mode == SearchMode.PLOT) {
-                    client.searchByPlot(query)
-                } else {
-                    client.search(query)
-                }
+                val results = client.search(query)
                 if (_search.value.query == query && _search.value.mode == mode) {
-                    val complete = SearchUiState(
+                    val complete = _search.value.copy(
                         query = query,
                         mode = mode,
+                        phase = if (results.isEmpty()) SearchPhase.EMPTY else SearchPhase.RESULTS,
                         loading = false,
                         results = results,
+                        error = null,
                     )
                     _search.value = complete
                 }
@@ -234,9 +272,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 throw cancelled
             } catch (error: Exception) {
                 if (_search.value.query == query && _search.value.mode == mode) {
-                    val failed = SearchUiState(
-                        query = query,
-                        mode = mode,
+                    val failed = _search.value.copy(
+                        phase = SearchPhase.ERROR,
                         loading = false,
                         error = error.message ?: "Search failed.",
                     )
@@ -250,7 +287,16 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         if (mode == SearchMode.AI && !recommendationStore.enabled.value) return
         if (_search.value.mode == mode) return
         searchJob?.cancel()
-        _search.value = SearchUiState(mode = mode)
+        val query = _search.value.query
+        _search.value = _search.value.copy(
+            mode = mode,
+            phase = if (query.isBlank()) SearchPhase.IDLE else SearchPhase.TYPING,
+            loading = false,
+            error = null,
+        )
+        if (mode == SearchMode.TITLE && query.isNotBlank()) {
+            updateSearch(query)
+        }
     }
 
     fun openGenre(genre: String, type: MediaType) {
@@ -470,7 +516,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         if (!enabled) {
             recommendationOrchestrator.restart()
             if (_search.value.mode == SearchMode.AI) {
-                _search.value = SearchUiState(mode = SearchMode.TITLE)
+                selectSearchMode(SearchMode.TITLE)
             }
         }
     }
@@ -486,6 +532,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private fun pauseBackgroundHomeRefresh() {
         homeRefreshJob?.cancel()
         homeRefreshJob = null
+    }
+
+    override fun onCleared() {
+        client.close()
+        semanticModelManager.close()
     }
 
     private companion object {

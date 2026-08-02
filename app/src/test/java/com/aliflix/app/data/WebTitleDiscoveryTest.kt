@@ -1,9 +1,12 @@
 package com.aliflix.app.data
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.asCoroutineDispatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 
 class WebTitleDiscoveryTest {
     @Test
@@ -24,7 +27,7 @@ class WebTitleDiscoveryTest {
             },
         )
 
-        val result = discovery.discover(WebDiscoveryMode.RECOMMENDATION)
+        val result = discovery.discover()
 
         assertEquals(listOf("brave"), calls)
         assertEquals(18, result.items.size)
@@ -52,37 +55,12 @@ class WebTitleDiscoveryTest {
             },
         )
 
-        val result = discovery.discover(WebDiscoveryMode.RECOMMENDATION)
+        val result = discovery.discover()
 
         assertEquals(listOf("brave", "wikipedia", "ddg"), calls)
         assertEquals(2, result.successfulSources)
         assertEquals(setOf("DUCKDUCKGO", "WIKIPEDIA"), result.items.first().sources)
         assertEquals("Paprika", result.items.first().title)
-    }
-
-    @Test
-    fun describePlotPreservesAllThreeSourceBehavior() = runTest {
-        val calls = mutableListOf<String>()
-        val discovery = discovery(
-            brave = {
-                calls += "brave"
-                listOf(Candidate("Inception", setOf("BRAVE"), 1))
-            },
-            wikipedia = {
-                calls += "wikipedia"
-                listOf(Candidate("Paprika", setOf("WIKIPEDIA"), 2))
-            },
-            duckDuckGo = {
-                calls += "ddg"
-                listOf(Candidate("Dreamscape", setOf("DUCKDUCKGO"), 3))
-            },
-        )
-
-        val result = discovery.discover(WebDiscoveryMode.DESCRIBE_PLOT)
-
-        assertEquals(listOf("brave", "wikipedia", "ddg"), calls)
-        assertEquals(3, result.items.size)
-        assertEquals(3, result.successfulSources)
     }
 
     @Test
@@ -95,11 +73,53 @@ class WebTitleDiscoveryTest {
             },
         )
 
-        val result = discovery.discover(WebDiscoveryMode.RECOMMENDATION)
+        val result = discovery.discover()
 
         assertEquals(listOf("Breaking Bad"), result.items.map { it.title })
         assertEquals(1, result.successfulSources)
         assertTrue(result.items.none { it.title.contains("ignore previous", true) })
+    }
+
+    @Test
+    fun discoveryMergingAndSortingUseTheInjectedComputationDispatcher() = runTest {
+        val executor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "web-title-computation")
+        }
+        val dispatcher = executor.asCoroutineDispatcher()
+        val observedThreads = CopyOnWriteArrayList<String>()
+        try {
+            val discovery = WebTitleDiscovery(
+                brave = {
+                    observedThreads += Thread.currentThread().name
+                    listOf(Candidate("Paprika", setOf("BRAVE"), 2))
+                },
+                wikipedia = {
+                    observedThreads += Thread.currentThread().name
+                    listOf(Candidate("Paprika", setOf("WIKIPEDIA"), 1))
+                },
+                duckDuckGo = {
+                    observedThreads += Thread.currentThread().name
+                    emptyList()
+                },
+                keyOf = { it.title.lowercase() },
+                merge = { first, second ->
+                    observedThreads += Thread.currentThread().name
+                    first.copy(sources = first.sources + second.sources)
+                },
+                sortScore = {
+                    observedThreads += Thread.currentThread().name
+                    it.sources.size.toDouble()
+                },
+                computationDispatcher = dispatcher,
+            )
+
+            discovery.discover()
+
+            assertTrue(observedThreads.isNotEmpty())
+            assertTrue(observedThreads.all { it == "web-title-computation" })
+        } finally {
+            dispatcher.close()
+        }
     }
 
     private fun discovery(

@@ -1,11 +1,39 @@
 package com.aliflix.app.recommendation
 
+import com.aliflix.app.model.MediaType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RecommendationPreferenceParserTest {
+    @Test
+    fun exposesStructuredIntentAndCanonicalAnchorResolution() {
+        val parsed = RecommendationPreferenceParser.parse(
+            "Series similar to Money Heist but darker",
+        )
+        val canonical = CanonicalTitleAnchor(
+            identity = CanonicalMediaIdentity(MediaType.TV, 71446),
+            canonicalTitle = "La casa de papel",
+            alternativeTitles = setOf("Money Heist", "Haus des Geldes"),
+            year = 2017,
+        )
+
+        val intent = RecommendationIntent.from(parsed.preferences)
+        assertEquals(RecommendationContentType.TV, intent.requiredMediaType)
+        assertEquals(RecommendationMood.DARK, intent.moods.single())
+        val resolved = CanonicalTitleResolver.resolve(
+            query = parsed.preferences.similarityTitle?.value.orEmpty(),
+            requiredType = parsed.preferences.contentType?.value,
+            candidates = listOf(canonical),
+        )
+        assertTrue(resolved is TitleAnchorResolution.Resolved)
+        assertEquals(
+            canonical.identity,
+            (resolved as TitleAnchorResolution.Resolved).anchor.identity,
+        )
+    }
+
     @Test
     fun parsesTerrifyingMovieUnderOneHundredMinutes() {
         val result = RecommendationPreferenceParser.parse(
@@ -74,6 +102,23 @@ class RecommendationPreferenceParserTest {
         ).preferences
 
         assertEquals(120, second.runtimeMaximumMinutes?.value)
+    }
+
+    @Test
+    fun scary120MinutePromptIsAHardMovieConstraint() {
+        val preferences = RecommendationPreferenceParser.parse(
+            "Something scary under 120 minutes",
+        ).preferences
+
+        assertEquals(
+            RecommendationContentType.MOVIE,
+            preferences.contentType?.value,
+        )
+        assertEquals(120, preferences.runtimeMaximumMinutes?.value)
+        assertEquals(
+            ConstraintStrength.HARD,
+            preferences.runtimeMaximumMinutes?.strength,
+        )
     }
 
     @Test

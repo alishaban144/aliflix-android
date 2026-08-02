@@ -3,6 +3,8 @@ package com.aliflix.app.recommendation
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
+import com.aliflix.app.model.Media
+import com.aliflix.app.model.MediaType
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
@@ -11,75 +13,81 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class RecommendationTypeGateTest {
-    @OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class)
+class RecommendationStoreHydrationTest {
     @Test
-    fun noRepositoryRequestStartsUntilMovieOrSeriesIsSelected() = runTest {
-        val repository = CountingRepository()
-        val orchestrator = RecommendationOrchestrator(
+    fun feedbackBeforeHydrationMergesWithPersistedTaste() = runTest {
+        val context = InMemoryContext(
+            initial = mapOf(
+                "enabled" to false,
+                "taste_signals" to
+                    """[{"key":"genre:drama","positive":3,"negative":0,"updatedAt":1}]""",
+                "seen_keys" to """["movie:7"]""",
+            ),
+        )
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val store = RecommendationStore(
+            context = context,
             scope = this,
-            repository = repository,
-            store = RecommendationStore(InMemoryContext()),
-            likesProvider = ::emptyList,
-            recentlyPlayedProvider = ::emptyList,
-            dispatchers = RecommendationDispatchers(
-                io = StandardTestDispatcher(testScheduler),
-                computation = StandardTestDispatcher(testScheduler),
+            dispatchers = RecommendationDispatchers(dispatcher, dispatcher),
+        )
+
+        assertFalse(store.enabled.value)
+        store.recordAccepted(
+            Media(
+                id = 8,
+                type = MediaType.MOVIE,
+                title = "New feedback",
+                year = "2024",
+                genres = listOf("Thriller"),
             ),
         )
 
-        orchestrator.submitText("a thriller made after 2015 with IMDb 7 or higher")
-        orchestrator.showMatches()
-        orchestrator.surpriseMe()
         advanceUntilIdle()
 
-        assertEquals(0, repository.pageRequests)
-        assertTrue(orchestrator.state.value is RecommendationUiState.SelectType)
-
-        orchestrator.selectType(RecommendationMediaKind.MOVIE)
-        advanceUntilIdle()
-        assertEquals("Selecting a type is local-only.", 0, repository.pageRequests)
-
-        orchestrator.submitText("a thriller made after 2015 with IMDb 7 or higher")
-        advanceUntilIdle()
-
-        assertEquals(1, repository.pageRequests)
-        assertEquals(RecommendationMediaKind.MOVIE, repository.lastSpec?.mediaKind)
+        val taste = store.taste.value
+        assertEquals(3, taste.signals.getValue("genre:drama").positiveObservations)
+        assertEquals(1, taste.signals.getValue("genre:thriller").positiveObservations)
+        assertEquals(1, taste.signals.getValue("type:movie").positiveObservations)
+        assertTrue("movie:7" in taste.seenKeys)
+        assertFalse(store.enabled.value)
     }
 
-    private class CountingRepository : RecommendationCandidateRepository {
-        var pageRequests = 0
-        var lastSpec: CatalogDiscoverySpec? = null
+    @Test
+    fun enabledFailsClosedUntilPersistedOptInLoads() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val store = RecommendationStore(
+            context = InMemoryContext(mapOf("enabled" to true)),
+            scope = this,
+            dispatchers = RecommendationDispatchers(dispatcher, dispatcher),
+        )
 
-        override suspend fun discoverPage(
-            spec: CatalogDiscoverySpec,
-            cursor: RecommendationPageCursor,
-            requiredFields: RequiredMetadataFields,
-        ): RecommendationPage {
-            pageRequests += 1
-            lastSpec = spec
-            return RecommendationPage(
-                candidates = emptyList(),
-                nextCursor = null,
-                hasMore = false,
-                sourceHealth = RecommendationSourceHealth(),
-            )
+        assertFalse(store.enabled.value)
+        advanceUntilIdle()
+        assertTrue(store.enabled.value)
+    }
+
+    @Test
+    fun seenHistoryCapKeepsNewestFeedback() {
+        val store = RecommendationStore(InMemoryContext())
+
+        repeat(260) { id ->
+            store.markSeen(Media(id = id, type = MediaType.MOVIE, title = "Movie $id"))
         }
 
-        override suspend fun resolveSimilarityAnchor(
-            title: String,
-        ): RecommendationCandidate? = null
+        assertEquals(250, store.taste.value.seenKeys.size)
+        assertFalse("movie:0" in store.taste.value.seenKeys)
+        assertTrue("movie:259" in store.taste.value.seenKeys)
     }
 
-    /**
-     * RecommendationStore only needs private SharedPreferences. A small proxy
-     * keeps this a fast JVM test without adding Robolectric or a device.
-     */
-    private class InMemoryContext : ContextWrapper(null) {
-        private val preferences = InMemoryPreferences().value
+    private class InMemoryContext(
+        initial: Map<String, Any?> = emptyMap(),
+    ) : ContextWrapper(null) {
+        private val preferences = InMemoryPreferences(initial).value
 
         override fun getSharedPreferences(
             name: String?,
@@ -87,8 +95,8 @@ class RecommendationTypeGateTest {
         ): SharedPreferences = preferences
     }
 
-    private class InMemoryPreferences : InvocationHandler {
-        private val values = linkedMapOf<String, Any?>()
+    private class InMemoryPreferences(initial: Map<String, Any?>) : InvocationHandler {
+        private val values = linkedMapOf<String, Any?>().apply { putAll(initial) }
         val value: SharedPreferences
         private val editor: SharedPreferences.Editor
 
@@ -182,11 +190,7 @@ class RecommendationTypeGateTest {
     private companion object {
         @Suppress("UNCHECKED_CAST")
         fun <T> proxy(type: Class<T>, handler: InvocationHandler): T =
-            Proxy.newProxyInstance(
-                type.classLoader,
-                arrayOf(type),
-                handler,
-            ) as T
+            Proxy.newProxyInstance(type.classLoader, arrayOf(type), handler) as T
 
         fun defaultValue(type: Class<*>): Any? = when (type) {
             Boolean::class.javaPrimitiveType -> false

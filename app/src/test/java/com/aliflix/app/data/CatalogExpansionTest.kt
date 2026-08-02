@@ -13,8 +13,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 import java.net.URI
-import java.net.URLDecoder
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -346,113 +344,6 @@ class CatalogExpansionTest {
     }
 
     @Test
-    fun plotSearchReturnsOnlyExternallyDiscoveredTitlesOutsideHomeCatalogue() = runTest {
-        val external = listOf(
-            Triple("Inception", "2010", MediaType.MOVIE),
-            Triple("Paprika", "2006", MediaType.MOVIE),
-            Triple("Dreamscape", "1984", MediaType.MOVIE),
-            Triple("Groundhog Day", "1993", MediaType.MOVIE),
-            Triple("Breaking Bad", "2008", MediaType.TV),
-            Triple("The Matrix", "1999", MediaType.MOVIE),
-            Triple("Arrival", "2016", MediaType.MOVIE),
-            Triple("Dark", "2017", MediaType.TV),
-        )
-        val client = CatalogClient(
-            pageLoader = { url ->
-                when {
-                    "search.brave.com" in url -> braveHtml(external)
-                    "wikipedia.org/w/api.php" in url -> emptyWikipedia()
-                    "duckduckgo.com" in url -> """<div class="no-results"></div>"""
-                    "/search/" in url -> tmdbResolvedTitleHtml(url, external)
-                    else -> error("Unexpected request: $url")
-                }
-            },
-        )
-
-        val results = client.searchByPlot(
-            "stories involving dreams and a chemistry teacher becoming a drug dealer",
-        )
-        val titles = results.map(Media::title)
-
-        assertTrue("Inception" in titles)
-        assertTrue("Paprika" in titles)
-        assertTrue("Dreamscape" in titles)
-        assertTrue("Groundhog Day" in titles)
-        assertTrue("Breaking Bad" in titles)
-        assertFalse("Parasite" in titles)
-    }
-
-    @Test
-    fun realShapedDuckDuckGoHeadingResolvesCleanTitleYearAndType() = runTest {
-        val client = CatalogClient(
-            pageLoader = { url ->
-                when {
-                    "search.brave.com" in url -> """<html>captcha challenge</html>"""
-                    "wikipedia.org/w/api.php" in url -> emptyWikipedia()
-                    "duckduckgo.com" in url -> """
-                        <div class="result">
-                          <a class="result__a"
-                             href="https://www.imdb.com/title/tt1375666/">
-                            Inception (2010) - Plot - IMDb
-                          </a>
-                          <a class="result__snippet">
-                            A thief enters shared dreams to steal secrets.
-                          </a>
-                        </div>
-                    """.trimIndent()
-                    "/search/movie" in url -> searchHtml(
-                        type = MediaType.MOVIE,
-                        items = listOf(
-                            FixtureItem(
-                                id = 27205,
-                                title = "Inception",
-                                year = "2010",
-                                overview = "A thief enters shared dreams to steal secrets.",
-                            ),
-                        ),
-                    )
-                    "/search/tv" in url -> "<main></main>"
-                    else -> error("Unexpected request: $url")
-                }
-            },
-        )
-
-        val results = client.searchByPlot("a thief enters dreams to steal secrets")
-
-        assertEquals(listOf("Inception"), results.map(Media::title))
-    }
-
-    @Test
-    fun normalizedPlotQueryUsesThe24HourCacheWithoutAnotherWebLookup() = runTest {
-        val cache = MemoryCatalogCache()
-        val webCalls = AtomicInteger(0)
-        val external = listOf(Triple("Breaking Bad", "2008", MediaType.TV))
-        val client = CatalogClient(
-            cacheStore = cache,
-            pageLoader = { url ->
-                when {
-                    "search.brave.com" in url -> {
-                        webCalls.incrementAndGet()
-                        braveHtml(external)
-                    }
-                    "wikipedia.org/w/api.php" in url -> emptyWikipedia()
-                    "duckduckgo.com" in url -> """<div class="no-results"></div>"""
-                    "/search/" in url -> tmdbResolvedTitleHtml(url, external)
-                    else -> error("Unexpected request: $url")
-                }
-            },
-        )
-
-        val first = client.searchByPlot("A chemistry teacher becomes a drug dealer")
-        val callsAfterFirst = webCalls.get()
-        val second = client.searchByPlot("  a CHEMISTRY teacher becomes a drug dealer  ")
-
-        assertEquals(listOf("Breaking Bad"), first.map(Media::title))
-        assertEquals(first, second)
-        assertEquals(callsAfterFirst, webCalls.get())
-    }
-
-    @Test
     fun braveAnswerTextExtractsMultipleNamedMoviesAndKnowledgePanelShow() {
         val client = CatalogClient(
             pageLoader = { error("Parser test must stay offline") },
@@ -472,21 +363,6 @@ class CatalogExpansionTest {
         assertTrue("Breaking Bad" in titles)
     }
 
-    @Test
-    fun plotSearchNeverFallsBackToLocalTitlesWhenEveryWebSourceFails() {
-        val client = CatalogClient(
-            pageLoader = { throw IOException("blocked") },
-        )
-
-        val error = assertThrows(IOException::class.java) {
-            runTest {
-                client.searchByPlot("a family moves into a house with a secret")
-            }
-        }
-
-        assertEquals("Web lookup unavailable—try again.", error.message)
-    }
-
     private fun cachedHome(): HomeContent {
         val rails = GenreCatalog.homeSpecs.mapIndexed { railIndex, spec ->
             ContentRail(
@@ -501,43 +377,6 @@ class CatalogExpansionTest {
             )
         }
         return HomeContent(rails.first().items.first(), rails)
-    }
-
-    private fun braveHtml(items: List<Triple<String, String, MediaType>>): String =
-        buildString {
-            append("<main>")
-            items.forEach { (title, year, type) ->
-                val qualifier = if (type == MediaType.TV) "TV series" else "film"
-                append(
-                    """<div class="search-snippet-title" title="$title ($year $qualifier)">""" +
-                        "$title ($year $qualifier)</div>",
-                )
-            }
-            append("</main>")
-        }
-
-    private fun emptyWikipedia(): String = """{"query":{"search":[]}}"""
-
-    private fun tmdbResolvedTitleHtml(
-        url: String,
-        external: List<Triple<String, String, MediaType>>,
-    ): String {
-        val title = queryParameter(url, "query")
-        val match = external.firstOrNull { it.first.equals(title, ignoreCase = true) }
-            ?: return "<main></main>"
-        val requestedType = if ("/search/tv" in url) MediaType.TV else MediaType.MOVIE
-        if (requestedType != match.third) return "<main></main>"
-        return searchHtml(
-            type = match.third,
-            items = listOf(
-                FixtureItem(
-                    id = external.indexOf(match) + 50_000,
-                    title = match.first,
-                    year = match.second,
-                    overview = plotFor(match.first),
-                ),
-            ),
-        )
     }
 
     private fun collidingCatalogueHtml(url: String): String {
@@ -722,20 +561,6 @@ class CatalogExpansionTest {
             ?.get(1)
             ?.toIntOrNull()
 
-    private fun queryParameter(url: String, name: String): String {
-        val raw = url.substringAfter("$name=").substringBefore('&')
-        return URLDecoder.decode(raw, StandardCharsets.UTF_8.toString())
-    }
-
-    private fun plotFor(title: String): String = when (title) {
-        "Inception" -> "A thief enters other people's dreams to steal secrets."
-        "Paprika" -> "A therapist uses a device to enter dreams."
-        "Dreamscape" -> "A man enters and manipulates people's dreams."
-        "Groundhog Day" -> "A man repeatedly relives the same day."
-        "Breaking Bad" -> "A chemistry teacher becomes a drug dealer."
-        else -> "A science fiction mystery."
-    }
-
     private data class FixtureItem(
         val id: Int,
         val title: String,
@@ -746,21 +571,10 @@ class CatalogExpansionTest {
     private class MemoryCatalogCache(
         private var home: HomeContent? = null,
     ) : CatalogCacheStore {
-        private val plots = mutableMapOf<String, List<Media>>()
-
         override suspend fun loadHome(): HomeContent? = home
 
         override suspend fun saveHome(content: HomeContent) {
             home = content
-        }
-
-        override suspend fun loadPlot(
-            queryKey: String,
-            maxAgeMs: Long,
-        ): List<Media>? = plots[queryKey]
-
-        override suspend fun savePlot(queryKey: String, items: List<Media>) {
-            plots[queryKey] = items
         }
     }
 

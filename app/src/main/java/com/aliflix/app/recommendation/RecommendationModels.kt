@@ -49,25 +49,9 @@ data class UnmatchedPreference(
     val confidence: Double = 0.65,
 )
 
-data class ConstraintSignal(
-    val key: String,
-    val value: String,
-    val origin: PreferenceOrigin,
-    val strength: ConstraintStrength,
-    val confidence: Double = 1.0,
-)
-
 data class PreferenceCorrection(
     val key: String,
     val replacement: String?,
-)
-
-data class RecommendationIntentV2(
-    val mediaKind: RecommendationMediaKind,
-    val hardConstraints: List<ConstraintSignal>,
-    val softFacets: List<SemanticFacet>,
-    val excludedFacets: List<SemanticFacet>,
-    val unmatchedPreferences: List<UnmatchedPreference>,
 )
 
 enum class RecommendationContentType {
@@ -125,8 +109,12 @@ data class CatalogDiscoverySpec(
     val similarityTitle: String? = null,
     val semanticFacets: List<String> = emptyList(),
     val excludedFacets: List<String> = emptyList(),
+    val creatorNames: List<String> = emptyList(),
+    val castNames: List<String> = emptyList(),
+    val countries: List<String> = emptyList(),
     val supplementalTerms: List<String> = emptyList(),
     val discoveryText: String = "",
+    val surpriseMe: Boolean = false,
     val sourcePolicyVersion: Int = 2,
     val semanticModelVersion: String = "use-v1",
 ) {
@@ -153,7 +141,12 @@ data class CatalogDiscoverySpec(
             similarityTitle.orEmpty().trim().lowercase(),
             semanticFacets.normalizedKey(),
             excludedFacets.normalizedKey(),
+            creatorNames.normalizedKey(),
+            castNames.normalizedKey(),
+            countries.normalizedKey(),
             stableHash(supplementalTerms.normalizedKey()),
+            stableHash(discoveryText.trim().lowercase()),
+            surpriseMe.toString(),
             sourcePolicyVersion.toString(),
             semanticModelVersion,
         ).joinToString("|")
@@ -202,12 +195,16 @@ data class CatalogDiscoverySpec(
                 similarityTitle = preferences.similarityTitle?.value,
                 semanticFacets = preferences.semanticFacets.map { it.value.label },
                 excludedFacets = preferences.excludedFacets.map { it.value.label },
+                creatorNames = preferences.creatorNames.map { it.value },
+                castNames = preferences.castNames.map { it.value },
+                countries = preferences.countryPreferences.map { it.value },
                 supplementalTerms = (
                     preferences.semanticFacets.flatMap { it.value.discoveryTerms } +
                         preferences.unmatchedPreferences.map { it.text } +
                         preferences.unverifiedTerms
                     ).distinct(),
                 discoveryText = RecommendationQueryBuilder.build(preferences),
+                surpriseMe = preferences.surpriseMe,
             )
         }
     }
@@ -443,6 +440,9 @@ data class RecommendationScoreBreakdown(
     val novelty: Double = 0.0,
     val coverage: Double = 1.0,
     val total: Double = 0.0,
+    val anchorRelevance: Double = 0.0,
+    val semanticRelevance: Double = 0.0,
+    val confidence: Double = 0.0,
 )
 
 data class RecommendationCandidate(
@@ -455,6 +455,10 @@ data class RecommendationCandidate(
     val sourcePosition: Int = 99,
     val score: RecommendationScoreBreakdown = RecommendationScoreBreakdown(),
     val explanation: String = "",
+    val relevanceEvidence: List<RecommendationEvidence> = emptyList(),
+    val precomputedSemanticScore: Double? = null,
+    val matchReasons: List<RecommendationMatchReason> = emptyList(),
+    val alternativeTitles: Set<String> = emptySet(),
 )
 
 data class CandidateSourceEvidence(
