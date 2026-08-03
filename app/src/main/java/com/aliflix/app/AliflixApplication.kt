@@ -6,6 +6,10 @@ import android.os.StrictMode
 class AliflixApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        runCatching {
+            System.setProperty("java.net.preferIPv4Stack", "true")
+            System.setProperty("java.net.preferIPv6Addresses", "false")
+        }
         if (!BuildConfig.DEBUG) return
 
         StrictMode.setThreadPolicy(
