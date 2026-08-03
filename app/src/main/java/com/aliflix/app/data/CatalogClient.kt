@@ -5222,40 +5222,28 @@ class CatalogClient(
                 URL(url).host.equals("en.wikipedia.org", ignoreCase = true)
             }.getOrDefault(false)
             return suspendCancellableCoroutine { continuation ->
-                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 12_000
-                    readTimeout = 18_000
-                    instanceFollowRedirects = true
-                    setRequestProperty(
-                        "User-Agent",
-                        if (isWikipediaApi) {
-                            "AliflixAndroid/2.7.8 " +
-                                "(https://github.com/alishaban144/aliflix-android)"
-                        } else {
-                            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
-                                "(KHTML, like Gecko) Chrome/126 Mobile Safari/537.36"
-                        },
-                    )
-                    setRequestProperty(
-                        "Accept",
-                        if (isWikipediaApi) {
-                            "application/json"
-                        } else {
-                            "text/html,application/xhtml+xml"
-                        },
-                    )
-                    setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-                }
+                val extraHeaders = mapOf(
+                    "User-Agent" to if (isWikipediaApi) {
+                        "AliflixAndroid/2.7.8 (https://github.com/alishaban144/aliflix-android)"
+                    } else {
+                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Mobile Safari/537.36"
+                    },
+                    "Accept" to if (isWikipediaApi) {
+                        "application/json"
+                    } else {
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+                    },
+                )
+                val connection = SafeHttpTransport.openConnection(
+                    urlString = url,
+                    connectTimeoutMs = 12_000,
+                    readTimeoutMs = 18_000,
+                    headers = extraHeaders,
+                )
                 continuation.invokeOnCancellation { connection.disconnect() }
                 try {
                     val status = connection.responseCode
-                    val stream = if (status in 200..299) {
-                        connection.inputStream
-                    } else {
-                        connection.errorStream
-                    }
-                    val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    val response = SafeHttpTransport.readResponseText(connection)
                     if (status !in 200..299) {
                         throw IOException("Catalogue request failed ($status)")
                     }
@@ -5276,26 +5264,25 @@ class CatalogClient(
         suspend fun postJson(url: String, body: String): String {
             val payload = body.toByteArray(StandardCharsets.UTF_8)
             return suspendCancellableCoroutine { continuation ->
-                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                val extraHeaders = mapOf(
+                    "Content-Type" to "application/json",
+                    "Accept" to "application/json",
+                )
+                val connection = SafeHttpTransport.openConnection(
+                    urlString = url,
+                    connectTimeoutMs = 8_000,
+                    readTimeoutMs = 10_000,
+                    headers = extraHeaders,
+                ).apply {
                     requestMethod = "POST"
-                    connectTimeout = 8_000
-                    readTimeout = 10_000
                     doOutput = true
                     setFixedLengthStreamingMode(payload.size)
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("Accept", "application/json")
-                    setRequestProperty("User-Agent", "Aliflix/1.5 (personal Android app)")
                 }
                 continuation.invokeOnCancellation { connection.disconnect() }
                 try {
                     connection.outputStream.use { it.write(payload) }
                     val status = connection.responseCode
-                    val stream = if (status in 200..299) {
-                        connection.inputStream
-                    } else {
-                        connection.errorStream
-                    }
-                    val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    val response = SafeHttpTransport.readResponseText(connection)
                     if (status !in 200..299) {
                         throw IOException("Metadata request failed ($status)")
                     }

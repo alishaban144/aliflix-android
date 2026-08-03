@@ -3,6 +3,7 @@ package com.aliflix.app.recommendation
 import android.content.Context
 import androidx.core.content.edit
 import com.google.mediapipe.tasks.text.textembedder.TextEmbedder
+import com.aliflix.app.data.SafeHttpTransport
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -619,17 +620,19 @@ class AndroidSemanticModelManager(
     }
 
     private suspend fun downloadVerifiedModel(token: Long) {
-        val connection = (URL(MODEL_URL).openConnection() as HttpURLConnection).apply {
-            connectTimeout = CONNECT_TIMEOUT_MS
-            readTimeout = READ_TIMEOUT_MS
-            instanceFollowRedirects = true
-            requestMethod = "GET"
-            setRequestProperty("Accept", "application/octet-stream")
-            setRequestProperty("User-Agent", MODEL_USER_AGENT)
-        }
+        val extraHeaders = mapOf(
+            "Accept" to "application/octet-stream",
+            "User-Agent" to MODEL_USER_AGENT,
+        )
+        val connection = SafeHttpTransport.openConnection(
+            urlString = MODEL_URL,
+            connectTimeoutMs = CONNECT_TIMEOUT_MS,
+            readTimeoutMs = READ_TIMEOUT_MS,
+            headers = extraHeaders,
+        )
         try {
             currentCoroutineContext().ensureActive()
-            val status = runInterruptible { connection.responseCode }
+            val status = runInterruptible<Int> { connection.responseCode }
             if (status !in 200..299) {
                 error("Model server returned HTTP $status.")
             }
@@ -639,12 +642,12 @@ class AndroidSemanticModelManager(
             }
             val digest = MessageDigest.getInstance("SHA-256")
             var total = 0L
-            runInterruptible { connection.inputStream }.use { input ->
+            runInterruptible<java.io.InputStream> { connection.inputStream }.use { input ->
                 FileOutputStream(partialFile).use { output ->
                     val buffer = ByteArray(DOWNLOAD_BUFFER_SIZE)
                     while (true) {
                         currentCoroutineContext().ensureActive()
-                        val count = runInterruptible { input.read(buffer) }
+                        val count = runInterruptible<Int> { input.read(buffer) }
                         if (count < 0) break
                         output.write(buffer, 0, count)
                         digest.update(buffer, 0, count)
