@@ -3982,7 +3982,7 @@ private fun DetailScreen(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 40.dp),
     ) {
-        item {
+        item(key = "hero") {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -4051,7 +4051,7 @@ private fun DetailScreen(
                 }
             }
         }
-        item {
+        item(key = "metadata:${item.key}:${item.runtime}:${item.imdbRating}:${item.rottenTomatoesRating}") {
             Column(
                 modifier = Modifier.padding(horizontal = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -4198,7 +4198,7 @@ private fun DetailScreen(
         }
 
         if (item.type == MediaType.TV && !state.loading) {
-            item {
+            item(key = "episodes-header") {
                 Column(
                     modifier = Modifier.padding(top = 34.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -4253,7 +4253,7 @@ private fun DetailScreen(
             }
 
             if (state.episodesLoading) {
-                item {
+                item(key = "episodes-loading") {
                     Box(
                         Modifier
                             .fillMaxWidth()
@@ -4264,7 +4264,7 @@ private fun DetailScreen(
                     }
                 }
             } else if (state.episodes.isEmpty()) {
-                item {
+                item(key = "episodes-empty") {
                     Text(
                         text = "Episode information is unavailable for this season.",
                         color = AliflixMuted,
@@ -4286,7 +4286,7 @@ private fun DetailScreen(
         }
 
         if (state.loading) {
-            item {
+            item(key = "detail-loading") {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -4297,7 +4297,7 @@ private fun DetailScreen(
                 }
             }
         } else if (state.recommendations.isNotEmpty()) {
-            item {
+            item(key = "recommendations") {
                 MediaRail(
                     rail = ContentRail("More Like This", state.recommendations),
                     onOpen = onOpen,
