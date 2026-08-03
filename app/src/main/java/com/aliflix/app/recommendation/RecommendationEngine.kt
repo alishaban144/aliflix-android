@@ -797,13 +797,20 @@ object RecommendationRanker {
 
         val ratings = listOfNotNull(
             media.imdbRating?.let { rating ->
-                val voteConfidence = media.imdbVoteCount?.let {
-                    (log10(it.toDouble() + 1.0) / 6.0).coerceIn(0.35, 1.0)
-                } ?: 0.58
-                (rating / 10.0).coerceIn(0.0, 1.0) * voteConfidence
+                val v = media.imdbVoteCount?.toDouble() ?: 1000.0
+                val m = 25000.0
+                val c = 7.0
+                val bayesian = (v / (v + m)) * rating + (m / (v + m)) * c
+                (bayesian / 10.0).coerceIn(0.0, 1.0)
             },
             media.rottenTomatoesRating?.let { (it / 100.0).coerceIn(0.0, 1.0) },
-            media.rating.takeIf { it > 0.0 }?.let { (it / 10.0).coerceIn(0.0, 1.0) },
+            media.rating.takeIf { it > 0.0 }?.let { rating ->
+                val v = media.imdbVoteCount?.toDouble() ?: 1000.0
+                val m = 25000.0
+                val c = 7.0
+                val bayesian = (v / (v + m)) * rating + (m / (v + m)) * c
+                (bayesian / 10.0).coerceIn(0.0, 1.0)
+            },
         )
         val ratingCoverage = ratings.size / 3.0
         val qualityValue = if (ratings.isEmpty()) {
@@ -1040,8 +1047,8 @@ object RecommendationRanker {
         RecommendationEvidenceType.SHARED_CAST -> 0.76
         RecommendationEvidenceType.SHARED_COMPANY -> 0.68
         RecommendationEvidenceType.SHARED_NETWORK -> 0.62
-        RecommendationEvidenceType.SHARED_KEYWORD -> 0.56
-        RecommendationEvidenceType.SHARED_GENRE -> 0.34
+        RecommendationEvidenceType.SHARED_KEYWORD -> 0.72
+        RecommendationEvidenceType.SHARED_GENRE -> 0.68
         else -> 0.0
     }
 

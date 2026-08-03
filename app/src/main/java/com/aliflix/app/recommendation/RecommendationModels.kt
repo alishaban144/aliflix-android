@@ -430,6 +430,97 @@ data class VerifiedMediaMetadata(
     val verifiedAtMillis: Long = System.currentTimeMillis(),
 )
 
+enum class MetadataSource {
+    IMDB_PUBLIC,
+    TMDB,
+    LOCAL_ANALYSIS,
+    RELATIONSHIP_DATA,
+    USER_INPUT,
+    CACHE
+}
+
+enum class RecommendationRejectionReason {
+    WRONG_MEDIA_TYPE,
+    EXCLUDED_GENRE,
+    EXCLUDED_TRAIT,
+    EXCLUDED_TITLE,
+    CONTRADICTION,
+    LOW_RELEVANCE,
+    BELOW_RATING_THRESHOLD,
+    ALREADY_SEEN,
+    EXCLUDED_KEYWORD,
+    OUTSIDE_YEAR_RANGE,
+    OUTSIDE_RUNTIME_RANGE,
+    WRONG_LANGUAGE,
+    WRONG_COUNTRY,
+}
+
+data class RecommendationTag(
+    val name: String,
+    val category: String = "trait",
+    val specificityWeight: Double = 1.0,
+    val source: MetadataSource = MetadataSource.LOCAL_ANALYSIS,
+)
+
+data class WeightedTagMatch(
+    val tag: String,
+    val weight: Double,
+    val matchedText: String,
+    val source: MetadataSource = MetadataSource.LOCAL_ANALYSIS,
+)
+
+data class WeightedTagConflict(
+    val tag: String,
+    val weight: Double,
+    val conflictReason: String,
+)
+
+data class AnchorTitleProfile(
+    val titleId: String,
+    val mediaType: MediaType,
+    val genres: Set<String> = emptySet(),
+    val keywords: Set<RecommendationTag> = emptySet(),
+    val themes: Set<String> = emptySet(),
+    val tones: Set<String> = emptySet(),
+    val settings: Set<String> = emptySet(),
+    val narrativeTraits: Set<String> = emptySet(),
+    val creators: Set<String> = emptySet(),
+    val writers: Set<String> = emptySet(),
+    val directors: Set<String> = emptySet(),
+    val mainCast: Set<String> = emptySet(),
+    val companies: Set<String> = emptySet(),
+    val networks: Set<String> = emptySet(),
+    val franchiseIds: Set<String> = emptySet(),
+    val relatedTitleIds: Set<String> = emptySet(),
+    val releaseYear: Int? = null,
+    val runtimeMinutes: Int? = null,
+    val rating: Double? = null,
+    val voteCount: Long? = null,
+)
+
+data class CandidateRelevanceProfile(
+    val mediaKey: String,
+    val mediaType: MediaType,
+    val genres: Set<String> = emptySet(),
+    val keywords: Set<RecommendationTag> = emptySet(),
+    val themes: Set<String> = emptySet(),
+    val tones: Set<String> = emptySet(),
+    val settings: Set<String> = emptySet(),
+    val narrativeTraits: Set<String> = emptySet(),
+    val creators: Set<String> = emptySet(),
+    val writers: Set<String> = emptySet(),
+    val directors: Set<String> = emptySet(),
+    val mainCast: Set<String> = emptySet(),
+    val companies: Set<String> = emptySet(),
+    val networks: Set<String> = emptySet(),
+    val franchiseIds: Set<String> = emptySet(),
+    val relatedTitleIds: Set<String> = emptySet(),
+    val releaseYear: Int? = null,
+    val runtimeMinutes: Int? = null,
+    val rating: Double? = null,
+    val voteCount: Long? = null,
+)
+
 data class RecommendationScoreBreakdown(
     val contentMatch: Double = 0.0,
     val similarity: Double = 0.0,
@@ -443,6 +534,16 @@ data class RecommendationScoreBreakdown(
     val anchorRelevance: Double = 0.0,
     val semanticRelevance: Double = 0.0,
     val confidence: Double = 0.0,
+    val hardConstraintsPassed: Boolean = true,
+    val matchedTags: List<WeightedTagMatch> = emptyList(),
+    val contradictedTags: List<WeightedTagConflict> = emptyList(),
+    val relationshipScore: Double = 0.0,
+    val traitScore: Double = 0.0,
+    val semanticScore: Double = 0.0,
+    val qualityScore: Double = 0.0,
+    val personalizationScore: Double = 0.0,
+    val finalScore: Double = 0.0,
+    val rejectionReason: RecommendationRejectionReason? = null,
 )
 
 data class RecommendationCandidate(

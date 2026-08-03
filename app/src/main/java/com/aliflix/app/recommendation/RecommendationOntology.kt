@@ -39,7 +39,7 @@ object RecommendationOntology {
         facet("neo_noir", "Neo-noir", SemanticFacetCategory.SUBGENRE, "modern noir"),
         facet("noir", "Film noir", SemanticFacetCategory.SUBGENRE, "noir"),
         facet("whodunit", "Whodunit", SemanticFacetCategory.SUBGENRE, "murder mystery", "detective mystery"),
-        facet("procedural", "Procedural", SemanticFacetCategory.SUBGENRE, "police procedural", "investigative procedural"),
+        facet("procedural", "Procedural", SemanticFacetCategory.SUBGENRE, "police procedural", "police procedurals", "procedural", "procedurals", "investigative procedural"),
         facet("courtroom", "Courtroom", SemanticFacetCategory.SUBGENRE, "courtroom drama", "legal drama"),
         facet("medical", "Medical", SemanticFacetCategory.SUBGENRE, "medical drama", "hospital drama"),
         facet("heist", "Heist", SemanticFacetCategory.SUBGENRE, "robbery", "caper"),
