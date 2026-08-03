@@ -350,7 +350,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         episodeJob?.cancel()
         _detail.value = DetailUiState(loading = true, item = item)
         detailJob = viewModelScope.launch {
-            _detail.value = runCatching {
+            try {
                 val detailsRequest = async { client.details(item) }
                 val seasonsRequest = async {
                     if (item.type == MediaType.TV) client.seasons(item) else emptyList()
@@ -359,30 +359,32 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 library.refreshMetadata(details)
                 val seasons = seasonsRequest.await()
                 val selectedSeason = seasons.firstOrNull()?.number ?: 1
-                val episodes = if (item.type == MediaType.TV) {
-                    client.episodes(details, selectedSeason)
-                } else {
-                    emptyList()
-                }
-                DetailUiState(
+
+                // Immediately update UI with enriched details (ratings, RT score, runtime, cast)
+                _detail.value = DetailUiState(
                     loading = false,
                     item = details,
                     recommendations = recommendations,
                     seasons = seasons,
                     selectedSeason = selectedSeason,
-                    episodes = episodes,
+                    episodes = emptyList(),
+                    episodesLoading = item.type == MediaType.TV,
+                )
+
+                if (item.type == MediaType.TV) {
+                    val episodes = client.episodes(details, selectedSeason)
+                    _detail.value = _detail.value.copy(
+                        episodes = episodes,
+                        episodesLoading = false,
+                    )
+                }
+            } catch (error: Throwable) {
+                _detail.value = DetailUiState(
+                    loading = false,
+                    item = item,
+                    error = error.message,
                 )
             }
-                .fold(
-                    onSuccess = { it },
-                    onFailure = {
-                        DetailUiState(
-                            loading = false,
-                            item = item,
-                            error = it.message,
-                        )
-                    },
-                )
         }
     }
 

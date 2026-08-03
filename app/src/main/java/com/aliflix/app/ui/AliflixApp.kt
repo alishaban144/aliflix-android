@@ -2228,11 +2228,6 @@ private fun PlaybackProviderSelector(
                     color = AliflixContentPrimary,
                     style = MaterialTheme.typography.titleMedium,
                 )
-                Text(
-                    text = "Used when you activate Play",
-                    color = AliflixContentTertiary,
-                    style = MaterialTheme.typography.bodySmall,
-                )
             }
             Box(
                 modifier = Modifier
