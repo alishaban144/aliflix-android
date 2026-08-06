@@ -544,7 +544,7 @@ private fun RecommendationQuestionContent(
 
 
 @Composable
-private fun RecommendationResults(
+internal fun RecommendationResults(
     state: RecommendationUiState.Results,
     onOpen: (Media) -> Unit,
     onLoadMore: () -> Unit,

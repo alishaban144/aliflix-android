@@ -12,6 +12,9 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -205,240 +208,195 @@ internal fun DiscoverScreen(
     val suggestions = remember(suggestionOrder, suggestionKind) {
         suggestionsForSession(suggestionOrder, suggestionKind)
     }
+    var recommendModeActive by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(state.query) {
-        if (fieldValue.text != state.query) {
-            fieldValue = TextFieldValue(
-                text = state.query,
-                selection = TextRange(state.query.length),
-            )
+    LaunchedEffect(recommendationState) {
+        if (recommendationState is com.aliflix.app.recommendation.RecommendationUiState.Idle) {
+            recommendModeActive = false
         }
     }
 
-    LaunchedEffect(focusRequestId) {
-        val requestId = focusRequestId ?: return@LaunchedEffect
-        withFrameNanos { }
-        fieldValue = fieldValue.copy(selection = TextRange(fieldValue.text.length))
-        focusRequester.requestFocus()
-        keyboard?.show()
-        onFocusRequestConsumed(requestId)
-    }
-
-    fun submitRecommendation(prompt: String, kind: RecommendationMediaKind? = null) {
-        val cleanPrompt = prompt.trim()
-        if (cleanPrompt.isBlank()) return
-        val requestedKind = kind ?: recommendationKind ?: return
-        if (state.mode != SearchMode.AI) onModeChange(SearchMode.AI)
-        if (recommendationKind != requestedKind) onSelectRecommendationType(requestedKind)
-        onQueryChange(cleanPrompt)
-        onSubmitRecommendation(cleanPrompt)
-    }
-
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(AliflixBackgroundBase),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            AliflixAccentPrimary.copy(alpha = 0.13f),
-                            Color.Transparent,
-                        ),
-                    ),
-                )
-                .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Discover",
-                        color = AliflixContentPrimary,
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Black,
-                        modifier = Modifier.semantics { heading() },
-                    )
-                    Text(
-                        text = if (state.mode == SearchMode.AI) {
-                            "Tell Aliflix what should make the cut"
+        AnimatedContent(
+            targetState = recommendModeActive,
+            transitionSpec = { fadeIn(tween(180)).togetherWith(fadeOut(tween(120))) },
+            label = "discover-mode",
+        ) { recommendMode ->
+            if (recommendMode) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(WindowInsets.systemBars.asPaddingValues())
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                        if (
+                            recommendationState !is com.aliflix.app.recommendation.RecommendationUiState.Idle &&
+                            recommendationState !is com.aliflix.app.recommendation.RecommendationUiState.SelectType
+                        ) {
+                            RecommendationResults(
+                                state = recommendationState as RecommendationUiState.Results,
+                                onOpen = onOpen,
+                                onLoadMore = onLoadMoreRecommendations,
+                                onRetryPage = onRetryRecommendationPage,
+                                onRestart = onRestartRecommendations,
+                                onMoreLike = onMoreLikeRecommendation,
+                                onLessLike = onLessLikeRecommendation,
+                                onSeen = onRecommendationSeen,
+                                onCorrectPreference = onCorrectRecommendationPreference,
+                                listState = recommendationListState,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                            )
                         } else {
-                            "Search directly or explore what is waiting"
-                        },
-                        color = AliflixContentSecondary,
-                        fontSize = 12.sp,
-                    )
-                }
-            }
-
-            DiscoverModeSelector(
-                selected = state.mode,
-                aiEnabled = aiEnabled,
-                onSelect = onModeChange,
-            )
-
-            OutlinedTextField(
-                value = fieldValue,
-                onValueChange = { updated ->
-                    fieldValue = updated
-                    onQueryChange(updated.text)
-                },
-                placeholder = {
-                    Text(
-                        text = if (state.mode == SearchMode.AI) {
-                            "Mood, constraints, or something like a title..."
-                        } else {
-                            "Title, actor, year, or keyword"
-                        },
-                        color = AliflixContentTertiary,
-                        fontSize = 14.sp,
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (state.mode == SearchMode.AI) {
-                            Icons.Rounded.AutoAwesome
-                        } else {
-                            Icons.Filled.Search
-                        },
-                        contentDescription = null,
-                        tint = if (state.mode == SearchMode.AI) {
-                            AliflixAccentSecondary
-                        } else {
-                            AliflixContentSecondary
-                        },
-                    )
-                },
-                trailingIcon = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (fieldValue.text.isNotEmpty()) {
-                            IconButton(
-                                onClick = {
-                                    fieldValue = TextFieldValue("")
-                                    onQueryChange("")
-                                },
-                                modifier = Modifier.testTag("discover-clear-search"),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Close,
-                                    contentDescription = "Clear search",
-                                )
-                            }
+                            Spacer(modifier = Modifier.weight(1f))
                         }
-                        if (state.mode == SearchMode.AI) {
-                            IconButton(
-                                enabled = fieldValue.text.isNotBlank() &&
-                                    recommendationKind != null,
-                                onClick = {
-                                    submitRecommendation(fieldValue.text)
+
+                        RecommendationComposer(
+                            state = recommendationState,
+                            selectedKind = recommendationKind,
+                            onSelectType = onSelectRecommendationType,
+                            onSubmit = { 
+                                val cleanPrompt = it.trim()
+                                if (cleanPrompt.isNotBlank()) {
+                                    val requestedKind = recommendationKind ?: RecommendationMediaKind.MOVIE
+                                    if (recommendationKind != requestedKind) onSelectRecommendationType(requestedKind)
+                                    onQueryChange(cleanPrompt)
+                                    onSubmitRecommendation(cleanPrompt)
                                     keyboard?.hide()
-                                },
-                                modifier = Modifier.testTag("discover-recommend-submit"),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                                    contentDescription = "Find recommendations",
+                                }
+                            },
+                            onAnswer = onAnswerRecommendation,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            recommendModeActive = false
+                            onModeChange(SearchMode.TITLE)
+                        },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(16.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Close Recommend",
+                            tint = AliflixContentPrimary
+                        )
+                    }
+                }
+            } else {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        OutlinedTextField(
+                            value = fieldValue,
+                            onValueChange = { updated ->
+                                fieldValue = updated
+                                onQueryChange(updated.text)
+                            },
+                            placeholder = {
+                                Text(
+                                    text = "Title, actor, year, or keyword",
+                                    color = AliflixContentTertiary,
+                                    fontSize = 14.sp,
                                 )
-                            }
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Search,
+                                    contentDescription = null,
+                                    tint = AliflixContentSecondary,
+                                )
+                            },
+                            trailingIcon = {
+                                if (fieldValue.text.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = {
+                                            fieldValue = TextFieldValue("")
+                                            onQueryChange("")
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "Clear search",
+                                        )
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(
+                                onSearch = { keyboard?.hide() },
+                            ),
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                color = AliflixContentPrimary,
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = AliflixSurfaceElevated,
+                                unfocusedContainerColor = AliflixSurfaceSecondary,
+                                focusedBorderColor = AliflixAccentPrimary,
+                                unfocusedBorderColor = AliflixBorderSubtle,
+                                cursorColor = AliflixAccentSecondary,
+                                focusedTextColor = AliflixContentPrimary,
+                                unfocusedTextColor = AliflixContentPrimary,
+                            ),
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                                .heightIn(min = 58.dp)
+                                .focusRequester(focusRequester),
+                        )
+
+                        CatalogueTypeSelector(
+                            selected = mediaFilter,
+                            onSelect = onMediaFilterChange,
+                        )
+
+                        CatalogueContent(
+                            state = state,
+                            mediaFilter = mediaFilter,
+                            homeContent = homeContent,
+                            recent = recent,
+                            onOpen = onOpen,
+                            gridState = catalogGridState,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                        )
+                    }
+
+                    if (aiEnabled) {
+                        androidx.compose.material3.FloatingActionButton(
+                            onClick = {
+                                recommendModeActive = true
+                                onModeChange(SearchMode.AI)
+                            },
+                            containerColor = AliflixAccentPrimary,
+                            contentColor = AliflixContentPrimary,
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(bottom = 80.dp, end = 24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = "Recommend"
+                            )
                         }
                     }
-                },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(
-                    onSearch = {
-                        if (state.mode == SearchMode.AI) {
-                            submitRecommendation(fieldValue.text)
-                        }
-                        keyboard?.hide()
-                    },
-                ),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    color = AliflixContentPrimary,
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = AliflixSurfaceElevated,
-                    unfocusedContainerColor = AliflixSurfaceSecondary,
-                    focusedBorderColor = AliflixAccentPrimary,
-                    unfocusedBorderColor = AliflixBorderSubtle,
-                    cursorColor = AliflixAccentSecondary,
-                    focusedTextColor = AliflixContentPrimary,
-                    unfocusedTextColor = AliflixContentPrimary,
-                ),
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 58.dp)
-                    .focusRequester(focusRequester)
-                    .testTag("discover-search-field"),
-            )
-
-            if (state.mode == SearchMode.AI) {
-                RecommendationTypeSelector(
-                    selected = recommendationKind,
-                    onSelect = onSelectRecommendationType,
-                )
-            } else {
-                CatalogueTypeSelector(
-                    selected = mediaFilter,
-                    onSelect = onMediaFilterChange,
-                )
-            }
-        }
-
-        AnimatedContent(
-            targetState = state.mode,
-            transitionSpec = { fadeIn(tween(180)).togetherWith(fadeOut(tween(120))) },
-            label = "discover-mode-content",
-            modifier = Modifier.weight(1f),
-        ) { mode ->
-            if (mode == SearchMode.AI) {
-                RecommendationContent(
-                    state = recommendationState,
-                    suggestions = suggestions,
-                    semanticModelState = semanticModelState,
-                    shouldOfferSemanticModel = shouldOfferSemanticModel,
-                    onSuggestion = { suggestion ->
-                        submitRecommendation(suggestion.prompt, suggestion.mediaKind)
-                    },
-                    onSurprise = onSurpriseRecommendation,
-                    onAnswer = onAnswerRecommendation,
-                    onShowMatches = onShowRecommendationMatches,
-                    onBack = onPreviousRecommendationStep,
-                    onRestart = {
-                        onRestartRecommendations()
-                        onQueryChange("")
-                    },
-                    onRetry = onRetryRecommendations,
-                    onOpen = onOpen,
-                    onLoadMore = onLoadMoreRecommendations,
-                    onRetryPage = onRetryRecommendationPage,
-                    onRelax = onRelaxRecommendation,
-                    onDownloadSemanticModel = onDownloadSemanticModel,
-                    onDismissSemanticModelOffer = onDismissSemanticModelOffer,
-                    onMoreLike = onMoreLikeRecommendation,
-                    onLessLike = onLessLikeRecommendation,
-                    onSeen = onRecommendationSeen,
-                    onCorrectPreference = onCorrectRecommendationPreference,
-                    listState = recommendationListState,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                CatalogueContent(
-                    state = state,
-                    mediaFilter = mediaFilter,
-                    homeContent = homeContent,
-                    recent = recent,
-                    onOpen = onOpen,
-                    gridState = catalogGridState,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                }
             }
         }
     }

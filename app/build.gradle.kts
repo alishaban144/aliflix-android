@@ -29,6 +29,11 @@ android {
         versionName = "2.8.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField(
+            "String",
+            "RECOMMENDATION_AI_BASE_URL",
+            "\"https://aliflix-recommendations.alishaban144.workers.dev\""
+        )
     }
 
     flavorDimensions += "formFactor"
@@ -40,11 +45,6 @@ android {
                 "String",
                 "UPDATE_MANIFEST_URL",
                 "\"${mobileUpdateManifestUrl.replace("\"", "\\\"")}\"",
-            )
-            buildConfigField(
-                "String",
-                "RECOMMENDATION_AI_BASE_URL",
-                "\"https://aliflix-recommendations.alishaban144.workers.dev\""
             )
         }
         create("tv") {

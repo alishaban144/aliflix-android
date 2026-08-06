@@ -172,6 +172,16 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         refreshHome()
+        val connectivityManager = application.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val networkRequest = android.net.NetworkRequest.Builder()
+            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            .build()
+        connectivityManager.registerNetworkCallback(networkRequest, object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                refreshHomeIfStale()
+            }
+        })
         viewModelScope.launch {
             while (true) {
                 delay(HOME_REFRESH_INTERVAL_MS)
@@ -250,7 +260,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             loading = false,
             error = null,
         )
-        searchJob = viewModelScope.launch {
+        searchJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
             try {
                 delay(220)
                 if (_search.value.query != query || _search.value.mode != mode) {
@@ -311,7 +321,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             type = type,
             loading = true,
         )
-        genreJob = viewModelScope.launch {
+        genreJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
             _genre.value = runCatching { client.browseGenre(genre, type) }
                 .fold(
                     onSuccess = { items ->
@@ -354,39 +364,44 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         detailJob?.cancel()
         episodeJob?.cancel()
         _detail.value = DetailUiState(loading = true, item = item)
-        detailJob = viewModelScope.launch {
+        detailJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
             try {
-                val detailsRequest = async { client.details(item) }
                 val seasonsRequest = async {
                     if (item.type == MediaType.TV) client.seasons(item) else emptyList()
                 }
-                val (details, recommendations) = detailsRequest.await()
-                library.refreshMetadata(details)
-                val seasons = seasonsRequest.await()
-                val selectedSeason = seasons.firstOrNull()?.number ?: 1
 
-                // Immediately update UI with enriched details (ratings, RT score, runtime, cast)
-                _detail.value = DetailUiState(
-                    loading = false,
-                    item = details,
-                    recommendations = recommendations,
-                    seasons = seasons,
-                    selectedSeason = selectedSeason,
-                    episodes = emptyList(),
-                    episodesLoading = item.type == MediaType.TV,
-                )
-
-                if (item.type == MediaType.TV) {
-                    val episodes = client.episodes(details, selectedSeason)
+                launch {
+                    val seasons = seasonsRequest.await()
+                    val selectedSeason = seasons.firstOrNull()?.number ?: 1
                     _detail.value = _detail.value.copy(
-                        episodes = episodes,
-                        episodesLoading = false,
+                        seasons = seasons,
+                        selectedSeason = selectedSeason,
+                        episodesLoading = item.type == MediaType.TV,
+                    )
+                    
+                    if (item.type == MediaType.TV) {
+                        val currentItem = _detail.value.item ?: item
+                        val episodes = client.episodes(currentItem, selectedSeason)
+                        _detail.value = _detail.value.copy(
+                            episodes = episodes,
+                            episodesLoading = false,
+                        )
+                    }
+                }
+
+                client.details(item) { details, recommendations ->
+                    library.refreshMetadata(details)
+                    _detail.value = _detail.value.copy(
+                        loading = false,
+                        item = details,
+                        recommendations = recommendations ?: emptyList(),
                     )
                 }
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Throwable) {
-                _detail.value = DetailUiState(
+                _detail.value = _detail.value.copy(
                     loading = false,
-                    item = item,
                     error = error.message,
                 )
             }
@@ -404,7 +419,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             episodesLoading = true,
             error = null,
         )
-        episodeJob = viewModelScope.launch {
+        episodeJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
             _detail.value = runCatching { client.episodes(item, number) }
                 .fold(
                     onSuccess = { episodes ->

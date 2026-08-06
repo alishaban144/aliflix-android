@@ -350,11 +350,11 @@ internal fun isSafeTrendingItem(item: Media): Boolean {
         explicitTrendingPhrases.none(searchable::contains)
 }
 
-private object RecommendationRequestPriorityKey :
-    CoroutineContext.Key<RecommendationRequestPriorityElement>
+internal object ForegroundRequestPriorityKey :
+    CoroutineContext.Key<ForegroundRequestPriorityElement>
 
-private object RecommendationRequestPriorityElement :
-    AbstractCoroutineContextElement(RecommendationRequestPriorityKey)
+internal object ForegroundRequestPriorityElement :
+    AbstractCoroutineContextElement(ForegroundRequestPriorityKey)
 
 /**
  * One bounded scheduler for all catalogue traffic. Foreground recommendation
@@ -363,38 +363,37 @@ private object RecommendationRequestPriorityElement :
  */
 private class CatalogRequestScheduler {
     private val globalGate = Semaphore(MAX_CONCURRENT_REQUESTS)
+    private val backgroundGate = Semaphore(MAX_BACKGROUND_REQUESTS)
     private val hostGates = ConcurrentHashMap<String, Semaphore>()
-    private val foregroundWaiters = AtomicInteger(0)
 
     suspend fun <T> execute(
         url: String,
         foreground: Boolean,
         block: suspend () -> T,
     ): T {
-        if (foreground) foregroundWaiters.incrementAndGet()
-        try {
-            if (!foreground) {
-                while (foregroundWaiters.get() > 0) {
-                    delay(BACKGROUND_YIELD_DELAY_MS)
-                }
-            }
-            val host = runCatching { URL(url).host.lowercase() }
-                .getOrDefault("unknown")
-            val hostGate = hostGates.computeIfAbsent(host) {
-                Semaphore(MAX_CONCURRENT_REQUESTS_PER_HOST)
-            }
+        val host = runCatching { URL(url).host.lowercase() }
+            .getOrDefault("unknown")
+        val hostGate = hostGates.computeIfAbsent(host) {
+            Semaphore(MAX_CONCURRENT_REQUESTS_PER_HOST)
+        }
+        
+        suspend fun acquireGlobalAndHost(): T {
             return globalGate.withPermit {
                 hostGate.withPermit { block() }
             }
-        } finally {
-            if (foreground) foregroundWaiters.decrementAndGet()
+        }
+        
+        return if (!foreground) {
+            backgroundGate.withPermit { acquireGlobalAndHost() }
+        } else {
+            acquireGlobalAndHost()
         }
     }
 
     private companion object {
         const val MAX_CONCURRENT_REQUESTS = 4
+        const val MAX_BACKGROUND_REQUESTS = 3
         const val MAX_CONCURRENT_REQUESTS_PER_HOST = 4
-        const val BACKGROUND_YIELD_DELAY_MS = 30L
     }
 }
 
@@ -527,7 +526,7 @@ class CatalogClient(
                     requestScheduler.execute(
                         url = url,
                         foreground =
-                            coroutineContext[RecommendationRequestPriorityKey] != null,
+                            coroutineContext[ForegroundRequestPriorityKey] != null,
                     ) {
                         rawImdbGraphQlTransport.postJson(url, body, headers)
                     }
@@ -569,7 +568,7 @@ class CatalogClient(
             requestScheduler.execute(
                 url = url,
                 foreground =
-                    coroutineContext[RecommendationRequestPriorityKey] != null,
+                    coroutineContext[ForegroundRequestPriorityKey] != null,
             ) {
                 rawPageLoader(url)
             }
@@ -580,7 +579,7 @@ class CatalogClient(
             requestScheduler.execute(
                 url = url,
                 foreground =
-                    coroutineContext[RecommendationRequestPriorityKey] != null,
+                    coroutineContext[ForegroundRequestPriorityKey] != null,
             ) {
                 rawJsonPoster(url, body)
             }
@@ -594,7 +593,7 @@ class CatalogClient(
         requestScheduler.execute(
             url = url,
             foreground =
-                coroutineContext[RecommendationRequestPriorityKey] != null,
+                coroutineContext[ForegroundRequestPriorityKey] != null,
         ) {
             rawFormTransport.postForm(url, fields, headers)
         }
@@ -1155,7 +1154,7 @@ class CatalogClient(
         cursor: RecommendationPageCursor = RecommendationPageCursor(),
         requiredFields: RequiredMetadataFields,
     ): CatalogRecommendationPage = withContext(
-        computationDispatcher + RecommendationRequestPriorityElement,
+        computationDispatcher + ForegroundRequestPriorityElement,
     ) {
         supervisorScope {
         cacheStore?.loadRecommendationCatalogPage(
@@ -3899,45 +3898,25 @@ class CatalogClient(
         return true
     }
 
-    suspend fun details(item: Media): Pair<Media, List<Media>> = supervisorScope {
+    suspend fun details(
+        item: Media,
+        onProgress: suspend (Media, List<Media>?) -> Unit,
+    ) = supervisorScope {
         val current = catalogue.firstOrNull { it.key == item.key } ?: item
-        val pageRequest = async {
-            suspendOrNull {
-                pageLoader(
-                    "$TMDB_SITE_URL/${item.type.routeName}/${item.id}?language=en-US",
-                )
-            }
+        val pageHtml = suspendOrNull {
+            pageLoader(
+                "$TMDB_SITE_URL/${item.type.routeName}/${item.id}?language=en-US",
+            )
         }
-        val ratingsRequest = async {
-            ratingsFor(current)
-        }
-        val pageHtml = pageRequest.await()
         val metadata = pageHtml?.let {
             runCatching { parseTitleDetails(it, current) }.getOrDefault(current)
         } ?: current
         val pageRecommendations = pageHtml?.let {
             runCatching { parseRelatedResults(it) }.getOrDefault(emptyList())
         }.orEmpty()
-        var ratings = ratingsRequest.await()
-        if (
-            metadata.imdbId != null &&
-            metadata.imdbId != current.imdbId &&
-            ratings.imdbState != RatingSourceState.VERIFIED
-        ) {
-            ratings = ratingsFor(metadata)
-        }
-        val enriched = metadata.copy(
-            imdbId = ratings.imdbId ?: metadata.imdbId,
-            imdbRating = ratings.imdb ?: metadata.imdbRating,
-            imdbVoteCount = ratings.imdbVoteCount ?: metadata.imdbVoteCount,
-            imdbRatingState = ratings.imdbState ?: metadata.imdbRatingState,
-            rottenTomatoesRating = ratings.rottenTomatoes
-                ?: metadata.rottenTomatoesRating,
-        )
-        catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
 
         val locallyRelated = RelatedContentEngine.rank(
-            source = enriched,
+            source = metadata,
             candidates = catalogue,
             candidateScoreLimit = RECOMMENDATION_LOCAL_RELATED_SCORE_LIMIT,
             resultLimit = 18,
@@ -3946,7 +3925,47 @@ class CatalogClient(
             .filter { it.type == item.type && it.key != item.key }
             .distinctBy(Media::key)
             .take(18)
-        enriched to recommendations
+
+        catalogue = (listOf(metadata) + catalogue.filterNot { it.key == metadata.key })
+        onProgress(metadata, recommendations)
+
+        val cachedRottenTomatoes = rottenTomatoesRatingsCache[metadata.key]
+
+        val imdbJob = async {
+            if (metadata.imdbId == null) return@async
+            try {
+                val imdbSnapshot = imdbRatingRepository.ratingFor(metadata)
+                val enriched = catalogue.firstOrNull { it.key == metadata.key }?.copy(
+                    imdbRating = imdbSnapshot.rating,
+                    imdbVoteCount = imdbSnapshot.voteCount,
+                    imdbRatingState = imdbSnapshot.state,
+                )
+                if (enriched != null) {
+                    catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
+                    onProgress(enriched, recommendations)
+                    enriched.imdbRating?.let { imdbRatingsCache[enriched.key] = it }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {}
+        }
+
+        val rtJob = async {
+            val rt = cachedRottenTomatoes ?: suspendOrNull { loadRottenTomatoesRating(metadata) }
+            if (rt != null) {
+                val enriched = catalogue.firstOrNull { it.key == metadata.key }?.copy(
+                    rottenTomatoesRating = rt,
+                )
+                if (enriched != null) {
+                    catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
+                    onProgress(enriched, recommendations)
+                    rottenTomatoesRatingsCache[enriched.key] = rt
+                }
+            }
+        }
+
+        imdbJob.await()
+        rtJob.await()
     }
 
     suspend fun seasons(item: Media): List<Season> {

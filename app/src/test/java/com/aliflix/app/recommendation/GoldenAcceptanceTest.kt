@@ -1,7 +1,7 @@
 package com.aliflix.app.recommendation
 
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.model.RecommendationContentType
+import com.aliflix.app.recommendation.RecommendationContentType
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Test
