@@ -101,7 +101,7 @@ data class InterpretationRequest(
     fun toJson(): JSONObject = JSONObject().apply {
         put("requestId", requestId)
         put("query", query)
-        put("mediaType", mediaType)
+        put("mediaType", mediaType.lowercase())
         put("deterministicConstraints", JSONObject().apply {
             put("includedGenres", JSONArray(deterministicConstraints.includedGenres))
             put("excludedGenres", JSONArray(deterministicConstraints.excludedGenres))
@@ -248,7 +248,7 @@ data class VerificationCandidate(
     fun toJson(): JSONObject = JSONObject().apply {
         put("candidateId", candidateId)
         put("tmdbId", tmdbId)
-        put("mediaType", mediaType)
+        put("mediaType", mediaType.lowercase())
         put("title", title)
         put("originalTitle", originalTitle)
         put("overview", overview)
@@ -272,7 +272,7 @@ data class VerificationRequest(
     fun toJson(): JSONObject = JSONObject().apply {
         put("requestId", requestId)
         put("originalQuery", originalQuery)
-        put("mediaType", mediaType)
+        put("mediaType", mediaType.lowercase())
         put("requiredConceptGroups", JSONArray(requiredConceptGroups.map { it.toJson() }))
         put("excludedConcepts", JSONArray(excludedConcepts))
         put("hardConstraints", hardConstraints)
