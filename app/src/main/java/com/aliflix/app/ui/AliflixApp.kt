@@ -215,6 +215,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import com.aliflix.app.ui.common.MobileTopSafeArea
 
 internal enum class AppTab(val label: String) {
     HOME("Home"),
@@ -3171,14 +3172,13 @@ private fun MySpaceScreen(
                         AliflixBlack,
                     ),
                 ),
-            )
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(top = 8.dp),
+            ),
     ) {
+        MobileTopSafeArea()
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
+                .padding(start = 16.dp, end = 12.dp, top = 0.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(

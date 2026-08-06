@@ -13,12 +13,16 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import com.aliflix.app.ui.common.MobileTopSafeArea
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -228,35 +232,45 @@ internal fun DiscoverScreen(
         ) { recommendMode ->
             if (recommendMode) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(WindowInsets.systemBars.asPaddingValues())
+                    modifier = Modifier.fillMaxSize()
                 ) {
                     Column(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.Bottom
                     ) {
-                        if (
-                            recommendationState !is com.aliflix.app.recommendation.RecommendationUiState.Idle &&
-                            recommendationState !is com.aliflix.app.recommendation.RecommendationUiState.SelectType
-                        ) {
-                            RecommendationResults(
-                                state = recommendationState as RecommendationUiState.Results,
-                                onOpen = onOpen,
-                                onLoadMore = onLoadMoreRecommendations,
-                                onRetryPage = onRetryRecommendationPage,
-                                onRestart = onRestartRecommendations,
-                                onMoreLike = onMoreLikeRecommendation,
-                                onLessLike = onLessLikeRecommendation,
-                                onSeen = onRecommendationSeen,
-                                onCorrectPreference = onCorrectRecommendationPreference,
-                                listState = recommendationListState,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth()
-                            )
-                        } else {
-                            Spacer(modifier = Modifier.weight(1f))
+                        MobileTopSafeArea()
+
+                        when (recommendationState) {
+                            is RecommendationUiState.Idle,
+                            is RecommendationUiState.SelectType -> {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                            is RecommendationUiState.Results -> {
+                                RecommendationResults(
+                                    state = recommendationState,
+                                    onOpen = onOpen,
+                                    onLoadMore = onLoadMoreRecommendations,
+                                    onRetryPage = onRetryRecommendationPage,
+                                    onRestart = onRestartRecommendations,
+                                    onMoreLike = onMoreLikeRecommendation,
+                                    onLessLike = onLessLikeRecommendation,
+                                    onSeen = onRecommendationSeen,
+                                    onCorrectPreference = onCorrectRecommendationPreference,
+                                    listState = recommendationListState,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth()
+                                )
+                            }
+                            is RecommendationUiState.Discovering,
+                            is RecommendationUiState.Question,
+                            is RecommendationUiState.Empty,
+                            is RecommendationUiState.SourceUnavailable,
+                            is RecommendationUiState.Relaxation,
+                            is RecommendationUiState.Error -> {
+                                Spacer(modifier = Modifier.weight(1f))
+                                // RecommendationComposer will handle the remaining summary/error states inline below
+                            }
                         }
 
                         RecommendationComposer(
@@ -274,6 +288,10 @@ internal fun DiscoverScreen(
                                 }
                             },
                             onAnswer = onAnswerRecommendation,
+                            onRestart = onRestartRecommendations,
+                            onRelax = onRelaxRecommendation,
+                            onRetry = onRetryRecommendations,
+                            onShowMatches = onShowRecommendationMatches,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(16.dp)
@@ -287,6 +305,7 @@ internal fun DiscoverScreen(
                         },
                         modifier = Modifier
                             .align(Alignment.TopEnd)
+                            .windowInsetsPadding(WindowInsets.statusBars)
                             .padding(16.dp)
                     ) {
                         Icon(
@@ -299,6 +318,23 @@ internal fun DiscoverScreen(
             } else {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize()) {
+                        MobileTopSafeArea()
+
+                        Text(
+                            text = "Discover",
+                            color = AliflixContentPrimary,
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
+                        )
+                        
+                        Text(
+                            text = "Search movies and series",
+                            color = AliflixContentSecondary,
+                            fontSize = 16.sp,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                        )
+
                         OutlinedTextField(
                             value = fieldValue,
                             onValueChange = { updated ->
@@ -378,23 +414,42 @@ internal fun DiscoverScreen(
                     }
 
                     if (aiEnabled) {
-                        androidx.compose.material3.FloatingActionButton(
+                        androidx.compose.material3.ExtendedFloatingActionButton(
                             onClick = {
                                 recommendModeActive = true
                                 onModeChange(SearchMode.AI)
                             },
-                            containerColor = AliflixAccentPrimary,
+                            containerColor = AliflixSurfaceElevated,
                             contentColor = AliflixContentPrimary,
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(26.dp),
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
                                 .padding(bottom = 80.dp, end = 24.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AutoAwesome,
-                                contentDescription = "Recommend"
-                            )
-                        }
+                                .heightIn(min = 52.dp),
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Rounded.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = AliflixAccentPrimary
+                                )
+                            },
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "Ask Aliflix",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "BETA",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 9.sp,
+                                        color = AliflixContentSecondary
+                                    )
+                                }
+                            }
+                        )
                     }
                 }
             }
