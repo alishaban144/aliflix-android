@@ -51,6 +51,7 @@ interface RecommendationCandidateRepository {
 
 class CatalogRecommendationCandidateRepository(
     private val client: CatalogClient,
+    private val aiClient: RecommendationAiClient
 ) : RecommendationCandidateRepository {
     override suspend fun seedCandidates(
         spec: CatalogDiscoverySpec,
@@ -139,6 +140,79 @@ class CatalogRecommendationCandidateRepository(
             media = verified.media,
             metadata = verified.metadata.toRecommendationMetadata(),
         )
+    }
+
+    suspend fun resolveAiCandidates(
+        interpretation: InterpretationResponse,
+        limit: Int = 25
+    ): List<VerificationCandidate> = supervisorScope {
+        val gate = Semaphore(4)
+        
+        // 1. Resolve keywords
+        val allKeywordSearchPhrases = interpretation.keywordSearchPhrases.toSet()
+        val resolvedKeywords = allKeywordSearchPhrases.map { phrase ->
+            async {
+                gate.withPermit {
+                    client.scrapeTmdbKeywordSearch(phrase)
+                }
+            }
+        }.awaitAll().flatten().distinctBy { it.id }
+        
+        val keywordIds = resolvedKeywords.map { it.id }.joinToString("|")
+        
+        // 2. Discover TMDB pages
+        val discoverJobs = mutableListOf<kotlinx.coroutines.Deferred<List<Media>>>()
+        
+        // 2a. Broad searches
+        interpretation.broadSearchPhrases.forEach { phrase ->
+            discoverJobs += async {
+                gate.withPermit {
+                    try { client.search(phrase) } catch (e: Exception) { emptyList() }
+                }
+            }
+        }
+        
+        // 2b. Keyword searches
+        if (keywordIds.isNotEmpty()) {
+            discoverJobs += async {
+                gate.withPermit {
+                    try { client.scrapeTmdbDiscoverPage("with_keywords=$keywordIds") } catch (e: Exception) { emptyList() }
+                }
+            }
+        }
+        
+        val candidates = discoverJobs.awaitAll().flatten()
+            .distinctBy { it.key }
+            .take(limit)
+            
+        // 3. Local enrichment (verifyRecommendationItem)
+        val verifiedCandidates = candidates.map { media ->
+            async {
+                gate.withPermit {
+                    try {
+                        val required = RequiredMetadataFields(runtime = true, originalLanguage = true)
+                        val verified = client.verifyRecommendationItem(media, required)
+                        VerificationCandidate(
+                            candidateId = verified.media.key,
+                            tmdbId = verified.media.id,
+                            mediaType = verified.media.type.name.lowercase(),
+                            title = verified.media.title,
+                            originalTitle = verified.media.title,
+                            overview = verified.media.overview,
+                            genres = verified.media.genres,
+                            keywords = emptyList(), // Not fetched locally
+                            releaseYear = verified.media.year.toIntOrNull(),
+                            directorOrCreators = listOfNotNull(verified.metadata.director),
+                            principalCast = verified.media.cast
+                        )
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }
+        }.awaitAll().filterNotNull()
+        
+        verifiedCandidates
     }
 
     override suspend fun relatedCandidates(

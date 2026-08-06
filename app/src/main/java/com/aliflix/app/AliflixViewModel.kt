@@ -104,14 +104,19 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         scope = viewModelScope,
         ioDispatcher = recommendationDispatchers.io,
     )
+    private val aiClient = com.aliflix.app.recommendation.RecommendationAiClient(
+        baseUrl = BuildConfig.RECOMMENDATION_AI_BASE_URL,
+        ioDispatcher = recommendationDispatchers.io
+    )
     private val recommendationOrchestrator = RecommendationOrchestrator(
         scope = viewModelScope,
-        repository = CatalogRecommendationCandidateRepository(client),
+        repository = CatalogRecommendationCandidateRepository(client, aiClient),
         store = recommendationStore,
         likesProvider = { library.likes.value },
         recentlyPlayedProvider = { library.recent.value },
         semanticBatchScorerProvider = semanticModelManager::batchScorerOrNull,
         dispatchers = recommendationDispatchers,
+        aiClient = aiClient
     )
     private var searchJob: Job? = null
     private var detailJob: Job? = null

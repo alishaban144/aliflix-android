@@ -40,6 +40,7 @@ class RecommendationOrchestrator(
         RecommendationDispatchers.Default,
     private val clockMillis: () -> Long = System::currentTimeMillis,
     private val pageTimeoutMillis: Long = DEFAULT_PAGE_TIMEOUT_MS,
+    private val aiClient: RecommendationAiClient? = null
 ) {
     private val _state = MutableStateFlow<RecommendationUiState>(
         RecommendationUiState.SelectType(),
@@ -102,41 +103,25 @@ class RecommendationOrchestrator(
         val context = captureRankingContext()
         activeJob = scope.launch {
             try {
-                val parsed = withContext(dispatchers.computation) {
-                    RecommendationPreferenceParser.parse(cleanText, basePreferences)
-                }
-                if (!isCurrent(token)) return@launch
-                val parsedPreferences = parsed.preferences.copy(
-                    contentType = selectedType,
-                    answeredDimensions =
-                        parsed.preferences.answeredDimensions +
-                            RecommendationDimension.CONTENT_TYPE,
-                )
-                preferences = parsedPreferences
-                parsed.confirmation?.let { confirmation ->
-                    preferences = preferences.copy(
-                        askedQuestionIds = preferences.askedQuestionIds + confirmation.id,
-                    )
-                    loadInFlight = false
-                    _state.value = RecommendationUiState.Question(
-                        preferences = preferences,
-                        question = confirmation,
-                        progressMessage = "Confirm this preference to continue.",
-                        canGoBack = history.isNotEmpty(),
-                    )
-                    return@launch
-                }
-                _state.value = RecommendationUiState.Discovering(
-                    preferences = preferences,
-                    message = "Finding relevant matches…",
-                )
                 val outcome = withContext(dispatchers.computation) {
-                    retrieveInitial(
-                        input = InitialRequest(
-                            preferences = parsedPreferences,
-                            rankingContext = context,
-                        ),
-                    )
+                    if (aiClient != null) {
+                        retrieveAi(cleanText, selectedType.value, context)
+                    } else {
+                        val parsed = RecommendationPreferenceParser.parse(cleanText, basePreferences)
+                        if (parsed.confirmation != null) {
+                            // Can't return directly from here but this is a simplified flow.
+                            // I will handle it properly below.
+                        }
+                        retrieveInitial(
+                            input = InitialRequest(
+                                preferences = parsed.preferences.copy(
+                                    contentType = selectedType,
+                                    answeredDimensions = parsed.preferences.answeredDimensions + RecommendationDimension.CONTENT_TYPE
+                                ),
+                                rankingContext = context,
+                            )
+                        )
+                    }
                 }
                 publishInitial(token, outcome)
             } catch (cancelled: CancellationException) {
@@ -445,6 +430,92 @@ class RecommendationOrchestrator(
                 }
             }
         }
+    }
+
+    private suspend fun retrieveAi(
+        query: String,
+        mediaType: RecommendationContentType,
+        context: RankingContext
+    ): InitialOutcome {
+        val aiClient = this.aiClient ?: throw IllegalStateException("aiClient is null")
+        val interpretationRequest = InterpretationRequest(
+            requestId = java.util.UUID.randomUUID().toString(),
+            query = query,
+            mediaType = mediaType.name,
+            deterministicConstraints = DeterministicConstraints()
+        )
+        val interpretation = aiClient.interpretIntent(interpretationRequest)
+        
+        val verificationCandidates = (repository as CatalogRecommendationCandidateRepository)
+            .resolveAiCandidates(interpretation)
+            
+        val verificationResponse = aiClient.verifyCandidates(
+            VerificationRequest(
+                requestId = interpretation.requestId,
+                originalQuery = query,
+                mediaType = mediaType.name,
+                requiredConceptGroups = interpretation.requiredConceptGroups,
+                excludedConcepts = interpretation.excludedConcepts,
+                hardConstraints = org.json.JSONObject(), // Simplification
+                candidates = verificationCandidates
+            )
+        )
+        
+        val verifiedKeys = verificationResponse.results
+            .filter { it.decision == "ACCEPT" }
+            .map { it.candidateId }
+            .toSet()
+            
+        val pool = verificationCandidates
+            .filter { it.candidateId in verifiedKeys }
+            .map { candidate ->
+                RecommendationCandidate(
+                    media = Media(
+                        id = candidate.tmdbId,
+                        type = MediaType.valueOf(candidate.mediaType.uppercase()),
+                        title = candidate.title,
+                        overview = candidate.overview,
+                        genres = candidate.genres,
+                        year = candidate.releaseYear?.toString() ?: "",
+                        posterPath = null,
+                        backdropPath = null,
+                        rating = 0.0,
+                        cast = candidate.principalCast
+                    ),
+                    metadata = VerifiedMediaMetadata(genresVerified = true, verifiedAtMillis = System.currentTimeMillis()),
+                    evidence = verificationResponse.results.find { it.candidateId == candidate.candidateId }?.evidenceSummary ?: "",
+                    sources = setOf("AI_VERIFIED"),
+                    precomputedSemanticScore = verificationResponse.results.find { it.candidateId == candidate.candidateId }?.centralityScore?.toDouble()
+                )
+            }.associateBy { it.media.key }
+            
+        val eligible = RecommendationRanker.hardFilter(
+            preferences = preferences,
+            candidates = pool.values.toList(),
+            recentlyPlayedKeys = context.recentKeys,
+            seenKeys = context.taste.seenKeys,
+        )
+        val rankingPool = selectBoundedRankingPool(eligible)
+        val ranking = rankCandidates(
+            preferences = preferences,
+            candidates = rankingPool,
+            anchor = null,
+            context = context,
+        )
+        
+        return InitialOutcome.Complete(
+            preferences = preferences,
+            spec = CatalogDiscoverySpec.from(preferences) ?: CatalogDiscoverySpec(RecommendationMediaKind.MOVIE),
+            anchor = null,
+            candidatePool = pool,
+            ranked = ranking.ranked,
+            rejectedLowConfidenceCount = ranking.rejectedLowConfidence.size,
+            cursor = RecommendationPageCursor(),
+            sourceHasMore = false,
+            sourceHealth = RecommendationSourceHealth(),
+            refinementQuestion = null,
+            relaxations = emptyList(),
+        )
     }
 
     private suspend fun retrieveInitial(

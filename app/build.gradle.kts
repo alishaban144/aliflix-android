@@ -25,8 +25,8 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 49
-        versionName = "2.7.30"
+        versionCode = 50
+        versionName = "2.8.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -40,6 +40,11 @@ android {
                 "String",
                 "UPDATE_MANIFEST_URL",
                 "\"${mobileUpdateManifestUrl.replace("\"", "\\\"")}\"",
+            )
+            buildConfigField(
+                "String",
+                "RECOMMENDATION_AI_BASE_URL",
+                "\"https://aliflix-recommendations.alishaban144.workers.dev\""
             )
         }
         create("tv") {

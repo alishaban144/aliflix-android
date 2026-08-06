@@ -535,7 +535,22 @@ class CatalogClient(
             },
         )
 
-    /** Cancels optional recommendation discovery owned by this client. */
+    suspend fun scrapeTmdbDiscoverPage(
+        pathParams: String
+    ): List<Media> = supervisorScope {
+        val url = "https://www.themoviedb.org/discover/movie?$pathParams"
+        val html = pageLoader(url)
+        com.aliflix.app.recommendation.TmdbKeywordParser.parseDiscoverPage(html, MediaType.MOVIE)
+    }
+
+    suspend fun scrapeTmdbKeywordSearch(
+        query: String
+    ): List<com.aliflix.app.recommendation.ResolvedKeyword> = supervisorScope {
+        val url = "https://www.themoviedb.org/search/keyword?query=${URLEncoder.encode(query, "UTF-8")}"
+        val html = pageLoader(url)
+        com.aliflix.app.recommendation.TmdbKeywordParser.parseKeywordSearchResults(html)
+    }
+
     fun close() {
         val jobToCancel = synchronized(recommendationSupplementResults) {
             if (supplementsClosed) return
