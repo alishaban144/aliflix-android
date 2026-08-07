@@ -280,6 +280,34 @@ data class VerificationRequest(
     }
 }
 
+/**
+ * The decision values that the Cloudflare verification Worker returns.
+ *
+ * Android previously compared against the nonexistent value "ACCEPT",
+ * which silently rejected every candidate.  This typed enum makes the
+ * contract explicit.
+ */
+enum class VerificationDecision {
+    DEFINITE_MATCH,
+    PROBABLE_MATCH,
+    INSUFFICIENT_EVIDENCE,
+    REJECT;
+
+    /** True when the candidate should be accepted into the ranking pool. */
+    fun isAccepted(confidence: Double): Boolean = when (this) {
+        DEFINITE_MATCH -> true
+        PROBABLE_MATCH -> confidence >= 0.70
+        INSUFFICIENT_EVIDENCE -> false
+        REJECT -> false
+    }
+
+    companion object {
+        fun parse(raw: String): VerificationDecision =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+                ?: REJECT
+    }
+}
+
 data class VerifiedConceptEvidence(
     val groupId: String,
     val status: String,
@@ -296,7 +324,7 @@ data class VerifiedConceptEvidence(
 
 data class VerificationResult(
     val candidateId: String,
-    val decision: String,
+    val decision: VerificationDecision,
     val confidence: Double,
     val centralityScore: Double,
     val requiredGroupAssessments: List<VerifiedConceptEvidence>,
@@ -307,7 +335,7 @@ data class VerificationResult(
     companion object {
         fun fromJson(json: JSONObject): VerificationResult = VerificationResult(
             candidateId = json.getString("candidateId"),
-            decision = json.getString("decision"),
+            decision = VerificationDecision.parse(json.getString("decision")),
             confidence = json.getDouble("confidence"),
             centralityScore = json.getDouble("centralityScore"),
             requiredGroupAssessments = json.optJSONArray("requiredGroupAssessments")?.let { arr -> List(arr.length()) { VerifiedConceptEvidence.fromJson(arr.getJSONObject(it)) } } ?: emptyList(),

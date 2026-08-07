@@ -462,7 +462,7 @@ class RecommendationOrchestrator(
         )
         
         val verifiedKeys = verificationResponse.results
-            .filter { it.decision == "ACCEPT" }
+            .filter { it.decision.isAccepted(it.confidence) }
             .map { it.candidateId }
             .toSet()
             
