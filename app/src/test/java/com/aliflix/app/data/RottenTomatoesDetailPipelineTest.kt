@@ -4,6 +4,7 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
 import com.aliflix.app.model.HomeContent
+import com.aliflix.app.data.omdb.OmdbMetadataClient
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
@@ -57,10 +58,12 @@ class RottenTomatoesDetailPipelineTest {
             },
             {},
         )
+        val dummyOmdbClient = OmdbMetadataClient(baseUrl = "http://127.0.0.1:1", ioDispatcher = Dispatchers.Unconfined)
         return CatalogClient(
             cacheStore = cache,
             pageLoader = { "<html><head><title>The Godfather</title></head><body></body></html>" },
             rottenTomatoesClientOverride = rtClient,
+            omdbClientOverride = dummyOmdbClient,
             ioDispatcher = Dispatchers.Unconfined,
             computationDispatcher = Dispatchers.Unconfined,
         )
