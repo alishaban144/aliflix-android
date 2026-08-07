@@ -165,6 +165,7 @@ internal fun DiscoverScreen(
     onFocusRequestConsumed: (Int) -> Unit,
     onQueryChange: (String) -> Unit,
     onSubmitSearch: (String) -> Unit,
+    onSearchTitles: suspend (String) -> List<Media>,
     onModeChange: (SearchMode) -> Unit,
     onOpen: (Media) -> Unit,
     onSelectRecommendationType: (RecommendationMediaKind) -> Unit,
@@ -275,20 +276,12 @@ internal fun DiscoverScreen(
             label = "discover-mode",
         ) { recommendMode ->
             if (recommendMode) {
-                Box(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.Bottom
-                    ) {
-                        MobileTopSafeArea()
+                Column(modifier = Modifier.fillMaxSize()) {
+                    MobileTopSafeArea()
 
                         when (recommendationState) {
                             is RecommendationUiState.Idle,
-                            is RecommendationUiState.SelectType -> {
-                                Spacer(modifier = Modifier.height(16.dp))
-                            }
+                            is RecommendationUiState.SelectType -> Unit
                             is RecommendationUiState.Results -> {
                                 RecommendationResults(
                                     state = recommendationState,
@@ -312,7 +305,6 @@ internal fun DiscoverScreen(
                             is RecommendationUiState.SourceUnavailable,
                             is RecommendationUiState.Relaxation,
                             is RecommendationUiState.Error -> {
-                                Spacer(modifier = Modifier.height(16.dp))
                                 // RecommendationComposer will handle the remaining summary/error states inline below
                             }
                         }
@@ -321,6 +313,7 @@ internal fun DiscoverScreen(
                             state = recommendationState,
                             selectedKind = recommendationKind,
                             onSelectType = onSelectRecommendationType,
+                            onSearchTitles = onSearchTitles,
                             onSubmit = { 
                                 val draft = it
                                 if (draft.freeText.isNotBlank() || draft.similarityTitle?.isNotBlank() == true || draft.genres.isNotEmpty() || draft.moods.isNotEmpty()) {
@@ -336,29 +329,14 @@ internal fun DiscoverScreen(
                             onRelax = onRelaxRecommendation,
                             onRetry = onRetryRecommendations,
                             onShowMatches = onShowRecommendationMatches,
+                            onBack = {
+                                recommendModeActive = false
+                                onModeChange(SearchMode.TITLE)
+                            },
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
-                                .padding(16.dp)
                         )
-                    }
-
-                    IconButton(
-                        onClick = {
-                            recommendModeActive = false
-                            onModeChange(SearchMode.TITLE)
-                        },
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .windowInsetsPadding(WindowInsets.statusBars)
-                            .padding(16.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = "Close Recommend",
-                            tint = AliflixContentPrimary
-                        )
-                    }
                 }
             } else {
                 Box(modifier = Modifier.fillMaxSize()) {

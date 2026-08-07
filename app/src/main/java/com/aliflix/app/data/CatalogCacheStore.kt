@@ -136,7 +136,7 @@ class AndroidCatalogCacheStore internal constructor(
     private val recommendationPageFile = File(cacheDir, "recommendation-pages-v3.json")
     private val metadataFile = File(cacheDir, "recommendation-metadata-v1.json")
     private val imdbRatingFile = File(cacheDir, "imdb-ratings-v1.json")
-    private val rottenTomatoesRatingFile = File(cacheDir, "rotten-tomatoes-ratings-v2.json")
+    private val rottenTomatoesRatingFile = File(cacheDir, "rotten-tomatoes-ratings-v3.json")
     private val mutex = Mutex()
     private val cacheScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val pendingMetadata = linkedMapOf<String, VerifiedRecommendationItem>()
@@ -144,10 +144,10 @@ class AndroidCatalogCacheStore internal constructor(
 
     init {
         try {
-            val v1File = File(cacheDir, "rotten-tomatoes-ratings-v1.json")
-            if (v1File.exists()) {
-                v1File.delete()
-            }
+            listOf("rotten-tomatoes-ratings-v1.json", "rotten-tomatoes-ratings-v2.json")
+                .map { File(cacheDir, it) }
+                .filter(File::exists)
+                .forEach(File::delete)
         } catch (_: Throwable) {}
     }
 
@@ -567,23 +567,28 @@ class AndroidCatalogCacheStore internal constructor(
                 val state = com.aliflix.app.model.RatingSourceState.entries
                     .firstOrNull { it.name == entry.optString("state") }
                     ?: return@decode null
+                val ageMs = System.currentTimeMillis() - fetchedAt
                 if (state == com.aliflix.app.model.RatingSourceState.NOT_RATED) {
-                    if (System.currentTimeMillis() - fetchedAt > 24 * 60 * 60 * 1000L) {
+                    if (ageMs > 24 * 60 * 60 * 1000L) {
                         return@decode null
                     }
-                } else if (System.currentTimeMillis() - fetchedAt > maxAgeMs) {
+                } else if (ageMs > maxAgeMs) {
                     return@decode null
                 }
                 RottenTomatoesSnapshot(
                     rating = entry.optInt("rating").takeIf { entry.has("rating") && it > 0 },
-                    state = state,
+                    state = if (
+                        state == com.aliflix.app.model.RatingSourceState.VERIFIED &&
+                        ageMs > 7 * 24 * 60 * 60 * 1000L
+                    ) com.aliflix.app.model.RatingSourceState.STALE else state,
                 )
             }
         }
     }
 
     override suspend fun saveRottenTomatoesRating(mediaKey: String, snapshot: RottenTomatoesSnapshot) {
-        if (snapshot.state == com.aliflix.app.model.RatingSourceState.UNAVAILABLE) return
+        if (snapshot.state == com.aliflix.app.model.RatingSourceState.UNAVAILABLE ||
+            snapshot.state == com.aliflix.app.model.RatingSourceState.LOADING) return
         mutex.withLock {
             val value = withContext(computationDispatcher) {
                 val previous = cacheValueOrNull { fileReader(rottenTomatoesRatingFile) }?.let { JSONObject(it) }

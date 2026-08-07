@@ -353,6 +353,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    suspend fun searchTitles(query: String): List<Media> = client.search(query.trim())
+
     fun selectSearchMode(mode: SearchMode) {
         if (mode == SearchMode.AI && !recommendationStore.enabled.value) return
         if (_search.value.mode == mode) return

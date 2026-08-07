@@ -485,6 +485,7 @@ class CatalogClient(
     formTransport: CatalogFormTransport = HttpCatalogFormTransport,
     imdbGraphQlTransport: ImdbGraphQlTransport? = null,
     pageLoader: suspend (String) -> String = ::downloadPage,
+    rottenTomatoesClientOverride: RottenTomatoesClient? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
@@ -518,7 +519,7 @@ class CatalogClient(
         ConcurrentHashMap<String, CatalogVerifiedMetadata>()
     private val tmdbSearchCache = ConcurrentHashMap<String, List<Media>>()
     private val verifiedGenrePageCache = ConcurrentHashMap<String, List<Media>>()
-    private val rottenTomatoesClient = RottenTomatoesClient(rawPageLoader)
+    private val rottenTomatoesClient = rottenTomatoesClientOverride ?: RottenTomatoesClient()
     private val verifiedGenrePageLocks = ConcurrentHashMap<String, Mutex>()
     private val genreBrowsePageCursor = ConcurrentHashMap<String, Int>()
     private val genreBrowseSeenKeys = ConcurrentHashMap.newKeySet<String>()
@@ -3967,16 +3968,36 @@ class CatalogClient(
         }
 
         val rtJob = async {
-            val rt = rottenTomatoesClient.loadRating(metadata)
-            if (rt.state != RatingSourceState.UNAVAILABLE) {
+            suspend fun publish(snapshot: RottenTomatoesSnapshot) {
                 val enriched = catalogue.firstOrNull { it.key == metadata.key }?.copy(
-                    rottenTomatoesRating = rt.rating,
-                    rottenTomatoesState = rt.state,
-                )
-                if (enriched != null) {
-                    catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
-                    onProgress(enriched, recommendations)
+                    rottenTomatoesRating = snapshot.rating,
+                    rottenTomatoesState = snapshot.state,
+                ) ?: return
+                catalogue = listOf(enriched) + catalogue.filterNot { it.key == enriched.key }
+                onProgress(enriched, recommendations)
+            }
+
+            val memory = rottenTomatoesRatingsCache[metadata.key]
+            if (memory != null && memory.state in setOf(RatingSourceState.VERIFIED, RatingSourceState.NOT_RATED)) {
+                publish(memory)
+                return@async
+            }
+            val persisted = cacheStore?.loadRottenTomatoesRating(metadata.key, 30L * 24 * 60 * 60 * 1000)
+            if (persisted != null) {
+                publish(persisted)
+                if (persisted.state != RatingSourceState.STALE) {
+                    rottenTomatoesRatingsCache[metadata.key] = persisted
+                    return@async
                 }
+            } else {
+                publish(RottenTomatoesSnapshot(null, RatingSourceState.LOADING))
+            }
+
+            val rt = rottenTomatoesClient.loadRating(metadata)
+            publish(rt)
+            if (rt.state in setOf(RatingSourceState.VERIFIED, RatingSourceState.STALE, RatingSourceState.NOT_RATED)) {
+                rottenTomatoesRatingsCache[metadata.key] = rt
+                cacheStore?.saveRottenTomatoesRating(metadata.key, rt)
             }
         }
 
@@ -4480,8 +4501,10 @@ class CatalogClient(
         }
         ratings.imdb?.let { imdbRatingsCache[item.key] = it }
         val rtSnapshot = RottenTomatoesSnapshot(ratings.rottenTomatoes, ratings.rottenTomatoesState!!)
-        rottenTomatoesRatingsCache[item.key] = rtSnapshot
-        cacheStore?.saveRottenTomatoesRating(item.key, rtSnapshot)
+        if (rtSnapshot.state in setOf(RatingSourceState.VERIFIED, RatingSourceState.STALE, RatingSourceState.NOT_RATED)) {
+            rottenTomatoesRatingsCache[item.key] = rtSnapshot
+            cacheStore?.saveRottenTomatoesRating(item.key, rtSnapshot)
+        }
         return ratings
     }
 

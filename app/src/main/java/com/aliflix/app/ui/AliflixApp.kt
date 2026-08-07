@@ -800,6 +800,7 @@ fun AliflixApp(
                         },
                         onQueryChange = viewModel::updateSearch,
                         onSubmitSearch = viewModel::submitCatalogueSearch,
+                        onSearchTitles = viewModel::searchTitles,
                         onModeChange = viewModel::selectSearchMode,
                         onOpen = ::openDetails,
                         onSelectRecommendationType = viewModel::selectRecommendationType,
@@ -4323,9 +4324,16 @@ private fun RatingsRow(item: Media) {
         )
         RatingPill(
             source = "Tomatometer",
-            value = item.rottenTomatoesRating?.let { "$it%" } ?: "Not rated",
+            value = when (item.rottenTomatoesState) {
+                RatingSourceState.VERIFIED, RatingSourceState.STALE ->
+                    item.rottenTomatoesRating?.let { "$it%" } ?: "Unavailable"
+                RatingSourceState.NOT_RATED -> "Not rated"
+                RatingSourceState.UNAVAILABLE -> "Unavailable"
+                RatingSourceState.LOADING, null -> ""
+            },
             accent = Color(0xFFFA3A45),
             darkText = false,
+            loading = item.rottenTomatoesState == RatingSourceState.LOADING || item.rottenTomatoesState == null,
         )
     }
 }
@@ -4336,6 +4344,7 @@ private fun RatingPill(
     value: String,
     accent: Color,
     darkText: Boolean,
+    loading: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -4357,13 +4366,21 @@ private fun RatingPill(
                 fontWeight = FontWeight.Black,
             )
         }
-        Text(
-            text = value,
-            color = Color.White,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 8.dp),
-        )
+        if (loading) {
+            CircularProgressIndicator(
+                color = Color.White,
+                strokeWidth = 1.5.dp,
+                modifier = Modifier.padding(start = 9.dp).size(14.dp),
+            )
+        } else {
+            Text(
+                text = value,
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
     }
 }
 
