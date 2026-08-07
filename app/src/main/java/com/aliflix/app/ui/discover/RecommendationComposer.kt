@@ -2,12 +2,24 @@
 
 package com.aliflix.app.ui.discover
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -18,6 +30,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -54,39 +68,6 @@ internal fun RecommendationComposer(
         if (state is RecommendationUiState.Results) {
             showComposer = false
         }
-    }
-
-    if (!showComposer && state is RecommendationUiState.Results) {
-        // Compact summary view for Results state
-        Row(
-            modifier = modifier
-                .fillMaxWidth()
-                .background(AliflixSurfaceSecondary, RoundedCornerShape(20.dp))
-                .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(20.dp))
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (selectedKind == RecommendationMediaKind.MOVIE) "Movies" else "Series",
-                    color = AliflixAccentSecondary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = text.ifBlank { "Recommendation search" },
-                    color = AliflixContentPrimary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = { showComposer = true }) {
-                Icon(Icons.Rounded.Edit, contentDescription = "Edit request", tint = AliflixContentSecondary)
-            }
-        }
-        return
     }
 
     var activeMode by rememberSaveable { mutableIntStateOf(0) }
@@ -171,13 +152,59 @@ internal fun RecommendationComposer(
 
     val canSubmit = selectedKind != null && builtPrompt.isNotBlank() && state !is RecommendationUiState.Discovering
 
-    Column(
-        modifier = modifier
-            .background(AliflixSurfacePrimary, RoundedCornerShape(24.dp))
-            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(24.dp))
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
+    AnimatedContent(
+        targetState = showComposer,
+        transitionSpec = {
+            if (targetState) {
+                (expandVertically(animationSpec = DiscoverMotion.standard()) + fadeIn(DiscoverMotion.standard())).togetherWith(
+                    shrinkVertically(animationSpec = DiscoverMotion.standard()) + fadeOut(DiscoverMotion.standard())
+                )
+            } else {
+                (expandVertically(animationSpec = DiscoverMotion.standard()) + fadeIn(DiscoverMotion.standard())).togetherWith(
+                    shrinkVertically(animationSpec = DiscoverMotion.standard()) + fadeOut(DiscoverMotion.standard())
+                )
+            }
+        },
+        label = "ComposerState"
+    ) { isExpanded ->
+        if (!isExpanded) {
+            // Compact summary view for Results state
+            Row(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .background(AliflixSurfaceSecondary, RoundedCornerShape(20.dp))
+                    .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(20.dp))
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (selectedKind == RecommendationMediaKind.MOVIE) "Movies" else "Series",
+                        color = AliflixAccentSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = text.ifBlank { "Recommendation search" },
+                        color = AliflixContentPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(onClick = { showComposer = true }) {
+                    Icon(Icons.Rounded.Edit, contentDescription = "Edit request", tint = AliflixContentSecondary)
+                }
+            }
+        } else {
+            Column(
+                modifier = modifier
+                    .background(AliflixSurfacePrimary, RoundedCornerShape(24.dp))
+                    .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(24.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
         if (state is RecommendationUiState.Error) {
             RecommendationErrorState(state, onRetry)
         } else if (state is RecommendationUiState.Empty) {
@@ -202,19 +229,34 @@ internal fun RecommendationComposer(
             ) {
                 RecommendationMediaKind.entries.forEach { kind ->
                     val selected = kind == selectedKind
+                    val bgColor by animateColorAsState(
+                        targetValue = if (selected) AliflixAccentPrimary.copy(alpha = 0.25f) else Color.Transparent,
+                        animationSpec = DiscoverMotion.fast(),
+                        label = "MediaBgColor"
+                    )
+                    val contentColor by animateColorAsState(
+                        targetValue = if (selected) AliflixContentPrimary else AliflixContentSecondary,
+                        animationSpec = DiscoverMotion.fast(),
+                        label = "MediaContentColor"
+                    )
+                    val interactionSource = remember { MutableInteractionSource() }
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(20.dp))
-                            .background(if (selected) AliflixAccentPrimary.copy(alpha = 0.25f) else Color.Transparent)
-                            .clickable { onSelectType(kind) }
+                            .background(bgColor)
+                            .aliflixPressScale(interactionSource)
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = androidx.compose.foundation.LocalIndication.current
+                            ) { onSelectType(kind) }
                             .testTag(if (kind == RecommendationMediaKind.MOVIE) "discover-type-movie" else "discover-type-series"),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = if (kind == RecommendationMediaKind.MOVIE) "Movies" else "Series",
-                            color = if (selected) AliflixContentPrimary else AliflixContentSecondary,
+                            color = contentColor,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )
@@ -232,18 +274,33 @@ internal fun RecommendationComposer(
             ) {
                 listOf("Describe", "Similar to", "Build with filters").forEachIndexed { index, modeText ->
                     val selected = activeMode == index
+                    val bgColor by animateColorAsState(
+                        targetValue = if (selected) AliflixSurfaceElevated else Color.Transparent,
+                        animationSpec = DiscoverMotion.fast(),
+                        label = "ModeBgColor"
+                    )
+                    val contentColor by animateColorAsState(
+                        targetValue = if (selected) AliflixContentPrimary else AliflixContentSecondary,
+                        animationSpec = DiscoverMotion.fast(),
+                        label = "ModeContentColor"
+                    )
+                    val interactionSource = remember { MutableInteractionSource() }
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(16.dp))
-                            .background(if (selected) AliflixSurfaceElevated else Color.Transparent)
-                            .clickable { activeMode = index },
+                            .background(bgColor)
+                            .aliflixPressScale(interactionSource)
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = androidx.compose.foundation.LocalIndication.current
+                            ) { activeMode = index },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = modeText,
-                            color = if (selected) AliflixContentPrimary else AliflixContentSecondary,
+                            color = contentColor,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 12.sp
                         )
@@ -251,8 +308,34 @@ internal fun RecommendationComposer(
                 }
             }
 
-            // Mode Content
-            when (activeMode) {
+            AnimatedContent(
+                targetState = activeMode,
+                transitionSpec = {
+                    if (targetState > initialState) {
+                        (slideInHorizontally(
+                            initialOffsetX = { it / 5 },
+                            animationSpec = DiscoverMotion.standard()
+                        ) + fadeIn(DiscoverMotion.standard())).togetherWith(
+                            slideOutHorizontally(
+                                targetOffsetX = { -it / 6 },
+                                animationSpec = DiscoverMotion.standard()
+                            ) + fadeOut(DiscoverMotion.standard())
+                        )
+                    } else {
+                        (slideInHorizontally(
+                            initialOffsetX = { -it / 6 },
+                            animationSpec = DiscoverMotion.standard()
+                        ) + fadeIn(DiscoverMotion.standard())).togetherWith(
+                            slideOutHorizontally(
+                                targetOffsetX = { it / 5 },
+                                animationSpec = DiscoverMotion.standard()
+                            ) + fadeOut(DiscoverMotion.standard())
+                        )
+                    }
+                },
+                label = "ModeContent"
+            ) { mode ->
+                when (mode) {
                 0 -> {
                     Text("Describe the story, mood, characters or limits", color = AliflixContentSecondary, fontSize = 12.sp)
                     OutlinedTextField(
@@ -319,33 +402,81 @@ internal fun RecommendationComposer(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         filterGroups.forEach { (groupTitle, options) ->
-                            Text(groupTitle, color = AliflixContentPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                options.forEach { option ->
-                                    val isSelected = activeRefinements.contains(option)
-                                    FilterChip(
-                                        selected = isSelected,
-                                        onClick = {
-                                            if (isSelected) activeRefinements = activeRefinements - option
-                                            else activeRefinements = activeRefinements + option
-                                        },
-                                        label = { Text(option) },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            containerColor = AliflixSurfaceSecondary,
-                                            selectedContainerColor = AliflixAccentPrimary.copy(alpha = 0.2f),
-                                            labelColor = AliflixContentPrimary,
-                                            selectedLabelColor = AliflixAccentPrimary
-                                        ),
-                                        border = FilterChipDefaults.filterChipBorder(
-                                            borderColor = AliflixBorderSubtle,
-                                            selectedBorderColor = AliflixAccentPrimary,
-                                            enabled = true,
-                                            selected = isSelected
-                                        )
+                            var isExpanded by rememberSaveable(groupTitle) { mutableStateOf(true) }
+                            Column(modifier = Modifier.fillMaxWidth().animateContentSize()) {
+                                val groupInteractionSource = remember { MutableInteractionSource() }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aliflixPressScale(groupInteractionSource)
+                                        .clickable(
+                                            interactionSource = groupInteractionSource,
+                                            indication = androidx.compose.foundation.LocalIndication.current
+                                        ) { isExpanded = !isExpanded }
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(groupTitle, color = AliflixContentPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                    Icon(
+                                        imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                                        contentDescription = "Toggle $groupTitle",
+                                        tint = AliflixContentSecondary
                                     )
+                                }
+                                AnimatedVisibility(
+                                    visible = isExpanded,
+                                    enter = expandVertically(animationSpec = DiscoverMotion.standard()) + fadeIn(DiscoverMotion.standard()),
+                                    exit = shrinkVertically(animationSpec = DiscoverMotion.standard()) + fadeOut(DiscoverMotion.standard())
+                                ) {
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 8.dp)) {
+                                        options.forEach { option ->
+                                            val isSelected = activeRefinements.contains(option)
+                                            val chipBgColor by animateColorAsState(
+                                                targetValue = if (isSelected) AliflixAccentPrimary.copy(alpha = 0.2f) else AliflixSurfaceSecondary,
+                                                animationSpec = DiscoverMotion.fast(),
+                                                label = "chipBg"
+                                            )
+                                            val chipBorderColor by animateColorAsState(
+                                                targetValue = if (isSelected) AliflixAccentPrimary else AliflixBorderSubtle,
+                                                animationSpec = DiscoverMotion.fast(),
+                                                label = "chipBorder"
+                                            )
+                                            val chipTextColor by animateColorAsState(
+                                                targetValue = if (isSelected) AliflixAccentPrimary else AliflixContentPrimary,
+                                                animationSpec = DiscoverMotion.fast(),
+                                                label = "chipText"
+                                            )
+                                            val chipInteractionSource = remember { MutableInteractionSource() }
+                                            Box(
+                                                modifier = Modifier
+                                                    .height(32.dp)
+                                                    .clip(RoundedCornerShape(16.dp))
+                                                    .background(chipBgColor)
+                                                    .border(1.dp, chipBorderColor, RoundedCornerShape(16.dp))
+                                                    .aliflixPressScale(chipInteractionSource)
+                                                    .clickable(
+                                                        interactionSource = chipInteractionSource,
+                                                        indication = androidx.compose.foundation.LocalIndication.current
+                                                    ) {
+                                                        if (isSelected) activeRefinements = activeRefinements - option
+                                                        else activeRefinements = activeRefinements + option
+                                                    }
+                                                    .padding(horizontal = 12.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.animateContentSize()) {
+                                                    AnimatedVisibility(visible = isSelected) {
+                                                        Icon(Icons.Rounded.Check, contentDescription = null, tint = chipTextColor, modifier = Modifier.size(16.dp).padding(end = 4.dp))
+                                                    }
+                                                    Text(option, color = chipTextColor, fontSize = 12.sp)
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
@@ -360,18 +491,27 @@ internal fun RecommendationComposer(
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("Your request", color = AliflixContentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(builtPrompt, color = AliflixContentPrimary, fontSize = 14.sp)
+                        AnimatedContent(
+                            targetState = builtPrompt,
+                            transitionSpec = { fadeIn(DiscoverMotion.standard()).togetherWith(fadeOut(DiscoverMotion.standard())) },
+                            label = "RequestPreview"
+                        ) { prompt ->
+                            Text(prompt, color = AliflixContentPrimary, fontSize = 14.sp)
+                        }
                     }
                 }
             }
 
             // Main Action Button
+            val buttonInteractionSource = remember { MutableInteractionSource() }
             Button(
                 onClick = { onSubmit(builtDraft) },
                 enabled = canSubmit,
+                interactionSource = buttonInteractionSource,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
+                    .height(56.dp)
+                    .aliflixPressScale(buttonInteractionSource),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = AliflixAccentPrimary,
                     disabledContainerColor = AliflixSurfaceSecondary,
@@ -380,17 +520,25 @@ internal fun RecommendationComposer(
                 ),
                 shape = RoundedCornerShape(28.dp)
             ) {
-                if (state is RecommendationUiState.Discovering) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = AliflixContentPrimary)
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Rounded.Search, contentDescription = null)
-                        Text("Find matches", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                AnimatedContent(
+                    targetState = state is RecommendationUiState.Discovering,
+                    transitionSpec = { fadeIn(DiscoverMotion.standard()).togetherWith(fadeOut(DiscoverMotion.standard())) },
+                    label = "FindMatchesButton"
+                ) { isDiscovering ->
+                    if (isDiscovering) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = AliflixContentPrimary, strokeWidth = 2.dp)
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.Search, contentDescription = null)
+                            Text("Find matches", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        }
                     }
                 }
             }
         }
     }
+    }
+}
 }
 
 // Separate state UI components

@@ -245,7 +245,33 @@ internal fun DiscoverScreen(
     ) {
         AnimatedContent(
             targetState = recommendModeActive,
-            transitionSpec = { fadeIn(tween(180)).togetherWith(fadeOut(tween(120))) },
+            transitionSpec = {
+                if (targetState) {
+                    (
+                        androidx.compose.animation.slideInHorizontally(
+                            initialOffsetX = { it / 5 },
+                            animationSpec = DiscoverMotion.navigation()
+                        ) + fadeIn(DiscoverMotion.navigation())
+                    ) togetherWith (
+                        androidx.compose.animation.slideOutHorizontally(
+                            targetOffsetX = { -it / 6 },
+                            animationSpec = DiscoverMotion.navigation()
+                        ) + fadeOut(DiscoverMotion.navigation())
+                    )
+                } else {
+                    (
+                        androidx.compose.animation.slideInHorizontally(
+                            initialOffsetX = { -it / 6 },
+                            animationSpec = DiscoverMotion.navigation()
+                        ) + fadeIn(DiscoverMotion.navigation())
+                    ) togetherWith (
+                        androidx.compose.animation.slideOutHorizontally(
+                            targetOffsetX = { it / 5 },
+                            animationSpec = DiscoverMotion.navigation()
+                        ) + fadeOut(DiscoverMotion.navigation())
+                    )
+                }
+            },
             label = "discover-mode",
         ) { recommendMode ->
             if (recommendMode) {
@@ -415,12 +441,14 @@ internal fun DiscoverScreen(
                                     .testTag("discover-search-field"),
                             )
                             Spacer(modifier = Modifier.width(8.dp))
+                            val searchInteractionSource = remember { MutableInteractionSource() }
                             Button(
                                 onClick = {
                                     keyboard?.hide()
                                     onSubmitSearch(fieldValue.text)
                                 },
                                 enabled = fieldValue.text.isNotBlank(),
+                                interactionSource = searchInteractionSource,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = AliflixAccentPrimary,
                                     contentColor = Color.White,
@@ -430,13 +458,24 @@ internal fun DiscoverScreen(
                                 shape = RoundedCornerShape(18.dp),
                                 modifier = Modifier
                                     .height(56.dp)
+                                    .aliflixPressScale(searchInteractionSource)
                                     .testTag("discover-catalogue-submit"),
                             ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Search,
-                                    contentDescription = "Search catalogue",
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                AnimatedContent(
+                                    targetState = state.phase == SearchPhase.LOADING,
+                                    transitionSpec = { fadeIn(DiscoverMotion.standard()).togetherWith(fadeOut(DiscoverMotion.standard())) },
+                                    label = "searchIcon"
+                                ) { isLoading ->
+                                    if (isLoading) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Filled.Search,
+                                            contentDescription = "Search catalogue",
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = "Search",
@@ -517,17 +556,26 @@ internal fun DiscoverScreen(
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (state.phase == SearchPhase.IDLE) 20.dp else 4.dp)
                         )
 
-                        CatalogueContent(
-                            state = state,
-                            mediaFilter = mediaFilter,
-                            homeContent = homeContent,
-                            recent = recent,
-                            onOpen = onOpen,
-                            gridState = catalogGridState,
+                        AnimatedContent(
+                            targetState = state to mediaFilter,
+                            transitionSpec = {
+                                fadeIn(DiscoverMotion.standard()).togetherWith(fadeOut(DiscoverMotion.standard()))
+                            },
+                            label = "catalogueContent",
                             modifier = Modifier
                                 .weight(1f)
-                                .fillMaxWidth(),
-                        )
+                                .fillMaxWidth()
+                        ) { (currentState, currentFilter) ->
+                            CatalogueContent(
+                                state = currentState,
+                                mediaFilter = currentFilter,
+                                homeContent = homeContent,
+                                recent = recent,
+                                onOpen = onOpen,
+                                gridState = catalogGridState,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
 
                 }
@@ -637,12 +685,47 @@ private fun CatalogueTypeSelector(
     ) {
         listOf("All", "Movies", "Series").forEach { option ->
             val active = option == selected
-            DiscoverFilterChip(
-                label = option,
-                selected = active,
-                onClick = { onSelect(option) },
-                modifier = Modifier.testTag("discover-filter-${option.lowercase()}")
+            val bgColor by androidx.compose.animation.animateColorAsState(
+                targetValue = if (active) AliflixAccentPrimary.copy(alpha = 0.22f) else AliflixSurfaceSecondary,
+                animationSpec = DiscoverMotion.fast(),
+                label = "catalogueBg"
             )
+            val borderColor by androidx.compose.animation.animateColorAsState(
+                targetValue = if (active) AliflixAccentPrimary.copy(alpha = 0.72f) else AliflixBorderSubtle,
+                animationSpec = DiscoverMotion.fast(),
+                label = "catalogueBorder"
+            )
+            val textColor by androidx.compose.animation.animateColorAsState(
+                targetValue = if (active) AliflixContentPrimary else AliflixContentSecondary,
+                animationSpec = DiscoverMotion.fast(),
+                label = "catalogueText"
+            )
+            val interactionSource = remember { MutableInteractionSource() }
+            Box(
+                modifier = Modifier
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(bgColor)
+                    .border(1.dp, borderColor, RoundedCornerShape(15.dp))
+                    .aliflixPressScale(interactionSource)
+                    .selectable(
+                        selected = active,
+                        role = Role.Tab,
+                        interactionSource = interactionSource,
+                        indication = androidx.compose.foundation.LocalIndication.current,
+                        onClick = { onSelect(option) }
+                    )
+                    .padding(horizontal = 15.dp)
+                    .testTag("discover-filter-${option.lowercase()}"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = option,
+                    color = textColor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
     }
 }
@@ -988,6 +1071,7 @@ internal fun TryOneCarousel(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 112.dp)
+                        .aliflixPressScale(interactionSource)
                         .clickable(
                             interactionSource = interactionSource,
                             indication = null,
@@ -1174,9 +1258,15 @@ private fun DiscoverPosterCard(
     onOpen: (Media) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
         modifier = modifier
-            .clickable(role = Role.Button) { onOpen(item) }
+            .aliflixPressScale(interactionSource)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = androidx.compose.foundation.LocalIndication.current,
+                role = Role.Button
+            ) { onOpen(item) }
             .semantics { contentDescription = "Open ${item.title}" },
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {

@@ -178,90 +178,107 @@ internal fun RecommendationContent(
             )
         }
 
-        when (state) {
-            RecommendationUiState.Idle,
-            is RecommendationUiState.SelectType,
-            -> RecommendationIdle(
-                selectedKind = state.preferencesOrNull()?.selectedMediaKind(),
-                suggestions = suggestions,
-                onSuggestion = onSuggestion,
-                onSurprise = onSurprise,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("discover-recommendation-idle"),
-            )
-            is RecommendationUiState.Discovering -> RecommendationLoading(
-                message = state.message,
-                preferences = state.preferences,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("discover-recommendation-loading"),
-            )
-            is RecommendationUiState.Question -> RecommendationQuestionContent(
-                state = state,
-                onAnswer = onAnswer,
-                onShowMatches = onShowMatches,
-                onBack = onBack,
-                onCorrectPreference = onCorrectPreference,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("discover-recommendation-question"),
-            )
-            is RecommendationUiState.Results -> RecommendationResults(
-                state = state,
-                onOpen = onOpen,
-                onLoadMore = onLoadMore,
-                onRetryPage = onRetryPage,
-                onRestart = onRestart,
-                onMoreLike = onMoreLike,
-                onLessLike = onLessLike,
-                onSeen = onSeen,
-                onCorrectPreference = onCorrectPreference,
-                listState = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("discover-recommendation-results"),
-            )
-            is RecommendationUiState.Empty -> RecommendationEmpty(
-                message = state.message,
-                options = state.options,
-                onRelax = onRelax,
-                onRestart = onRestart,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("discover-recommendation-low-confidence"),
-            )
-            is RecommendationUiState.SourceUnavailable -> RecommendationFailure(
-                eyebrow = "SOURCES UNAVAILABLE",
-                title = "Recommendations could not be verified",
-                message = state.message,
-                canRetry = state.canRetry,
-                onRetry = onRetry,
-                onRestart = onRestart,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("discover-recommendation-source-error"),
-            )
-            is RecommendationUiState.Relaxation -> RecommendationEmpty(
-                message = state.message,
-                options = state.options,
-                onRelax = onRelax,
-                onRestart = onRestart,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("discover-recommendation-relaxation"),
-            )
-            is RecommendationUiState.Error -> RecommendationFailure(
-                eyebrow = "RECOMMENDATION ERROR",
-                title = "This request did not finish",
-                message = state.message,
-                canRetry = state.canRetry,
-                onRetry = onRetry,
-                onRestart = onRestart,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("discover-recommendation-error"),
-            )
+        AnimatedContent(
+            targetState = state,
+            transitionSpec = {
+                (fadeIn(DiscoverMotion.standard()) + androidx.compose.animation.slideInVertically(
+                    initialOffsetY = { it / 10 },
+                    animationSpec = DiscoverMotion.standard()
+                )).togetherWith(
+                    fadeOut(DiscoverMotion.standard()) + androidx.compose.animation.slideOutVertically(
+                        targetOffsetY = { -it / 10 },
+                        animationSpec = DiscoverMotion.standard()
+                    )
+                )
+            },
+            label = "RecommendationState",
+            modifier = Modifier.fillMaxSize()
+        ) { targetState ->
+            when (targetState) {
+                RecommendationUiState.Idle,
+                is RecommendationUiState.SelectType,
+                -> RecommendationIdle(
+                    selectedKind = targetState.preferencesOrNull()?.selectedMediaKind(),
+                    suggestions = suggestions,
+                    onSuggestion = onSuggestion,
+                    onSurprise = onSurprise,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("discover-recommendation-idle"),
+                )
+                is RecommendationUiState.Discovering -> RecommendationLoading(
+                    message = targetState.message,
+                    preferences = targetState.preferences,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("discover-recommendation-loading"),
+                )
+                is RecommendationUiState.Question -> RecommendationQuestionContent(
+                    state = targetState,
+                    onAnswer = onAnswer,
+                    onShowMatches = onShowMatches,
+                    onBack = onBack,
+                    onCorrectPreference = onCorrectPreference,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("discover-recommendation-question"),
+                )
+                is RecommendationUiState.Results -> RecommendationResults(
+                    state = targetState,
+                    onOpen = onOpen,
+                    onLoadMore = onLoadMore,
+                    onRetryPage = onRetryPage,
+                    onRestart = onRestart,
+                    onMoreLike = onMoreLike,
+                    onLessLike = onLessLike,
+                    onSeen = onSeen,
+                    onCorrectPreference = onCorrectPreference,
+                    listState = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("discover-recommendation-results"),
+                )
+                is RecommendationUiState.Empty -> RecommendationEmpty(
+                    message = targetState.message,
+                    options = targetState.options,
+                    onRelax = onRelax,
+                    onRestart = onRestart,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("discover-recommendation-low-confidence"),
+                )
+                is RecommendationUiState.SourceUnavailable -> RecommendationFailure(
+                    eyebrow = "SOURCES UNAVAILABLE",
+                    title = "Recommendations could not be verified",
+                    message = targetState.message,
+                    canRetry = targetState.canRetry,
+                    onRetry = onRetry,
+                    onRestart = onRestart,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("discover-recommendation-source-error"),
+                )
+                is RecommendationUiState.Relaxation -> RecommendationEmpty(
+                    message = targetState.message,
+                    options = targetState.options,
+                    onRelax = onRelax,
+                    onRestart = onRestart,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("discover-recommendation-relaxation"),
+                )
+                is RecommendationUiState.Error -> RecommendationFailure(
+                    eyebrow = "RECOMMENDATION ERROR",
+                    title = "This request did not finish",
+                    message = targetState.message,
+                    canRetry = targetState.canRetry,
+                    onRetry = onRetry,
+                    onRestart = onRestart,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("discover-recommendation-error"),
+                )
+            }
         }
     }
 }
@@ -663,7 +680,7 @@ internal fun RecommendationResults(
                     onMoreLike = onMoreLike,
                     onLessLike = onLessLike,
                     onSeen = onSeen,
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp).animateItem(),
                 )
             }
         }
@@ -680,7 +697,7 @@ internal fun RecommendationResults(
                 onMoreLike = onMoreLike,
                 onLessLike = onLessLike,
                 onSeen = onSeen,
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 16.dp).animateItem(),
             )
         }
         if (state.loadingMore || state.refreshing) {
@@ -734,11 +751,17 @@ private fun RecommendationHero(
     modifier: Modifier = Modifier,
 ) {
     val item = candidate.media
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
-            .clickable(role = Role.Button) { onOpen(item) }
+            .aliflixPressScale(interactionSource)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = androidx.compose.foundation.LocalIndication.current,
+                role = Role.Button
+            ) { onOpen(item) }
             .testTag("discover-top-match-${item.key}")
             .semantics { contentDescription = "Open top match ${item.title}" },
         color = AliflixSurfaceElevated,
@@ -838,6 +861,7 @@ private fun RecommendationResultRow(
     modifier: Modifier = Modifier,
 ) {
     val item = candidate.media
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = AliflixSurfacePrimary,
@@ -851,8 +875,15 @@ private fun RecommendationResultRow(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(role = Role.Button) { onOpen(item) }
-                    .semantics { contentDescription = "Open rank $rank ${item.title}" },
+                    .clip(RoundedCornerShape(16.dp))
+                    .aliflixPressScale(interactionSource)
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = androidx.compose.foundation.LocalIndication.current,
+                        role = Role.Button
+                    ) { onOpen(item) }
+                    .testTag("discover-ranked-match-${item.key}")
+                    .semantics { contentDescription = "Open rank $rank match ${item.title}" },
                 horizontalArrangement = Arrangement.spacedBy(13.dp),
             ) {
                 Box {
