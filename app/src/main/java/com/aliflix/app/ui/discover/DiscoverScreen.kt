@@ -128,6 +128,7 @@ import com.aliflix.app.recommendation.RecommendationCandidate
 import com.aliflix.app.recommendation.RecommendationContentType
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationPreferences
+import com.aliflix.app.recommendation.RecommendationRequestDraft
 import com.aliflix.app.recommendation.RecommendationQuestion
 import com.aliflix.app.recommendation.RecommendationQuestionType
 import com.aliflix.app.recommendation.RecommendationSourceHealth
@@ -167,7 +168,7 @@ internal fun DiscoverScreen(
     onModeChange: (SearchMode) -> Unit,
     onOpen: (Media) -> Unit,
     onSelectRecommendationType: (RecommendationMediaKind) -> Unit,
-    onSubmitRecommendation: (String) -> Unit,
+    onSubmitRecommendation: (RecommendationRequestDraft) -> Unit,
     onSurpriseRecommendation: () -> Unit,
     onAnswerRecommendation: (RecommendationQuestion, List<String>) -> Unit,
     onShowRecommendationMatches: () -> Unit,
@@ -233,6 +234,10 @@ internal fun DiscoverScreen(
         }
     }
 
+    androidx.activity.compose.BackHandler(enabled = recommendModeActive) {
+        recommendModeActive = false
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -291,12 +296,12 @@ internal fun DiscoverScreen(
                             selectedKind = recommendationKind,
                             onSelectType = onSelectRecommendationType,
                             onSubmit = { 
-                                val cleanPrompt = it.trim()
-                                if (cleanPrompt.isNotBlank()) {
+                                val draft = it
+                                if (draft.freeText.isNotBlank() || draft.similarityTitle?.isNotBlank() == true || draft.genres.isNotEmpty() || draft.moods.isNotEmpty()) {
                                     val requestedKind = recommendationKind ?: RecommendationMediaKind.MOVIE
                                     if (recommendationKind != requestedKind) onSelectRecommendationType(requestedKind)
-                                    onQueryChange(cleanPrompt)
-                                    onSubmitRecommendation(cleanPrompt)
+                                    onQueryChange(draft.freeText)
+                                    onSubmitRecommendation(draft)
                                     keyboard?.hide()
                                 }
                             },
@@ -339,13 +344,6 @@ internal fun DiscoverScreen(
                             fontSize = 32.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
-                        )
-                        
-                        Text(
-                            text = "Search movies and series",
-                            color = AliflixContentSecondary,
-                            fontSize = 16.sp,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
                         )
 
                         Row(
@@ -412,7 +410,7 @@ internal fun DiscoverScreen(
                                 shape = RoundedCornerShape(18.dp),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .heightIn(min = 58.dp)
+                                    .height(56.dp)
                                     .focusRequester(focusRequester)
                                     .testTag("discover-search-field"),
                             )
@@ -431,7 +429,7 @@ internal fun DiscoverScreen(
                                 ),
                                 shape = RoundedCornerShape(18.dp),
                                 modifier = Modifier
-                                    .height(58.dp)
+                                    .height(56.dp)
                                     .testTag("discover-catalogue-submit"),
                             ) {
                                 Icon(

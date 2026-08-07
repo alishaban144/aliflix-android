@@ -390,11 +390,19 @@ private fun RecommendationLoading(
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
                     )
-                    Text(
-                        text = message,
-                        color = AliflixContentSecondary,
-                        fontSize = 12.sp,
-                    )
+                    androidx.compose.animation.AnimatedContent(
+                        targetState = message,
+                        transitionSpec = {
+                            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220)) togetherWith androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(220))
+                        },
+                        label = "ai-message-animation"
+                    ) { targetMessage ->
+                        Text(
+                            text = targetMessage,
+                            color = AliflixContentSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
                 }
             }
         }
@@ -972,16 +980,16 @@ private fun ReliableMetadata(
 
 
 private fun candidateReason(candidate: RecommendationCandidate): String? =
-    candidate.matchReasons
-        .sortedByDescending { it.contribution }
-        .map { it.text.trim() }
-        .filter(String::isNotBlank)
-        .distinct()
-        .take(2)
-        .joinToString(" · ")
-        .takeIf(String::isNotBlank)
+    candidate.evidence.trim().takeIf(String::isNotBlank)
+        ?: candidate.matchReasons
+            .sortedByDescending { it.contribution }
+            .map { it.text.trim() }
+            .filter(String::isNotBlank)
+            .distinct()
+            .take(2)
+            .joinToString(" · ")
+            .takeIf(String::isNotBlank)
         ?: candidate.explanation.trim().takeIf(String::isNotBlank)
-        ?: candidate.evidence.trim().takeIf(String::isNotBlank)
 
 
 @Composable

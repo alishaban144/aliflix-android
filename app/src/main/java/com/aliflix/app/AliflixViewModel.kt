@@ -22,6 +22,7 @@ import com.aliflix.app.recommendation.RecommendationQuestion
 import com.aliflix.app.recommendation.RecommendationDispatchers
 import com.aliflix.app.recommendation.RecommendationStore
 import com.aliflix.app.recommendation.RecommendationUiState
+import com.aliflix.app.recommendation.RecommendationRequestDraft
 import com.aliflix.app.recommendation.AndroidSemanticModelManager
 import com.aliflix.app.recommendation.SemanticModelState
 import kotlinx.coroutines.async
@@ -512,9 +513,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearRecent() = library.clearRecent()
 
-    fun submitRecommendationText(text: String) {
+    fun submitRecommendationDraft(draft: RecommendationRequestDraft) {
         pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.submitText(text)
+        recommendationOrchestrator.submitDraft(draft)
     }
 
     fun selectRecommendationType(type: RecommendationMediaKind) =

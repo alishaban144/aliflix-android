@@ -170,7 +170,6 @@ object RecommendationQuestionSelector {
         val facetsByCandidate = candidates.associateWith { candidate ->
             RecommendationOntology.detect(
                 listOf(
-                    candidate.media.title,
                     candidate.media.overview,
                     candidate.media.genres.joinToString(" "),
                     candidate.evidence,
@@ -675,7 +674,6 @@ object RecommendationRanker {
             }
         val document = normalize(
             listOf(
-                media.title,
                 media.overview,
                 media.genres.joinToString(" "),
                 media.cast.joinToString(" "),
@@ -722,7 +720,6 @@ object RecommendationRanker {
         val media = candidate.media
         val genres = media.genres.map(::normalize).toSet()
         val document = listOf(
-            media.title,
             media.overview,
             media.genres.joinToString(" "),
             media.cast.joinToString(" "),

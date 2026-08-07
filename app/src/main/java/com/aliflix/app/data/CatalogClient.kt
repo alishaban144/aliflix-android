@@ -117,6 +117,7 @@ data class CatalogVerifiedMetadata(
     val director: String? = null,
     val seasonCount: Int? = null,
     val averageEpisodeRuntimeMinutes: Int? = null,
+    val keywords: List<String> = emptyList(),
     val verifiedAtMillis: Long = System.currentTimeMillis(),
 )
 
@@ -540,11 +541,13 @@ class CatalogClient(
         )
 
     suspend fun scrapeTmdbDiscoverPage(
-        pathParams: String
+        pathParams: String,
+        mediaType: MediaType = MediaType.MOVIE
     ): List<Media> = supervisorScope {
-        val url = "https://www.themoviedb.org/discover/movie?$pathParams"
+        val typeStr = if (mediaType == MediaType.TV) "tv" else "movie"
+        val url = "https://www.themoviedb.org/discover/$typeStr?$pathParams"
         val html = pageLoader(url)
-        com.aliflix.app.recommendation.TmdbKeywordParser.parseDiscoverPage(html, MediaType.MOVIE)
+        com.aliflix.app.recommendation.TmdbKeywordParser.parseDiscoverPage(html, mediaType)
     }
 
     suspend fun scrapeTmdbKeywordSearch(
@@ -2923,11 +2926,16 @@ class CatalogClient(
             }
         }
         val rottenTomatoesRequest = async {
-            if (
-                requiredFields.rottenTomatoesRating ||
-                parsed.rottenTomatoesRating == null
-            ) {
-                suspendOrNull { loadRottenTomatoesRating(parsed) }
+            if (requiredFields.rottenTomatoesRating && parsed.rottenTomatoesState != RatingSourceState.UNAVAILABLE && parsed.rottenTomatoesState != RatingSourceState.NOT_RATED) {
+                val cached = cacheStore?.loadRottenTomatoesRating(parsed.key, 7 * 24 * 60 * 60 * 1000L)
+                if (cached != null) {
+                    cached
+                } else {
+                    val snapshot = suspendOrNull { loadRottenTomatoesRating(parsed) } 
+                        ?: RottenTomatoesSnapshot(null, RatingSourceState.UNAVAILABLE)
+                    cacheStore?.saveRottenTomatoesRating(parsed.key, snapshot)
+                    snapshot
+                }
             } else {
                 RottenTomatoesSnapshot(parsed.rottenTomatoesRating, parsed.rottenTomatoesState ?: RatingSourceState.UNAVAILABLE)
             }
@@ -3130,6 +3138,10 @@ class CatalogClient(
                 .takeIf(List<Int>::isNotEmpty)
                 ?.average()
                 ?.roundToInt(),
+            keywords = document.select("section.keywords ul li a[href^=/keyword/], a[href^=/keyword/]")
+                .map { it.text().trim() }
+                .filter(String::isNotBlank)
+                .distinct(),
         )
     }
 
@@ -4506,45 +4518,48 @@ class CatalogClient(
             year?.let { add("$expectedPrefix${slug}_$it") }
         }.distinct().take(2)
         
-        val directResults = kotlinx.coroutines.coroutineScope {
-            directPaths.map { path ->
-                async {
-                    val html = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL$path") }
-                    if (html != null && isRottenTomatoesIdentityVerified(html, item)) {
-                        parseRottenTomatoesRating(html)
-                    } else null
-                }
-            }.mapNotNull { it.await() }
-        }
-        
-        val directRating = directResults.firstOrNull()
-        if (directRating != null) {
-            return RottenTomatoesSnapshot(directRating, com.aliflix.app.model.RatingSourceState.VERIFIED)
-        }
-        
-        val query = URLEncoder.encode(item.title, StandardCharsets.UTF_8.toString())
-        val searchHtml = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL/search?search=$query") } ?: ""
-        val candidatePaths = parseRottenTomatoesCandidatePaths(searchHtml, item)
-            .filterNot(directPaths::contains)
-            .take(3)
+        val result = kotlinx.coroutines.withTimeoutOrNull(4500) {
+            val directResults = kotlinx.coroutines.coroutineScope {
+                directPaths.map { path ->
+                    async {
+                        val html = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL$path") }
+                        if (html != null && isRottenTomatoesIdentityVerified(html, item)) {
+                            parseRottenTomatoesRating(html)
+                        } else null
+                    }
+                }.mapNotNull { it.await() }
+            }
             
-        val candidateResults = kotlinx.coroutines.coroutineScope {
-            candidatePaths.take(2).map { path ->
-                async {
-                    val html = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL$path") }
-                    if (html != null && isRottenTomatoesIdentityVerified(html, item)) {
-                        parseRottenTomatoesRating(html)
-                    } else null
-                }
-            }.mapNotNull { it.await() }
+            val directRating = directResults.firstOrNull()
+            if (directRating != null) {
+                return@withTimeoutOrNull RottenTomatoesSnapshot(directRating, com.aliflix.app.model.RatingSourceState.VERIFIED)
+            }
+            
+            val query = URLEncoder.encode(item.title, StandardCharsets.UTF_8.toString())
+            val searchHtml = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL/search?search=$query") } ?: ""
+            val candidatePaths = parseRottenTomatoesCandidatePaths(searchHtml, item)
+                .filterNot(directPaths::contains)
+                .take(3)
+                
+            val candidateResults = kotlinx.coroutines.coroutineScope {
+                candidatePaths.take(2).map { path ->
+                    async {
+                        val html = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL$path") }
+                        if (html != null && isRottenTomatoesIdentityVerified(html, item)) {
+                            parseRottenTomatoesRating(html)
+                        } else null
+                    }
+                }.mapNotNull { it.await() }
+            }
+            
+            val fallbackRating = candidateResults.firstOrNull()
+            if (fallbackRating != null) {
+                return@withTimeoutOrNull RottenTomatoesSnapshot(fallbackRating, com.aliflix.app.model.RatingSourceState.VERIFIED)
+            }
+            
+            RottenTomatoesSnapshot(null, com.aliflix.app.model.RatingSourceState.NOT_RATED)
         }
-        
-        val fallbackRating = candidateResults.firstOrNull()
-        if (fallbackRating != null) {
-            return RottenTomatoesSnapshot(fallbackRating, com.aliflix.app.model.RatingSourceState.VERIFIED)
-        }
-        
-        return RottenTomatoesSnapshot(null, com.aliflix.app.model.RatingSourceState.NOT_RATED)
+        return result ?: RottenTomatoesSnapshot(null, com.aliflix.app.model.RatingSourceState.UNAVAILABLE)
     }
 
     private fun isRottenTomatoesIdentityVerified(html: String, item: Media): Boolean {

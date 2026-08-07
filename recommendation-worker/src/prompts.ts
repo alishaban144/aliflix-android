@@ -30,10 +30,11 @@ CRITICAL RULES:
 1. Accept a result ONLY when EVERY required concept group is SATISFIED and the decision is DEFINITE_MATCH.
    - OR: Every required concept group is SATISFIED and decision is PROBABLE_MATCH with confidence >= 0.85 and concrete evidence is found.
 2. Only use the PROVIDED metadata for the candidate to make your decision. Do NOT use outside knowledge to hallucinate plot points.
-3. If a required concept involves a character role (e.g. "young character"), verify that they are central to the story, not just incidental.
-4. If a required concept involves an action or power, verify it actually happens based on the metadata.
-5. Provide a short, concise \`evidenceSummary\` (e.g. "Teenage protagonist who develops telekinetic abilities.") No chain of thought.
-6. Decisions must be one of: DEFINITE_MATCH, PROBABLE_MATCH, INSUFFICIENT_EVIDENCE, REJECT.
-7. Group status must be one of: SATISFIED, NOT_SATISFIED, INSUFFICIENT.
+3. TITLE WORDS DO NOT COUNT AS EVIDENCE. The occurrence of a word in a title (e.g. "Dark") does not mean it satisfies a conceptual constraint (e.g. "dark mood").
+4. If a required concept involves a character role (e.g. "young character"), verify that they are central to the story, not just incidental.
+5. If a required concept involves an action or power, verify it actually happens based on the metadata.
+6. Provide a short, concise \`evidenceSummary\` (e.g. "Teenage protagonist who develops telekinetic abilities.") No chain of thought.
+7. Decisions must be one of: DEFINITE_MATCH, PROBABLE_MATCH, INSUFFICIENT_EVIDENCE, REJECT.
+8. Group status must be one of: SATISFIED, NOT_SATISFIED, INSUFFICIENT.
 
 Return a JSON matching the VerificationResponseSchema exactly.`;

@@ -181,11 +181,20 @@ class CatalogRecommendationCandidateRepository(
             }
         }
         
-        // 2b. Keyword searches
-        if (keywordIds.isNotEmpty()) {
+        // 2b. Keyword and Genre searches
+        val mediaType = if (interpretation.hardConstraints.mediaType == "tv") MediaType.TV else MediaType.MOVIE
+        val genreIdsStr = interpretation.hardConstraints.includedGenres.mapNotNull { genreName ->
+            com.aliflix.app.data.GenreCatalog.specFor(genreName, mediaType)?.genreIds?.firstOrNull()
+        }.joinToString(",")
+
+        val queryParams = mutableListOf<String>()
+        if (keywordIds.isNotEmpty()) queryParams.add("with_keywords=$keywordIds")
+        if (genreIdsStr.isNotEmpty()) queryParams.add("with_genres=$genreIdsStr")
+
+        if (queryParams.isNotEmpty()) {
             discoverJobs += async {
                 gate.withPermit {
-                    try { client.scrapeTmdbDiscoverPage("with_keywords=$keywordIds") } catch (e: Exception) { emptyList() }
+                    try { client.scrapeTmdbDiscoverPage(queryParams.joinToString("&"), mediaType) } catch (e: Exception) { emptyList() }
                 }
             }
         }
@@ -202,8 +211,8 @@ class CatalogRecommendationCandidateRepository(
                         val required = RequiredMetadataFields(
                             runtime = true, 
                             originalLanguage = true,
-                            rottenTomatoesRating = true,
-                            imdbRating = true
+                            rottenTomatoesRating = interpretation.hardConstraints.minimumRating != null,
+                            imdbRating = interpretation.hardConstraints.minimumRating != null
                         )
                         val verified = client.verifyRecommendationItem(media, required)
                         val candidate = VerificationCandidate(
@@ -214,7 +223,7 @@ class CatalogRecommendationCandidateRepository(
                             originalTitle = verified.media.title,
                             overview = verified.media.overview,
                             genres = verified.media.genres,
-                            keywords = emptyList(), // Not fetched locally
+                            keywords = verified.metadata.keywords,
                             releaseYear = verified.media.year.toIntOrNull(),
                             directorOrCreators = listOfNotNull(verified.metadata.director),
                             principalCast = verified.media.cast

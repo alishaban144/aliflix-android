@@ -103,27 +103,31 @@ data class InterpretationRequest(
         put("query", query)
         put("mediaType", mediaType.lowercase())
         put("deterministicConstraints", JSONObject().apply {
-            put("includedGenres", JSONArray(deterministicConstraints.includedGenres))
-            put("excludedGenres", JSONArray(deterministicConstraints.excludedGenres))
-            put("minimumYear", deterministicConstraints.minimumYear ?: JSONObject.NULL)
-            put("maximumYear", deterministicConstraints.maximumYear ?: JSONObject.NULL)
-            put("maximumRuntimeMinutes", deterministicConstraints.maximumRuntimeMinutes ?: JSONObject.NULL)
-            put("minimumRating", deterministicConstraints.minimumRating ?: JSONObject.NULL)
-            put("originalLanguage", deterministicConstraints.originalLanguage ?: JSONObject.NULL)
-            put("excludedTerms", JSONArray(deterministicConstraints.excludedTerms))
+            put("genres", JSONArray(deterministicConstraints.genres))
+            put("moods", JSONArray(deterministicConstraints.moods))
+            put("themes", JSONArray(deterministicConstraints.themes))
+            put("yearRule", deterministicConstraints.yearRule ?: JSONObject.NULL)
+            put("runtimeRule", deterministicConstraints.runtimeRule ?: JSONObject.NULL)
+            put("minimumImdb", deterministicConstraints.minimumImdb ?: JSONObject.NULL)
+            put("language", deterministicConstraints.language ?: JSONObject.NULL)
+            put("status", deterministicConstraints.status ?: JSONObject.NULL)
+            put("exclusions", JSONArray(deterministicConstraints.exclusions))
+            put("similarityTitle", deterministicConstraints.similarityTitle ?: JSONObject.NULL)
         })
     }
 }
 
 data class DeterministicConstraints(
-    val includedGenres: List<String> = emptyList(),
-    val excludedGenres: List<String> = emptyList(),
-    val minimumYear: Int? = null,
-    val maximumYear: Int? = null,
-    val maximumRuntimeMinutes: Int? = null,
-    val minimumRating: Double? = null,
-    val originalLanguage: String? = null,
-    val excludedTerms: List<String> = emptyList()
+    val genres: List<String> = emptyList(),
+    val moods: List<String> = emptyList(),
+    val themes: List<String> = emptyList(),
+    val yearRule: String? = null,
+    val runtimeRule: String? = null,
+    val minimumImdb: Double? = null,
+    val language: String? = null,
+    val status: String? = null,
+    val exclusions: List<String> = emptyList(),
+    val similarityTitle: String? = null,
 )
 
 data class RequiredConceptGroup(
@@ -155,6 +159,30 @@ data class RequiredConceptGroup(
     }
 }
 
+data class AiHardConstraints(
+    val mediaType: String,
+    val includedGenres: List<String>,
+    val excludedGenres: List<String>,
+    val minimumYear: Int?,
+    val maximumYear: Int?,
+    val maximumRuntimeMinutes: Int?,
+    val minimumRating: Double?,
+    val originalLanguage: String?
+) {
+    companion object {
+        fun fromJson(json: JSONObject): AiHardConstraints = AiHardConstraints(
+            mediaType = json.getString("mediaType"),
+            includedGenres = json.optJSONArray("includedGenres")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
+            excludedGenres = json.optJSONArray("excludedGenres")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
+            minimumYear = if (json.isNull("minimumYear")) null else json.getInt("minimumYear"),
+            maximumYear = if (json.isNull("maximumYear")) null else json.getInt("maximumYear"),
+            maximumRuntimeMinutes = if (json.isNull("maximumRuntimeMinutes")) null else json.getInt("maximumRuntimeMinutes"),
+            minimumRating = if (json.isNull("minimumRating")) null else json.getDouble("minimumRating"),
+            originalLanguage = if (json.isNull("originalLanguage")) null else json.getString("originalLanguage")
+        )
+    }
+}
+
 data class InterpretationResponse(
     val requestId: String,
     val normalizedRequest: String,
@@ -167,7 +195,8 @@ data class InterpretationResponse(
     val broadSearchPhrases: List<String>,
     val anchorTitle: String?,
     val anchorModifiers: List<String>,
-    val contradictions: List<String>
+    val contradictions: List<String>,
+    val hardConstraints: AiHardConstraints
 ) {
     companion object {
         fun fromJson(json: JSONObject): InterpretationResponse = InterpretationResponse(
@@ -182,7 +211,17 @@ data class InterpretationResponse(
             broadSearchPhrases = json.optJSONArray("broadSearchPhrases")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
             anchorTitle = if (json.isNull("anchorTitle")) null else json.getString("anchorTitle"),
             anchorModifiers = json.optJSONArray("anchorModifiers")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            contradictions = json.optJSONArray("contradictions")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList()
+            contradictions = json.optJSONArray("contradictions")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
+            hardConstraints = json.optJSONObject("hardConstraints")?.let { AiHardConstraints.fromJson(it) } ?: AiHardConstraints(
+                mediaType = "movie",
+                includedGenres = emptyList(),
+                excludedGenres = emptyList(),
+                minimumYear = null,
+                maximumYear = null,
+                maximumRuntimeMinutes = null,
+                minimumRating = null,
+                originalLanguage = null
+            )
         )
     }
 }

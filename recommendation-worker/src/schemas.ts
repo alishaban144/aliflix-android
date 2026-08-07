@@ -4,15 +4,17 @@ export const InterpretationRequestSchema = z.object({
   requestId: z.string(),
   query: z.string(),
   mediaType: z.enum(['movie', 'tv']),
-  deterministicConstraints: z.object({
-    includedGenres: z.array(z.string()).default([]),
-    excludedGenres: z.array(z.string()).default([]),
-    minimumYear: z.number().nullable().default(null),
-    maximumYear: z.number().nullable().default(null),
-    maximumRuntimeMinutes: z.number().nullable().default(null),
-    minimumRating: z.number().nullable().default(null),
-    originalLanguage: z.string().nullable().default(null),
-    excludedTerms: z.array(z.string()).default([]),
+    deterministicConstraints: z.object({
+    genres: z.array(z.string()).default([]),
+    moods: z.array(z.string()).default([]),
+    themes: z.array(z.string()).default([]),
+    yearRule: z.string().nullable().default(null),
+    runtimeRule: z.string().nullable().default(null),
+    minimumImdb: z.number().nullable().default(null),
+    language: z.string().nullable().default(null),
+    status: z.string().nullable().default(null),
+    exclusions: z.array(z.string()).default([]),
+    similarityTitle: z.string().nullable().default(null),
   }),
 });
 

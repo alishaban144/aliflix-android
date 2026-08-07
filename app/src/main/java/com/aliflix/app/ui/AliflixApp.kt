@@ -803,7 +803,7 @@ fun AliflixApp(
                         onModeChange = viewModel::selectSearchMode,
                         onOpen = ::openDetails,
                         onSelectRecommendationType = viewModel::selectRecommendationType,
-                        onSubmitRecommendation = viewModel::submitRecommendationText,
+                        onSubmitRecommendation = viewModel::submitRecommendationDraft,
                         onSurpriseRecommendation = viewModel::surpriseRecommendation,
                         onAnswerRecommendation = viewModel::answerRecommendation,
                         onShowRecommendationMatches = viewModel::showRecommendationMatches,

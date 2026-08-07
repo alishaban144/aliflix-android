@@ -31,7 +31,7 @@ class RecommendationTypeGateTest {
             ),
         )
 
-        orchestrator.submitText("a thriller made after 2015 with IMDb 7 or higher")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "a thriller made after 2015 with IMDb 7 or higher"))
         orchestrator.showMatches()
         orchestrator.surpriseMe()
         advanceUntilIdle()
@@ -43,7 +43,8 @@ class RecommendationTypeGateTest {
         advanceUntilIdle()
         assertEquals("Selecting a type is local-only.", 0, repository.pageRequests)
 
-        orchestrator.submitText("a thriller made after 2015 with IMDb 7 or higher")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "a thriller made after 2015 with IMDb 7 or higher"))
+        orchestrator.showMatches()
         advanceUntilIdle()
 
         assertEquals(1, repository.pageRequests)

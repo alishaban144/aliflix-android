@@ -210,6 +210,21 @@ data class CatalogDiscoverySpec(
     }
 }
 
+data class RecommendationRequestDraft(
+    val mediaType: MediaType? = null,
+    val genres: List<String> = emptyList(),
+    val moods: List<String> = emptyList(),
+    val themes: List<String> = emptyList(),
+    val yearRule: String? = null,
+    val runtimeRule: String? = null,
+    val minimumImdb: Double? = null,
+    val language: String? = null,
+    val status: String? = null,
+    val exclusions: List<String> = emptyList(),
+    val similarityTitle: String? = null,
+    val freeText: String = "",
+)
+
 data class RecommendationPageCursor(
     val page: Int = 1,
     val seenKeys: Set<String> = emptySet(),

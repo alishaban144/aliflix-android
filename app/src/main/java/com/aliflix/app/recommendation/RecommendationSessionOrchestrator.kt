@@ -80,12 +80,19 @@ class RecommendationOrchestrator(
         _state.value = RecommendationUiState.SelectType(preferences)
     }
 
-    fun submitText(text: String) {
-        val cleanText = text.trim()
-        if (cleanText.isBlank()) return
-        val selectedType = preferences.contentType
+    fun submitDraft(draft: RecommendationRequestDraft) {
+        val freeText = draft.freeText
+        if (freeText.isBlank() && draft.similarityTitle.isNullOrBlank() && draft.genres.isEmpty() && draft.moods.isEmpty()) return
+        val selectedType = preferences.contentType ?: PreferenceSignal(
+            value = when (draft.mediaType) {
+                MediaType.MOVIE -> RecommendationContentType.MOVIE
+                MediaType.TV -> RecommendationContentType.TV
+                null -> RecommendationContentType.EITHER
+            },
+            origin = PreferenceOrigin.EXPLICIT,
+            strength = ConstraintStrength.HARD,
+        )
         if (
-            selectedType == null ||
             selectedType.value == RecommendationContentType.EITHER
         ) {
             _state.value = RecommendationUiState.SelectType(preferences)
@@ -105,9 +112,9 @@ class RecommendationOrchestrator(
             try {
                 val outcome = withContext(dispatchers.computation) {
                     if (aiClient != null) {
-                        retrieveAi(cleanText, selectedType.value, context)
+                        retrieveAi(draft, selectedType.value, context)
                     } else {
-                        val parsed = RecommendationPreferenceParser.parse(cleanText, basePreferences)
+                        val parsed = RecommendationPreferenceParser.parse(freeText, basePreferences)
                         if (parsed.confirmation != null) {
                             // Can't return directly from here but this is a simplified flow.
                             // I will handle it properly below.
@@ -433,16 +440,27 @@ class RecommendationOrchestrator(
     }
 
     private suspend fun retrieveAi(
-        query: String,
+        draft: RecommendationRequestDraft,
         mediaType: RecommendationContentType,
         context: RankingContext
     ): InitialOutcome {
         val aiClient = this.aiClient ?: throw IllegalStateException("aiClient is null")
         val interpretationRequest = InterpretationRequest(
             requestId = java.util.UUID.randomUUID().toString(),
-            query = query,
+            query = draft.freeText,
             mediaType = mediaType.name,
-            deterministicConstraints = DeterministicConstraints()
+            deterministicConstraints = DeterministicConstraints(
+                genres = draft.genres,
+                moods = draft.moods,
+                themes = draft.themes,
+                yearRule = draft.yearRule,
+                runtimeRule = draft.runtimeRule,
+                minimumImdb = draft.minimumImdb,
+                language = draft.language,
+                status = draft.status,
+                exclusions = draft.exclusions,
+                similarityTitle = draft.similarityTitle
+            )
         )
         val interpretation = aiClient.interpretIntent(interpretationRequest)
         
@@ -452,7 +470,7 @@ class RecommendationOrchestrator(
         val verificationResponse = aiClient.verifyCandidates(
             VerificationRequest(
                 requestId = interpretation.requestId,
-                originalQuery = query,
+                originalQuery = draft.freeText,
                 mediaType = mediaType.name,
                 requiredConceptGroups = interpretation.requiredConceptGroups,
                 excludedConcepts = interpretation.excludedConcepts,
@@ -1048,7 +1066,6 @@ class RecommendationOrchestrator(
             candidate.evidence.hashCode().toString(),
         ).joinToString("|")
         val text = listOf(
-            media.title,
             media.overview,
             media.genres.joinToString(" "),
             media.cast.joinToString(" "),

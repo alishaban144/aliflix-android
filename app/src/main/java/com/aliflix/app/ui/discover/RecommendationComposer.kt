@@ -39,7 +39,7 @@ internal fun RecommendationComposer(
     state: RecommendationUiState,
     selectedKind: RecommendationMediaKind?,
     onSelectType: (RecommendationMediaKind) -> Unit,
-    onSubmit: (String) -> Unit,
+    onSubmit: (RecommendationRequestDraft) -> Unit,
     onAnswer: (RecommendationQuestion, List<String>) -> Unit,
     onRestart: () -> Unit,
     onRelax: (String) -> Unit,
@@ -118,6 +118,54 @@ internal fun RecommendationComposer(
                     append(".")
                 }
             }
+        }
+    }
+
+    val filterGroups = mapOf(
+        "Mood" to listOf("Dark", "Funny", "Warm", "Tense", "Mind-bending", "Emotional", "Relaxing", "Suspenseful"),
+        "Genre" to listOf("Action", "Comedy", "Crime", "Drama", "Fantasy", "Horror", "Mystery", "Romance", "Science Fiction", "Thriller"),
+        "Length" to if (selectedKind == RecommendationMediaKind.MOVIE) {
+            listOf("Under 90 minutes", "Under 2 hours", "Over 2 hours")
+        } else {
+            listOf("Short episodes", "Under 45-minute episodes", "Long episodes")
+        },
+        "Era" to listOf("Recent", "After 2015", "2000s", "1990s", "Classic"),
+        "Avoid" to listOf("No animation", "No horror", "No graphic violence", "No romance", "No comedy", "No supernatural elements"),
+        "Rating" to listOf("IMDb 7+", "IMDb 8+", "Highly rated", "Hidden gem")
+    )
+
+    val builtDraft = remember(activeMode, describeText, similarToTitle, similarToDiff, activeRefinements, selectedKind) {
+        val mediaType = if (selectedKind == RecommendationMediaKind.MOVIE) com.aliflix.app.model.MediaType.MOVIE else com.aliflix.app.model.MediaType.TV
+        when (activeMode) {
+            0 -> RecommendationRequestDraft(
+                mediaType = mediaType,
+                freeText = describeText.trim(),
+            )
+            1 -> RecommendationRequestDraft(
+                mediaType = mediaType,
+                similarityTitle = similarToTitle.trim().takeIf { it.isNotBlank() },
+                freeText = similarToDiff.trim(),
+            )
+            2 -> {
+                val moods = activeRefinements.filter { it in (filterGroups["Mood"] ?: emptyList()) }
+                val genres = activeRefinements.filter { it in (filterGroups["Genre"] ?: emptyList()) }
+                val runtimeRule = activeRefinements.firstOrNull { it in (filterGroups["Length"] ?: emptyList()) }
+                val yearRule = activeRefinements.firstOrNull { it in (filterGroups["Era"] ?: emptyList()) }
+                val exclusions = activeRefinements.filter { it in (filterGroups["Avoid"] ?: emptyList()) }
+                val minimumImdb = if ("IMDb 8+" in activeRefinements) 8.0 else if ("IMDb 7+" in activeRefinements) 7.0 else null
+
+                RecommendationRequestDraft(
+                    mediaType = mediaType,
+                    moods = moods,
+                    genres = genres,
+                    runtimeRule = runtimeRule,
+                    yearRule = yearRule,
+                    exclusions = exclusions,
+                    minimumImdb = minimumImdb,
+                    freeText = builtPrompt
+                )
+            }
+            else -> RecommendationRequestDraft(mediaType = mediaType, freeText = builtPrompt)
         }
     }
 
@@ -270,18 +318,6 @@ internal fun RecommendationComposer(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        val filterGroups = mapOf(
-                            "Mood" to listOf("Dark", "Funny", "Warm", "Tense", "Mind-bending", "Emotional", "Relaxing", "Suspenseful"),
-                            "Genre" to listOf("Action", "Comedy", "Crime", "Drama", "Fantasy", "Horror", "Mystery", "Romance", "Science Fiction", "Thriller"),
-                            "Length" to if (selectedKind == RecommendationMediaKind.MOVIE) {
-                                listOf("Under 90 minutes", "Under 2 hours", "Over 2 hours")
-                            } else {
-                                listOf("Short episodes", "Under 45-minute episodes", "Long episodes")
-                            },
-                            "Era" to listOf("Recent", "After 2015", "2000s", "1990s", "Classic"),
-                            "Avoid" to listOf("No animation", "No horror", "No graphic violence", "No romance", "No comedy", "No supernatural elements"),
-                            "Rating" to listOf("IMDb 7+", "IMDb 8+", "Highly rated", "Hidden gem")
-                        )
                         filterGroups.forEach { (groupTitle, options) ->
                             Text(groupTitle, color = AliflixContentPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -331,7 +367,7 @@ internal fun RecommendationComposer(
 
             // Main Action Button
             Button(
-                onClick = { onSubmit(builtPrompt) },
+                onClick = { onSubmit(builtDraft) },
                 enabled = canSubmit,
                 modifier = Modifier
                     .fillMaxWidth()

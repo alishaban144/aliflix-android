@@ -87,7 +87,7 @@ class RecommendationOrchestratorPagingContractTest {
         val orchestrator = orchestrator(repository)
 
         orchestrator.selectType(RecommendationMediaKind.MOVIE)
-        orchestrator.submitText("thriller movie")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "thriller movie"))
         advanceUntilIdle()
         if (orchestrator.state.value is RecommendationUiState.Question) {
             orchestrator.showMatches()
@@ -141,11 +141,11 @@ class RecommendationOrchestratorPagingContractTest {
         val orchestrator = orchestrator(repository)
 
         orchestrator.selectType(RecommendationMediaKind.MOVIE)
-        orchestrator.submitText("a thriller made after 2015 with IMDb 7 or higher")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "a thriller made after 2015 with IMDb 7 or higher"))
         runCurrent()
         assertTrue(repository.firstStarted.isCompleted)
 
-        orchestrator.submitText("a thriller made after 2020 with IMDb 8 or higher")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "a thriller made after 2020 with IMDb 8 or higher"))
         advanceUntilIdle()
 
         assertTrue(repository.firstCancelled)
@@ -215,7 +215,7 @@ class RecommendationOrchestratorPagingContractTest {
         val orchestrator = orchestrator(repository)
 
         orchestrator.selectType(RecommendationMediaKind.MOVIE)
-        orchestrator.submitText("a movie with IMDb 8 or higher")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "a movie with IMDb 8 or higher"))
         orchestrator.showMatches()
         advanceUntilIdle()
 
@@ -232,7 +232,7 @@ class RecommendationOrchestratorPagingContractTest {
         val orchestrator = orchestrator(repository)
 
         orchestrator.selectType(RecommendationMediaKind.MOVIE)
-        orchestrator.submitText("a funny movie")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "a funny movie"))
 
         assertTrue(orchestrator.state.value is RecommendationUiState.Discovering)
         assertEquals(0, repository.requests)
@@ -511,11 +511,11 @@ class RecommendationOrchestratorPagingContractTest {
         val orchestrator = orchestrator(repository)
 
         orchestrator.selectType(RecommendationMediaKind.MOVIE)
-        orchestrator.submitText("a thriller made after 2015")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "a thriller made after 2015"))
         runCurrent()
         assertTrue(repository.firstStarted.isCompleted)
 
-        orchestrator.submitText("a thriller made after 2020")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "a thriller made after 2020"))
         advanceUntilIdle()
         assertEquals(2, repository.requests)
         val fresh = orchestrator.state.value as RecommendationUiState.Results
@@ -537,7 +537,7 @@ class RecommendationOrchestratorPagingContractTest {
         val orchestrator = orchestrator(repository)
 
         orchestrator.selectType(RecommendationMediaKind.SERIES)
-        orchestrator.submitText("Series similar to The Office")
+        orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "Series similar to The Office"))
         advanceUntilIdle()
 
         val state = orchestrator.state.value as RecommendationUiState.Question
@@ -572,7 +572,7 @@ class RecommendationOrchestratorPagingContractTest {
             )
 
             orchestrator.selectType(RecommendationMediaKind.MOVIE)
-            orchestrator.submitText("a thriller")
+            orchestrator.submitDraft(com.aliflix.app.recommendation.RecommendationRequestDraft(freeText = "a thriller"))
             runCurrent()
 
             val retrievalExecutionThread = repositoryThread.await()
