@@ -95,7 +95,7 @@ class RottenTomatoesClient(
         return true
     }
 
-    private fun parseRating(html: String): Int? {
+    internal fun parseRating(html: String): Int? {
         if (html.isBlank()) return null
         val document = Jsoup.parse(html, ROTTEN_TOMATOES_URL)
         
@@ -130,7 +130,7 @@ class RottenTomatoesClient(
         }
     }
 
-    private fun parseCandidatePaths(html: String, item: Media): List<String> {
+    internal fun parseCandidatePaths(html: String, item: Media): List<String> {
         if (html.isBlank()) return emptyList()
         val expectedPrefix = if (item.type == MediaType.MOVIE) "/m/" else "/tv/"
         val wantedTitle = normalizeText(item.title)
@@ -196,9 +196,22 @@ class RottenTomatoesClient(
         val visibleTomatometerPattern = Regex("""(\d{1,3})%\s*(?:Avg\.\s*)?Tomatometer""", RegexOption.IGNORE_CASE)
         val rottenTomatoesPathPattern = Regex("""/(?:m|tv)/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*""")
         val rottenTomatoesPatterns = listOf(
-            Regex(""""tomatometerScore"\s*:\s*"?([0-9]+)"""),
-            Regex("tomatometerscore=\"([0-9]+)\""),
-            Regex("tomatometerScore=\"([0-9]+)\""),
+            Regex(
+                """tomatometerscore\s*=\s*["']?(\d{1,3})""",
+                RegexOption.IGNORE_CASE,
+            ),
+            Regex(
+                """"criticsScore"\s*:\s*"?(\d{1,3})""",
+                RegexOption.IGNORE_CASE,
+            ),
+            Regex(
+                """"criticsScore"\s*:\s*\{[^{}]*"score"\s*:\s*"(\d{1,3})"""",
+                setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+            ),
+            Regex(
+                """"scorePercent"\s*:\s*"(\d{1,3})%"""",
+                RegexOption.IGNORE_CASE,
+            ),
         )
     }
 }

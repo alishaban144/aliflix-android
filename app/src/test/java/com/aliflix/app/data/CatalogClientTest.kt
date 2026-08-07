@@ -18,6 +18,7 @@ import org.junit.Test
 
 class CatalogClientTest {
     private val client = CatalogClient { error("Network must not be used by parser tests") }
+    private val rtClient = RottenTomatoesClient { error("Network must not be used by parser tests") }
 
     @Test
     fun parsesNativeRailsAndHeroFromServerRenderedHtml() {
@@ -305,7 +306,7 @@ class CatalogClientTest {
         """.trimIndent()
 
         assertEquals(8.8, client.parseImdbRating(imdb) ?: 0.0, 0.001)
-        assertEquals(87, client.parseRottenTomatoesRating(rottenTomatoes))
+        assertEquals(87, rtClient.parseRating(rottenTomatoes))
     }
 
     @Test
@@ -323,7 +324,7 @@ class CatalogClientTest {
             </script>
         """.trimIndent()
 
-        val paths = client.parseRottenTomatoesCandidatePaths(
+        val paths = rtClient.parseCandidatePaths(
             html,
             Media(
                 id = 155,
