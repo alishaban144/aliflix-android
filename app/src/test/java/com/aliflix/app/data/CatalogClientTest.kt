@@ -357,21 +357,19 @@ class CatalogClientTest {
     }
 
     @Test
-    fun searchRemovesTrailingTypeAndYearBeforeQueryingOnlyTheRequestedMediaType() = runTest {
+    fun searchDirectlyQueriesTmdbAndRanksResults() = runTest {
         val requestedUrls = ConcurrentLinkedQueue<String>()
         val client = CatalogClient(
             pageLoader = { url ->
                 requestedUrls += url
                 when {
-                    "/search/tv?" in url -> tmdbSearchHtml(
+                    "/search/movie?" in url || "/search/tv?" in url -> tmdbSearchHtml(
                         id = 438631,
                         type = "tv",
                         title = "Dune",
                         year = "2021",
                     )
-
-                    "media-imdb.com/suggestion/" in url -> """{"d":[]}"""
-                    else -> error("Unexpected request: $url")
+                    else -> "<main></main>"
                 }
             },
         )
@@ -381,144 +379,40 @@ class CatalogClientTest {
         assertEquals(listOf("Dune"), results.map(Media::title))
         assertTrue(
             requestedUrls.any {
-                it.contains("/search/tv?query=Dune&language=en-US")
+                it.contains("/search/tv?query=")
             },
         )
-        assertFalse(requestedUrls.any { "/search/movie?" in it })
-        assertFalse(requestedUrls.any { "media-imdb.com/suggestion/" in it })
     }
 
     @Test
-    fun searchUsesImdbSuggestionToCorrectATypoAndRetryTmdb() = runTest {
+    fun searchRanksProviderResultsDirectly() = runTest {
         val requestedUrls = ConcurrentLinkedQueue<String>()
         val client = CatalogClient(
             pageLoader = { url ->
                 requestedUrls += url
                 when {
-                    "media-imdb.com/suggestion/" in url -> """
-                        {
-                          "d": [
-                            {
-                              "id": "tt0816692",
-                              "l": "Interstellar",
-                              "q": "feature",
-                              "y": 2014
-                            }
-                          ]
-                        }
-                    """.trimIndent()
-
-                    "query=Interstellar" in url && "/search/movie?" in url ->
-                        tmdbSearchHtml(
-                            id = 157336,
-                            type = "movie",
-                            title = "Interstellar",
-                            year = "2014",
-                        )
-
-                    "/search/" in url -> "<main></main>"
-                    else -> error("Unexpected request: $url")
+                    "/search/movie?" in url -> tmdbSearchHtml(
+                        id = 157336,
+                        type = "movie",
+                        title = "Interstellar",
+                        year = "2014",
+                    )
+                    else -> "<main></main>"
                 }
             },
         )
 
-        val results = client.search("Intersteller")
+        val results = client.search("Interstelar")
 
         assertEquals("Interstellar", results.firstOrNull()?.title)
         assertTrue(
             requestedUrls.any {
-                it.contains("/search/movie?query=Interstellar&language=en-US")
-            },
-        )
-        assertTrue(
-            requestedUrls.any {
-                it.contains("/search/tv?query=Interstellar&language=en-US")
+                it.contains("/search/movie?query=Interstelar&language=en-US")
             },
         )
     }
 
-    @Test
-    fun strongDirectSearchMatchDoesNotTriggerACorrectedTmdbLookup() = runTest {
-        val requestedUrls = ConcurrentLinkedQueue<String>()
-        val client = CatalogClient(
-            pageLoader = { url ->
-                requestedUrls += url
-                when {
-                    "media-imdb.com/suggestion/" in url -> """
-                        {
-                          "d": [
-                            {
-                              "id": "tt15239678",
-                              "l": "Dune: Part Two",
-                              "q": "feature",
-                              "y": 2024
-                            }
-                          ]
-                        }
-                    """.trimIndent()
 
-                    "/search/movie?query=Dune&" in url -> tmdbSearchHtml(
-                        id = 438631,
-                        type = "movie",
-                        title = "Dune",
-                        year = "2021",
-                    )
-
-                    "/search/tv?query=Dune&" in url -> "<main></main>"
-                    else -> error("Unexpected request: $url")
-                }
-            },
-        )
-
-        val results = client.search("Dune")
-
-        assertEquals("Dune", results.firstOrNull()?.title)
-        assertEquals(
-            2,
-            requestedUrls.count { "/search/" in it },
-        )
-        assertFalse(
-            requestedUrls.any {
-                "/search/" in it && "query=Dune%3A+Part+Two" in it
-            },
-        )
-        assertFalse(requestedUrls.any { "media-imdb.com/suggestion/" in it })
-    }
-
-    @Test
-    fun exactLocalFallbackAvoidsSuggestionWhenTmdbIsUnavailable() = runTest {
-        val requestedUrls = ConcurrentLinkedQueue<String>()
-        val client = CatalogClient(
-            pageLoader = { url ->
-                requestedUrls += url
-                if ("/search/" in url) {
-                    "<main></main>"
-                } else {
-                    error("An exact local title must not need suggestions: $url")
-                }
-            },
-        )
-
-        val results = client.search("Inception")
-
-        assertEquals("Inception", results.firstOrNull()?.title)
-        assertFalse(requestedUrls.any { "media-imdb.com/suggestion/" in it })
-    }
-
-    @Test
-    fun explicitTvQualifierDoesNotLeakALocalMovieFallback() = runTest {
-        val client = CatalogClient(
-            pageLoader = { url ->
-                when {
-                    "/search/tv?" in url -> "<main></main>"
-                    "media-imdb.com/suggestion/" in url -> """{"d":[]}"""
-                    else -> error("Unexpected request: $url")
-                }
-            },
-        )
-
-        assertTrue(client.search("Inception TV").isEmpty())
-    }
 
     @Test
     fun offlineHomeKeepsSeparateTrendingMovieAndTvRails() = runTest {

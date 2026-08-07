@@ -1040,48 +1040,15 @@ class CatalogClient(
 
     suspend fun search(query: String): List<Media> = withContext(computationDispatcher) {
         supervisorScope {
-        val cleanQuery = query.trim()
-        if (cleanQuery.isBlank()) return@supervisorScope emptyList()
-        val intent = SearchRanker.parseIntent(cleanQuery)
-        val providerQuery = intent.providerTitle.ifBlank { cleanQuery }
-        val requestedTypes = intent.type
-            ?.let { listOf(it.routeName) }
-            ?: listOf("movie", "tv")
+            val cleanQuery = query.trim()
+            if (cleanQuery.isBlank()) return@supervisorScope emptyList()
+            val online = searchTmdb(cleanQuery)
 
-        val direct = searchTmdb(providerQuery, requestedTypes)
-        val local = localSearch(providerQuery).filter { item ->
-            intent.type == null || item.type == intent.type
-        }
-        val bestKnown = SearchRanker.rank(
-            cleanQuery,
-            (direct + local).distinctBy(Media::key),
-        ).firstOrNull()
-        val knownConfidence = bestKnown
-            ?.takeIf { item -> item.matchesExplicitQualifiers(intent) }
-            ?.let { item -> SearchRanker.confidence(intent, item) }
-            ?: SearchRanker.SearchConfidence.NONE
-        val correctedTitle = if (
-            knownConfidence.ordinal < SearchRanker.SearchConfidence.LIKELY.ordinal
-        ) {
-            predictiveTitleSuggestion(providerQuery, intent)
-        } else {
-            null
-        }
-        val corrected = correctedTitle
-            ?.takeUnless { normalizeText(it) == normalizeText(providerQuery) }
-            ?.let { searchTmdb(it, requestedTypes) }
-            .orEmpty()
-
-        val online = (direct + corrected).distinctBy(Media::key)
-        val source = (online + local).distinctBy(Media::key)
-        val ranked = SearchRanker.rank(cleanQuery, source)
-        val relevant = ranked.filter { item ->
-            SearchRanker.confidence(intent, item) != SearchRanker.SearchConfidence.NONE
-        }
-        val sorted = (relevant.ifEmpty { ranked }).take(80)
-        if (online.isNotEmpty()) {
-            catalogue = (online + catalogue).distinctBy(Media::key)
-        }
+            val source = online.ifEmpty { localSearch(cleanQuery) }
+            val sorted = CatalogueSearchRanker.rank(cleanQuery, source).take(80)
+            if (online.isNotEmpty()) {
+                catalogue = (online + catalogue).distinctBy(Media::key)
+            }
             sorted
         }
     }
