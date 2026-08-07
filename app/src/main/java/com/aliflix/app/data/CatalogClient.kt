@@ -256,6 +256,11 @@ private sealed interface ImdbTitleResolution {
     data class Unavailable(val cause: Throwable? = null) : ImdbTitleResolution
 }
 
+data class RottenTomatoesSnapshot(
+    val rating: Int?,
+    val state: com.aliflix.app.model.RatingSourceState,
+)
+
 private fun CatalogDiscoverySpec.requiredFieldsForCacheFallback():
     RequiredMetadataFields = RequiredMetadataFields(
     genres = includedGenres.isNotEmpty() || excludedGenres.isNotEmpty(),
@@ -507,7 +512,7 @@ class CatalogClient(
     @Volatile
     private var catalogue: List<Media> = fallbackItems
     private val imdbRatingsCache = ConcurrentHashMap<String, Double>()
-    private val rottenTomatoesRatingsCache = ConcurrentHashMap<String, Int>()
+    private val rottenTomatoesRatingsCache = ConcurrentHashMap<String, RottenTomatoesSnapshot>()
     private val recommendationMetadata =
         ConcurrentHashMap<String, CatalogVerifiedMetadata>()
     private val tmdbSearchCache = ConcurrentHashMap<String, List<Media>>()
@@ -2922,7 +2927,7 @@ class CatalogClient(
                 requiredFields.rottenTomatoesRating &&
                 parsed.rottenTomatoesRating == null
             ) {
-                suspendOrNull { loadRottenTomatoesRating(parsed) }
+                suspendOrNull { loadRottenTomatoesRating(parsed) }?.rating
             } else {
                 parsed.rottenTomatoesRating
             }
@@ -2943,8 +2948,7 @@ class CatalogClient(
         }
         val enriched = parsed.copy(
             imdbRating = imdbRequest.await() ?: parsed.imdbRating,
-            rottenTomatoesRating = rottenTomatoesRequest.await()
-                ?: parsed.rottenTomatoesRating,
+            rottenTomatoesRating = rottenTomatoesRequest.await() ?: parsed.rottenTomatoesRating,
         )
         val metadata = parseVerifiedRecommendationMetadata(
             html = pageHtml.orEmpty(),
@@ -3932,10 +3936,10 @@ class CatalogClient(
         val cachedRottenTomatoes = rottenTomatoesRatingsCache[metadata.key]
 
         val imdbJob = async {
-            if (metadata.imdbId == null) return@async
             try {
                 val imdbSnapshot = imdbRatingRepository.ratingFor(metadata)
                 val enriched = catalogue.firstOrNull { it.key == metadata.key }?.copy(
+                    imdbId = imdbSnapshot.identity.imdbId,
                     imdbRating = imdbSnapshot.rating,
                     imdbVoteCount = imdbSnapshot.voteCount,
                     imdbRatingState = imdbSnapshot.state,
@@ -3954,7 +3958,8 @@ class CatalogClient(
             val rt = cachedRottenTomatoes ?: suspendOrNull { loadRottenTomatoesRating(metadata) }
             if (rt != null) {
                 val enriched = catalogue.firstOrNull { it.key == metadata.key }?.copy(
-                    rottenTomatoesRating = rt,
+                    rottenTomatoesRating = rt.rating,
+                    rottenTomatoesState = rt.state,
                 )
                 if (enriched != null) {
                     catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
@@ -4434,6 +4439,9 @@ class CatalogClient(
 
     private suspend fun ratingsFor(item: Media): ExternalRatings {
         val cachedRottenTomatoes = rottenTomatoesRatingsCache[item.key]
+            ?: cacheStore?.loadRottenTomatoesRating(item.key, 24 * 60 * 60 * 1000L)
+                ?.also { rottenTomatoesRatingsCache[item.key] = it }
+                
         val ratings = supervisorScope {
             val imdb = async {
                 try {
@@ -4449,16 +4457,20 @@ class CatalogClient(
                     ?: suspendOrNull { loadRottenTomatoesRating(item) }
             }
             val imdbSnapshot = imdb.await()
+            val rtSnapshot = rottenTomatoes.await()
             ExternalRatings(
                 imdb = imdbSnapshot?.rating,
                 imdbId = imdbSnapshot?.identity?.imdbId,
                 imdbVoteCount = imdbSnapshot?.voteCount,
                 imdbState = imdbSnapshot?.state ?: RatingSourceState.UNAVAILABLE,
-                rottenTomatoes = rottenTomatoes.await(),
+                rottenTomatoes = rtSnapshot?.rating,
+                rottenTomatoesState = rtSnapshot?.state ?: RatingSourceState.UNAVAILABLE,
             )
         }
         ratings.imdb?.let { imdbRatingsCache[item.key] = it }
-        ratings.rottenTomatoes?.let { rottenTomatoesRatingsCache[item.key] = it }
+        val rtSnapshot = RottenTomatoesSnapshot(ratings.rottenTomatoes, ratings.rottenTomatoesState!!)
+        rottenTomatoesRatingsCache[item.key] = rtSnapshot
+        cacheStore?.saveRottenTomatoesRating(item.key, rtSnapshot)
         return ratings
     }
 
@@ -4482,33 +4494,66 @@ class CatalogClient(
             ?.takeIf { it in 0.1..10.0 }
     }
 
-    private suspend fun loadRottenTomatoesRating(item: Media): Int? {
+    private suspend fun loadRottenTomatoesRating(item: Media): RottenTomatoesSnapshot {
         val slug = rottenTomatoesSlug(item.title)
         val expectedPrefix = if (item.type == MediaType.MOVIE) "/m/" else "/tv/"
         val year = item.year.take(4).takeIf { it.matches(Regex("\\d{4}")) }
+        
         val directPaths = buildList {
             add("$expectedPrefix$slug")
             year?.let { add("$expectedPrefix${slug}_$it") }
-        }.distinct()
-        directPaths.forEach { path ->
-            val direct = suspendOrNull {
-                pageLoader("$ROTTEN_TOMATOES_URL$path")
-            }
-            parseRottenTomatoesRating(direct.orEmpty())?.let { return it }
+        }.distinct().take(2)
+        
+        val directResults = kotlinx.coroutines.coroutineScope {
+            directPaths.map { path ->
+                async {
+                    val html = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL$path") }
+                    if (html != null && isRottenTomatoesIdentityVerified(html, item)) {
+                        parseRottenTomatoesRating(html)
+                    } else null
+                }
+            }.mapNotNull { it.await() }
         }
-
+        
+        val directRating = directResults.firstOrNull()
+        if (directRating != null) {
+            return RottenTomatoesSnapshot(directRating, com.aliflix.app.model.RatingSourceState.VERIFIED)
+        }
+        
         val query = URLEncoder.encode(item.title, StandardCharsets.UTF_8.toString())
-        val searchHtml = pageLoader("$ROTTEN_TOMATOES_URL/search?search=$query")
+        val searchHtml = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL/search?search=$query") } ?: ""
         val candidatePaths = parseRottenTomatoesCandidatePaths(searchHtml, item)
             .filterNot(directPaths::contains)
-            .take(5)
-        candidatePaths.forEach { path ->
-            val page = suspendOrNull {
-                pageLoader("$ROTTEN_TOMATOES_URL$path")
-            }
-            parseRottenTomatoesRating(page.orEmpty())?.let { return it }
+            .take(3)
+            
+        val candidateResults = kotlinx.coroutines.coroutineScope {
+            candidatePaths.take(2).map { path ->
+                async {
+                    val html = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL$path") }
+                    if (html != null && isRottenTomatoesIdentityVerified(html, item)) {
+                        parseRottenTomatoesRating(html)
+                    } else null
+                }
+            }.mapNotNull { it.await() }
         }
-        return null
+        
+        val fallbackRating = candidateResults.firstOrNull()
+        if (fallbackRating != null) {
+            return RottenTomatoesSnapshot(fallbackRating, com.aliflix.app.model.RatingSourceState.VERIFIED)
+        }
+        
+        return RottenTomatoesSnapshot(null, com.aliflix.app.model.RatingSourceState.NOT_RATED)
+    }
+
+    private fun isRottenTomatoesIdentityVerified(html: String, item: Media): Boolean {
+        if (html.isBlank()) return false
+        val expectedPrefix = if (item.type == MediaType.MOVIE) "/m/" else "/tv/"
+        val doc = Jsoup.parse(html, ROTTEN_TOMATOES_URL)
+        val canonical = doc.select("link[rel=canonical]").attr("href")
+        if (!canonical.contains(expectedPrefix)) return false
+        val titleElement = doc.selectFirst("title")?.text() ?: ""
+        if (!titleElement.contains(item.title, ignoreCase = true)) return false
+        return true
     }
 
     internal fun parseRottenTomatoesRating(html: String): Int? {
@@ -4630,6 +4675,7 @@ class CatalogClient(
         val imdbVoteCount: Int?,
         val imdbState: RatingSourceState?,
         val rottenTomatoes: Int?,
+        val rottenTomatoesState: RatingSourceState?,
     )
 
     private data class TmdbHomeRailSpec(

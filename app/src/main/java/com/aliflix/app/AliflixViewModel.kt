@@ -298,6 +298,60 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun submitCatalogueSearch(query: String) {
+        val trimmed = query.trim()
+        searchJob?.cancel()
+        val current = _search.value
+        val mode = current.mode
+        
+        if (mode == SearchMode.AI) return
+        
+        if (trimmed.isBlank()) {
+            _search.value = current.copy(
+                query = "",
+                phase = SearchPhase.IDLE,
+                loading = false,
+                error = null,
+            )
+            return
+        }
+        
+        _search.value = current.copy(
+            query = trimmed,
+            phase = SearchPhase.LOADING,
+            loading = true,
+            error = null,
+        )
+        
+        searchJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
+            try {
+                val results = client.search(trimmed)
+                if (_search.value.query == trimmed && _search.value.mode == mode) {
+                    val complete = _search.value.copy(
+                        query = trimmed,
+                        mode = mode,
+                        phase = if (results.isEmpty()) SearchPhase.EMPTY else SearchPhase.RESULTS,
+                        loading = false,
+                        results = results,
+                        error = null,
+                    )
+                    _search.value = complete
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (_search.value.query == trimmed && _search.value.mode == mode) {
+                    val failed = _search.value.copy(
+                        phase = SearchPhase.ERROR,
+                        loading = false,
+                        error = error.message ?: "Search failed.",
+                    )
+                    _search.value = failed
+                }
+            }
+        }
+    }
+
     fun selectSearchMode(mode: SearchMode) {
         if (mode == SearchMode.AI && !recommendationStore.enabled.value) return
         if (_search.value.mode == mode) return

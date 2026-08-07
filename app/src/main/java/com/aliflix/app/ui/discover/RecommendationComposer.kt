@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -23,6 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -87,18 +89,35 @@ internal fun RecommendationComposer(
         return
     }
 
-    var activeRefinements by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var activeMode by rememberSaveable { mutableIntStateOf(0) }
+    var describeText by rememberSaveable { mutableStateOf("") }
     var similarToTitle by rememberSaveable { mutableStateOf("") }
+    var similarToDiff by rememberSaveable { mutableStateOf("") }
+    var activeRefinements by rememberSaveable { mutableStateOf(setOf<String>()) }
 
     val builtPrompt = buildString {
-        append(text.trim())
-        if (activeRefinements.isNotEmpty()) {
-            if (isNotEmpty()) append(", ")
-            append(activeRefinements.joinToString(", "))
-        }
-        if (similarToTitle.isNotBlank()) {
-            if (isNotEmpty()) append(". ")
-            append("Similar to ${similarToTitle.trim()}")
+        when (activeMode) {
+            0 -> {
+                append(describeText.trim())
+            }
+            1 -> {
+                if (similarToTitle.isNotBlank()) {
+                    val kindText = if (selectedKind == RecommendationMediaKind.MOVIE) "movie" else "series"
+                    append("A $kindText similar to ${similarToTitle.trim()}")
+                    if (similarToDiff.isNotBlank()) {
+                        append(", but ${similarToDiff.trim()}")
+                    }
+                    append(".")
+                }
+            }
+            2 -> {
+                if (activeRefinements.isNotEmpty()) {
+                    val kindText = if (selectedKind == RecommendationMediaKind.MOVIE) "movie" else "series"
+                    append("A $kindText ")
+                    append(activeRefinements.joinToString(", "))
+                    append(".")
+                }
+            }
         }
     }
 
@@ -123,7 +142,7 @@ internal fun RecommendationComposer(
             RecommendationQuestionState(state, onAnswer)
         } else {
             // Main Builder UI
-            Text("What should we find?", color = AliflixContentPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text("Ask Aliflix", color = AliflixContentPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
 
             // Media Selector Segmented Control
             Row(
@@ -141,7 +160,8 @@ internal fun RecommendationComposer(
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(20.dp))
                             .background(if (selected) AliflixAccentPrimary.copy(alpha = 0.25f) else Color.Transparent)
-                            .clickable { onSelectType(kind) },
+                            .clickable { onSelectType(kind) }
+                            .testTag(if (kind == RecommendationMediaKind.MOVIE) "discover-type-movie" else "discover-type-series"),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -154,92 +174,157 @@ internal fun RecommendationComposer(
                 }
             }
 
-            // Prompt field
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                placeholder = { Text("Describe the story, mood, or limits...", color = AliflixContentTertiary) },
-                shape = RoundedCornerShape(16.dp),
+            // Mode Selector
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 110.dp, max = 150.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = AliflixSurfaceSecondary,
-                    unfocusedContainerColor = AliflixSurfaceSecondary,
-                    focusedBorderColor = AliflixAccentPrimary,
-                    unfocusedBorderColor = AliflixBorderSubtle,
-                    focusedTextColor = AliflixContentPrimary,
-                    unfocusedTextColor = AliflixContentPrimary,
-                )
-            )
-
-            // Active Refinements Chips
-            if (activeRefinements.isNotEmpty() || similarToTitle.isNotBlank()) {
-                Column {
-                    Text("Selected refinements:", color = AliflixContentSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp))
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        activeRefinements.forEach { ref ->
-                            InputChip(
-                                selected = true,
-                                onClick = { activeRefinements = activeRefinements - ref },
-                                label = { Text(ref) },
-                                trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp)) },
-                                colors = InputChipDefaults.inputChipColors(
-                                    selectedContainerColor = AliflixSurfaceElevated,
-                                    selectedLabelColor = AliflixContentPrimary
-                                ),
-                                border = InputChipDefaults.inputChipBorder(borderColor = AliflixBorderStrong, enabled = true, selected = true)
-                            )
-                        }
-                        if (similarToTitle.isNotBlank()) {
-                            InputChip(
-                                selected = true,
-                                onClick = { similarToTitle = "" },
-                                label = { Text("Similar to: $similarToTitle") },
-                                trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp)) },
-                                colors = InputChipDefaults.inputChipColors(
-                                    selectedContainerColor = AliflixSurfaceElevated,
-                                    selectedLabelColor = AliflixContentPrimary
-                                ),
-                                border = InputChipDefaults.inputChipBorder(borderColor = AliflixBorderStrong, enabled = true, selected = true)
-                            )
-                        }
+                    .height(40.dp)
+                    .background(AliflixSurfaceSecondary, RoundedCornerShape(20.dp))
+                    .padding(4.dp)
+            ) {
+                listOf("Describe", "Similar to", "Build with filters").forEachIndexed { index, modeText ->
+                    val selected = activeMode == index
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (selected) AliflixSurfaceElevated else Color.Transparent)
+                            .clickable { activeMode = index },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = modeText,
+                            color = if (selected) AliflixContentPrimary else AliflixContentSecondary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp
+                        )
                     }
                 }
             }
 
-            // Refinement Tools
-            Text("Make it more specific", color = AliflixContentPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val tools = listOf("Dark", "Under 2 hours", "No animation", "After 2015", "Suspenseful")
-                tools.forEach { tool ->
-                    AssistChip(
-                        onClick = {
-                            if (activeRefinements.contains(tool)) {
-                                activeRefinements = activeRefinements - tool
-                            } else {
-                                activeRefinements = activeRefinements + tool
-                            }
-                        },
-                        label = { Text(tool) },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = AliflixSurfaceSecondary,
-                            labelColor = AliflixContentPrimary
-                        ),
-                        border = AssistChipDefaults.assistChipBorder(borderColor = AliflixBorderSubtle, enabled = true)
+            // Mode Content
+            when (activeMode) {
+                0 -> {
+                    Text("Describe the story, mood, characters or limits", color = AliflixContentSecondary, fontSize = 12.sp)
+                    OutlinedTextField(
+                        value = describeText,
+                        onValueChange = { describeText = it },
+                        placeholder = { Text("Example: A teenager develops dangerous psychic abilities, without animation", color = AliflixContentTertiary, fontSize = 14.sp) },
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 100.dp, max = 150.dp)
+                            .testTag("discover-search-field"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = AliflixSurfaceSecondary,
+                            unfocusedContainerColor = AliflixSurfaceSecondary,
+                            focusedBorderColor = AliflixAccentPrimary,
+                            unfocusedBorderColor = AliflixBorderSubtle,
+                            focusedTextColor = AliflixContentPrimary,
+                            unfocusedTextColor = AliflixContentPrimary,
+                        )
                     )
                 }
+                1 -> {
+                    OutlinedTextField(
+                        value = similarToTitle,
+                        onValueChange = { similarToTitle = it },
+                        label = { Text("Title you already like") },
+                        placeholder = { Text("Enter a movie or series title", color = AliflixContentTertiary) },
+                        shape = RoundedCornerShape(16.dp),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = AliflixSurfaceSecondary,
+                            unfocusedContainerColor = AliflixSurfaceSecondary,
+                            focusedBorderColor = AliflixAccentPrimary,
+                            unfocusedBorderColor = AliflixBorderSubtle,
+                            focusedTextColor = AliflixContentPrimary,
+                            unfocusedTextColor = AliflixContentPrimary,
+                        )
+                    )
+                    OutlinedTextField(
+                        value = similarToDiff,
+                        onValueChange = { similarToDiff = it },
+                        label = { Text("What should be different?") },
+                        placeholder = { Text("For example: shorter, darker, less violent", color = AliflixContentTertiary) },
+                        shape = RoundedCornerShape(16.dp),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = AliflixSurfaceSecondary,
+                            unfocusedContainerColor = AliflixSurfaceSecondary,
+                            focusedBorderColor = AliflixAccentPrimary,
+                            unfocusedBorderColor = AliflixBorderSubtle,
+                            focusedTextColor = AliflixContentPrimary,
+                            unfocusedTextColor = AliflixContentPrimary,
+                        )
+                    )
+                }
+                2 -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 240.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        val filterGroups = mapOf(
+                            "Mood" to listOf("Dark", "Funny", "Warm", "Tense", "Mind-bending", "Emotional", "Relaxing", "Suspenseful"),
+                            "Genre" to listOf("Action", "Comedy", "Crime", "Drama", "Fantasy", "Horror", "Mystery", "Romance", "Science Fiction", "Thriller"),
+                            "Length" to if (selectedKind == RecommendationMediaKind.MOVIE) {
+                                listOf("Under 90 minutes", "Under 2 hours", "Over 2 hours")
+                            } else {
+                                listOf("Short episodes", "Under 45-minute episodes", "Long episodes")
+                            },
+                            "Era" to listOf("Recent", "After 2015", "2000s", "1990s", "Classic"),
+                            "Avoid" to listOf("No animation", "No horror", "No graphic violence", "No romance", "No comedy", "No supernatural elements"),
+                            "Rating" to listOf("IMDb 7+", "IMDb 8+", "Highly rated", "Hidden gem")
+                        )
+                        filterGroups.forEach { (groupTitle, options) ->
+                            Text(groupTitle, color = AliflixContentPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                options.forEach { option ->
+                                    val isSelected = activeRefinements.contains(option)
+                                    FilterChip(
+                                        selected = isSelected,
+                                        onClick = {
+                                            if (isSelected) activeRefinements = activeRefinements - option
+                                            else activeRefinements = activeRefinements + option
+                                        },
+                                        label = { Text(option) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            containerColor = AliflixSurfaceSecondary,
+                                            selectedContainerColor = AliflixAccentPrimary.copy(alpha = 0.2f),
+                                            labelColor = AliflixContentPrimary,
+                                            selectedLabelColor = AliflixAccentPrimary
+                                        ),
+                                        border = FilterChipDefaults.filterChipBorder(
+                                            borderColor = AliflixBorderSubtle,
+                                            selectedBorderColor = AliflixAccentPrimary,
+                                            enabled = true,
+                                            selected = isSelected
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
-            // Start with an idea (Recipes)
-            if (text.isBlank() && activeRefinements.isEmpty() && similarToTitle.isBlank()) {
-                Text("Start with an idea", color = AliflixContentPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RecipeCard("Hidden gem", "Less obvious, well-rated choices") {
-                        activeRefinements = activeRefinements + "Highly rated hidden gem"
-                    }
-                    RecipeCard("Similar to a title", "Find something like what you already love") {
-                        similarToTitle = "Inception" // Example starter
+            // Request Preview
+            if (builtPrompt.isNotBlank()) {
+                Surface(
+                    color = AliflixSurfaceSecondary,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Your request", color = AliflixContentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(builtPrompt, color = AliflixContentPrimary, fontSize = 14.sp)
                     }
                 }
             }
@@ -264,26 +349,10 @@ internal fun RecommendationComposer(
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Rounded.Search, contentDescription = null)
-                        Text("Find genuine matches", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Find matches", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun RecipeCard(title: String, desc: String, onClick: () -> Unit) {
-    Surface(
-        color = AliflixSurfaceSecondary,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(title, color = AliflixContentPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text(desc, color = AliflixContentSecondary, fontSize = 12.sp)
         }
     }
 }

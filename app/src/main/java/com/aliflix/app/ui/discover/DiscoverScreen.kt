@@ -163,6 +163,7 @@ internal fun DiscoverScreen(
     focusRequestId: Int?,
     onFocusRequestConsumed: (Int) -> Unit,
     onQueryChange: (String) -> Unit,
+    onSubmitSearch: (String) -> Unit,
     onModeChange: (SearchMode) -> Unit,
     onOpen: (Media) -> Unit,
     onSelectRecommendationType: (RecommendationMediaKind) -> Unit,
@@ -217,6 +218,18 @@ internal fun DiscoverScreen(
     LaunchedEffect(recommendationState) {
         if (recommendationState is com.aliflix.app.recommendation.RecommendationUiState.Idle) {
             recommendModeActive = false
+        }
+    }
+
+    LaunchedEffect(focusRequestId) {
+        if (focusRequestId != null) {
+            recommendModeActive = false
+            onModeChange(SearchMode.TITLE)
+            withFrameNanos {}
+            focusRequester.requestFocus()
+            fieldValue = fieldValue.copy(selection = TextRange(fieldValue.text.length))
+            keyboard?.show()
+            onFocusRequestConsumed(focusRequestId)
         }
     }
 
@@ -335,69 +348,175 @@ internal fun DiscoverScreen(
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
                         )
 
-                        OutlinedTextField(
-                            value = fieldValue,
-                            onValueChange = { updated ->
-                                fieldValue = updated
-                                onQueryChange(updated.text)
-                            },
-                            placeholder = {
-                                Text(
-                                    text = "Title, actor, year, or keyword",
-                                    color = AliflixContentTertiary,
-                                    fontSize = 14.sp,
-                                )
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Filled.Search,
-                                    contentDescription = null,
-                                    tint = AliflixContentSecondary,
-                                )
-                            },
-                            trailingIcon = {
-                                if (fieldValue.text.isNotEmpty()) {
-                                    IconButton(
-                                        onClick = {
-                                            fieldValue = TextFieldValue("")
-                                            onQueryChange("")
-                                        }
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Close,
-                                            contentDescription = "Clear search",
-                                        )
-                                    }
-                                }
-                            },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(
-                                onSearch = { keyboard?.hide() },
-                            ),
-                            textStyle = MaterialTheme.typography.bodyLarge.copy(
-                                color = AliflixContentPrimary,
-                            ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = AliflixSurfaceElevated,
-                                unfocusedContainerColor = AliflixSurfaceSecondary,
-                                focusedBorderColor = AliflixAccentPrimary,
-                                unfocusedBorderColor = AliflixBorderSubtle,
-                                cursorColor = AliflixAccentSecondary,
-                                focusedTextColor = AliflixContentPrimary,
-                                unfocusedTextColor = AliflixContentPrimary,
-                            ),
-                            shape = RoundedCornerShape(18.dp),
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 10.dp)
-                                .heightIn(min = 58.dp)
-                                .focusRequester(focusRequester),
-                        )
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            OutlinedTextField(
+                                value = fieldValue,
+                                onValueChange = { updated ->
+                                    fieldValue = updated
+                                    onQueryChange(updated.text)
+                                },
+                                placeholder = {
+                                    Text(
+                                        text = "Title, actor, year, or keyword",
+                                        color = AliflixContentTertiary,
+                                        fontSize = 14.sp,
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Search,
+                                        contentDescription = null,
+                                        tint = AliflixContentSecondary,
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (fieldValue.text.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = {
+                                                fieldValue = TextFieldValue("")
+                                                onQueryChange("")
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Close,
+                                                contentDescription = "Clear search",
+                                            )
+                                        }
+                                    }
+                                },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = { 
+                                        keyboard?.hide()
+                                        onSubmitSearch(fieldValue.text)
+                                    },
+                                ),
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                    color = AliflixContentPrimary,
+                                ),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = AliflixSurfaceElevated,
+                                    unfocusedContainerColor = AliflixSurfaceSecondary,
+                                    focusedBorderColor = AliflixAccentPrimary,
+                                    unfocusedBorderColor = AliflixBorderSubtle,
+                                    cursorColor = AliflixAccentSecondary,
+                                    focusedTextColor = AliflixContentPrimary,
+                                    unfocusedTextColor = AliflixContentPrimary,
+                                ),
+                                shape = RoundedCornerShape(18.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 58.dp)
+                                    .focusRequester(focusRequester)
+                                    .testTag("discover-search-field"),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    keyboard?.hide()
+                                    onSubmitSearch(fieldValue.text)
+                                },
+                                enabled = fieldValue.text.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AliflixAccentPrimary,
+                                    contentColor = Color.White,
+                                    disabledContainerColor = AliflixSurfaceSecondary,
+                                    disabledContentColor = AliflixContentTertiary,
+                                ),
+                                shape = RoundedCornerShape(18.dp),
+                                modifier = Modifier
+                                    .height(58.dp)
+                                    .testTag("discover-catalogue-submit"),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Search,
+                                    contentDescription = "Search catalogue",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Search",
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                recommendModeActive = true
+                                onModeChange(SearchMode.AI)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            color = AliflixSurfaceElevated,
+                            contentColor = AliflixContentPrimary,
+                            tonalElevation = 2.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = AliflixAccentPrimary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "Ask Aliflix",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = AliflixContentPrimary
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = AliflixAccentPrimary.copy(alpha = 0.1f),
+                                            shape = RoundedCornerShape(4.dp),
+                                            modifier = Modifier.padding(vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "BETA",
+                                                fontWeight = FontWeight.Black,
+                                                fontSize = 9.sp,
+                                                color = AliflixAccentPrimary,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = "Describe what you want and refine the matches",
+                                        color = AliflixContentSecondary,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                                    contentDescription = "Open Ask Aliflix recommendations",
+                                    tint = AliflixContentTertiary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
 
                         CatalogueTypeSelector(
                             selected = mediaFilter,
                             onSelect = onMediaFilterChange,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (state.phase == SearchPhase.IDLE) 20.dp else 4.dp)
                         )
 
                         CatalogueContent(
@@ -413,44 +532,6 @@ internal fun DiscoverScreen(
                         )
                     }
 
-                    if (aiEnabled) {
-                        androidx.compose.material3.ExtendedFloatingActionButton(
-                            onClick = {
-                                recommendModeActive = true
-                                onModeChange(SearchMode.AI)
-                            },
-                            containerColor = AliflixSurfaceElevated,
-                            contentColor = AliflixContentPrimary,
-                            shape = RoundedCornerShape(26.dp),
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(bottom = 80.dp, end = 24.dp)
-                                .heightIn(min = 52.dp),
-                            icon = {
-                                Icon(
-                                    imageVector = Icons.Rounded.AutoAwesome,
-                                    contentDescription = null,
-                                    tint = AliflixAccentPrimary
-                                )
-                            },
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = "Ask Aliflix",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "BETA",
-                                        fontWeight = FontWeight.Black,
-                                        fontSize = 9.sp,
-                                        color = AliflixContentSecondary
-                                    )
-                                }
-                            }
-                        )
-                    }
                 }
             }
         }
@@ -550,9 +631,10 @@ private fun DiscoverModeSelector(
 private fun CatalogueTypeSelector(
     selected: String,
     onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         listOf("All", "Movies", "Series").forEach { option ->

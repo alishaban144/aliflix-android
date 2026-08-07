@@ -13,6 +13,7 @@ enum class MediaType(val routeName: String) {
 }
 
 enum class RatingSourceState {
+    LOADING,
     VERIFIED,
     STALE,
     NOT_RATED,
@@ -33,6 +34,7 @@ data class Media(
     val imdbVoteCount: Int? = null,
     val imdbRatingState: RatingSourceState? = null,
     val rottenTomatoesRating: Int? = null,
+    val rottenTomatoesState: RatingSourceState? = null,
     val genres: List<String> = emptyList(),
     val cast: List<String> = emptyList(),
     val runtime: String = "",
@@ -57,6 +59,7 @@ data class Media(
         imdbVoteCount?.let { put("imdbVoteCount", it) }
         imdbRatingState?.let { put("imdbRatingState", it.name) }
         rottenTomatoesRating?.let { put("rottenTomatoesRating", it) }
+        rottenTomatoesState?.let { put("rottenTomatoesState", it.name) }
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
         put("runtime", runtime)
@@ -99,6 +102,11 @@ data class Media(
                 rottenTomatoesRating = json.optInt("rottenTomatoesRating").takeIf {
                     json.has("rottenTomatoesRating") && it > 0
                 },
+                rottenTomatoesState = json.optString("rottenTomatoesState")
+                    .takeIf(String::isNotBlank)
+                    ?.let { value ->
+                        RatingSourceState.entries.firstOrNull { it.name == value }
+                    },
                 genres = json.optJSONArray("genres")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         array.optString(index).takeIf(String::isNotBlank)

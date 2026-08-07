@@ -799,6 +799,7 @@ fun AliflixApp(
                             )
                         },
                         onQueryChange = viewModel::updateSearch,
+                        onSubmitSearch = viewModel::submitCatalogueSearch,
                         onModeChange = viewModel::selectSearchMode,
                         onOpen = ::openDetails,
                         onSelectRecommendationType = viewModel::selectRecommendationType,

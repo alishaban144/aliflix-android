@@ -97,6 +97,14 @@ interface CatalogCacheStore {
         mediaKey: String,
         snapshot: ImdbRatingSnapshot,
     ) = Unit
+    suspend fun loadRottenTomatoesRating(
+        mediaKey: String,
+        maxAgeMs: Long,
+    ): RottenTomatoesSnapshot? = null
+    suspend fun saveRottenTomatoesRating(
+        mediaKey: String,
+        snapshot: RottenTomatoesSnapshot,
+    ) = Unit
 }
 
 data class CachedRecommendationCatalogPage(
@@ -128,6 +136,7 @@ class AndroidCatalogCacheStore internal constructor(
     private val recommendationPageFile = File(cacheDir, "recommendation-pages-v3.json")
     private val metadataFile = File(cacheDir, "recommendation-metadata-v1.json")
     private val imdbRatingFile = File(cacheDir, "imdb-ratings-v1.json")
+    private val rottenTomatoesRatingFile = File(cacheDir, "rotten-tomatoes-ratings-v1.json")
     private val mutex = Mutex()
     private val cacheScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val pendingMetadata = linkedMapOf<String, VerifiedRecommendationItem>()
@@ -502,44 +511,89 @@ class AndroidCatalogCacheStore internal constructor(
         }
     }
 
-    override suspend fun saveImdbRating(
-        mediaKey: String,
-        snapshot: ImdbRatingSnapshot,
-    ) = mutex.withLock {
-        val previousValue = withContext(ioDispatcher) {
-            cacheValueOrNull { fileReader(imdbRatingFile) }
-        }
-        val value = withContext(computationDispatcher) {
-            val previous = previousValue?.let {
-                runCatching { JSONObject(it).optJSONArray("entries") }.getOrNull()
-            }
-            val entries = buildList {
-                add(
-                    JSONObject()
-                        .put("key", mediaKey)
-                        .put("imdbId", snapshot.identity.imdbId)
-                        .put("title", snapshot.identity.title)
-                        .put("type", snapshot.identity.type.routeName)
-                        .put("state", snapshot.state.name)
-                        .put("fetchedAt", snapshot.fetchedAtMillis)
-                        .apply {
-                            snapshot.identity.year?.let { put("year", it) }
-                            snapshot.rating?.let { put("rating", it) }
-                            snapshot.voteCount?.let { put("votes", it) }
-                        },
-                )
-                if (previous != null) {
-                    (0 until previous.length())
-                        .mapNotNull(previous::optJSONObject)
-                        .filterNot { it.optString("key") == mediaKey }
-                        .sortedByDescending { it.optLong("fetchedAt") }
-                        .take(MAX_IMDB_RATING_ENTRIES - 1)
-                        .forEach(::add)
+    override suspend fun saveImdbRating(mediaKey: String, snapshot: ImdbRatingSnapshot) {
+        mutex.withLock {
+            val value = withContext(computationDispatcher) {
+                val previous = cacheValueOrNull { fileReader(imdbRatingFile) }?.let { JSONObject(it) }
+                    ?.optJSONArray("entries")
+                val entries = JSONArray()
+                val updated = JSONObject().apply {
+                    put("key", mediaKey)
+                    put("imdbId", snapshot.identity.imdbId)
+                    put("title", snapshot.identity.title)
+                    put("type", snapshot.identity.type.routeName)
+                    snapshot.identity.year?.let { put("year", it) }
+                    snapshot.rating?.let { put("rating", it) }
+                    snapshot.voteCount?.let { put("votes", it) }
+                    put("state", snapshot.state.name)
+                    put("fetchedAt", snapshot.fetchedAtMillis)
                 }
+                entries.put(updated)
+                if (previous != null) {
+                    for (i in 0 until previous.length()) {
+                        val entry = previous.optJSONObject(i) ?: continue
+                        if (entry.optString("key") != mediaKey) {
+                            entries.put(entry)
+                        }
+                    }
+                }
+                JSONObject().put("entries", entries).toString()
             }
-            JSONObject().put("entries", JSONArray(entries)).toString()
+            withContext(ioDispatcher) { writeAtomically(imdbRatingFile, value) }
         }
-        withContext(ioDispatcher) { writeAtomically(imdbRatingFile, value) }
+    }
+    override suspend fun loadRottenTomatoesRating(
+        mediaKey: String,
+        maxAgeMs: Long,
+    ): RottenTomatoesSnapshot? = mutex.withLock {
+        cacheLoadOrNull {
+            val value = withContext(ioDispatcher) { fileReader(rottenTomatoesRatingFile) }
+            withContext(computationDispatcher) decode@{
+                val entries = JSONObject(value).optJSONArray("entries") ?: return@decode null
+                val entry = (0 until entries.length())
+                    .mapNotNull(entries::optJSONObject)
+                    .firstOrNull { it.optString("key") == mediaKey }
+                    ?: return@decode null
+                val fetchedAt = entry.optLong("fetchedAt")
+                if (System.currentTimeMillis() - fetchedAt > maxAgeMs) {
+                    return@decode null
+                }
+                val state = com.aliflix.app.model.RatingSourceState.entries
+                    .firstOrNull { it.name == entry.optString("state") }
+                    ?: return@decode null
+                RottenTomatoesSnapshot(
+                    rating = entry.optInt("rating").takeIf { entry.has("rating") && it > 0 },
+                    state = state,
+                )
+            }
+        }
+    }
+
+    override suspend fun saveRottenTomatoesRating(mediaKey: String, snapshot: RottenTomatoesSnapshot) {
+        mutex.withLock {
+            val value = withContext(computationDispatcher) {
+                val previous = cacheValueOrNull { fileReader(rottenTomatoesRatingFile) }?.let { JSONObject(it) }
+                    ?.optJSONArray("entries")
+                val entries = JSONArray()
+                val updated = JSONObject().apply {
+                    put("key", mediaKey)
+                    snapshot.rating?.let { put("rating", it) }
+                    put("state", snapshot.state.name)
+                    put("fetchedAt", System.currentTimeMillis())
+                }
+                entries.put(updated)
+                if (previous != null) {
+                    for (i in 0 until previous.length()) {
+                        val entry = previous.optJSONObject(i) ?: continue
+                        if (entry.optString("key") != mediaKey) {
+                            entries.put(entry)
+                        }
+                    }
+                }
+                JSONObject().put("entries", entries).toString()
+            }
+            withContext(ioDispatcher) { writeAtomically(rottenTomatoesRatingFile, value) }
+        }
     }
 
     private suspend fun flushPendingMetadata() = mutex.withLock {
