@@ -103,16 +103,21 @@ internal fun RecommendationComposer(
     }
 
     val filterGroups = mapOf(
-        "Mood" to listOf("Dark", "Funny", "Warm", "Tense", "Mind-bending", "Emotional", "Relaxing", "Suspenseful"),
-        "Genre" to listOf("Action", "Comedy", "Crime", "Drama", "Fantasy", "Horror", "Mystery", "Romance", "Science Fiction", "Thriller"),
-        "Length" to if (selectedKind == RecommendationMediaKind.MOVIE) {
-            listOf("Under 90 minutes", "Under 2 hours", "Over 2 hours")
+        "Genre" to listOf("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "History", "Horror", "Music", "Mystery", "Romance", "Science Fiction", "TV Movie", "Thriller", "War", "Western", "Action & Adventure", "Kids", "News", "Reality", "Sci-Fi & Fantasy", "Soap", "Talk", "War & Politics"),
+        "Mood & tone" to listOf("Dark", "Funny", "Warm", "Tense", "Mind-bending", "Emotional", "Relaxing", "Suspenseful", "Lighthearted", "Gritty"),
+        "Story & themes" to listOf("Coming of age", "Betrayal", "Revenge", "Love triangle", "Underdog", "Survival", "Heist", "Time travel", "Space exploration", "Post-apocalyptic"),
+        "Setting" to listOf("Space", "Underwater", "Small town", "Big city", "Medieval", "Future", "School", "Workplace", "Wilderness", "Fantasy world"),
+        "Era" to listOf("Recent", "After 2015", "2000s", "1990s", "1980s", "Classic", "Historical"),
+        "Runtime" to if (selectedKind == RecommendationMediaKind.MOVIE) {
+            listOf("Under 90 minutes", "Under 2 hours", "Over 2 hours", "Epic (3+ hours)")
         } else {
-            listOf("Short episodes", "Under 45-minute episodes", "Long episodes")
+            listOf("Short episodes", "Under 45-minute episodes", "Long episodes", "Limited Series")
         },
-        "Era" to listOf("Recent", "After 2015", "2000s", "1990s", "Classic"),
-        "Avoid" to listOf("No animation", "No horror", "No graphic violence", "No romance", "No comedy", "No supernatural elements"),
-        "Rating" to listOf("IMDb 7+", "IMDb 8+", "Highly rated", "Hidden gem")
+        "Rating" to listOf("IMDb 7+", "IMDb 8+", "RT 80%+", "RT 90%+", "Highly rated", "Hidden gem", "Family friendly", "Adults only"),
+        "Language" to listOf("English", "Spanish", "French", "German", "Korean", "Japanese", "Italian", "Hindi", "Non-English", "Foreign language"),
+        "Series status" to listOf("Ended", "Returning Series", "Canceled", "In Production", "New Series"),
+        "Popularity" to listOf("Blockbuster", "Indie", "Cult classic", "Award winning", "Critically acclaimed", "Trending"),
+        "Exclude" to listOf("No animation", "No horror", "No graphic violence", "No romance", "No comedy", "No supernatural elements", "No subtitles")
     )
 
     val builtDraft = remember(activeMode, describeText, similarToTitle, similarToDiff, activeRefinements, selectedKind) {
@@ -128,21 +133,27 @@ internal fun RecommendationComposer(
                 freeText = similarToDiff.trim(),
             )
             2 -> {
-                val moods = activeRefinements.filter { it in (filterGroups["Mood"] ?: emptyList()) }
+                val moods = activeRefinements.filter { it in (filterGroups["Mood & tone"] ?: emptyList()) }
                 val genres = activeRefinements.filter { it in (filterGroups["Genre"] ?: emptyList()) }
-                val runtimeRule = activeRefinements.firstOrNull { it in (filterGroups["Length"] ?: emptyList()) }
+                val themes = activeRefinements.filter { it in (filterGroups["Story & themes"] ?: emptyList()) }
+                val runtimeRule = activeRefinements.firstOrNull { it in (filterGroups["Runtime"] ?: emptyList()) }
                 val yearRule = activeRefinements.firstOrNull { it in (filterGroups["Era"] ?: emptyList()) }
-                val exclusions = activeRefinements.filter { it in (filterGroups["Avoid"] ?: emptyList()) }
+                val exclusions = activeRefinements.filter { it in (filterGroups["Exclude"] ?: emptyList()) }
                 val minimumImdb = if ("IMDb 8+" in activeRefinements) 8.0 else if ("IMDb 7+" in activeRefinements) 7.0 else null
+                val language = activeRefinements.firstOrNull { it in (filterGroups["Language"] ?: emptyList()) }
+                val status = activeRefinements.firstOrNull { it in (filterGroups["Series status"] ?: emptyList()) }
 
                 RecommendationRequestDraft(
                     mediaType = mediaType,
                     moods = moods,
                     genres = genres,
+                    themes = themes,
                     runtimeRule = runtimeRule,
                     yearRule = yearRule,
                     exclusions = exclusions,
                     minimumImdb = minimumImdb,
+                    language = language,
+                    status = status,
                     freeText = builtPrompt
                 )
             }
@@ -397,7 +408,7 @@ internal fun RecommendationComposer(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 240.dp)
+                            .weight(1f)
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {

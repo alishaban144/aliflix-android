@@ -518,6 +518,7 @@ class CatalogClient(
         ConcurrentHashMap<String, CatalogVerifiedMetadata>()
     private val tmdbSearchCache = ConcurrentHashMap<String, List<Media>>()
     private val verifiedGenrePageCache = ConcurrentHashMap<String, List<Media>>()
+    private val rottenTomatoesClient = RottenTomatoesClient(rawPageLoader)
     private val verifiedGenrePageLocks = ConcurrentHashMap<String, Mutex>()
     private val genreBrowsePageCursor = ConcurrentHashMap<String, Int>()
     private val genreBrowseSeenKeys = ConcurrentHashMap.newKeySet<String>()
@@ -2931,8 +2932,7 @@ class CatalogClient(
                 if (cached != null) {
                     cached
                 } else {
-                    val snapshot = suspendOrNull { loadRottenTomatoesRating(parsed) } 
-                        ?: RottenTomatoesSnapshot(null, RatingSourceState.UNAVAILABLE)
+                    val snapshot = rottenTomatoesClient.loadRating(parsed)
                     cacheStore?.saveRottenTomatoesRating(parsed.key, snapshot)
                     snapshot
                 }
@@ -3947,8 +3947,6 @@ class CatalogClient(
         catalogue = (listOf(metadata) + catalogue.filterNot { it.key == metadata.key })
         onProgress(metadata, recommendations)
 
-        val cachedRottenTomatoes = rottenTomatoesRatingsCache[metadata.key]
-
         val imdbJob = async {
             try {
                 val imdbSnapshot = imdbRatingRepository.ratingFor(metadata)
@@ -3969,8 +3967,8 @@ class CatalogClient(
         }
 
         val rtJob = async {
-            val rt = cachedRottenTomatoes ?: suspendOrNull { loadRottenTomatoesRating(metadata) }
-            if (rt != null) {
+            val rt = rottenTomatoesClient.loadRating(metadata)
+            if (rt.state != RatingSourceState.UNAVAILABLE) {
                 val enriched = catalogue.firstOrNull { it.key == metadata.key }?.copy(
                     rottenTomatoesRating = rt.rating,
                     rottenTomatoesState = rt.state,
@@ -3978,7 +3976,6 @@ class CatalogClient(
                 if (enriched != null) {
                     catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
                     onProgress(enriched, recommendations)
-                    rottenTomatoesRatingsCache[enriched.key] = rt
                 }
             }
         }
@@ -4468,7 +4465,7 @@ class CatalogClient(
             }
             val rottenTomatoes = async {
                 cachedRottenTomatoes
-                    ?: suspendOrNull { loadRottenTomatoesRating(item) }
+                    ?: rottenTomatoesClient.loadRating(item)
             }
             val imdbSnapshot = imdb.await()
             val rtSnapshot = rottenTomatoes.await()
@@ -4506,182 +4503,6 @@ class CatalogClient(
             ?.getOrNull(1)
             ?.toDoubleOrNull()
             ?.takeIf { it in 0.1..10.0 }
-    }
-
-    private suspend fun loadRottenTomatoesRating(item: Media): RottenTomatoesSnapshot {
-        val slug = rottenTomatoesSlug(item.title)
-        val expectedPrefix = if (item.type == MediaType.MOVIE) "/m/" else "/tv/"
-        val year = item.year.take(4).takeIf { it.matches(Regex("\\d{4}")) }
-        
-        val directPaths = buildList {
-            add("$expectedPrefix$slug")
-            year?.let { add("$expectedPrefix${slug}_$it") }
-        }.distinct().take(2)
-        
-        val result = kotlinx.coroutines.withTimeoutOrNull(4500) {
-            val directResults = kotlinx.coroutines.coroutineScope {
-                directPaths.map { path ->
-                    async {
-                        val html = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL$path") }
-                        if (html != null && isRottenTomatoesIdentityVerified(html, item)) {
-                            parseRottenTomatoesRating(html)
-                        } else null
-                    }
-                }.mapNotNull { it.await() }
-            }
-            
-            val directRating = directResults.firstOrNull()
-            if (directRating != null) {
-                return@withTimeoutOrNull RottenTomatoesSnapshot(directRating, com.aliflix.app.model.RatingSourceState.VERIFIED)
-            }
-            
-            val query = URLEncoder.encode(item.title, StandardCharsets.UTF_8.toString())
-            val searchHtml = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL/search?search=$query") } ?: ""
-            val candidatePaths = parseRottenTomatoesCandidatePaths(searchHtml, item)
-                .filterNot(directPaths::contains)
-                .take(3)
-                
-            val candidateResults = kotlinx.coroutines.coroutineScope {
-                candidatePaths.take(2).map { path ->
-                    async {
-                        val html = suspendOrNull { pageLoader("$ROTTEN_TOMATOES_URL$path") }
-                        if (html != null && isRottenTomatoesIdentityVerified(html, item)) {
-                            parseRottenTomatoesRating(html)
-                        } else null
-                    }
-                }.mapNotNull { it.await() }
-            }
-            
-            val fallbackRating = candidateResults.firstOrNull()
-            if (fallbackRating != null) {
-                return@withTimeoutOrNull RottenTomatoesSnapshot(fallbackRating, com.aliflix.app.model.RatingSourceState.VERIFIED)
-            }
-            
-            RottenTomatoesSnapshot(null, com.aliflix.app.model.RatingSourceState.NOT_RATED)
-        }
-        return result ?: RottenTomatoesSnapshot(null, com.aliflix.app.model.RatingSourceState.UNAVAILABLE)
-    }
-
-    private fun isRottenTomatoesIdentityVerified(html: String, item: Media): Boolean {
-        if (html.isBlank()) return false
-        val expectedPrefix = if (item.type == MediaType.MOVIE) "/m/" else "/tv/"
-        val doc = Jsoup.parse(html, ROTTEN_TOMATOES_URL)
-        val canonical = doc.select("link[rel=canonical]").attr("href")
-        if (canonical.isNotBlank() && !canonical.contains(expectedPrefix)) return false
-        val titleElement = doc.selectFirst("title")?.text() ?: ""
-        val normalizedDocTitle = normalizeText(titleElement)
-        val normalizedItemTitle = normalizeText(item.title)
-        if (normalizedDocTitle.isNotBlank() && normalizedItemTitle.isNotBlank() && !normalizedDocTitle.contains(normalizedItemTitle)) {
-            return false
-        }
-        return true
-    }
-
-    internal fun parseRottenTomatoesRating(html: String): Int? {
-        if (html.isBlank()) return null
-        val document = Jsoup.parse(html, ROTTEN_TOMATOES_URL)
-        
-        document.select("script[type=application/ld+json]").forEach { script ->
-            val data = script.data()
-            if (data.isNotBlank()) {
-                val rating = runCatching {
-                    val json = JSONObject(data)
-                    val aggregate = json.optJSONObject("aggregateRating")
-                    val valFromAggregate = aggregate?.optInt("ratingValue", -1)?.takeIf { it in 0..100 }
-                    val valDirect = json.optInt("tomatometerScore", -1).takeIf { it in 0..100 }
-                    valFromAggregate ?: valDirect
-                }.getOrNull()
-                if (rating != null && rating in 0..100) return rating
-            }
-        }
-
-        val scoreBoard = document.selectFirst("score-board")
-        val attributeScore = sequenceOf(
-            scoreBoard?.attr("tomatometerscore"),
-            scoreBoard?.attr("tomatometerScore"),
-            document.selectFirst(
-                "media-scorecard rt-text[slot=criticsScore], " +
-                    "rt-text[slot=criticsScore]",
-            )?.text(),
-            document.selectFirst(
-                "[data-qa=tomatometer], [data-qa=score-panel-critics-score], [data-qa=critics-score]",
-            )?.text(),
-        ).filterNotNull().mapNotNull { scoreText.find(it)?.value?.toIntOrNull() }.firstOrNull()
-        if (attributeScore != null && attributeScore in 0..100) return attributeScore
-        val visibleScore = visibleTomatometerPattern.find(document.text())
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.toIntOrNull()
-        if (visibleScore != null && visibleScore in 0..100) return visibleScore
-        return rottenTomatoesPatterns.firstNotNullOfOrNull { pattern ->
-            pattern.find(html)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toIntOrNull()
-                ?.takeIf { it in 0..100 }
-        }
-    }
-
-    internal fun parseRottenTomatoesCandidatePaths(
-        html: String,
-        item: Media,
-    ): List<String> {
-        if (html.isBlank()) return emptyList()
-        val expectedPrefix = if (item.type == MediaType.MOVIE) "/m/" else "/tv/"
-        val wantedTitle = normalizeText(item.title)
-        val wantedSlug = rottenTomatoesSlug(item.title)
-        val wantedTokens = wantedTitle.split(' ').filter(String::isNotBlank).toSet()
-        val wantedYear = item.year.take(4).takeIf { it.matches(Regex("\\d{4}")) }
-        val scores = linkedMapOf<String, Int>()
-
-        fun addCandidate(rawPath: String, context: String) {
-            val path = rawPath.substringBefore('?').substringBefore('#').trimEnd('/')
-            if (!path.startsWith(expectedPrefix)) return
-            val slug = path.substringAfter(expectedPrefix).substringBefore('/')
-            if (slug.isBlank()) return
-            val normalizedSlug = normalizeText(slug.replace('_', ' '))
-            val slugTokens = normalizedSlug.split(' ').filter(String::isNotBlank).toSet()
-            val normalizedContext = normalizeText(context)
-            var score = 0
-            if (slug == wantedSlug) score += 180
-            if (normalizedSlug == wantedTitle) score += 160
-            if (
-                normalizedSlug.contains(wantedTitle) ||
-                wantedTitle.contains(normalizedSlug)
-            ) {
-                score += 70
-            }
-            score += (slugTokens intersect wantedTokens).size * 18
-            if (normalizedContext.contains(wantedTitle)) score += 110
-            if (wantedYear != null && (wantedYear in path || wantedYear in context)) score += 24
-            scores[path] = maxOf(scores[path] ?: Int.MIN_VALUE, score)
-        }
-
-        val document = Jsoup.parse(html, ROTTEN_TOMATOES_URL)
-        document.select("a[href^=\"$expectedPrefix\"]").forEach { link ->
-            addCandidate(link.attr("href"), link.parent()?.text().orEmpty() + " " + link.text())
-        }
-        val unescaped = html
-            .replace("\\/", "/")
-            .replace("\\u002F", "/")
-            .replace("\\u002f", "/")
-        rottenTomatoesPathPattern.findAll(unescaped).forEach { match ->
-            addCandidate(match.value, "")
-        }
-        return scores.entries
-            .sortedByDescending(Map.Entry<String, Int>::value)
-            .map(Map.Entry<String, Int>::key)
-    }
-
-    private fun rottenTomatoesSlug(value: String): String {
-        val normalized = Normalizer.normalize(value, Normalizer.Form.NFD)
-            .replace(Regex("\\p{M}+"), "")
-            .lowercase()
-            .replace("&", " and ")
-            .replace(Regex("['’]"), "")
-            .replace(Regex("[^a-z0-9]+"), "_")
-            .trim('_')
-        return normalized
     }
 
     private fun normalizeText(value: String): String =

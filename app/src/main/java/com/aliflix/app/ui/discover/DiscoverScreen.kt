@@ -287,7 +287,7 @@ internal fun DiscoverScreen(
                         when (recommendationState) {
                             is RecommendationUiState.Idle,
                             is RecommendationUiState.SelectType -> {
-                                Spacer(modifier = Modifier.weight(1f))
+                                Spacer(modifier = Modifier.height(16.dp))
                             }
                             is RecommendationUiState.Results -> {
                                 RecommendationResults(
@@ -312,7 +312,7 @@ internal fun DiscoverScreen(
                             is RecommendationUiState.SourceUnavailable,
                             is RecommendationUiState.Relaxation,
                             is RecommendationUiState.Error -> {
-                                Spacer(modifier = Modifier.weight(1f))
+                                Spacer(modifier = Modifier.height(16.dp))
                                 // RecommendationComposer will handle the remaining summary/error states inline below
                             }
                         }
@@ -337,6 +337,7 @@ internal fun DiscoverScreen(
                             onRetry = onRetryRecommendations,
                             onShowMatches = onShowRecommendationMatches,
                             modifier = Modifier
+                                .weight(1f)
                                 .fillMaxWidth()
                                 .padding(16.dp)
                         )
