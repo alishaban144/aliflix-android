@@ -49,6 +49,11 @@ interface RecommendationCandidateRepository {
     ): List<RecommendationCandidate> = emptyList()
 }
 
+data class AiCandidateResolution(
+    val verificationCandidates: List<VerificationCandidate>,
+    val mediaMap: Map<String, Media>
+)
+
 class CatalogRecommendationCandidateRepository(
     private val client: CatalogClient,
     private val aiClient: RecommendationAiClient
@@ -93,6 +98,8 @@ class CatalogRecommendationCandidateRepository(
         val required = RequiredMetadataFields(
             runtime = media.type == MediaType.MOVIE,
             tvEpisodeRuntime = media.type == MediaType.TV,
+            rottenTomatoesRating = true,
+            imdbRating = true,
         )
         val verified = client.verifyRecommendationItem(media, required)
         return RecommendationCandidate(
@@ -134,6 +141,8 @@ class CatalogRecommendationCandidateRepository(
         val required = RequiredMetadataFields(
             runtime = anchor.media.type == MediaType.MOVIE,
             tvEpisodeRuntime = anchor.media.type == MediaType.TV,
+            rottenTomatoesRating = true,
+            imdbRating = true,
         )
         val verified = client.verifyRecommendationItem(anchor.media, required)
         return anchor.copy(
@@ -145,7 +154,7 @@ class CatalogRecommendationCandidateRepository(
     suspend fun resolveAiCandidates(
         interpretation: InterpretationResponse,
         limit: Int = 25
-    ): List<VerificationCandidate> = supervisorScope {
+    ): AiCandidateResolution = supervisorScope {
         val gate = Semaphore(4)
         
         // 1. Resolve keywords
@@ -186,13 +195,18 @@ class CatalogRecommendationCandidateRepository(
             .take(limit)
             
         // 3. Local enrichment (verifyRecommendationItem)
-        val verifiedCandidates = candidates.map { media ->
+        val verifiedPairs = candidates.map { media ->
             async {
                 gate.withPermit {
                     try {
-                        val required = RequiredMetadataFields(runtime = true, originalLanguage = true)
+                        val required = RequiredMetadataFields(
+                            runtime = true, 
+                            originalLanguage = true,
+                            rottenTomatoesRating = true,
+                            imdbRating = true
+                        )
                         val verified = client.verifyRecommendationItem(media, required)
-                        VerificationCandidate(
+                        val candidate = VerificationCandidate(
                             candidateId = verified.media.key,
                             tmdbId = verified.media.id,
                             mediaType = verified.media.type.name.lowercase(),
@@ -205,6 +219,7 @@ class CatalogRecommendationCandidateRepository(
                             directorOrCreators = listOfNotNull(verified.metadata.director),
                             principalCast = verified.media.cast
                         )
+                        candidate to verified.media
                     } catch (e: Exception) {
                         null
                     }
@@ -212,7 +227,10 @@ class CatalogRecommendationCandidateRepository(
             }
         }.awaitAll().filterNotNull()
         
-        verifiedCandidates
+        AiCandidateResolution(
+            verificationCandidates = verifiedPairs.map { it.first },
+            mediaMap = verifiedPairs.associate { it.first.candidateId to it.second }
+        )
     }
 
     override suspend fun relatedCandidates(
@@ -509,6 +527,8 @@ internal fun mergeRecommendationCandidates(
             incoming.media.imdbRatingState ?: existing.media.imdbRatingState,
         rottenTomatoesRating =
             incoming.media.rottenTomatoesRating ?: existing.media.rottenTomatoesRating,
+        rottenTomatoesState =
+            incoming.media.rottenTomatoesState ?: existing.media.rottenTomatoesState,
         genres = (existing.media.genres + incoming.media.genres)
             .distinctBy(String::lowercase),
         cast = (existing.media.cast + incoming.media.cast)

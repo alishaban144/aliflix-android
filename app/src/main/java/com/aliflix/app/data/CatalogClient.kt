@@ -2924,12 +2924,12 @@ class CatalogClient(
         }
         val rottenTomatoesRequest = async {
             if (
-                requiredFields.rottenTomatoesRating &&
+                requiredFields.rottenTomatoesRating ||
                 parsed.rottenTomatoesRating == null
             ) {
-                suspendOrNull { loadRottenTomatoesRating(parsed) }?.rating
+                suspendOrNull { loadRottenTomatoesRating(parsed) }
             } else {
-                parsed.rottenTomatoesRating
+                RottenTomatoesSnapshot(parsed.rottenTomatoesRating, parsed.rottenTomatoesState ?: RatingSourceState.UNAVAILABLE)
             }
         }
         val seasonsRequest = async {
@@ -2946,9 +2946,11 @@ class CatalogClient(
         } else {
             emptyList()
         }
+        val rtSnapshot = rottenTomatoesRequest.await()
         val enriched = parsed.copy(
             imdbRating = imdbRequest.await() ?: parsed.imdbRating,
-            rottenTomatoesRating = rottenTomatoesRequest.await() ?: parsed.rottenTomatoesRating,
+            rottenTomatoesRating = rtSnapshot?.rating ?: parsed.rottenTomatoesRating,
+            rottenTomatoesState = rtSnapshot?.state ?: parsed.rottenTomatoesState,
         )
         val metadata = parseVerifiedRecommendationMetadata(
             html = pageHtml.orEmpty(),
@@ -4550,15 +4552,34 @@ class CatalogClient(
         val expectedPrefix = if (item.type == MediaType.MOVIE) "/m/" else "/tv/"
         val doc = Jsoup.parse(html, ROTTEN_TOMATOES_URL)
         val canonical = doc.select("link[rel=canonical]").attr("href")
-        if (!canonical.contains(expectedPrefix)) return false
+        if (canonical.isNotBlank() && !canonical.contains(expectedPrefix)) return false
         val titleElement = doc.selectFirst("title")?.text() ?: ""
-        if (!titleElement.contains(item.title, ignoreCase = true)) return false
+        val normalizedDocTitle = normalizeText(titleElement)
+        val normalizedItemTitle = normalizeText(item.title)
+        if (normalizedDocTitle.isNotBlank() && normalizedItemTitle.isNotBlank() && !normalizedDocTitle.contains(normalizedItemTitle)) {
+            return false
+        }
         return true
     }
 
     internal fun parseRottenTomatoesRating(html: String): Int? {
         if (html.isBlank()) return null
         val document = Jsoup.parse(html, ROTTEN_TOMATOES_URL)
+        
+        document.select("script[type=application/ld+json]").forEach { script ->
+            val data = script.data()
+            if (data.isNotBlank()) {
+                val rating = runCatching {
+                    val json = JSONObject(data)
+                    val aggregate = json.optJSONObject("aggregateRating")
+                    val valFromAggregate = aggregate?.optInt("ratingValue", -1)?.takeIf { it in 0..100 }
+                    val valDirect = json.optInt("tomatometerScore", -1).takeIf { it in 0..100 }
+                    valFromAggregate ?: valDirect
+                }.getOrNull()
+                if (rating != null && rating in 0..100) return rating
+            }
+        }
+
         val scoreBoard = document.selectFirst("score-board")
         val attributeScore = sequenceOf(
             scoreBoard?.attr("tomatometerscore"),
@@ -4568,7 +4589,7 @@ class CatalogClient(
                     "rt-text[slot=criticsScore]",
             )?.text(),
             document.selectFirst(
-                "[data-qa=tomatometer], [data-qa=score-panel-critics-score]",
+                "[data-qa=tomatometer], [data-qa=score-panel-critics-score], [data-qa=critics-score]",
             )?.text(),
         ).filterNotNull().mapNotNull { scoreText.find(it)?.value?.toIntOrNull() }.firstOrNull()
         if (attributeScore != null && attributeScore in 0..100) return attributeScore

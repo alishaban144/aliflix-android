@@ -446,7 +446,7 @@ class RecommendationOrchestrator(
         )
         val interpretation = aiClient.interpretIntent(interpretationRequest)
         
-        val verificationCandidates = (repository as CatalogRecommendationCandidateRepository)
+        val resolution = (repository as CatalogRecommendationCandidateRepository)
             .resolveAiCandidates(interpretation)
             
         val verificationResponse = aiClient.verifyCandidates(
@@ -457,7 +457,7 @@ class RecommendationOrchestrator(
                 requiredConceptGroups = interpretation.requiredConceptGroups,
                 excludedConcepts = interpretation.excludedConcepts,
                 hardConstraints = org.json.JSONObject(), // Simplification
-                candidates = verificationCandidates
+                candidates = resolution.verificationCandidates
             )
         )
         
@@ -466,11 +466,12 @@ class RecommendationOrchestrator(
             .map { it.candidateId }
             .toSet()
             
-        val pool = verificationCandidates
+        val pool = resolution.verificationCandidates
             .filter { it.candidateId in verifiedKeys }
             .map { candidate ->
+                val enrichedMedia = resolution.mediaMap[candidate.candidateId]
                 RecommendationCandidate(
-                    media = Media(
+                    media = enrichedMedia ?: Media(
                         id = candidate.tmdbId,
                         type = MediaType.valueOf(candidate.mediaType.uppercase()),
                         title = candidate.title,
