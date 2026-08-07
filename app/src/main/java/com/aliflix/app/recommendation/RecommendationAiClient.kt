@@ -282,7 +282,17 @@ data class VerificationCandidate(
     val keywords: List<String>,
     val releaseYear: Int?,
     val directorOrCreators: List<String>,
-    val principalCast: List<String>
+    val principalCast: List<String>,
+    val omdbVerified: Boolean = false,
+    val omdbGenres: List<String> = emptyList(),
+    val fullPlot: String? = null,
+    val runtimeMinutes: Int? = null,
+    val imdbRating: Double? = null,
+    val imdbVotes: Int? = null,
+    val rottenTomatoesRating: Int? = null,
+    val metascore: Int? = null,
+    val director: String? = null,
+    val actors: List<String> = emptyList(),
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("candidateId", candidateId)
@@ -296,6 +306,16 @@ data class VerificationCandidate(
         put("releaseYear", releaseYear ?: JSONObject.NULL)
         put("directorOrCreators", JSONArray(directorOrCreators))
         put("principalCast", JSONArray(principalCast))
+        put("omdbVerified", omdbVerified)
+        put("omdbGenres", JSONArray(omdbGenres))
+        fullPlot?.let { put("fullPlot", it) }
+        runtimeMinutes?.let { put("runtimeMinutes", it) }
+        imdbRating?.let { put("imdbRating", it) }
+        imdbVotes?.let { put("imdbVotes", it) }
+        rottenTomatoesRating?.let { put("rottenTomatoesRating", it) }
+        metascore?.let { put("metascore", it) }
+        director?.let { put("director", it) }
+        put("actors", JSONArray(actors))
     }
 }
 

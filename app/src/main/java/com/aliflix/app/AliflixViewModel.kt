@@ -84,12 +84,22 @@ data class GenreUiState(
 
 class AliflixViewModel(application: Application) : AndroidViewModel(application) {
     private val recommendationDispatchers = RecommendationDispatchers.Default
+    private val omdbCacheStore = com.aliflix.app.data.omdb.OmdbCacheStore(
+        context = application,
+        ioDispatcher = recommendationDispatchers.io,
+    )
+    private val omdbClient = com.aliflix.app.data.omdb.OmdbMetadataClient(
+        baseUrl = BuildConfig.RECOMMENDATION_AI_BASE_URL,
+        cacheStore = omdbCacheStore,
+        ioDispatcher = recommendationDispatchers.io,
+    )
     private val client = CatalogClient(
         cacheStore = AndroidCatalogCacheStore(
             context = application,
             ioDispatcher = recommendationDispatchers.io,
             computationDispatcher = recommendationDispatchers.computation,
         ),
+        omdbClientOverride = omdbClient,
         ioDispatcher = recommendationDispatchers.io,
         computationDispatcher = recommendationDispatchers.computation,
     )
@@ -111,13 +121,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     )
     private val recommendationOrchestrator = RecommendationOrchestrator(
         scope = viewModelScope,
-        repository = CatalogRecommendationCandidateRepository(client, aiClient),
+        repository = CatalogRecommendationCandidateRepository(client, aiClient, omdbClient),
         store = recommendationStore,
         likesProvider = { library.likes.value },
         recentlyPlayedProvider = { library.recent.value },
         semanticBatchScorerProvider = semanticModelManager::batchScorerOrNull,
         dispatchers = recommendationDispatchers,
-        aiClient = aiClient
+        aiClient = aiClient,
+        omdbClient = omdbClient,
     )
     private var searchJob: Job? = null
     private var detailJob: Job? = null

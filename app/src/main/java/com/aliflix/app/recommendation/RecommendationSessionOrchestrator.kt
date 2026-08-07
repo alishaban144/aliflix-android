@@ -40,7 +40,8 @@ class RecommendationOrchestrator(
         RecommendationDispatchers.Default,
     private val clockMillis: () -> Long = System::currentTimeMillis,
     private val pageTimeoutMillis: Long = DEFAULT_PAGE_TIMEOUT_MS,
-    private val aiClient: RecommendationAiClient? = null
+    private val aiClient: RecommendationAiClient? = null,
+    private val omdbClient: com.aliflix.app.data.omdb.OmdbMetadataClient? = null,
 ) {
     private val _state = MutableStateFlow<RecommendationUiState>(
         RecommendationUiState.SelectType(),
@@ -465,52 +466,137 @@ class RecommendationOrchestrator(
         val interpretation = aiClient.interpretIntent(interpretationRequest)
         
         val resolution = (repository as CatalogRecommendationCandidateRepository)
-            .resolveAiCandidates(interpretation)
-            
-        val verificationResponse = aiClient.verifyCandidates(
-            VerificationRequest(
-                requestId = interpretation.requestId,
-                originalQuery = draft.freeText,
-                mediaType = mediaType.name,
-                requiredConceptGroups = interpretation.requiredConceptGroups,
-                excludedConcepts = interpretation.excludedConcepts,
-                hardConstraints = org.json.JSONObject(), // Simplification
-                candidates = resolution.verificationCandidates
-            )
-        )
-        
-        val verifiedKeys = verificationResponse.results
-            .filter { it.decision.isAccepted(it.confidence) }
-            .map { it.candidateId }
-            .toSet()
-            
-        val pool = resolution.verificationCandidates
-            .filter { it.candidateId in verifiedKeys }
-            .map { candidate ->
-                val enrichedMedia = resolution.mediaMap[candidate.candidateId]
-                RecommendationCandidate(
-                    media = enrichedMedia ?: Media(
-                        id = candidate.tmdbId,
-                        type = MediaType.valueOf(candidate.mediaType.uppercase()),
-                        title = candidate.title,
-                        overview = candidate.overview,
-                        genres = candidate.genres,
-                        year = candidate.releaseYear?.toString() ?: "",
-                        posterPath = null,
-                        backdropPath = null,
-                        rating = 0.0,
-                        cast = candidate.principalCast
-                    ),
-                    metadata = VerifiedMediaMetadata(genresVerified = true, verifiedAtMillis = System.currentTimeMillis()),
-                    evidence = verificationResponse.results.find { it.candidateId == candidate.candidateId }?.evidenceSummary ?: "",
-                    sources = setOf("AI_VERIFIED"),
-                    precomputedSemanticScore = verificationResponse.results.find { it.candidateId == candidate.candidateId }?.centralityScore?.toDouble()
+            .resolveAiCandidates(interpretation, limit = 150)
+
+        com.aliflix.app.data.omdb.OmdbDiagnostics.rawCandidates.set(resolution.verificationCandidates.size)
+
+        val wantedKind = if (mediaType == RecommendationContentType.TV) MediaType.TV else MediaType.MOVIE
+        val excludedNormalized = interpretation.hardConstraints.excludedGenres.map { it.lowercase().trim() }.toSet()
+        val prefilteredPairs = resolution.verificationCandidates.mapNotNull { cand ->
+            val media = resolution.mediaMap[cand.candidateId] ?: return@mapNotNull null
+            if (media.type != wantedKind) return@mapNotNull null
+            if (context.recentKeys.contains(media.key) || context.taste.seenKeys.contains(media.key)) return@mapNotNull null
+            val mediaGenresNorm = media.genres.map { it.lowercase().trim() }
+            if (excludedNormalized.any { it in mediaGenresNorm }) return@mapNotNull null
+            cand to media
+        }
+
+        com.aliflix.app.data.omdb.OmdbDiagnostics.prefilteredCandidates.set(prefilteredPairs.size)
+
+        val verifiedCandidates = mutableListOf<RecommendationCandidate>()
+        val acceptedKeys = mutableSetOf<String>()
+        var enrichedCount = 0
+        val maxEnrichedCeiling = 60
+        val targetVerified = 20
+
+        val remainingPairs = prefilteredPairs.toMutableList()
+
+        while (verifiedCandidates.size < targetVerified && remainingPairs.isNotEmpty()) {
+            val batchSize = if (enrichedCount == 0) 15 else 10
+            val batchPairs = remainingPairs.take(batchSize)
+            remainingPairs.removeAll(batchPairs)
+
+            val toLookup = mutableListOf<com.aliflix.app.data.omdb.OmdbLookupRequest>()
+            batchPairs.forEach { (cand, media) ->
+                val hasConclusiveRating = media.imdbRating != null || media.rottenTomatoesRating != null
+                val hasConclusiveGenre = media.genres.isNotEmpty()
+                val isConclusive = hasConclusiveRating && hasConclusiveGenre && media.overview.length >= 50
+                if (!isConclusive && enrichedCount < maxEnrichedCeiling && omdbClient != null) {
+                    toLookup.add(
+                        com.aliflix.app.data.omdb.OmdbLookupRequest(
+                            candidateId = cand.candidateId,
+                            imdbId = media.imdbId,
+                            title = media.title,
+                            year = cand.releaseYear,
+                            mediaType = media.type.routeName
+                        )
+                    )
+                }
+            }
+
+            val omdbResults: Map<String, com.aliflix.app.data.omdb.OmdbTitleMetadata?> =
+                if (toLookup.isNotEmpty() && omdbClient != null) {
+                    enrichedCount += toLookup.size
+                    omdbClient.lookupBatch(toLookup)
+                } else {
+                    emptyMap()
+                }
+
+            val batchVerificationCandidates = mutableListOf<VerificationCandidate>()
+            val batchMediaMap = mutableMapOf<String, Media>()
+
+            batchPairs.forEach { (cand, media) ->
+                val omdbMeta = omdbResults[cand.candidateId]
+                val mergedMedia = if (omdbMeta != null && omdbMeta.found) media.mergeWithOmdb(omdbMeta) else media
+                val enrichedCand = cand.copy(
+                    genres = (cand.genres + (omdbMeta?.genres ?: emptyList())).distinct(),
+                    omdbVerified = omdbMeta?.found == true,
+                    omdbGenres = omdbMeta?.genres ?: emptyList(),
+                    fullPlot = omdbMeta?.plot ?: mergedMedia.omdbFullPlot,
+                    runtimeMinutes = omdbMeta?.runtimeMinutes ?: mergedMedia.runtime.replace(Regex("[^0-9]"), "").toIntOrNull(),
+                    imdbRating = mergedMedia.imdbRating,
+                    imdbVotes = mergedMedia.imdbVoteCount,
+                    rottenTomatoesRating = mergedMedia.rottenTomatoesRating,
+                    metascore = omdbMeta?.metascore,
+                    director = omdbMeta?.director,
+                    actors = if (omdbMeta?.actors?.isNotEmpty() == true) omdbMeta.actors else cand.principalCast
                 )
-            }.associateBy { it.media.key }
-            
+                batchVerificationCandidates.add(enrichedCand)
+                batchMediaMap[cand.candidateId] = mergedMedia
+            }
+
+            val verificationResponse = aiClient.verifyCandidates(
+                VerificationRequest(
+                    requestId = interpretation.requestId,
+                    originalQuery = draft.freeText,
+                    mediaType = mediaType.name,
+                    requiredConceptGroups = interpretation.requiredConceptGroups,
+                    excludedConcepts = interpretation.excludedConcepts,
+                    hardConstraints = org.json.JSONObject(),
+                    candidates = batchVerificationCandidates
+                )
+            )
+
+            val requiredGenresNorm = interpretation.hardConstraints.includedGenres.map { it.lowercase().trim() }
+            val minImdbRequired = interpretation.hardConstraints.minimumRating ?: draft.minimumImdb
+
+            verificationResponse.results.forEach { res ->
+                if (res.decision.isAccepted(res.confidence)) {
+                    val cand = batchVerificationCandidates.find { it.candidateId == res.candidateId } ?: return@forEach
+                    val media = batchMediaMap[res.candidateId] ?: return@forEach
+
+                    if (requiredGenresNorm.isNotEmpty()) {
+                        val availableGenresNorm = (cand.genres + cand.omdbGenres).map { it.lowercase().trim() }.toSet()
+                        val satisfiesGenre = requiredGenresNorm.all { req -> availableGenresNorm.contains(req) }
+                        if (!satisfiesGenre) return@forEach
+                    }
+
+                    if (minImdbRequired != null) {
+                        val candidateRating = cand.imdbRating ?: media.imdbRating
+                        if (candidateRating == null || candidateRating < minImdbRequired) return@forEach
+                    }
+
+                    if (acceptedKeys.add(media.key)) {
+                        val recommendationCandidate = RecommendationCandidate(
+                            media = media,
+                            metadata = VerifiedMediaMetadata(genresVerified = true, verifiedAtMillis = System.currentTimeMillis()),
+                            evidence = res.evidenceSummary,
+                            sources = setOf("AI_VERIFIED"),
+                            precomputedSemanticScore = res.centralityScore
+                        )
+                        verifiedCandidates.add(recommendationCandidate)
+                    }
+                }
+            }
+        }
+
+        com.aliflix.app.data.omdb.OmdbDiagnostics.geminiVerified.set(verifiedCandidates.size)
+        com.aliflix.app.data.omdb.OmdbDiagnostics.finalResults.set(verifiedCandidates.size)
+
+        val pool = verifiedCandidates.associateBy { it.media.key }
         val eligible = RecommendationRanker.hardFilter(
             preferences = preferences,
-            candidates = pool.values.toList(),
+            candidates = verifiedCandidates,
             recentlyPlayedKeys = context.recentKeys,
             seenKeys = context.taste.seenKeys,
         )
@@ -524,7 +610,9 @@ class RecommendationOrchestrator(
         
         return InitialOutcome.Complete(
             preferences = preferences,
-            spec = CatalogDiscoverySpec.from(preferences) ?: CatalogDiscoverySpec(RecommendationMediaKind.MOVIE),
+            spec = CatalogDiscoverySpec.from(preferences) ?: CatalogDiscoverySpec(
+                if (mediaType == RecommendationContentType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE
+            ),
             anchor = null,
             candidatePool = pool,
             ranked = ranking.ranked,

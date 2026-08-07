@@ -56,7 +56,8 @@ data class AiCandidateResolution(
 
 class CatalogRecommendationCandidateRepository(
     private val client: CatalogClient,
-    private val aiClient: RecommendationAiClient
+    private val aiClient: RecommendationAiClient,
+    private val omdbClient: com.aliflix.app.data.omdb.OmdbMetadataClient? = null,
 ) : RecommendationCandidateRepository {
     override suspend fun seedCandidates(
         spec: CatalogDiscoverySpec,
@@ -145,8 +146,25 @@ class CatalogRecommendationCandidateRepository(
             imdbRating = true,
         )
         val verified = client.verifyRecommendationItem(anchor.media, required)
+        var enrichedMedia = verified.media
+        if (omdbClient != null) {
+            try {
+                val req = com.aliflix.app.data.omdb.OmdbLookupRequest(
+                    imdbId = anchor.media.imdbId,
+                    title = anchor.media.title,
+                    year = anchor.media.year.toIntOrNull(),
+                    mediaType = anchor.media.type.routeName
+                )
+                val omdbMeta = omdbClient.lookup(req)
+                if (omdbMeta != null && omdbMeta.found) {
+                    enrichedMedia = enrichedMedia.mergeWithOmdb(omdbMeta)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {}
+        }
         return anchor.copy(
-            media = verified.media,
+            media = enrichedMedia,
             metadata = verified.metadata.toRecommendationMetadata(),
         )
     }

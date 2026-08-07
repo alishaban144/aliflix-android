@@ -10,7 +10,13 @@ describe('Cloudflare Worker', () => {
     const response = await worker.fetch(request, env, ctx);
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toEqual({ status: 'ok', service: 'aliflix-recommendations' });
+    expect(body).toEqual({
+      status: 'ok',
+      service: 'aliflix-recommendations',
+      geminiConfigured: true,
+      omdbConfigured: false,
+      omdbCacheConfigured: false,
+    });
   });
 
   it('should return 404 for unsupported routes', async () => {

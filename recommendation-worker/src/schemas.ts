@@ -74,6 +74,29 @@ export const ExpansionResponseSchema = z.object({
   additionalBroadPhrases: z.array(z.string()),
 });
 
+export const OmdbMetadataRequestSchema = z.object({
+  imdbId: z.string().regex(/^tt\d{7,10}$/i).optional(),
+  title: z.string().min(1).max(200).optional(),
+  year: z.number().int().min(1880).max(2100).optional(),
+  mediaType: z.enum(['movie', 'series']),
+}).refine(data => !!(data.imdbId || data.title), {
+  message: "Either imdbId or title must be provided"
+});
+
+export const OmdbBatchCandidateSchema = z.object({
+  candidateId: z.string(),
+  imdbId: z.string().regex(/^tt\d{7,10}$/i).optional(),
+  title: z.string().min(1).max(200).optional(),
+  year: z.number().int().min(1880).max(2100).optional(),
+  mediaType: z.enum(['movie', 'series']),
+}).refine(data => !!(data.imdbId || data.title), {
+  message: "Either imdbId or title must be provided"
+});
+
+export const OmdbBatchRequestSchema = z.object({
+  titles: z.array(OmdbBatchCandidateSchema).max(25),
+});
+
 export const VerificationCandidateSchema = z.object({
   candidateId: z.string(),
   tmdbId: z.number(),
@@ -86,6 +109,16 @@ export const VerificationCandidateSchema = z.object({
   releaseYear: z.number().nullable(),
   directorOrCreators: z.array(z.string()),
   principalCast: z.array(z.string()),
+  omdbVerified: z.boolean().optional().default(false),
+  omdbGenres: z.array(z.string()).optional().default([]),
+  fullPlot: z.string().nullable().optional(),
+  runtimeMinutes: z.number().nullable().optional(),
+  imdbRating: z.number().nullable().optional(),
+  imdbVotes: z.number().nullable().optional(),
+  rottenTomatoesRating: z.number().nullable().optional(),
+  metascore: z.number().nullable().optional(),
+  director: z.string().nullable().optional(),
+  actors: z.array(z.string()).optional().default([]),
 });
 
 export const VerificationRequestSchema = z.object({

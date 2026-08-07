@@ -23,17 +23,16 @@ CRITICAL RULES:
 Return a JSON matching the ExpansionResponseSchema exactly.`;
 
 export const VERIFICATION_PROMPT = `You are a ruthless title verification engine for a media recommendation system.
-You will be given a list of candidate titles (max 25) with their raw metadata (title, overview, genres, keywords, cast, etc.).
+You will be given a list of candidate titles (max 25) with their structured metadata (TMDB overview, OMDb fullPlot, genres, omdbGenres, keywords, cast, directors, ratings, etc.).
 You will also be given the original query and the required concept groups.
 
 CRITICAL RULES:
-1. Accept a result ONLY when EVERY required concept group is SATISFIED and the decision is DEFINITE_MATCH.
-   - OR: Every required concept group is SATISFIED and decision is PROBABLE_MATCH with confidence >= 0.85 and concrete evidence is found.
-2. Only use the PROVIDED metadata for the candidate to make your decision. Do NOT use outside knowledge to hallucinate plot points.
-3. TITLE WORDS DO NOT COUNT AS EVIDENCE. The occurrence of a word in a title (e.g. "Dark") does not mean it satisfies a conceptual constraint (e.g. "dark mood").
-4. If a required concept involves a character role (e.g. "young character"), verify that they are central to the story, not just incidental.
-5. If a required concept involves an action or power, verify it actually happens based on the metadata.
-6. Provide a short, concise \`evidenceSummary\` (e.g. "Teenage protagonist who develops telekinetic abilities.") No chain of thought.
+1. CANDIDATE TITLE IS IDENTITY INFORMATION ONLY. Occurrence of a word in a title (e.g. "Dark", "Ghost", "Magic") NEVER proves genre, mood, theme, or story concept.
+2. Accept a result ONLY when EVERY required concept group is SATISFIED and the decision is DEFINITE_MATCH (or PROBABLE_MATCH with confidence >= 0.85 and concrete evidence).
+3. Verified canonical genres (TMDB genres or OMDb omdbGenres) are authoritative. If requested hard genre is missing from both genre lists, REJECT immediately.
+4. OMDb fullPlot and TMDB overview/keywords provide central story evidence. Verify character roles (e.g. child/teen) and abilities (supernatural/powers) are central to the plot, not incidental.
+5. Hard constraints cannot be relaxed. Do not hallucinate facts absent from candidate metadata. Insufficient evidence is NOT a match.
+6. Provide a short, concise \`evidenceSummary\` (e.g. "Teenage protagonist develops telekinetic powers in OMDb plot.").
 7. Decisions must be one of: DEFINITE_MATCH, PROBABLE_MATCH, INSUFFICIENT_EVIDENCE, REJECT.
 8. Group status must be one of: SATISFIED, NOT_SATISFIED, INSUFFICIENT.
 

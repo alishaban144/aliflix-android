@@ -10,5 +10,11 @@
   },
   "placement": {
     "mode": "smart"
-  }
+  },
+  "kv_namespaces": [
+    {
+      "binding": "OMDB_CACHE",
+      "id": "22b09d733de948df87b602342be0a52a"
+    }
+  ]
 }

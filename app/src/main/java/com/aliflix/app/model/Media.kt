@@ -38,12 +38,58 @@ data class Media(
     val genres: List<String> = emptyList(),
     val cast: List<String> = emptyList(),
     val runtime: String = "",
+    val omdbGenres: List<String> = emptyList(),
+    val omdbFullPlot: String? = null,
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
         get() = imageUrl(posterPath, "w500")
     val backdropUrl: String?
         get() = imageUrl(backdropPath, "w1280")
+
+    fun mergeWithOmdb(omdb: com.aliflix.app.data.omdb.OmdbTitleMetadata): Media {
+        if (!omdb.found) return this
+
+        val mergedImdbId = imdbId.takeIf { it?.matches(Regex("tt\\d+")) == true } ?: omdb.imdbId
+        val mergedImdbRating = omdb.imdbRating ?: imdbRating
+        val mergedImdbVotes = omdb.imdbVotes ?: imdbVoteCount
+        val mergedImdbState = if (omdb.imdbRating != null) RatingSourceState.VERIFIED else imdbRatingState
+
+        val mergedRtRating = omdb.rottenTomatoesRating ?: rottenTomatoesRating
+        val mergedRtState = if (omdb.rottenTomatoesRating != null) RatingSourceState.VERIFIED else rottenTomatoesState
+
+        val mergedRuntime = if (runtime.isBlank() && omdb.runtimeMinutes != null && omdb.runtimeMinutes > 0) {
+            "${omdb.runtimeMinutes} min"
+        } else {
+            runtime
+        }
+
+        val mergedCast = if (cast.isEmpty() && omdb.actors.isNotEmpty()) omdb.actors else cast
+        val mergedOverview = if ((overview.isBlank() || overview.length < 20) && !omdb.plot.isNull_or_blank()) {
+            omdb.plot!!
+        } else {
+            overview
+        }
+
+        val mergedOmdbGenres = (omdbGenres + omdb.genres).distinct()
+        val mergedFullPlot = omdb.plot ?: omdbFullPlot
+
+        return copy(
+            imdbId = mergedImdbId,
+            imdbRating = mergedImdbRating,
+            imdbVoteCount = mergedImdbVotes,
+            imdbRatingState = mergedImdbState,
+            rottenTomatoesRating = mergedRtRating,
+            rottenTomatoesState = mergedRtState,
+            runtime = mergedRuntime,
+            cast = mergedCast,
+            overview = mergedOverview,
+            omdbGenres = mergedOmdbGenres,
+            omdbFullPlot = mergedFullPlot,
+        )
+    }
+
+    private fun String?.isNull_or_blank(): Boolean = this == null || this.isBlank()
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -63,6 +109,8 @@ data class Media(
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
         put("runtime", runtime)
+        put("omdbGenres", org.json.JSONArray(omdbGenres))
+        omdbFullPlot?.let { put("omdbFullPlot", it) }
     }
 
     companion object {
@@ -118,6 +166,12 @@ data class Media(
                     }
                 }.orEmpty(),
                 runtime = json.optString("runtime", ""),
+                omdbGenres = json.optJSONArray("omdbGenres")?.let { array ->
+                    (0 until array.length()).mapNotNull { index ->
+                        array.optString(index).takeIf(String::isNotBlank)
+                    }
+                }.orEmpty(),
+                omdbFullPlot = json.optString("omdbFullPlot").takeIf { it.isNotBlank() && it != "null" },
             )
         }
     }

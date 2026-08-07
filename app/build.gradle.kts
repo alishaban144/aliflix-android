@@ -25,8 +25,8 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 61
-        versionName = "2.9.10"
+        versionCode = 62
+        versionName = "2.9.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
