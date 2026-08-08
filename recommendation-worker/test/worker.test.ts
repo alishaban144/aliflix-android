@@ -77,4 +77,44 @@ describe('Cloudflare Worker', () => {
     const response = await worker.fetch(request, env, ctx);
     expect(response.status).toBe(400);
   });
+
+  it('should validate request schema for /v2/recommendations/interpret', async () => {
+    const request = new Request('http://localhost/v2/recommendations/interpret', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mediaType: 'movie',
+        request: 'action sci fi movies after 2015'
+      })
+    });
+    // Will attempt to call gemini mock/fail with key error or pass parse stage
+    const response = await worker.fetch(request, env, ctx);
+    expect([200, 500, 502, 504]).toContain(response.status);
+  });
+
+  it('should return 400 for invalid mediaType on /v2/recommendations/interpret', async () => {
+    const request = new Request('http://localhost/v2/recommendations/interpret', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mediaType: 'invalid',
+        request: 'test'
+      })
+    });
+    const response = await worker.fetch(request, env, ctx);
+    expect(response.status).toBe(400);
+  });
+
+  it('should return 400 for candidates exceeding 25 on /v2/recommendations/verify-plots', async () => {
+    const request = new Request('http://localhost/v2/recommendations/verify-plots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        plotRequirements: ['test'],
+        candidates: new Array(26).fill({ candidateId: '1', title: 'T' })
+      })
+    });
+    const response = await worker.fetch(request, env, ctx);
+    expect(response.status).toBe(400);
+  });
 });

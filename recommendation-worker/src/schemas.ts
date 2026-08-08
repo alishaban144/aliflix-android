@@ -258,3 +258,99 @@ export const GeminiVerificationSchema = {
   },
   required: ["requestId", "results"]
 };
+
+// V2 Schemas for Rebuilt Recommendation Engine
+
+export const InterpretV2RequestSchema = z.object({
+  mediaType: z.enum(['movie', 'tv']),
+  request: z.string().min(1).max(1000),
+});
+
+export const GeminiInterpretV2Schema = {
+  type: "OBJECT",
+  properties: {
+    mediaType: { type: "STRING" },
+    includedGenres: { type: "ARRAY", items: { type: "STRING" } },
+    excludedGenres: { type: "ARRAY", items: { type: "STRING" } },
+    minimumYear: { type: "INTEGER", nullable: true },
+    maximumYear: { type: "INTEGER", nullable: true },
+    minimumRuntimeMinutes: { type: "INTEGER", nullable: true },
+    maximumRuntimeMinutes: { type: "INTEGER", nullable: true },
+    minimumImdbRating: { type: "NUMBER", nullable: true },
+    minimumImdbVotes: { type: "INTEGER", nullable: true },
+    minimumRottenTomatoesRating: { type: "INTEGER", nullable: true },
+    minimumMetascore: { type: "INTEGER", nullable: true },
+    contentRatings: { type: "ARRAY", items: { type: "STRING" } },
+    languages: { type: "ARRAY", items: { type: "STRING" } },
+    countries: { type: "ARRAY", items: { type: "STRING" } },
+    actors: { type: "ARRAY", items: { type: "STRING" } },
+    directors: { type: "ARRAY", items: { type: "STRING" } },
+    writers: { type: "ARRAY", items: { type: "STRING" } },
+    minimumSeasons: { type: "INTEGER", nullable: true },
+    maximumSeasons: { type: "INTEGER", nullable: true },
+    plotRequirements: { type: "ARRAY", items: { type: "STRING" } },
+    discoveryConcepts: { type: "ARRAY", items: { type: "STRING" } }
+  },
+  required: [
+    "mediaType", "includedGenres", "excludedGenres", "minimumYear", "maximumYear",
+    "minimumRuntimeMinutes", "maximumRuntimeMinutes", "minimumImdbRating", "minimumImdbVotes",
+    "minimumRottenTomatoesRating", "minimumMetascore", "contentRatings", "languages",
+    "countries", "actors", "directors", "writers", "minimumSeasons", "maximumSeasons",
+    "plotRequirements", "discoveryConcepts"
+  ]
+};
+
+export const VerifyPlotsCandidateSchema = z.object({
+  candidateId: z.string(),
+  title: z.string(),
+  genres: z.array(z.string()).default([]),
+  plot: z.string().nullable().optional(),
+});
+
+export const VerifyPlotsRequestSchema = z.object({
+  plotRequirements: z.array(z.string()),
+  candidates: z.array(VerifyPlotsCandidateSchema).max(25),
+});
+
+export const GeminiVerifyPlotsSchema = {
+  type: "OBJECT",
+  properties: {
+    results: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          candidateId: { type: "STRING" },
+          decision: { type: "STRING" },
+          confidence: { type: "NUMBER" },
+          evidence: { type: "STRING" }
+        },
+        required: ["candidateId", "decision", "confidence", "evidence"]
+      }
+    }
+  },
+  required: ["results"]
+};
+
+export const ProfileAnchorRequestSchema = z.object({
+  mediaType: z.string(),
+  title: z.string(),
+  genres: z.array(z.string()).default([]),
+  plot: z.string().nullable().optional(),
+  director: z.string().nullable().optional(),
+  writers: z.array(z.string()).default([]),
+  actors: z.array(z.string()).default([]),
+});
+
+export const GeminiProfileAnchorSchema = {
+  type: "OBJECT",
+  properties: {
+    coreThemes: { type: "ARRAY", items: { type: "STRING" } },
+    keyGenres: { type: "ARRAY", items: { type: "STRING" } },
+    keyCreators: { type: "ARRAY", items: { type: "STRING" } },
+    discoveryConcepts: { type: "ARRAY", items: { type: "STRING" } },
+    summary: { type: "STRING" }
+  },
+  required: ["coreThemes", "keyGenres", "keyCreators", "discoveryConcepts", "summary"]
+};
+

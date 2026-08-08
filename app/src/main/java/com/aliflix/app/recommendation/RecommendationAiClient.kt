@@ -45,6 +45,103 @@ class RecommendationAiClient(
             VerificationResponse.fromJson(JSONObject(response))
         }
 
+    suspend fun interpretV2(mediaType: String, requestText: String): com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec =
+        withContext(ioDispatcher) {
+            val reqObj = JSONObject().apply {
+                put("mediaType", mediaType.lowercase())
+                put("request", requestText)
+            }
+            val responseText = postJson("$baseUrl/v2/recommendations/interpret", reqObj)
+            val json = JSONObject(responseText)
+
+            val mType = if (json.optString("mediaType").lowercase() == "tv") com.aliflix.app.model.MediaType.TV else com.aliflix.app.model.MediaType.MOVIE
+
+            fun optStringSet(key: String): Set<String> {
+                val arr = json.optJSONArray(key) ?: return emptySet()
+                return List(arr.length()) { arr.getString(it) }.filter { it.isNotBlank() }.toSet()
+            }
+            fun optStringList(key: String): List<String> {
+                val arr = json.optJSONArray(key) ?: return emptyList()
+                return List(arr.length()) { arr.getString(it) }.filter { it.isNotBlank() }
+            }
+            fun optInt(key: String): Int? = if (json.isNull(key)) null else json.optInt(key).takeIf { it > 0 }
+            fun optDouble(key: String): Double? = if (json.isNull(key)) null else json.optDouble(key).takeIf { !it.isNaN() && it > 0.0 }
+
+            com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec(
+                mediaType = mType,
+                includedGenres = optStringSet("includedGenres"),
+                excludedGenres = optStringSet("excludedGenres"),
+                minimumYear = optInt("minimumYear"),
+                maximumYear = optInt("maximumYear"),
+                minimumRuntimeMinutes = optInt("minimumRuntimeMinutes"),
+                maximumRuntimeMinutes = optInt("maximumRuntimeMinutes"),
+                minimumImdbRating = optDouble("minimumImdbRating"),
+                minimumImdbVotes = optInt("minimumImdbVotes"),
+                minimumRottenTomatoesRating = optInt("minimumRottenTomatoesRating"),
+                minimumMetascore = optInt("minimumMetascore"),
+                contentRatings = optStringSet("contentRatings"),
+                languages = optStringSet("languages"),
+                countries = optStringSet("countries"),
+                actors = optStringSet("actors"),
+                directors = optStringSet("directors"),
+                writers = optStringSet("writers"),
+                minimumSeasons = optInt("minimumSeasons"),
+                maximumSeasons = optInt("maximumSeasons"),
+                plotRequirements = optStringList("plotRequirements"),
+                discoveryConcepts = optStringList("discoveryConcepts")
+            )
+        }
+
+    suspend fun verifyPlots(
+        plotRequirements: List<String>,
+        candidates: List<com.aliflix.app.recommendation.omdb.VerifiedRecommendationItem>
+    ): VerifyPlotsResponse = withContext(ioDispatcher) {
+        val candArray = JSONArray()
+        for (item in candidates) {
+            val candObj = JSONObject().apply {
+                put("candidateId", item.media.imdbId ?: "tmdb:${item.media.id}")
+                put("title", item.media.title)
+                put("genres", JSONArray(item.omdbMetadata.genres))
+                put("plot", item.omdbMetadata.plot ?: item.media.overview)
+            }
+            candArray.put(candObj)
+        }
+
+        val reqObj = JSONObject().apply {
+            put("plotRequirements", JSONArray(plotRequirements))
+            put("candidates", candArray)
+        }
+
+        val responseText = postJson("$baseUrl/v2/recommendations/verify-plots", reqObj)
+        val json = JSONObject(responseText)
+
+        val resultsArr = json.optJSONArray("results") ?: JSONArray()
+        val resultsList = mutableListOf<VerifyPlotsResultItem>()
+        for (i in 0 until resultsArr.length()) {
+            val res = resultsArr.getJSONObject(i)
+            resultsList.add(
+                VerifyPlotsResultItem(
+                    candidateId = res.getString("candidateId"),
+                    decision = res.optString("decision", "INSUFFICIENT_EVIDENCE"),
+                    confidence = res.optDouble("confidence", 0.0),
+                    evidence = res.optString("evidence", "")
+                )
+            )
+        }
+        VerifyPlotsResponse(resultsList)
+    }
+
+data class VerifyPlotsResultItem(
+    val candidateId: String,
+    val decision: String,
+    val confidence: Double,
+    val evidence: String,
+)
+
+data class VerifyPlotsResponse(
+    val results: List<VerifyPlotsResultItem>
+)
+
     private suspend fun postJson(url: String, jsonBody: JSONObject): String =
         suspendCancellableCoroutine { continuation ->
             var connection: HttpURLConnection? = null
@@ -169,16 +266,27 @@ data class AiHardConstraints(
     val minimumRating: Double?,
     val originalLanguage: String?
 ) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("mediaType", mediaType)
+        put("includedGenres", JSONArray(includedGenres))
+        put("excludedGenres", JSONArray(excludedGenres))
+        put("minimumYear", minimumYear ?: JSONObject.NULL)
+        put("maximumYear", maximumYear ?: JSONObject.NULL)
+        put("maximumRuntimeMinutes", maximumRuntimeMinutes ?: JSONObject.NULL)
+        put("minimumRating", minimumRating ?: JSONObject.NULL)
+        put("originalLanguage", originalLanguage ?: JSONObject.NULL)
+    }
+
     companion object {
         fun fromJson(json: JSONObject): AiHardConstraints = AiHardConstraints(
-            mediaType = json.getString("mediaType"),
+            mediaType = json.optString("mediaType", "movie"),
             includedGenres = json.optJSONArray("includedGenres")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
             excludedGenres = json.optJSONArray("excludedGenres")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            minimumYear = if (json.isNull("minimumYear")) null else json.getInt("minimumYear"),
-            maximumYear = if (json.isNull("maximumYear")) null else json.getInt("maximumYear"),
-            maximumRuntimeMinutes = if (json.isNull("maximumRuntimeMinutes")) null else json.getInt("maximumRuntimeMinutes"),
-            minimumRating = if (json.isNull("minimumRating")) null else json.getDouble("minimumRating"),
-            originalLanguage = if (json.isNull("originalLanguage")) null else json.getString("originalLanguage")
+            minimumYear = if (json.isNull("minimumYear")) null else json.optInt("minimumYear"),
+            maximumYear = if (json.isNull("maximumYear")) null else json.optInt("maximumYear"),
+            maximumRuntimeMinutes = if (json.isNull("maximumRuntimeMinutes")) null else json.optInt("maximumRuntimeMinutes"),
+            minimumRating = if (json.isNull("minimumRating")) null else json.optDouble("minimumRating"),
+            originalLanguage = if (json.isNull("originalLanguage")) null else json.optString("originalLanguage")
         )
     }
 }
@@ -196,8 +304,24 @@ data class InterpretationResponse(
     val anchorTitle: String?,
     val anchorModifiers: List<String>,
     val contradictions: List<String>,
-    val hardConstraints: AiHardConstraints
+    val hardConstraints: AiHardConstraints,
 ) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("requestId", requestId)
+        put("normalizedRequest", normalizedRequest)
+        put("summary", summary)
+        put("requiredConceptGroups", JSONArray(requiredConceptGroups.map { it.toJson() }))
+        put("optionalConcepts", JSONArray(optionalConcepts))
+        put("excludedConcepts", JSONArray(excludedConcepts))
+        put("genreHypotheses", JSONArray(genreHypotheses))
+        put("keywordSearchPhrases", JSONArray(keywordSearchPhrases))
+        put("broadSearchPhrases", JSONArray(broadSearchPhrases))
+        put("anchorTitle", anchorTitle ?: JSONObject.NULL)
+        put("anchorModifiers", JSONArray(anchorModifiers))
+        put("contradictions", JSONArray(contradictions))
+        put("hardConstraints", hardConstraints.toJson())
+    }
+
     companion object {
         fun fromJson(json: JSONObject): InterpretationResponse = InterpretationResponse(
             requestId = json.getString("requestId"),
@@ -283,6 +407,7 @@ data class VerificationCandidate(
     val releaseYear: Int?,
     val directorOrCreators: List<String>,
     val principalCast: List<String>,
+    val originalLanguage: String? = null,
     val omdbVerified: Boolean = false,
     val omdbGenres: List<String> = emptyList(),
     val fullPlot: String? = null,
@@ -306,6 +431,7 @@ data class VerificationCandidate(
         put("releaseYear", releaseYear ?: JSONObject.NULL)
         put("directorOrCreators", JSONArray(directorOrCreators))
         put("principalCast", JSONArray(principalCast))
+        put("originalLanguage", originalLanguage ?: JSONObject.NULL)
         put("omdbVerified", omdbVerified)
         put("omdbGenres", JSONArray(omdbGenres))
         fullPlot?.let { put("fullPlot", it) }
@@ -355,7 +481,7 @@ enum class VerificationDecision {
     /** True when the candidate should be accepted into the ranking pool. */
     fun isAccepted(confidence: Double): Boolean = when (this) {
         DEFINITE_MATCH -> true
-        PROBABLE_MATCH -> confidence >= 0.70
+        PROBABLE_MATCH -> confidence >= 0.85
         INSUFFICIENT_EVIDENCE -> false
         REJECT -> false
     }

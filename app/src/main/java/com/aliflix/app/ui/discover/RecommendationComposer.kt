@@ -4,26 +4,19 @@ package com.aliflix.app.ui.discover
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,25 +25,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,7 +62,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -74,11 +72,14 @@ import coil.compose.AsyncImage
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.RecommendationMediaKind
-import com.aliflix.app.recommendation.RecommendationQuestion
-import com.aliflix.app.recommendation.RecommendationRequestDraft
 import com.aliflix.app.recommendation.RecommendationUiState
+import com.aliflix.app.recommendation.omdb.OmdbGenre
+import com.aliflix.app.recommendation.omdb.OmdbRecommendationAnchor
+import com.aliflix.app.recommendation.omdb.OmdbRecommendationSort
+import com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
+import com.aliflix.app.ui.theme.AliflixBackgroundBase
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
@@ -86,83 +87,25 @@ import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixError
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
-internal data class AskFilterGroup(val title: String, val options: List<String>)
-
-internal val MOVIE_GENRES = listOf(
-    "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family",
-    "Fantasy", "History", "Horror", "Music", "Mystery", "Romance", "Science Fiction", "TV Movie",
-    "Thriller", "War", "Western",
-)
-internal val TV_GENRES = listOf(
-    "Action & Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Kids",
-    "Mystery", "News", "Reality", "Sci-Fi & Fantasy", "Soap", "Talk", "War & Politics", "Western",
-)
-internal val MOODS = listOf(
-    "Dark", "Gritty", "Bleak", "Tense", "Suspenseful", "Scary", "Creepy", "Atmospheric",
-    "Mind-bending", "Emotional", "Heartwarming", "Warm", "Funny", "Feel-good", "Relaxing",
-    "Melancholic", "Romantic", "Hopeful", "Uplifting", "Intense", "Fast-paced", "Slow-burn",
-    "Quirky", "Satirical", "Serious", "Epic",
-)
-internal val THEMES = listOf(
-    "Investigation", "Murder mystery", "Serial killer", "Revenge", "Survival", "Heist",
-    "Organized crime", "Conspiracy", "Coming of age", "Friendship", "Betrayal", "Family conflict",
-    "Political intrigue", "Espionage", "Prison", "Courtroom", "Police investigation", "Detective",
-    "Time travel", "Time loop", "Alternate reality", "Parallel universe", "Artificial intelligence",
-    "Robots", "Space exploration", "Alien contact", "Dystopian", "Post-apocalyptic", "Supernatural",
-    "Ghosts", "Demons", "Witchcraft", "Magic", "Psychic abilities", "Superpowers", "Vampires",
-    "Werewolves", "Zombies", "Monsters", "Disaster", "Road trip", "Sports", "Music", "School",
-    "Medical", "Historical",
-)
-internal val CHARACTERS = listOf(
-    "Child protagonist", "Teen protagonist", "Adult protagonist", "Older protagonist", "Female lead",
-    "Male lead", "Ensemble cast", "Family", "Detective", "Police officer", "Criminal", "Scientist",
-    "Doctor", "Teacher", "Student", "Soldier", "Spy", "Superhero", "Antihero", "Villain protagonist",
-)
-internal val SETTINGS = listOf(
-    "Space", "Future", "Medieval", "Historical", "Modern day", "Small town", "Big city", "Countryside",
-    "School", "University", "Workplace", "Hospital", "Prison", "Courtroom", "Military", "Ocean",
-    "Island", "Wilderness", "Desert", "Snow", "Underground", "Alternate world", "Post-apocalyptic world",
-)
-internal val ERAS = listOf(
-    "2020s", "2010s", "2000s", "1990s", "1980s", "1970s", "1960s", "Before 1960", "Recent", "Custom range",
-)
-internal val MOVIE_RUNTIMES = listOf(
-    "Under 80 min", "Under 90 min", "90–105 min", "105–120 min", "Under 2h", "2–2.5h", "2.5h+", "Custom maximum",
-)
-internal val TV_RUNTIMES = listOf(
-    "Under 25 min", "Under 30 min", "30–45 min", "Under 45 min", "45–60 min", "60+ min",
-)
-internal val RATINGS = listOf(
-    "IMDb 6+", "IMDb 6.5+", "IMDb 7+", "IMDb 7.5+", "IMDb 8+", "IMDb 8.5+", "TMDB 6+", "TMDB 7+", "TMDB 8+",
-)
-internal val LANGUAGES = listOf(
-    "English", "Arabic", "French", "Spanish", "German", "Italian", "Portuguese", "Japanese", "Korean",
-    "Chinese", "Hindi", "Turkish", "Russian", "Swedish", "Danish", "Norwegian",
-)
-internal val SERIES_STATUS = listOf("Ended", "Returning", "Miniseries", "Any")
-internal val DISCOVERY_STYLES = listOf("Popular", "Hidden gem", "Less mainstream", "Cult favorite", "Highly rated")
-internal val EXCLUSIONS = listOf(
-    "Animation", "Horror", "Comedy", "Romance", "Musical", "Documentary", "Reality", "Supernatural",
-    "Graphic violence", "Gore", "Jump scares", "Heavy romance", "War", "Crime",
+internal val CANONICAL_OMDB_GENRES = listOf(
+    "Action", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama", "Family",
+    "Fantasy", "Film-Noir", "Game-Show", "History", "Horror", "Music", "Musical", "Mystery", "News",
+    "Reality-TV", "Romance", "Sci-Fi", "Short", "Sport", "Talk-Show", "Thriller", "War", "Western"
 )
 
-internal fun askFilterGroups(kind: RecommendationMediaKind?): List<AskFilterGroup> = buildList {
-    add(AskFilterGroup("Genre", if (kind == RecommendationMediaKind.SERIES) TV_GENRES else MOVIE_GENRES))
-    add(AskFilterGroup("Mood & tone", MOODS))
-    add(AskFilterGroup("Story & themes", THEMES))
-    add(AskFilterGroup("Characters", CHARACTERS))
-    add(AskFilterGroup("Setting", SETTINGS))
-    add(AskFilterGroup("Era", ERAS))
-    add(AskFilterGroup("Runtime", if (kind == RecommendationMediaKind.SERIES) TV_RUNTIMES else MOVIE_RUNTIMES))
-    add(AskFilterGroup("Rating", RATINGS))
-    add(AskFilterGroup("Language", LANGUAGES))
-    if (kind == RecommendationMediaKind.SERIES) add(AskFilterGroup("Series status", SERIES_STATUS))
-    add(AskFilterGroup("Discovery style", DISCOVERY_STYLES))
-    add(AskFilterGroup("Exclude", EXCLUSIONS))
-}
+internal val YEAR_PRESETS = listOf("Any", "2020+", "2015+", "2010+", "2000+", "Before 2000")
+internal val MOVIE_RUNTIME_PRESETS = listOf("Any", "< 90 min", "< 120 min", "90–120 min", "120–150 min", "150+ min")
+internal val TV_RUNTIME_PRESETS = listOf("Any", "< 30 min", "30–45 min", "45–60 min", "60+ min")
+internal val IMDB_RATING_PRESETS = listOf("Any", "6+", "6.5+", "7+", "7.5+", "8+", "8.5+", "9+")
+internal val IMDB_VOTES_PRESETS = listOf("Any", "1,000+", "5,000+", "10,000+", "25,000+", "50,000+", "100,000+", "250,000+")
+internal val RT_RATING_PRESETS = listOf("Any", "60%+", "70%+", "80%+", "90%+")
+internal val METASCORE_PRESETS = listOf("Any", "50+", "60+", "70+", "80+", "90+")
+internal val CONTENT_RATINGS = listOf("G", "PG", "PG-13", "R", "NC-17", "TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA")
+internal val LANGUAGES = listOf("English", "Arabic", "French", "Spanish", "German", "Italian", "Portuguese", "Japanese", "Korean", "Chinese", "Hindi", "Turkish", "Russian")
+internal val SERIES_SEASONS_PRESETS = listOf("Any", "1 season", "2+", "3+", "5+", "10+")
+internal val SORT_MODES = listOf("Best match", "IMDb rating", "Rotten Tomatoes", "Metascore", "Newest", "Oldest", "Most IMDb votes")
 
 @Composable
 internal fun RecommendationComposer(
@@ -170,27 +113,62 @@ internal fun RecommendationComposer(
     selectedKind: RecommendationMediaKind?,
     onSelectType: (RecommendationMediaKind) -> Unit,
     onSearchTitles: suspend (String) -> List<Media>,
-    onSubmit: (RecommendationRequestDraft) -> Unit,
-    onAnswer: (RecommendationQuestion, List<String>) -> Unit,
-    onRestart: () -> Unit,
-    onRelax: (String) -> Unit,
-    onRetry: () -> Unit,
-    onShowMatches: () -> Unit,
+    onSubmitSpec: (OmdbRecommendationSpec) -> Unit,
+    onResetSession: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     var showComposer by rememberSaveable { mutableStateOf(true) }
-    var activeMode by rememberSaveable { mutableIntStateOf(0) }
+    var activeMode by rememberSaveable { mutableIntStateOf(0) } // 0: Describe, 1: Similar to, 2: Build with filters
+
+    // Describe mode state
     var describeText by rememberSaveable { mutableStateOf("") }
+
+    // Similar to state
     var similarQuery by rememberSaveable { mutableStateOf("") }
     var selectedAnchor by remember { mutableStateOf<Media?>(null) }
     var suggestions by remember { mutableStateOf(emptyList<Media>()) }
     var suggestionsLoading by remember { mutableStateOf(false) }
-    var activeRefinements by rememberSaveable { mutableStateOf(setOf<String>()) }
 
-    LaunchedEffect(state) { if (state is RecommendationUiState.Results) showComposer = false }
-    LaunchedEffect(similarQuery, selectedAnchor, selectedKind) {
+    // Build filters state
+    var mediaType by rememberSaveable { mutableStateOf(selectedKind?.mediaType ?: MediaType.MOVIE) }
+    var includedGenres by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var excludedGenres by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var selectedYearPreset by rememberSaveable { mutableStateOf("Any") }
+    var customFromYear by rememberSaveable { mutableStateOf("") }
+    var customToYear by rememberSaveable { mutableStateOf("") }
+    var selectedRuntimePreset by rememberSaveable { mutableStateOf("Any") }
+    var customMinRuntime by rememberSaveable { mutableStateOf("") }
+    var customMaxRuntime by rememberSaveable { mutableStateOf("") }
+    var selectedImdbPreset by rememberSaveable { mutableStateOf("Any") }
+    var selectedVotesPreset by rememberSaveable { mutableStateOf("Any") }
+    var selectedRtPreset by rememberSaveable { mutableStateOf("Any") }
+    var selectedMetascorePreset by rememberSaveable { mutableStateOf("Any") }
+    var selectedContentRatings by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var selectedLanguages by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var selectedSeasonsPreset by rememberSaveable { mutableStateOf("Any") }
+    var selectedSortMode by rememberSaveable { mutableStateOf("Best match") }
+
+    // Accordion expanded state (Genres expanded by default)
+    var expandedGenres by rememberSaveable { mutableStateOf(true) }
+    var expandedExcludedGenres by rememberSaveable { mutableStateOf(false) }
+    var expandedYearRuntime by rememberSaveable { mutableStateOf(false) }
+    var expandedRatings by rememberSaveable { mutableStateOf(false) }
+    var expandedContentLang by rememberSaveable { mutableStateOf(false) }
+    var expandedSeasons by rememberSaveable { mutableStateOf(false) }
+    var expandedSort by rememberSaveable { mutableStateOf(false) }
+
+    var lastExecutedSpec by remember { mutableStateOf<OmdbRecommendationSpec?>(null) }
+
+    LaunchedEffect(state) {
+        if (state is RecommendationUiState.Results) {
+            showComposer = false
+        }
+    }
+
+    // Anchor search debouncer
+    LaunchedEffect(similarQuery, selectedAnchor) {
         if (selectedAnchor != null || similarQuery.trim().length < 2) {
             suggestions = emptyList()
             suggestionsLoading = false
@@ -199,13 +177,7 @@ internal fun RecommendationComposer(
         delay(220)
         suggestionsLoading = true
         suggestions = try {
-            val preferredType = if (selectedKind == RecommendationMediaKind.MOVIE) MediaType.MOVIE else MediaType.TV
-            onSearchTitles(similarQuery.trim())
-                .sortedBy { if (it.type == preferredType) 0 else 1 }
-                .distinctBy(Media::key)
-                .take(5)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
+            onSearchTitles(similarQuery.trim()).take(6)
         } catch (_: Throwable) {
             emptyList()
         } finally {
@@ -213,286 +185,968 @@ internal fun RecommendationComposer(
         }
     }
 
-    val filterGroups = remember(selectedKind) { askFilterGroups(selectedKind) }
-    val mediaType = if (selectedKind == RecommendationMediaKind.MOVIE) MediaType.MOVIE else MediaType.TV
-    val builtPrompt = when (activeMode) {
-        0 -> describeText.trim()
-        1 -> selectedAnchor?.let { "${if (selectedKind == RecommendationMediaKind.MOVIE) "Movies" else "Series"} similar to ${it.title}" }.orEmpty()
-        else -> activeRefinements.joinToString(", ")
+    fun executeReset() {
+        describeText = ""
+        similarQuery = ""
+        selectedAnchor = null
+        suggestions = emptyList()
+        includedGenres = emptySet()
+        excludedGenres = emptySet()
+        selectedYearPreset = "Any"
+        customFromYear = ""
+        customToYear = ""
+        selectedRuntimePreset = "Any"
+        customMinRuntime = ""
+        customMaxRuntime = ""
+        selectedImdbPreset = "Any"
+        selectedVotesPreset = "Any"
+        selectedRtPreset = "Any"
+        selectedMetascorePreset = "Any"
+        selectedContentRatings = emptySet()
+        selectedLanguages = emptySet()
+        selectedSeasonsPreset = "Any"
+        selectedSortMode = "Best match"
+        activeMode = 0
+        mediaType = MediaType.MOVIE
+        lastExecutedSpec = null
+        showComposer = true
+        onResetSession()
     }
-    val builtDraft = remember(activeMode, describeText, selectedAnchor, activeRefinements, selectedKind, filterGroups) {
-        if (activeMode == 0) {
-            RecommendationRequestDraft(mediaType = mediaType, freeText = describeText.trim())
-        } else if (activeMode == 1) {
-            RecommendationRequestDraft(mediaType = mediaType, similarityTitle = selectedAnchor?.title, freeText = "")
-        } else {
-            val selectedIn: (String) -> List<String> = { name ->
-                val values = filterGroups.firstOrNull { it.title == name }?.options.orEmpty()
-                activeRefinements.filter { it in values }
-            }
-            val semantic = selectedIn("Mood & tone") + selectedIn("Story & themes") +
-                selectedIn("Characters") + selectedIn("Setting")
-            val rating = selectedIn("Rating").firstOrNull()
-            RecommendationRequestDraft(
-                mediaType = mediaType,
-                genres = selectedIn("Genre"),
-                moods = selectedIn("Mood & tone"),
-                themes = selectedIn("Story & themes") + selectedIn("Characters") + selectedIn("Setting"),
-                yearRule = selectedIn("Era").firstOrNull(),
-                runtimeRule = selectedIn("Runtime").firstOrNull(),
-                minimumImdb = rating?.takeIf { it.startsWith("IMDb ") }?.substringAfter("IMDb ")?.removeSuffix("+")?.toDoubleOrNull(),
-                language = selectedIn("Language").firstOrNull(),
-                status = selectedIn("Series status").firstOrNull()?.takeUnless { it == "Any" },
-                exclusions = selectedIn("Exclude"),
-                freeText = (semantic + selectedIn("Discovery style") + rating.orEmpty()).filter(String::isNotBlank).joinToString(", "),
-            )
-        }
-    }
-    val canSubmit = selectedKind != null && builtPrompt.isNotBlank() && state !is RecommendationUiState.Discovering
 
-    if (!showComposer) {
-        Row(
-            modifier = modifier.fillMaxWidth().background(AliflixSurfaceSecondary, RoundedCornerShape(20.dp))
-                .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(20.dp)).padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(if (selectedKind == RecommendationMediaKind.MOVIE) "Movies" else "Series", color = AliflixAccentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text(builtPrompt.ifBlank { "Recommendation search" }, color = AliflixContentPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            IconButton(onClick = { showComposer = true }) { Icon(Icons.Rounded.Edit, "Edit request", tint = AliflixContentSecondary) }
+    fun buildSpecFromFilters(): OmdbRecommendationSpec {
+        var minYear: Int? = when (selectedYearPreset) {
+            "2020+" -> 2020
+            "2015+" -> 2015
+            "2010+" -> 2010
+            "2000+" -> 2000
+            else -> customFromYear.toIntOrNull()
         }
-        return
+        var maxYear: Int? = when (selectedYearPreset) {
+            "Before 2000" -> 1999
+            else -> customToYear.toIntOrNull()
+        }
+
+        var minRuntime: Int? = when (selectedRuntimePreset) {
+            "90–120 min" -> 90
+            "120–150 min" -> 120
+            "150+ min" -> 150
+            "30–45 min" -> 30
+            "45–60 min" -> 45
+            "60+ min" -> 60
+            else -> customMinRuntime.toIntOrNull()
+        }
+        var maxRuntime: Int? = when (selectedRuntimePreset) {
+            "< 90 min" -> 89
+            "< 120 min" -> 119
+            "90–120 min" -> 120
+            "120–150 min" -> 150
+            "< 30 min" -> 29
+            "30–45 min" -> 45
+            "45–60 min" -> 60
+            else -> customMaxRuntime.toIntOrNull()
+        }
+
+        val minImdb: Double? = when (selectedImdbPreset) {
+            "6+" -> 6.0
+            "6.5+" -> 6.5
+            "7+" -> 7.0
+            "7.5+" -> 7.5
+            "8+" -> 8.0
+            "8.5+" -> 8.5
+            "9+" -> 9.0
+            else -> null
+        }
+
+        val minVotes: Int? = when (selectedVotesPreset) {
+            "1,000+" -> 1000
+            "5,000+" -> 5000
+            "10,000+" -> 10000
+            "25,000+" -> 25000
+            "50,000+" -> 50000
+            "100,000+" -> 100000
+            "250,000+" -> 250000
+            else -> null
+        }
+
+        val minRt: Int? = when (selectedRtPreset) {
+            "60%+" -> 60
+            "70%+" -> 70
+            "80%+" -> 80
+            "90%+" -> 90
+            else -> null
+        }
+
+        val minMeta: Int? = when (selectedMetascorePreset) {
+            "50+" -> 50
+            "60+" -> 60
+            "70+" -> 70
+            "80+" -> 80
+            "90+" -> 90
+            else -> null
+        }
+
+        val minSeasons: Int? = when (selectedSeasonsPreset) {
+            "1 season" -> 1
+            "2+" -> 2
+            "3+" -> 3
+            "5+" -> 5
+            "10+" -> 10
+            else -> null
+        }
+        val maxSeasons: Int? = if (selectedSeasonsPreset == "1 season") 1 else null
+
+        val sort = when (selectedSortMode) {
+            "IMDb rating" -> OmdbRecommendationSort.IMDB_RATING
+            "Rotten Tomatoes" -> OmdbRecommendationSort.ROTTEN_TOMATOES
+            "Metascore" -> OmdbRecommendationSort.METASCORE
+            "Newest" -> OmdbRecommendationSort.NEWEST
+            "Oldest" -> OmdbRecommendationSort.OLDEST
+            "Most IMDb votes" -> OmdbRecommendationSort.MOST_IMDB_VOTES
+            else -> OmdbRecommendationSort.BEST_MATCH
+        }
+
+        return OmdbRecommendationSpec(
+            mediaType = mediaType,
+            includedGenres = includedGenres,
+            excludedGenres = excludedGenres,
+            minimumYear = minYear,
+            maximumYear = maxYear,
+            minimumRuntimeMinutes = minRuntime,
+            maximumRuntimeMinutes = maxRuntime,
+            minimumImdbRating = minImdb,
+            minimumImdbVotes = minVotes,
+            minimumRottenTomatoesRating = minRt,
+            minimumMetascore = minMeta,
+            contentRatings = selectedContentRatings,
+            languages = selectedLanguages,
+            minimumSeasons = if (mediaType == MediaType.TV) minSeasons else null,
+            maximumSeasons = if (mediaType == MediaType.TV) maxSeasons else null,
+            sortMode = sort
+        )
     }
 
     Column(
-        modifier = modifier.fillMaxSize().padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = modifier
+            .fillMaxSize()
+            .background(AliflixBackgroundBase)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-            IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to Catalogue", tint = AliflixContentPrimary)
-            }
-            Text(
-                "Ask Aliflix",
-                color = AliflixContentPrimary,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.ExtraBold,
-                maxLines = 1,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
-            Surface(color = AliflixAccentPrimary.copy(alpha = .14f), shape = RoundedCornerShape(6.dp)) {
-                Text("BETA", color = AliflixAccentPrimary, fontSize = 9.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+        // MANDATORY HEADER: ← Ask Aliflix     BETA       Reset
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = AliflixSurfaceElevated,
+            tonalElevation = 2.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Back to Catalogue",
+                            tint = AliflixContentPrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Ask Aliflix",
+                        color = AliflixContentPrimary,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(AliflixAccentPrimary.copy(alpha = 0.2f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "BETA",
+                            color = AliflixAccentPrimary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // MANDATORY Visible Reset Button in Header
+                TextButton(onClick = { executeReset() }) {
+                    Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = "Reset session",
+                        tint = AliflixAccentPrimary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Reset",
+                        color = AliflixAccentPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
-        if (state is RecommendationUiState.Error) RecommendationErrorState(state, onRetry)
-        else if (state is RecommendationUiState.Empty) RecommendationEmptyState(state, onRelax)
-        else if (state is RecommendationUiState.SourceUnavailable) RecommendationUnavailableState(state, onRetry)
-        else if (state is RecommendationUiState.Relaxation) RecommendationRelaxationState(state, onRelax)
-        else if (state is RecommendationUiState.Question) RecommendationQuestionState(state, onAnswer)
-        else {
-            SegmentedMediaControl(selectedKind, onSelectType)
-            ModeControl(activeMode) {
-                keyboard?.hide()
-                activeMode = it
-            }
-            Box(Modifier.weight(1f).fillMaxWidth().testTag("ask-active-workspace")) {
-                AnimatedContent(
-                    targetState = activeMode,
-                    transitionSpec = {
-                        val enter = slideInHorizontally(DiscoverMotion.standard()) { if (targetState > initialState) it / 5 else -it / 5 } + fadeIn(DiscoverMotion.standard())
-                        val exit = slideOutHorizontally(DiscoverMotion.standard()) { if (targetState > initialState) -it / 6 else it / 6 } + fadeOut(DiscoverMotion.standard())
-                        enter togetherWith exit
-                    },
-                    label = "ask-mode-content",
-                    modifier = Modifier.fillMaxSize(),
-                ) { mode ->
-                    when (mode) {
-                        0 -> DescribeWorkspace(describeText) { describeText = it }
-                        1 -> SimilarWorkspace(
-                            query = similarQuery,
-                            selected = selectedAnchor,
-                            suggestions = suggestions,
-                            loading = suggestionsLoading,
-                            onQueryChange = { similarQuery = it; selectedAnchor = null },
-                            onSelect = {
-                                keyboard?.hide()
-                                selectedAnchor = it
-                                similarQuery = it.title
-                            },
-                            onChange = { selectedAnchor = null; suggestions = emptyList() },
+        // Compact Summary Bar when results are showing and composer collapsed
+        if (state is RecommendationUiState.Results && !showComposer) {
+            val spec = lastExecutedSpec ?: buildSpecFromFilters()
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clickable { showComposer = true },
+                color = AliflixSurfaceElevated
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = spec.summaryLabel(),
+                        color = AliflixContentSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.Edit,
+                            contentDescription = "Edit filters",
+                            tint = AliflixAccentPrimary,
+                            modifier = Modifier.size(16.dp)
                         )
-                        else -> FilterWorkspace(filterGroups, activeRefinements) { option ->
-                            activeRefinements = if (option in activeRefinements) activeRefinements - option else activeRefinements + option
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Edit",
+                            color = AliflixAccentPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showComposer) {
+            Column(modifier = Modifier.weight(1f)) {
+                // Header Mode Tabs: Describe | Similar to | Build with filters
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("Describe", "Similar to", "Build with filters").forEachIndexed { idx, label ->
+                        val isSelected = activeMode == idx
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) AliflixAccentPrimary else AliflixSurfaceElevated)
+                                .clickable { activeMode = idx }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.White else AliflixContentSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+
+                // Media Type Selector
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(MediaType.MOVIE to "Movies", MediaType.TV to "Series").forEach { (type, label) ->
+                        val isSelected = mediaType == type
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) AliflixAccentPrimary else AliflixBorderSubtle,
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .background(if (isSelected) AliflixAccentPrimary.copy(alpha = 0.15f) else Color.Transparent)
+                                .clickable {
+                                    mediaType = type
+                                    onSelectType(if (type == MediaType.MOVIE) RecommendationMediaKind.MOVIE else RecommendationMediaKind.SERIES)
+                                }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) AliflixAccentPrimary else AliflixContentSecondary,
+                                fontSize = 13.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                // Mode Content Body
+                Box(modifier = Modifier.weight(1f)) {
+                    when (activeMode) {
+                        0 -> {
+                            // Describe Mode
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = describeText,
+                                    onValueChange = { describeText = it },
+                                    placeholder = {
+                                        Text(
+                                            "e.g. action sci fi movies after 2015 rated at least 6 on IMDb",
+                                            color = AliflixContentTertiary,
+                                            fontSize = 14.sp
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(140.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = AliflixAccentPrimary,
+                                        unfocusedBorderColor = AliflixBorderSubtle,
+                                        focusedContainerColor = AliflixSurfaceElevated,
+                                        unfocusedContainerColor = AliflixSurfaceElevated,
+                                        focusedTextColor = AliflixContentPrimary,
+                                        unfocusedTextColor = AliflixContentPrimary
+                                    )
+                                )
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Text(
+                                    text = "Quick suggestions:",
+                                    color = AliflixContentSecondary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    listOf(
+                                        "recent action sci fi movies rated at least 6 on imdb",
+                                        "crime drama series written by Vince Gilligan with imdb 8+",
+                                        "science fiction but no horror, after 2018, under two hours"
+                                    ).forEach { sugg ->
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(AliflixSurfaceElevated)
+                                                .clickable { describeText = sugg }
+                                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = sugg,
+                                                color = AliflixContentSecondary,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.weight(1f))
+
+                                Button(
+                                    onClick = {
+                                        if (describeText.isNotBlank()) {
+                                            val spec = OmdbRecommendationSpec(
+                                                mediaType = mediaType,
+                                                plotRequirements = listOf(describeText)
+                                            )
+                                            lastExecutedSpec = spec
+                                            onSubmitSpec(spec)
+                                            keyboard?.hide()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
+                                    enabled = describeText.isNotBlank()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.AutoAwesome,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Find matches ✨", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        1 -> {
+                            // Similar To Mode
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = similarQuery,
+                                    onValueChange = {
+                                        similarQuery = it
+                                        if (selectedAnchor != null) selectedAnchor = null
+                                    },
+                                    placeholder = {
+                                        Text(
+                                            "Search title (e.g. Breaking Bad)",
+                                            color = AliflixContentTertiary,
+                                            fontSize = 14.sp
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Search,
+                                            contentDescription = null,
+                                            tint = AliflixContentTertiary
+                                        )
+                                    },
+                                    trailingIcon = {
+                                        if (suggestionsLoading) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                strokeWidth = 2.dp,
+                                                color = AliflixAccentPrimary
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = AliflixAccentPrimary,
+                                        unfocusedBorderColor = AliflixBorderSubtle,
+                                        focusedContainerColor = AliflixSurfaceElevated,
+                                        unfocusedContainerColor = AliflixSurfaceElevated,
+                                        focusedTextColor = AliflixContentPrimary,
+                                        unfocusedTextColor = AliflixContentPrimary
+                                    )
+                                )
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                selectedAnchor?.let { anchor ->
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = AliflixSurfaceElevated,
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            AsyncImage(
+                                                model = anchor.posterPath,
+                                                contentDescription = anchor.title,
+                                                modifier = Modifier
+                                                    .size(48.dp, 72.dp)
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(AliflixSurfaceSecondary)
+                                            )
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = anchor.title,
+                                                    color = AliflixContentPrimary,
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                anchor.year?.let {
+                                                    Text(
+                                                        text = "Year: $it",
+                                                        color = AliflixContentSecondary,
+                                                        fontSize = 12.sp
+                                                    )
+                                                }
+                                            }
+                                            IconButton(onClick = { selectedAnchor = null }) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Close,
+                                                    contentDescription = "Clear anchor",
+                                                    tint = AliflixContentTertiary
+                                                )
+                                            }
+                                        }
+                                    }
+                                } ?: LazyColumn(modifier = Modifier.weight(1f)) {
+                                    items(suggestions) { item ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    selectedAnchor = item
+                                                    similarQuery = item.title
+                                                }
+                                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = item.title,
+                                                color = AliflixContentPrimary,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            item.year?.let {
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = "($it)",
+                                                    color = AliflixContentTertiary,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Button(
+                                    onClick = {
+                                        val anchor = selectedAnchor
+                                        val anchorTitle = anchor?.title ?: similarQuery.trim()
+                                        if (anchorTitle.isNotBlank()) {
+                                            val spec = OmdbRecommendationSpec(
+                                                mediaType = mediaType,
+                                                similarityAnchor = OmdbRecommendationAnchor(
+                                                    title = anchorTitle,
+                                                    imdbId = anchor?.imdbId,
+                                                    mediaType = mediaType
+                                                )
+                                            )
+                                            lastExecutedSpec = spec
+                                            onSubmitSpec(spec)
+                                            keyboard?.hide()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
+                                    enabled = selectedAnchor != null || similarQuery.isNotBlank()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.AutoAwesome,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Find similar titles ✨", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        2 -> {
+                            // Build with Filters Mode
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                // Selected Filters Top Pill Summary Bar
+                                val currentSpec = buildSpecFromFilters()
+                                val activePills = mutableListOf<Pair<String, () -> Unit>>()
+                                includedGenres.forEach { g -> activePills.add("$g" to { includedGenres = includedGenres - g }) }
+                                excludedGenres.forEach { g -> activePills.add("No $g" to { excludedGenres = excludedGenres - g }) }
+                                if (selectedYearPreset != "Any") activePills.add(selectedYearPreset to { selectedYearPreset = "Any" })
+                                if (selectedRuntimePreset != "Any") activePills.add(selectedRuntimePreset to { selectedRuntimePreset = "Any" })
+                                if (selectedImdbPreset != "Any") activePills.add("IMDb $selectedImdbPreset" to { selectedImdbPreset = "Any" })
+                                if (selectedRtPreset != "Any") activePills.add("RT $selectedRtPreset" to { selectedRtPreset = "Any" })
+
+                                if (activePills.isNotEmpty()) {
+                                    LazyRow(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        items(activePills) { (label, onRemove) ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(AliflixAccentPrimary.copy(alpha = 0.2f))
+                                                    .clickable { onRemove() }
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        text = label,
+                                                        color = AliflixAccentPrimary,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.Close,
+                                                        contentDescription = "Remove",
+                                                        tint = AliflixAccentPrimary,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Accordion Sections
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    // 1. Genres (Included)
+                                    item {
+                                        FilterSectionHeader(
+                                            title = "Genres",
+                                            badgeCount = includedGenres.size,
+                                            isExpanded = expandedGenres,
+                                            onToggle = { expandedGenres = !expandedGenres }
+                                        ) {
+                                            FlowRow(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                CANONICAL_OMDB_GENRES.forEach { genre ->
+                                                    val isSelected = includedGenres.contains(genre)
+                                                    FilterChip(
+                                                        label = genre,
+                                                        isSelected = isSelected,
+                                                        onClick = {
+                                                            includedGenres = if (isSelected) includedGenres - genre else includedGenres + genre
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 2. Excluded Genres
+                                    item {
+                                        FilterSectionHeader(
+                                            title = "Exclude genres",
+                                            badgeCount = excludedGenres.size,
+                                            isExpanded = expandedExcludedGenres,
+                                            onToggle = { expandedExcludedGenres = !expandedExcludedGenres }
+                                        ) {
+                                            FlowRow(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                CANONICAL_OMDB_GENRES.forEach { genre ->
+                                                    val isSelected = excludedGenres.contains(genre)
+                                                    FilterChip(
+                                                        label = genre,
+                                                        isSelected = isSelected,
+                                                        onClick = {
+                                                            excludedGenres = if (isSelected) excludedGenres - genre else excludedGenres + genre
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 3. Year & Runtime
+                                    item {
+                                        FilterSectionHeader(
+                                            title = "Year & runtime",
+                                            badgeCount = (if (selectedYearPreset != "Any") 1 else 0) + (if (selectedRuntimePreset != "Any") 1 else 0),
+                                            isExpanded = expandedYearRuntime,
+                                            onToggle = { expandedYearRuntime = !expandedYearRuntime }
+                                        ) {
+                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Text("Year", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    YEAR_PRESETS.forEach { preset ->
+                                                        FilterChip(
+                                                            label = preset,
+                                                            isSelected = selectedYearPreset == preset,
+                                                            onClick = { selectedYearPreset = preset }
+                                                        )
+                                                    }
+                                                }
+
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text("Runtime", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                                val runtimePresets = if (mediaType == MediaType.TV) TV_RUNTIME_PRESETS else MOVIE_RUNTIME_PRESETS
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    runtimePresets.forEach { preset ->
+                                                        FilterChip(
+                                                            label = preset,
+                                                            isSelected = selectedRuntimePreset == preset,
+                                                            onClick = { selectedRuntimePreset = preset }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 4. Ratings
+                                    item {
+                                        FilterSectionHeader(
+                                            title = "Ratings",
+                                            badgeCount = (if (selectedImdbPreset != "Any") 1 else 0) + (if (selectedRtPreset != "Any") 1 else 0) + (if (selectedMetascorePreset != "Any") 1 else 0),
+                                            isExpanded = expandedRatings,
+                                            onToggle = { expandedRatings = !expandedRatings }
+                                        ) {
+                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Text("IMDb rating", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    IMDB_RATING_PRESETS.forEach { preset ->
+                                                        FilterChip(
+                                                            label = preset,
+                                                            isSelected = selectedImdbPreset == preset,
+                                                            onClick = { selectedImdbPreset = preset }
+                                                        )
+                                                    }
+                                                }
+
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text("Rotten Tomatoes", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    RT_RATING_PRESETS.forEach { preset ->
+                                                        FilterChip(
+                                                            label = preset,
+                                                            isSelected = selectedRtPreset == preset,
+                                                            onClick = { selectedRtPreset = preset }
+                                                        )
+                                                    }
+                                                }
+
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text("Metascore", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    METASCORE_PRESETS.forEach { preset ->
+                                                        FilterChip(
+                                                            label = preset,
+                                                            isSelected = selectedMetascorePreset == preset,
+                                                            onClick = { selectedMetascorePreset = preset }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 5. Content & Language
+                                    item {
+                                        FilterSectionHeader(
+                                            title = "Content rating & language",
+                                            badgeCount = selectedContentRatings.size + selectedLanguages.size,
+                                            isExpanded = expandedContentLang,
+                                            onToggle = { expandedContentLang = !expandedContentLang }
+                                        ) {
+                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Text("Content rating", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    CONTENT_RATINGS.forEach { rating ->
+                                                        val isSelected = selectedContentRatings.contains(rating)
+                                                        FilterChip(
+                                                            label = rating,
+                                                            isSelected = isSelected,
+                                                            onClick = {
+                                                                selectedContentRatings = if (isSelected) selectedContentRatings - rating else selectedContentRatings + rating
+                                                            }
+                                                        )
+                                                    }
+                                                }
+
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text("Language", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    LANGUAGES.forEach { lang ->
+                                                        val isSelected = selectedLanguages.contains(lang)
+                                                        FilterChip(
+                                                            label = lang,
+                                                            isSelected = isSelected,
+                                                            onClick = {
+                                                                selectedLanguages = if (isSelected) selectedLanguages - lang else selectedLanguages + lang
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 6. Series Seasons (Series only)
+                                    if (mediaType == MediaType.TV) {
+                                        item {
+                                            FilterSectionHeader(
+                                                title = "Seasons",
+                                                badgeCount = if (selectedSeasonsPreset != "Any") 1 else 0,
+                                                isExpanded = expandedSeasons,
+                                                onToggle = { expandedSeasons = !expandedSeasons }
+                                            ) {
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    SERIES_SEASONS_PRESETS.forEach { preset ->
+                                                        FilterChip(
+                                                            label = preset,
+                                                            isSelected = selectedSeasonsPreset == preset,
+                                                            onClick = { selectedSeasonsPreset = preset }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 7. Sort By
+                                    item {
+                                        FilterSectionHeader(
+                                            title = "Sort by",
+                                            badgeCount = if (selectedSortMode != "Best match") 1 else 0,
+                                            isExpanded = expandedSort,
+                                            onToggle = { expandedSort = !expandedSort }
+                                        ) {
+                                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                SORT_MODES.forEach { mode ->
+                                                    FilterChip(
+                                                        label = mode,
+                                                        isSelected = selectedSortMode == mode,
+                                                        onClick = { selectedSortMode = mode }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Bottom Find Matches Button
+                                Box(modifier = Modifier.padding(16.dp)) {
+                                    Button(
+                                        onClick = {
+                                            val spec = buildSpecFromFilters()
+                                            lastExecutedSpec = spec
+                                            onSubmitSpec(spec)
+                                            keyboard?.hide()
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.AutoAwesome,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Find matches ✨", fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
-            Button(
-                onClick = { onSubmit(builtDraft) }, enabled = canSubmit,
-                modifier = Modifier.fillMaxWidth().height(56.dp).testTag("ask-find-matches"),
-                colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary, disabledContainerColor = AliflixSurfaceSecondary),
-                shape = RoundedCornerShape(20.dp),
+        }
+    }
+}
+
+@Composable
+private fun FilterSectionHeader(
+    title: String,
+    badgeCount: Int,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = AliflixSurfaceElevated,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggle() },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                if (state is RecommendationUiState.Discovering) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
-                else { Icon(Icons.Rounded.Search, null); Spacer(Modifier.width(8.dp)); Text("Find matches", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        color = AliflixContentPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (badgeCount > 0) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(AliflixAccentPrimary)
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "$badgeCount",
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+                Icon(
+                    imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = AliflixContentSecondary
+                )
             }
-            Spacer(Modifier.height(4.dp))
-        }
-    }
-}
 
-@Composable private fun SegmentedMediaControl(selectedKind: RecommendationMediaKind?, onSelect: (RecommendationMediaKind) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(48.dp).background(AliflixSurfaceSecondary, RoundedCornerShape(20.dp)).padding(4.dp)) {
-        RecommendationMediaKind.entries.forEach { kind ->
-            val selected = kind == selectedKind
-            Box(
-                Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(16.dp))
-                    .background(if (selected) AliflixAccentPrimary.copy(alpha = .24f) else Color.Transparent)
-                    .clickable { onSelect(kind) }.testTag(if (kind == RecommendationMediaKind.MOVIE) "discover-type-movie" else "discover-type-series"),
-                contentAlignment = Alignment.Center,
-            ) { Text(if (kind == RecommendationMediaKind.MOVIE) "Movies" else "Series", color = if (selected) AliflixContentPrimary else AliflixContentSecondary, fontWeight = FontWeight.Bold) }
-        }
-    }
-}
-
-@Composable private fun ModeControl(active: Int, onSelect: (Int) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(42.dp).background(AliflixSurfaceSecondary, RoundedCornerShape(18.dp)).padding(4.dp)) {
-        listOf("Describe", "Similar to", "Build with filters").forEachIndexed { index, label ->
-            val color by animateColorAsState(if (active == index) AliflixSurfaceElevated else Color.Transparent, label = "mode-color")
-            Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(14.dp)).background(color).clickable { onSelect(index) }.testTag("ask-mode-$index"), contentAlignment = Alignment.Center) {
-                Text(label, color = if (active == index) AliflixContentPrimary else AliflixContentSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            AnimatedVisibility(visible = isExpanded) {
+                Column {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    content()
+                }
             }
         }
     }
 }
 
-@Composable private fun DescribeWorkspace(value: String, onChange: (String) -> Unit) {
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Describe the story, mood, characters or limits", color = AliflixContentSecondary, fontSize = 13.sp)
-        OutlinedTextField(
-            value = value, onValueChange = onChange,
-            placeholder = { Text("A tense supernatural story with a teen protagonist…", color = AliflixContentTertiary) },
-            modifier = Modifier.fillMaxWidth().weight(1f).testTag("discover-search-field"), shape = RoundedCornerShape(16.dp),
-            colors = askFieldColors(),
+@Composable
+private fun FilterChip(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .border(
+                width = 1.dp,
+                color = if (isSelected) AliflixAccentPrimary else AliflixBorderSubtle,
+                shape = RoundedCornerShape(12.dp)
+            )
+            .background(if (isSelected) AliflixAccentPrimary.copy(alpha = 0.2f) else AliflixSurfaceSecondary)
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = label,
+            color = if (isSelected) AliflixAccentPrimary else AliflixContentSecondary,
+            fontSize = 12.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
         )
     }
-}
-
-@Composable private fun SimilarWorkspace(
-    query: String,
-    selected: Media?,
-    suggestions: List<Media>,
-    loading: Boolean,
-    onQueryChange: (String) -> Unit,
-    onSelect: (Media) -> Unit,
-    onChange: () -> Unit,
-) {
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Find something similar to", color = AliflixContentPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-        AnimatedContent(targetState = selected, transitionSpec = { (fadeIn() + expandVertically()) togetherWith (fadeOut() + shrinkVertically()) }, label = "anchor-morph") { anchor ->
-            if (anchor == null) {
-                OutlinedTextField(
-                    value = query, onValueChange = onQueryChange, singleLine = true,
-                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
-                    trailingIcon = { if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) },
-                    placeholder = { Text("Search for a movie or series…", color = AliflixContentTertiary) },
-                    modifier = Modifier.fillMaxWidth().testTag("similar-title-search"), shape = RoundedCornerShape(16.dp), colors = askFieldColors(),
-                )
-            } else {
-                Surface(color = AliflixSurfaceSecondary, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().testTag("similar-selected-anchor")) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AsyncImage(anchor.posterUrl, anchor.title, Modifier.size(width = 48.dp, height = 68.dp).clip(RoundedCornerShape(8.dp)))
-                        Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) {
-                            Text(anchor.title, color = AliflixContentPrimary, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text("${if (anchor.type == MediaType.MOVIE) "Movie" else "Series"}${anchor.year.take(4).takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}", color = AliflixContentSecondary, fontSize = 12.sp)
-                        }
-                        Button(onClick = onChange, colors = ButtonDefaults.buttonColors(containerColor = AliflixSurfaceElevated)) { Text("Change") }
-                    }
-                }
-            }
-        }
-        AnimatedVisibility(visible = selected == null && suggestions.isNotEmpty(), enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-            LazyColumn(Modifier.fillMaxWidth().testTag("similar-suggestions"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(suggestions, key = Media::key) { item ->
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onSelect(item) }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AsyncImage(item.posterUrl, item.title, Modifier.size(width = 36.dp, height = 52.dp).clip(RoundedCornerShape(6.dp)))
-                        Spacer(Modifier.width(10.dp)); Column {
-                            Text(item.title, color = AliflixContentPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${if (item.type == MediaType.MOVIE) "Movie" else "Series"}${item.year.take(4).takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}", color = AliflixContentSecondary, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable private fun FilterWorkspace(groups: List<AskFilterGroup>, selected: Set<String>, onToggle: (String) -> Unit) {
-    LazyColumn(Modifier.fillMaxSize().testTag("ask-filter-browser"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (selected.isNotEmpty()) {
-            item("selected") {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Selected filters", color = AliflixContentPrimary, fontWeight = FontWeight.Bold)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        selected.sorted().forEach { option -> FilterChip(option, true) { onToggle(option) } }
-                    }
-                }
-            }
-        }
-        items(groups, key = AskFilterGroup::title) { group ->
-            var expanded by rememberSaveable(group.title) { mutableStateOf(group.title == "Genre") }
-            val count = group.options.count(selected::contains)
-            Column(Modifier.fillMaxWidth().animateContentSize()) {
-                Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(group.title, color = AliflixContentPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    if (count > 0) Surface(color = AliflixAccentPrimary.copy(alpha = .18f), shape = RoundedCornerShape(10.dp)) { Text("$count", color = AliflixAccentPrimary, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)) }
-                    Spacer(Modifier.width(6.dp)); Icon(if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown, "Toggle ${group.title}", tint = AliflixContentSecondary)
-                }
-                AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                    Column {
-                        if (group.title == "Era") Text("Recent: Released within the last 5 years", color = AliflixContentTertiary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.padding(bottom = 8.dp)) {
-                            group.options.forEach { option -> FilterChip(option, option in selected) { onToggle(option) } }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable private fun FilterChip(text: String, selected: Boolean, onClick: () -> Unit) {
-    val background by animateColorAsState(if (selected) AliflixAccentPrimary.copy(alpha = .2f) else AliflixSurfaceSecondary, label = "filter-bg")
-    val border by animateColorAsState(if (selected) AliflixAccentPrimary else AliflixBorderSubtle, label = "filter-border")
-    Row(Modifier.height(34.dp).clip(RoundedCornerShape(17.dp)).background(background).border(1.dp, border, RoundedCornerShape(17.dp)).clickable(onClick = onClick).padding(horizontal = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-        AnimatedVisibility(selected) { Icon(Icons.Rounded.Check, null, tint = AliflixAccentPrimary, modifier = Modifier.size(15.dp)) }
-        if (selected) Spacer(Modifier.width(4.dp)); Text(text, color = AliflixContentPrimary, fontSize = 12.sp)
-    }
-}
-
-@Composable private fun askFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedContainerColor = AliflixSurfaceSecondary, unfocusedContainerColor = AliflixSurfaceSecondary,
-    focusedBorderColor = AliflixAccentPrimary, unfocusedBorderColor = AliflixBorderSubtle,
-    focusedTextColor = AliflixContentPrimary, unfocusedTextColor = AliflixContentPrimary,
-)
-
-@Composable private fun RecommendationQuestionState(state: RecommendationUiState.Question, onAnswer: (RecommendationQuestion, List<String>) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(state.question.text, color = AliflixContentPrimary, fontWeight = FontWeight.Bold)
-        state.question.options.forEach { option -> Button(onClick = { onAnswer(state.question, listOf(option.value)) }, modifier = Modifier.fillMaxWidth()) { Text(option.label) } }
-    }
-}
-@Composable private fun RecommendationErrorState(state: RecommendationUiState.Error, onRetry: () -> Unit) = MessageState("An error occurred", state.message, state.canRetry, onRetry)
-@Composable private fun RecommendationUnavailableState(state: RecommendationUiState.SourceUnavailable, onRetry: () -> Unit) = MessageState("Source unavailable", state.message, state.canRetry, onRetry)
-@Composable private fun MessageState(title: String, message: String, retry: Boolean, onRetry: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) { Text(title, color = AliflixError, fontWeight = FontWeight.Bold); Text(message, color = AliflixContentSecondary, textAlign = TextAlign.Center, modifier = Modifier.padding(8.dp)); if (retry) Button(onClick = onRetry) { Text("Retry") } }
-}
-@Composable private fun RecommendationEmptyState(state: RecommendationUiState.Empty, onRelax: (String) -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) { Text("No matches", color = AliflixContentPrimary, fontWeight = FontWeight.Bold); Text(state.message, color = AliflixContentSecondary, textAlign = TextAlign.Center); state.options.forEach { Button(onClick = { onRelax(it.id) }) { Text(it.label) } } }
-}
-@Composable private fun RecommendationRelaxationState(state: RecommendationUiState.Relaxation, onRelax: (String) -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) { Text("Too specific", color = AliflixContentPrimary, fontWeight = FontWeight.Bold); Text(state.message, color = AliflixContentSecondary, textAlign = TextAlign.Center); state.options.forEach { Button(onClick = { onRelax(it.id) }) { Text(it.label) } } }
 }

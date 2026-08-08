@@ -18,6 +18,14 @@ object OmdbDiagnostics {
     val omdbBatchCalls = AtomicInteger(0)
     val geminiVerified = AtomicInteger(0)
     val finalResults = AtomicInteger(0)
+    val interpretationKeywordPhrases = AtomicInteger(0)
+    val requiredConceptGroupCount = AtomicInteger(0)
+    val resolvedKeywordIdsCount = AtomicInteger(0)
+    val searchPathCount = AtomicInteger(0)
+    val pagesSearched = AtomicInteger(0)
+    val hardGenreRejections = AtomicInteger(0)
+    val hardFilterRejections = AtomicInteger(0)
+    val expansionRounds = AtomicInteger(0)
 
     fun reset() {
         omdbAndroidCacheHits.set(0)
@@ -33,8 +41,16 @@ object OmdbDiagnostics {
         omdbBatchCalls.set(0)
         geminiVerified.set(0)
         finalResults.set(0)
+        interpretationKeywordPhrases.set(0)
+        requiredConceptGroupCount.set(0)
+        resolvedKeywordIdsCount.set(0)
+        searchPathCount.set(0)
+        pagesSearched.set(0)
+        hardGenreRejections.set(0)
+        hardFilterRejections.set(0)
+        expansionRounds.set(0)
     }
 
     fun dumpString(): String =
-        "OMDb Diag [AndroidCacheHits: ${omdbAndroidCacheHits.get()}, Verified: ${omdbVerified.get()}, NotFound: ${omdbNotFound.get()}, Timeouts: ${omdbTimeouts.get()}, QuotaFailures: ${omdbQuotaFailures.get()}, CandidatesRequested: ${omdbCandidatesRequested.get()}, GeminiVerified: ${geminiVerified.get()}]"
+        "OMDb/Rec Diag [Raw: ${rawCandidates.get()}, Prefiltered: ${prefilteredCandidates.get()}, HardGenreRejects: ${hardGenreRejections.get()}, HardFilterRejects: ${hardFilterRejections.get()}, SearchPaths: ${searchPathCount.get()}, Pages: ${pagesSearched.get()}, ExpansionRounds: ${expansionRounds.get()}, GeminiVerified: ${geminiVerified.get()}, Final: ${finalResults.get()}]"
 }

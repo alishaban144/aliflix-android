@@ -4329,11 +4329,11 @@ private fun RatingsRow(item: Media) {
                     item.rottenTomatoesRating?.let { "$it%" } ?: "Unavailable"
                 RatingSourceState.NOT_RATED -> "Not rated"
                 RatingSourceState.UNAVAILABLE -> "Unavailable"
-                RatingSourceState.LOADING, null -> ""
+                RatingSourceState.LOADING, null -> "—"
             },
             accent = Color(0xFFFA3A45),
             darkText = false,
-            loading = item.rottenTomatoesState == RatingSourceState.LOADING || item.rottenTomatoesState == null,
+            loading = false,
         )
     }
 }
@@ -4366,20 +4366,28 @@ private fun RatingPill(
                 fontWeight = FontWeight.Black,
             )
         }
-        if (loading) {
+        if (loading && source != "Tomatometer") {
             CircularProgressIndicator(
                 color = Color.White,
                 strokeWidth = 1.5.dp,
                 modifier = Modifier.padding(start = 9.dp).size(14.dp),
             )
         } else {
-            Text(
-                text = value,
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 8.dp),
-            )
+            AnimatedContent(
+                targetState = value,
+                transitionSpec = {
+                    fadeIn(tween(180)) togetherWith fadeOut(tween(180))
+                },
+                label = "rating-pill-animation",
+            ) { targetValue ->
+                Text(
+                    text = targetValue,
+                    color = if (targetValue == "—") AliflixContentTertiary else Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
         }
     }
 }

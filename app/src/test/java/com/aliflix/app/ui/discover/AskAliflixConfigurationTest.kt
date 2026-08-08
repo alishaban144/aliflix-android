@@ -1,28 +1,29 @@
 package com.aliflix.app.ui.discover
 
-import com.aliflix.app.recommendation.RecommendationMediaKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AskAliflixConfigurationTest {
-    @Test fun `movie and series genre sets remain canonical and separate`() {
-        assertTrue("TV Movie" in MOVIE_GENRES)
-        assertFalse("TV Movie" in TV_GENRES)
-        assertTrue("Sci-Fi & Fantasy" in TV_GENRES)
-        assertFalse("Sci-Fi & Fantasy" in MOVIE_GENRES)
+    @Test
+    fun testCanonicalOmdbGenresContainsRealImdbTaxonomy() {
+        assertTrue("Sci-Fi" in CANONICAL_OMDB_GENRES)
+        assertTrue("Film-Noir" in CANONICAL_OMDB_GENRES)
+        assertTrue("Reality-TV" in CANONICAL_OMDB_GENRES)
+        assertTrue("Action" in CANONICAL_OMDB_GENRES)
+        assertFalse("Sci-Fi & Fantasy" in CANONICAL_OMDB_GENRES)
+        assertFalse("Action & Adventure" in CANONICAL_OMDB_GENRES)
     }
 
-    @Test fun `movie filters omit series status and rotten tomatoes thresholds`() {
-        val groups = askFilterGroups(RecommendationMediaKind.MOVIE)
-        assertEquals(listOf("Genre", "Mood & tone", "Story & themes", "Characters", "Setting", "Era", "Runtime", "Rating", "Language", "Discovery style", "Exclude"), groups.map { it.title })
-        assertFalse(groups.flatMap { it.options }.any { it.startsWith("RT ") })
-    }
-
-    @Test fun `series filters expose status and canonical runtime choices`() {
-        val groups = askFilterGroups(RecommendationMediaKind.SERIES)
-        assertEquals(SERIES_STATUS, groups.single { it.title == "Series status" }.options)
-        assertEquals(TV_RUNTIMES, groups.single { it.title == "Runtime" }.options)
+    @Test
+    fun testFilterPresets() {
+        assertTrue("2020+" in YEAR_PRESETS)
+        assertTrue("7+" in IMDB_RATING_PRESETS)
+        assertTrue("80%+" in RT_RATING_PRESETS)
+        assertTrue("70+" in METASCORE_PRESETS)
+        assertTrue("English" in LANGUAGES)
+        assertTrue("PG-13" in CONTENT_RATINGS)
+        assertTrue("Best match" in SORT_MODES)
     }
 }

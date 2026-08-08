@@ -37,14 +37,17 @@ class VerificationDecisionTest {
 
     @Test
     fun probableMatchIsAcceptedAtOrAboveThreshold() {
-        assertTrue(VerificationDecision.PROBABLE_MATCH.isAccepted(0.70))
+        assertFalse(VerificationDecision.PROBABLE_MATCH.isAccepted(0.70))
+        assertFalse(VerificationDecision.PROBABLE_MATCH.isAccepted(0.84))
         assertTrue(VerificationDecision.PROBABLE_MATCH.isAccepted(0.85))
+        assertTrue(VerificationDecision.PROBABLE_MATCH.isAccepted(0.92))
         assertTrue(VerificationDecision.PROBABLE_MATCH.isAccepted(1.0))
     }
 
     @Test
     fun probableMatchIsRejectedBelowThreshold() {
-        assertFalse(VerificationDecision.PROBABLE_MATCH.isAccepted(0.69))
+        assertFalse(VerificationDecision.PROBABLE_MATCH.isAccepted(0.84))
+        assertFalse(VerificationDecision.PROBABLE_MATCH.isAccepted(0.70))
         assertFalse(VerificationDecision.PROBABLE_MATCH.isAccepted(0.5))
         assertFalse(VerificationDecision.PROBABLE_MATCH.isAccepted(0.0))
     }

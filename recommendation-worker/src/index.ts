@@ -4,6 +4,9 @@ import {
   INTERPRETATION_PROMPT,
   EXPANSION_PROMPT,
   VERIFICATION_PROMPT,
+  INTERPRET_V2_PROMPT,
+  VERIFY_PLOTS_PROMPT,
+  ANCHOR_PROFILE_PROMPT,
 } from './prompts';
 import {
   InterpretationRequestSchema,
@@ -14,6 +17,12 @@ import {
   GeminiInterpretationSchema,
   GeminiExpansionSchema,
   GeminiVerificationSchema,
+  InterpretV2RequestSchema,
+  GeminiInterpretV2Schema,
+  VerifyPlotsRequestSchema,
+  GeminiVerifyPlotsSchema,
+  ProfileAnchorRequestSchema,
+  GeminiProfileAnchorSchema,
 } from './schemas';
 import { lookupOmdbTitle, normalizeOmdbResponse } from './omdb';
 
@@ -45,6 +54,9 @@ export default {
       '/v1/verify',
       '/v1/metadata/omdb',
       '/v1/metadata/omdb/batch',
+      '/v2/recommendations/interpret',
+      '/v2/recommendations/verify-plots',
+      '/v2/recommendations/profile-anchor',
       '/health',
     ];
     if (!knownRoutes.includes(url.pathname)) {
@@ -235,6 +247,78 @@ export default {
           VERIFICATION_PROMPT,
           parsed.data,
           GeminiVerificationSchema
+        );
+        return new Response(JSON.stringify(geminiRes), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.pathname === '/v2/recommendations/interpret') {
+        const parsed = InterpretV2RequestSchema.safeParse(body);
+        if (!parsed.success) {
+          rateLimiter.check(ip, true);
+          return new Response(JSON.stringify({ error: 'Bad Request' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        const geminiRes = await callGemini(
+          env,
+          INTERPRET_V2_PROMPT,
+          parsed.data,
+          GeminiInterpretV2Schema
+        );
+        return new Response(JSON.stringify(geminiRes), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.pathname === '/v2/recommendations/verify-plots') {
+        const parsed = VerifyPlotsRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          rateLimiter.check(ip, true);
+          return new Response(JSON.stringify({ error: 'Bad Request' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (parsed.data.candidates.length > 25) {
+          return new Response(JSON.stringify({ error: 'Too many candidates' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        const geminiRes = await callGemini(
+          env,
+          VERIFY_PLOTS_PROMPT,
+          parsed.data,
+          GeminiVerifyPlotsSchema
+        );
+        return new Response(JSON.stringify(geminiRes), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.pathname === '/v2/recommendations/profile-anchor') {
+        const parsed = ProfileAnchorRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          rateLimiter.check(ip, true);
+          return new Response(JSON.stringify({ error: 'Bad Request' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        const geminiRes = await callGemini(
+          env,
+          ANCHOR_PROFILE_PROMPT,
+          parsed.data,
+          GeminiProfileAnchorSchema
         );
         return new Response(JSON.stringify(geminiRes), {
           status: 200,

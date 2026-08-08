@@ -909,7 +909,11 @@ object RecommendationRanker {
                         } else {
                             "SEMANTIC_MODEL"
                         },
-                        description = "Semantic intent match",
+                        description = candidate.evidence.ifBlank {
+                            val genresStr = candidate.media.genres.take(2).joinToString(" · ")
+                            val ratingStr = candidate.media.imdbRating?.let { " · IMDb $it" }.orEmpty()
+                            if (genresStr.isNotBlank()) "$genresStr$ratingStr" else "Verified content match"
+                        },
                     ),
                 )
             }
@@ -1249,10 +1253,15 @@ object RecommendationRanker {
             )
         }
         if (semanticValue > 0.0) {
+            val concreteReason = candidate.evidence.ifBlank {
+                val genresStr = candidate.media.genres.take(2).joinToString(" · ")
+                val ratingStr = candidate.media.imdbRating?.let { " · IMDb $it" }.orEmpty()
+                if (genresStr.isNotBlank()) "$genresStr$ratingStr" else "Verified plot and story match"
+            }
             add(
                 RecommendationMatchReason(
                     RecommendationEvidenceType.SEMANTIC_MATCH,
-                    "Its story is a semantic match for your request",
+                    concreteReason,
                     contribution = weights.semantic * semanticValue,
                     source = evidence.firstOrNull {
                         it.type == RecommendationEvidenceType.SEMANTIC_MATCH

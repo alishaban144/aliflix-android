@@ -2,7 +2,7 @@ import { INTERPRETATION_PROMPT, EXPANSION_PROMPT, VERIFICATION_PROMPT } from './
 
 export interface Env {
   GEMINI_API_KEY: string;
-  OMDB_API_KEY: string;
+  OMDB_API_KEY?: string;
   OMDB_CACHE?: KVNamespace;
 }
 

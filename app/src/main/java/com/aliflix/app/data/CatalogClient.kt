@@ -549,10 +549,12 @@ class CatalogClient(
 
     suspend fun scrapeTmdbDiscoverPage(
         pathParams: String,
-        mediaType: MediaType = MediaType.MOVIE
+        mediaType: MediaType = MediaType.MOVIE,
+        page: Int = 1,
     ): List<Media> = supervisorScope {
         val typeStr = if (mediaType == MediaType.TV) "tv" else "movie"
-        val url = "https://www.themoviedb.org/discover/$typeStr?$pathParams"
+        val pageParam = if (page > 1) "&page=$page" else ""
+        val url = "https://www.themoviedb.org/discover/$typeStr?$pathParams$pageParam"
         val html = pageLoader(url)
         com.aliflix.app.recommendation.TmdbKeywordParser.parseDiscoverPage(html, mediaType)
     }

@@ -423,9 +423,6 @@ private fun RecommendationLoading(
                 }
             }
         }
-        item(key = "loading-preferences", contentType = "preferences") {
-            PreferenceSummary(preferences = preferences)
-        }
         item(key = "hero-skeleton", contentType = "skeleton") {
             RecommendationHeroSkeleton()
         }
@@ -653,10 +650,6 @@ internal fun RecommendationResults(
                         Text("New request")
                     }
                 }
-                PreferenceSummary(
-                    preferences = state.preferences,
-                    onRemove = onCorrectPreference,
-                )
             }
         }
         if (state.sourceHealth.isPartial()) {

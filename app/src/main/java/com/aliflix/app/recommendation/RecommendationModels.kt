@@ -4,6 +4,15 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import java.security.MessageDigest
 
+data class RetrievalLedger(
+    val searchedKeywordPhrases: MutableSet<String> = mutableSetOf(),
+    val searchedBroadPhrases: MutableSet<String> = mutableSetOf(),
+    val resolvedKeywordIds: MutableSet<Int> = mutableSetOf(),
+    val searchedDiscoverParams: MutableSet<String> = mutableSetOf(),
+    val searchedPages: MutableSet<String> = mutableSetOf(),
+    val discoveredTmdbIds: MutableSet<Int> = mutableSetOf(),
+)
+
 enum class PreferenceOrigin {
     EXPLICIT,
     REJECTED,
@@ -222,7 +231,17 @@ data class RecommendationRequestDraft(
     val status: String? = null,
     val exclusions: List<String> = emptyList(),
     val similarityTitle: String? = null,
+    val similarityAnchor: Media? = null,
+    val similarityAnchorTmdbId: Int? = null,
+    val similarityAnchorMediaType: MediaType? = null,
+    val similarityAnchorImdbId: String? = null,
     val freeText: String = "",
+)
+
+data class ResolvedKeywordGroup(
+    val groupId: String,
+    val keywordIds: List<Int>,
+    val phrases: List<String> = emptyList(),
 )
 
 data class RecommendationPageCursor(

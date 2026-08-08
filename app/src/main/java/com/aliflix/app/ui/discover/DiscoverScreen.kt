@@ -279,12 +279,12 @@ internal fun DiscoverScreen(
                 Column(modifier = Modifier.fillMaxSize()) {
                     MobileTopSafeArea()
 
-                        when (recommendationState) {
+                        when (val recState = recommendationState) {
                             is RecommendationUiState.Idle,
                             is RecommendationUiState.SelectType -> Unit
                             is RecommendationUiState.Results -> {
                                 RecommendationResults(
-                                    state = recommendationState,
+                                    state = recState,
                                     onOpen = onOpen,
                                     onLoadMore = onLoadMoreRecommendations,
                                     onRetryPage = onRetryRecommendationPage,
@@ -314,21 +314,17 @@ internal fun DiscoverScreen(
                             selectedKind = recommendationKind,
                             onSelectType = onSelectRecommendationType,
                             onSearchTitles = onSearchTitles,
-                            onSubmit = { 
-                                val draft = it
-                                if (draft.freeText.isNotBlank() || draft.similarityTitle?.isNotBlank() == true || draft.genres.isNotEmpty() || draft.moods.isNotEmpty()) {
-                                    val requestedKind = recommendationKind ?: RecommendationMediaKind.MOVIE
-                                    if (recommendationKind != requestedKind) onSelectRecommendationType(requestedKind)
-                                    onQueryChange(draft.freeText)
-                                    onSubmitRecommendation(draft)
-                                    keyboard?.hide()
-                                }
+                            onSubmitSpec = { spec ->
+                                onSubmitRecommendation(
+                                    RecommendationRequestDraft(
+                                        mediaType = spec.mediaType,
+                                        genres = spec.includedGenres.toList(),
+                                        freeText = spec.plotRequirements.firstOrNull() ?: ""
+                                    )
+                                )
+                                keyboard?.hide()
                             },
-                            onAnswer = onAnswerRecommendation,
-                            onRestart = onRestartRecommendations,
-                            onRelax = onRelaxRecommendation,
-                            onRetry = onRetryRecommendations,
-                            onShowMatches = onShowRecommendationMatches,
+                            onResetSession = onRestartRecommendations,
                             onBack = {
                                 recommendModeActive = false
                                 onModeChange(SearchMode.TITLE)
