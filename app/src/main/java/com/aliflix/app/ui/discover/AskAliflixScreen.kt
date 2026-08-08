@@ -8,6 +8,9 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListState
@@ -40,6 +43,7 @@ fun AskAliflixScreen(
         modifier = modifier
             .fillMaxSize()
             .background(AliflixBackgroundBase)
+            .windowInsetsPadding(WindowInsets.statusBars)
     ) {
         // TOP APP BAR: ← Ask Aliflix  BETA  Reset
         AskAliflixHeader(

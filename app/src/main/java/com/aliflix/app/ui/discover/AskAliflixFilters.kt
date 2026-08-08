@@ -444,7 +444,7 @@ fun AskAliflixFilters(
 
         // Sticky Primary CTA
         AskAliflixStickyCta(
-            label = if (loading) "Finding matches…" else "Find matches ✨",
+            label = if (loading) "Finding matches…" else "Find matches",
             enabled = isFilterActive,
             loading = loading,
             onClick = onSubmit

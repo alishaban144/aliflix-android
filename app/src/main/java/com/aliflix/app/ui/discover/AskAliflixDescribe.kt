@@ -75,8 +75,8 @@ fun AskAliflixDescribe(
         Spacer(modifier = Modifier.weight(1f))
 
         AskAliflixStickyCta(
-            label = if (loading) "Understanding request…" else "Find matches ✨",
-            enabled = text.trim().isNotBlank(),
+            label = if (loading) "Understanding request…" else "Find matches",
+            enabled = text.trim().isNotEmpty(),
             loading = loading,
             onClick = onSubmit
         )

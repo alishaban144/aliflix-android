@@ -596,7 +596,7 @@ internal fun RecommendationComposer(
                                         modifier = Modifier.size(18.dp)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Find matches ✨", fontWeight = FontWeight.Bold)
+                                    Text("Find matches", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -1050,7 +1050,7 @@ internal fun RecommendationComposer(
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Find matches ✨", fontWeight = FontWeight.Bold)
+                                        Text("Find matches", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
