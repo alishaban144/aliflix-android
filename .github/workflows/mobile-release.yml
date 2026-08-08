@@ -19,8 +19,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "68"
-  RELEASE_VERSION_NAME: "2.9.17"
+  RELEASE_VERSION_CODE: "69"
+  RELEASE_VERSION_NAME: "2.9.18"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -135,6 +135,7 @@ jobs:
             "releaseNotes": "Ask Aliflix Rebuild - OMDb Recommendation Engine"
           }
           EOF
+          cp "$APK_PATH" aliflix-mobile.apk
 
       - name: Create or update release
         uses: softprops/action-gh-release@v2
@@ -143,5 +144,5 @@ jobs:
           name: "Aliflix ${RELEASE_VERSION_NAME}"
           body: "Aliflix ${RELEASE_VERSION_NAME} release with Ask Aliflix OMDb-verified recommendation engine."
           files: |
-            app/build/outputs/apk/mobile/release/app-mobile-release.apk#aliflix-mobile.apk
+            aliflix-mobile.apk
             update-mobile.json
