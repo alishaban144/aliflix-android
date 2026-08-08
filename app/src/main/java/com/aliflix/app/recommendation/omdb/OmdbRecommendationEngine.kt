@@ -151,20 +151,17 @@ class OmdbRecommendationEngine(
         candidates: List<VerifiedRecommendationItem>,
         plotRequirements: List<String>,
     ): List<VerifiedRecommendationItem> {
-        val aiVerifications = try {
-            aiClient?.verifyPlots(plotRequirements, candidates)
-        } catch (_: Throwable) {
-            null
-        } ?: return candidates // If AI call fails, preserve deterministic OMDb matches
+        val client = aiClient ?: throw IllegalStateException("Semantic plot verification service unavailable")
+        val aiVerifications = client.verifyPlots(plotRequirements, candidates)
 
-        val acceptedCandidateIds = aiVerifications.results
-            .filter { it.decision == "MATCH" }
+        val matchCandidateIds = aiVerifications.results
+            .filter { it.decision.equals("MATCH", ignoreCase = true) }
             .map { it.candidateId }
             .toSet()
 
         return candidates.filter { item ->
             val id = item.media.imdbId ?: "tmdb:${item.media.id}"
-            acceptedCandidateIds.contains(id) || acceptedCandidateIds.contains(item.media.title)
+            matchCandidateIds.contains(id) || matchCandidateIds.contains(item.media.title)
         }
     }
 }

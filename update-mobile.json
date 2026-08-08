@@ -1,0 +1,8 @@
+{
+  "versionCode": 64,
+  "versionName": "2.9.13",
+  "apkUrl": "https://github.com/alishaban144/aliflix-android/releases/download/v2.9.13/aliflix-mobile.apk",
+  "sha256": "896de38ce17f85c578cb39cf83b68ccac177ac302080dc9f3e8bd429bd4170f9",
+  "sizeBytes": 77441546,
+  "releaseNotes": "Ask Aliflix Rebuild - OMDb Recommendation Engine"
+}

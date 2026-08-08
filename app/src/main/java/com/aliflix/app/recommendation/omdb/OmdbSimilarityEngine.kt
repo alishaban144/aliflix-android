@@ -43,6 +43,79 @@ class OmdbSimilarityEngine(
         )
     }
 
+    suspend fun resolveAnchorFromMedia(media: Media): OmdbRecommendationAnchor {
+        val omdb = omdbClient.lookup(
+            OmdbLookupRequest(
+                imdbId = media.imdbId,
+                title = media.title,
+                year = media.year?.toIntOrNull(),
+                mediaType = if (media.type == MediaType.MOVIE) "movie" else "series"
+            )
+        )
+
+        return OmdbRecommendationAnchor(
+            title = omdb?.title ?: media.title,
+            imdbId = omdb?.imdbId ?: media.imdbId,
+            mediaType = media.type,
+            overview = omdb?.plot ?: media.overview,
+            genres = omdb?.genres ?: emptyList()
+        )
+    }
+
+    suspend fun executeSimilar(
+        anchorMedia: Media,
+        outputMediaType: MediaType,
+        ledger: AskAliflixLedger,
+    ): List<VerifiedRecommendationItem> {
+        val anchor = resolveAnchorFromMedia(anchorMedia)
+        val rawCandidates = discoverSimilarCandidates(
+            anchor = anchor.copy(mediaType = outputMediaType),
+            ledger = ledger
+        )
+
+        if (rawCandidates.isEmpty()) return emptyList()
+
+        val lookupRequests = rawCandidates.take(30).map { cand ->
+            OmdbLookupRequest(
+                candidateId = cand.imdbId ?: "tmdb:${cand.id}",
+                imdbId = cand.imdbId,
+                title = cand.title,
+                year = cand.year?.toIntOrNull(),
+                mediaType = if (outputMediaType == MediaType.MOVIE) "movie" else "series"
+            )
+        }
+
+        val batchMap = try {
+            omdbClient.lookupBatch(lookupRequests)
+        } catch (_: Throwable) {
+            emptyMap()
+        }
+
+        val verifiedItems = mutableListOf<VerifiedRecommendationItem>()
+        for (cand in rawCandidates) {
+            val key = cand.imdbId ?: "tmdb:${cand.id}"
+            val meta = batchMap[key]
+            val evalResult = OmdbConstraintEvaluator.evaluate(
+                spec = OmdbRecommendationSpec(mediaType = outputMediaType, includedGenres = anchor.genres.take(1).toSet()),
+                metadata = meta
+            )
+            if (meta != null && !cand.title.equals(anchor.title, ignoreCase = true)) {
+                val explanation = "Similar to ${anchor.title} (${meta.genres.take(2).joinToString(" · ")})"
+                verifiedItems.add(
+                    VerifiedRecommendationItem(
+                        media = cand,
+                        omdbMetadata = meta,
+                        evaluationResult = evalResult,
+                        matchExplanation = explanation
+                    )
+                )
+            }
+        }
+
+        val spec = OmdbRecommendationSpec(mediaType = outputMediaType, includedGenres = anchor.genres.toSet())
+        return OmdbRecommendationRanker.rankAndSort(verifiedItems, spec)
+    }
+
     suspend fun discoverSimilarCandidates(
         anchor: OmdbRecommendationAnchor,
         ledger: AskAliflixLedger,

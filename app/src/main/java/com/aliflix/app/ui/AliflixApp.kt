@@ -348,6 +348,8 @@ fun AliflixApp(
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
     val semanticModelState by viewModel.semanticModelState.collectAsState()
     val shouldOfferSemanticModel by viewModel.shouldOfferSemanticModel.collectAsState()
+    val askUiState by viewModel.askUiState.collectAsState()
+    val askEditorState by viewModel.askEditorState.collectAsState()
 
     val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val ramoflixConfig = playbackPreferences.ramoflixConfig
@@ -825,6 +827,13 @@ fun AliflixApp(
                         recommendationListState = recommendationScrollState,
                         mediaFilter = searchMediaFilter,
                         onMediaFilterChange = { searchMediaFilter = it },
+                        askUiState = askUiState,
+                        askEditorState = askEditorState,
+                        onSubmitAskAliflix = viewModel::submitAskAliflix,
+                        onResetAskAliflix = viewModel::resetAskAliflix,
+                        onEditAskAliflix = viewModel::editAskAliflix,
+                        onSetAskEditorState = viewModel::setAskEditorState,
+                        onLoadMoreAskAliflix = viewModel::loadMoreAskAliflix,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
 

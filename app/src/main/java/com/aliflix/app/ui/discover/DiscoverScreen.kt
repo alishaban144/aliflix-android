@@ -189,6 +189,13 @@ internal fun DiscoverScreen(
     recommendationListState: LazyListState,
     mediaFilter: String,
     onMediaFilterChange: (String) -> Unit,
+    askUiState: AskAliflixUiState = AskAliflixUiState.Editing,
+    askEditorState: AskAliflixEditorState = AskAliflixEditorState(),
+    onSubmitAskAliflix: (AskAliflixRequest) -> Unit = {},
+    onResetAskAliflix: () -> Unit = {},
+    onEditAskAliflix: () -> Unit = {},
+    onSetAskEditorState: (AskAliflixEditorState) -> Unit = {},
+    onLoadMoreAskAliflix: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -276,64 +283,53 @@ internal fun DiscoverScreen(
             label = "discover-mode",
         ) { recommendMode ->
             if (recommendMode) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    MobileTopSafeArea()
+                var similarSuggestions by remember { mutableStateOf<List<Media>>(emptyList()) }
+                var similarSuggestionsLoading by remember { mutableStateOf(false) }
 
-                        when (val recState = recommendationState) {
-                            is RecommendationUiState.Idle,
-                            is RecommendationUiState.SelectType -> Unit
-                            is RecommendationUiState.Results -> {
-                                RecommendationResults(
-                                    state = recState,
-                                    onOpen = onOpen,
-                                    onLoadMore = onLoadMoreRecommendations,
-                                    onRetryPage = onRetryRecommendationPage,
-                                    onRestart = onRestartRecommendations,
-                                    onMoreLike = onMoreLikeRecommendation,
-                                    onLessLike = onLessLikeRecommendation,
-                                    onSeen = onRecommendationSeen,
-                                    onCorrectPreference = onCorrectRecommendationPreference,
-                                    listState = recommendationListState,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxWidth()
-                                )
-                            }
-                            is RecommendationUiState.Discovering,
-                            is RecommendationUiState.Question,
-                            is RecommendationUiState.Empty,
-                            is RecommendationUiState.SourceUnavailable,
-                            is RecommendationUiState.Relaxation,
-                            is RecommendationUiState.Error -> {
-                                // RecommendationComposer will handle the remaining summary/error states inline below
-                            }
+                LaunchedEffect(askEditorState.similarQuery, askEditorState.mode) {
+                    if (askEditorState.mode == 1 && askEditorState.similarQuery.trim().isNotBlank() && askEditorState.selectedAnchor == null) {
+                        similarSuggestionsLoading = true
+                        similarSuggestions = try {
+                            onSearchTitles(askEditorState.similarQuery.trim())
+                        } catch (_: Throwable) {
+                            emptyList()
                         }
-
-                        RecommendationComposer(
-                            state = recommendationState,
-                            selectedKind = recommendationKind,
-                            onSelectType = onSelectRecommendationType,
-                            onSearchTitles = onSearchTitles,
-                            onSubmitSpec = { spec ->
-                                onSubmitRecommendation(
-                                    RecommendationRequestDraft(
-                                        mediaType = spec.mediaType,
-                                        genres = spec.includedGenres.toList(),
-                                        freeText = spec.plotRequirements.firstOrNull() ?: ""
-                                    )
-                                )
-                                keyboard?.hide()
-                            },
-                            onResetSession = onRestartRecommendations,
-                            onBack = {
-                                recommendModeActive = false
-                                onModeChange(SearchMode.TITLE)
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                        )
+                        similarSuggestionsLoading = false
+                    } else {
+                        similarSuggestions = emptyList()
+                        similarSuggestionsLoading = false
+                    }
                 }
+
+                AskAliflixScreen(
+                    uiState = askUiState,
+                    editorState = askEditorState,
+                    onEditorStateChanged = onSetAskEditorState,
+                    onSubmitRequest = { req ->
+                        keyboard?.hide()
+                        onSubmitAskAliflix(req)
+                    },
+                    onReset = onResetAskAliflix,
+                    onEdit = onEditAskAliflix,
+                    onOpenMedia = onOpen,
+                    onSearchTitles = onSearchTitles,
+                    suggestions = similarSuggestions,
+                    suggestionsLoading = similarSuggestionsLoading,
+                    onLoadMore = onLoadMoreAskAliflix,
+                    onRetry = {
+                        val req = when (val s = askUiState) {
+                            is AskAliflixUiState.Results -> AskAliflixRequest.Filters(s.spec)
+                            else -> AskAliflixRequest.Filters(askEditorState.spec)
+                        }
+                        onSubmitAskAliflix(req)
+                    },
+                    onBack = {
+                        recommendModeActive = false
+                        onModeChange(SearchMode.TITLE)
+                    },
+                    listState = recommendationListState,
+                    modifier = Modifier.fillMaxSize()
+                )
             } else {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize()) {
