@@ -133,16 +133,6 @@ class RecommendationLastGoodCacheTest {
 
         override suspend fun saveHome(content: HomeContent) = Unit
 
-        override suspend fun loadPlot(
-            queryKey: String,
-            maxAgeMs: Long,
-        ): List<Media>? = null
-
-        override suspend fun savePlot(
-            queryKey: String,
-            items: List<Media>,
-        ) = Unit
-
         override suspend fun loadLastGoodRecommendationItems(
             mediaType: MediaType,
             maxAgeMs: Long,

@@ -1,11 +1,9 @@
 package com.aliflix.app.data
 
 import kotlinx.coroutines.CancellationException
-
-internal enum class WebDiscoveryMode {
-    DESCRIBE_PLOT,
-    RECOMMENDATION,
-}
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 internal data class WebDiscoveryResult<T>(
     val items: List<T>,
@@ -13,7 +11,7 @@ internal data class WebDiscoveryResult<T>(
 )
 
 /**
- * Deterministic source coordinator shared by Describe Plot and Aliflix AI.
+ * Deterministic source coordinator for Aliflix AI title discovery.
  *
  * Provider output is untrusted discovery evidence only. Callers must still resolve every title
  * through the native catalogue before it can become user-visible.
@@ -25,8 +23,9 @@ internal class WebTitleDiscovery<T>(
     private val keyOf: (T) -> String,
     private val merge: (T, T) -> T,
     private val sortScore: (T) -> Double,
+    private val computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
-    suspend fun discover(mode: WebDiscoveryMode): WebDiscoveryResult<T> {
+    suspend fun discover(): WebDiscoveryResult<T> = withContext(computationDispatcher) {
         var successfulSources = 0
         val discovered = linkedMapOf<String, T>()
 
@@ -45,17 +44,9 @@ internal class WebTitleDiscovery<T>(
         }
 
         collect(brave)
-        when (mode) {
-            WebDiscoveryMode.DESCRIBE_PLOT -> {
-                collect(wikipedia)
-                collect(duckDuckGo)
-            }
-            WebDiscoveryMode.RECOMMENDATION -> {
-                if (discovered.size < WIKIPEDIA_THRESHOLD) collect(wikipedia)
-                if (discovered.size < DUCKDUCKGO_THRESHOLD) collect(duckDuckGo)
-            }
-        }
-        return WebDiscoveryResult(
+        if (discovered.size < WIKIPEDIA_THRESHOLD) collect(wikipedia)
+        if (discovered.size < DUCKDUCKGO_THRESHOLD) collect(duckDuckGo)
+        WebDiscoveryResult(
             items = discovered.values.sortedByDescending(sortScore),
             successfulSources = successfulSources,
         )

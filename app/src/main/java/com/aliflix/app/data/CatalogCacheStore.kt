@@ -7,6 +7,8 @@ import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.RecommendationPageCursor
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,11 +22,34 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+private suspend fun <T> cacheLoadOrNull(
+    block: suspend () -> T,
+): T? = try {
+    block()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Throwable) {
+    null
+}
+
+private suspend fun <T> cacheLoadOrDefault(
+    defaultValue: T,
+    block: suspend () -> T,
+): T = cacheLoadOrNull(block) ?: defaultValue
+
+private inline fun <T> cacheValueOrNull(
+    block: () -> T,
+): T? = try {
+    block()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Throwable) {
+    null
+}
+
 interface CatalogCacheStore {
     suspend fun loadHome(): HomeContent?
     suspend fun saveHome(content: HomeContent)
-    suspend fun loadPlot(queryKey: String, maxAgeMs: Long): List<Media>?
-    suspend fun savePlot(queryKey: String, items: List<Media>)
     suspend fun loadRecommendations(
         queryKey: String,
         maxAgeMs: Long,
@@ -72,6 +97,14 @@ interface CatalogCacheStore {
         mediaKey: String,
         snapshot: ImdbRatingSnapshot,
     ) = Unit
+    suspend fun loadRottenTomatoesRating(
+        mediaKey: String,
+        maxAgeMs: Long,
+    ): RottenTomatoesSnapshot? = null
+    suspend fun saveRottenTomatoesRating(
+        mediaKey: String,
+        snapshot: RottenTomatoesSnapshot,
+    ) = Unit
 }
 
 data class CachedRecommendationCatalogPage(
@@ -81,23 +114,48 @@ data class CachedRecommendationCatalogPage(
     val savedAtMillis: Long = System.currentTimeMillis(),
 )
 
-class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
-    private val cacheDir = File(context.filesDir, "catalog-cache")
+class AndroidCatalogCacheStore internal constructor(
+    private val cacheDir: File,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val fileReader: (File) -> String = { file -> file.readText() },
+    private val fileWriter: ((File, String) -> Unit)? = null,
+) : CatalogCacheStore {
+    constructor(
+        context: Context,
+        ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+        computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    ) : this(
+        cacheDir = File(context.filesDir, "catalog-cache"),
+        ioDispatcher = ioDispatcher,
+        computationDispatcher = computationDispatcher,
+    )
+
     private val homeFile = File(cacheDir, "home-v4.json")
-    private val plotFile = File(cacheDir, "plot-v2.json")
     private val recommendationFile = File(cacheDir, "recommendations-v1.json")
     private val recommendationPageFile = File(cacheDir, "recommendation-pages-v3.json")
     private val metadataFile = File(cacheDir, "recommendation-metadata-v1.json")
     private val imdbRatingFile = File(cacheDir, "imdb-ratings-v1.json")
+    private val rottenTomatoesRatingFile = File(cacheDir, "rotten-tomatoes-ratings-v3.json")
     private val mutex = Mutex()
-    private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val cacheScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val pendingMetadata = linkedMapOf<String, VerifiedRecommendationItem>()
     private var metadataFlushJob: Job? = null
 
+    init {
+        try {
+            listOf("rotten-tomatoes-ratings-v1.json", "rotten-tomatoes-ratings-v2.json")
+                .map { File(cacheDir, it) }
+                .filter(File::exists)
+                .forEach(File::delete)
+        } catch (_: Throwable) {}
+    }
+
     override suspend fun loadHome(): HomeContent? = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(homeFile.readText())
+        cacheLoadOrNull {
+            val value = withContext(ioDispatcher) { fileReader(homeFile) }
+            withContext(computationDispatcher) {
+                val json = JSONObject(value)
                 val hero = Media.fromJson(json.getJSONObject("hero"))
                 val railsJson = json.getJSONArray("rails")
                 val rails = (0 until railsJson.length()).mapNotNull { index ->
@@ -110,12 +168,12 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                     if (title.isBlank() || items.isEmpty()) null else ContentRail(title, items)
                 }
                 HomeContent(hero, rails)
-            }.getOrNull()
+            }
         }
     }
 
     override suspend fun saveHome(content: HomeContent) = mutex.withLock {
-        withContext(Dispatchers.IO) {
+        val value = withContext(computationDispatcher) {
             val json = JSONObject().apply {
                 put("savedAt", System.currentTimeMillis())
                 put("hero", content.hero.toJson())
@@ -138,78 +196,26 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                     },
                 )
             }
-            writeAtomically(homeFile, json.toString())
+            json.toString()
         }
-    }
-
-    override suspend fun loadPlot(
-        queryKey: String,
-        maxAgeMs: Long,
-    ): List<Media>? = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val entries = JSONObject(plotFile.readText()).optJSONArray("entries")
-                    ?: return@runCatching null
-                (0 until entries.length())
-                    .mapNotNull(entries::optJSONObject)
-                    .firstOrNull { it.optString("query") == queryKey }
-                    ?.takeIf {
-                        System.currentTimeMillis() - it.optLong("savedAt") <= maxAgeMs
-                    }
-                    ?.optJSONArray("items")
-                    ?.let { items ->
-                        (0 until items.length()).mapNotNull { index ->
-                            items.optJSONObject(index)?.let(Media::fromJson)
-                        }
-                    }
-            }.getOrNull()
-        }
-    }
-
-    override suspend fun savePlot(queryKey: String, items: List<Media>) = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            val previous = runCatching {
-                JSONObject(plotFile.readText()).optJSONArray("entries")
-            }.getOrNull()
-            val entries = buildList {
-                if (previous != null) {
-                    (0 until previous.length())
-                        .mapNotNull(previous::optJSONObject)
-                        .filterNot { it.optString("query") == queryKey }
-                        .take(MAX_PLOT_CACHE_ENTRIES - 1)
-                        .forEach(::add)
-                }
-                add(
-                    0,
-                    JSONObject().apply {
-                        put("query", queryKey)
-                        put("savedAt", System.currentTimeMillis())
-                        put(
-                            "items",
-                            JSONArray().apply { items.forEach { put(it.toJson()) } },
-                        )
-                    },
-                )
-            }
-            val payload = JSONObject().put("entries", JSONArray(entries)).toString()
-            writeAtomically(plotFile, payload)
-        }
+        withContext(ioDispatcher) { writeAtomically(homeFile, value) }
     }
 
     override suspend fun loadRecommendations(
         queryKey: String,
         maxAgeMs: Long,
     ): List<RecommendationDiscoveryItem>? = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val entries = JSONObject(recommendationFile.readText()).optJSONArray("entries")
-                    ?: return@runCatching null
+        cacheLoadOrNull {
+            val value = withContext(ioDispatcher) { fileReader(recommendationFile) }
+            withContext(computationDispatcher) decode@{
+                val entries = JSONObject(value).optJSONArray("entries")
+                    ?: return@decode null
                 val entry = (0 until entries.length())
                     .mapNotNull(entries::optJSONObject)
                     .firstOrNull { it.optString("query") == queryKey }
-                    ?: return@runCatching null
+                    ?: return@decode null
                 if (System.currentTimeMillis() - entry.optLong("savedAt") > maxAgeMs) {
-                    return@runCatching null
+                    return@decode null
                 }
                 val items = entry.optJSONArray("items") ?: JSONArray()
                 (0 until items.length()).mapNotNull { index ->
@@ -227,7 +233,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                         sourcePosition = json.optInt("sourcePosition", 99),
                     )
                 }
-            }.getOrNull()
+            }
         }
     }
 
@@ -235,10 +241,13 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         queryKey: String,
         items: List<RecommendationDiscoveryItem>,
     ) = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            val previous = runCatching {
-                JSONObject(recommendationFile.readText()).optJSONArray("entries")
-            }.getOrNull()
+        val previousValue = withContext(ioDispatcher) {
+            cacheValueOrNull { fileReader(recommendationFile) }
+        }
+        val value = withContext(computationDispatcher) {
+            val previous = previousValue?.let {
+                runCatching { JSONObject(it).optJSONArray("entries") }.getOrNull()
+            }
             val entries = buildList {
                 add(
                     JSONObject().apply {
@@ -269,11 +278,9 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                         .forEach(::add)
                 }
             }
-            writeAtomically(
-                recommendationFile,
-                JSONObject().put("entries", JSONArray(entries)).toString(),
-            )
+            JSONObject().put("entries", JSONArray(entries)).toString()
         }
+        withContext(ioDispatcher) { writeAtomically(recommendationFile, value) }
     }
 
     override suspend fun loadRecommendationCatalogPage(
@@ -281,19 +288,20 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         page: Int,
         maxAgeMs: Long,
     ): CachedRecommendationCatalogPage? = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val entries = JSONObject(recommendationPageFile.readText())
-                    .optJSONArray("entries") ?: return@runCatching null
+        cacheLoadOrNull {
+            val value = withContext(ioDispatcher) { fileReader(recommendationPageFile) }
+            withContext(computationDispatcher) decode@{
+                val entries = JSONObject(value)
+                    .optJSONArray("entries") ?: return@decode null
                 val entry = (0 until entries.length())
                     .mapNotNull(entries::optJSONObject)
                     .firstOrNull {
                         it.optString("fingerprint") == fingerprint &&
                             it.optInt("page") == page
-                    } ?: return@runCatching null
+                    } ?: return@decode null
                 val savedAt = entry.optLong("savedAt")
                 if (System.currentTimeMillis() - savedAt > maxAgeMs) {
-                    return@runCatching null
+                    return@decode null
                 }
                 val itemArray = entry.optJSONArray("items") ?: JSONArray()
                 val items = recommendationItemsFromJson(itemArray)
@@ -303,7 +311,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                     hasMore = entry.optBoolean("hasMore"),
                     savedAtMillis = savedAt,
                 )
-            }.getOrNull()
+            }
         }
     }
 
@@ -312,10 +320,13 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         page: Int,
         value: CachedRecommendationCatalogPage,
     ) = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            val previous = runCatching {
-                JSONObject(recommendationPageFile.readText()).optJSONArray("entries")
-            }.getOrNull()
+        val previousValue = withContext(ioDispatcher) {
+            cacheValueOrNull { fileReader(recommendationPageFile) }
+        }
+        val encoded = withContext(computationDispatcher) {
+            val previous = previousValue?.let {
+                runCatching { JSONObject(it).optJSONArray("entries") }.getOrNull()
+            }
             val entries = buildList {
                 add(
                     JSONObject().apply {
@@ -353,11 +364,9 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                         .forEach(::add)
                 }
             }
-            writeAtomically(
-                recommendationPageFile,
-                JSONObject().put("entries", JSONArray(entries)).toString(),
-            )
+            JSONObject().put("entries", JSONArray(entries)).toString()
         }
+        withContext(ioDispatcher) { writeAtomically(recommendationPageFile, encoded) }
     }
 
     override suspend fun loadLastGoodRecommendationItems(
@@ -366,16 +375,22 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         limit: Int,
     ): List<RecommendationDiscoveryItem> = mutex.withLock {
         if (limit <= 0) return@withLock emptyList()
-        withContext(Dispatchers.IO) {
-            runCatching {
+        cacheLoadOrDefault(emptyList()) {
+            val (pageValue, metadataValue) = withContext(ioDispatcher) {
+                val pages = fileReader(recommendationPageFile)
+                val metadata = cacheValueOrNull { fileReader(metadataFile) }
+                pages to metadata
+            }
+            val pendingSnapshot = pendingMetadata.values.toList()
+            withContext(computationDispatcher) decode@{
                 val now = System.currentTimeMillis()
                 val fingerprintPrefix = when (mediaType) {
                     MediaType.MOVIE -> "MOVIE|"
                     MediaType.TV -> "SERIES|"
                 }
-                val pageEntries = JSONObject(recommendationPageFile.readText())
+                val pageEntries = JSONObject(pageValue)
                     .optJSONArray("entries")
-                    ?: return@runCatching emptyList()
+                    ?: return@decode emptyList()
                 val items = (0 until pageEntries.length())
                     .mapNotNull(pageEntries::optJSONObject)
                     .filter { entry ->
@@ -393,9 +408,9 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                     .take(limit)
 
                 val verifiedByKey = linkedMapOf<String, VerifiedRecommendationItem>()
-                val metadataEntries = runCatching {
-                    JSONObject(metadataFile.readText()).optJSONArray("entries")
-                }.getOrNull()
+                val metadataEntries = metadataValue?.let {
+                    runCatching { JSONObject(it).optJSONArray("entries") }.getOrNull()
+                }
                 if (metadataEntries != null) {
                     (0 until metadataEntries.length())
                         .mapNotNull(metadataEntries::optJSONObject)
@@ -407,7 +422,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                             verifiedByKey.putIfAbsent(item.media.key, item)
                         }
                 }
-                pendingMetadata.values
+                pendingSnapshot
                     .filter { item ->
                         now - item.metadata.verifiedAtMillis <= maxAgeMs
                     }
@@ -421,7 +436,7 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                         metadata = mergeMetadata(item.metadata, verified.metadata),
                     )
                 }
-            }.getOrDefault(emptyList())
+            }
         }
     }
 
@@ -432,19 +447,20 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         pendingMetadata[mediaKey]?.takeIf { item ->
             System.currentTimeMillis() - item.metadata.verifiedAtMillis <= maxAgeMs
         }?.let { return@withLock it }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val entries = JSONObject(metadataFile.readText()).optJSONArray("entries")
-                    ?: return@runCatching null
+        cacheLoadOrNull {
+            val value = withContext(ioDispatcher) { fileReader(metadataFile) }
+            withContext(computationDispatcher) decode@{
+                val entries = JSONObject(value).optJSONArray("entries")
+                    ?: return@decode null
                 val entry = (0 until entries.length())
                     .mapNotNull(entries::optJSONObject)
                     .firstOrNull { it.optString("key") == mediaKey }
-                    ?: return@runCatching null
+                    ?: return@decode null
                 if (System.currentTimeMillis() - entry.optLong("savedAt") > maxAgeMs) {
-                    return@runCatching null
+                    return@decode null
                 }
                 verifiedItemFromJson(entry)
-            }.getOrNull()
+            }
         }
     }
 
@@ -464,25 +480,26 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         mediaKey: String,
         maxAgeMs: Long,
     ): ImdbRatingSnapshot? = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val entries = JSONObject(imdbRatingFile.readText())
-                    .optJSONArray("entries") ?: return@runCatching null
+        cacheLoadOrNull {
+            val value = withContext(ioDispatcher) { fileReader(imdbRatingFile) }
+            withContext(computationDispatcher) decode@{
+                val entries = JSONObject(value)
+                    .optJSONArray("entries") ?: return@decode null
                 val entry = (0 until entries.length())
                     .mapNotNull(entries::optJSONObject)
                     .firstOrNull { it.optString("key") == mediaKey }
-                    ?: return@runCatching null
+                    ?: return@decode null
                 val fetchedAt = entry.optLong("fetchedAt")
                 if (System.currentTimeMillis() - fetchedAt > maxAgeMs) {
-                    return@runCatching null
+                    return@decode null
                 }
                 val imdbId = entry.optString("imdbId")
                     .takeIf { it.matches(Regex("tt\\d+")) }
-                    ?: return@runCatching null
+                    ?: return@decode null
                 val type = MediaType.from(entry.optString("type"))
                 val state = com.aliflix.app.model.RatingSourceState.entries
                     .firstOrNull { it.name == entry.optString("state") }
-                    ?: return@runCatching null
+                    ?: return@decode null
                 ImdbRatingSnapshot(
                     identity = ImdbTitleIdentity(
                         imdbId = imdbId,
@@ -499,46 +516,102 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                     state = state,
                     fetchedAtMillis = fetchedAt,
                 )
-            }.getOrNull()
+            }
         }
     }
 
-    override suspend fun saveImdbRating(
-        mediaKey: String,
-        snapshot: ImdbRatingSnapshot,
-    ) = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            val previous = runCatching {
-                JSONObject(imdbRatingFile.readText()).optJSONArray("entries")
-            }.getOrNull()
-            val entries = buildList {
-                add(
-                    JSONObject()
-                        .put("key", mediaKey)
-                        .put("imdbId", snapshot.identity.imdbId)
-                        .put("title", snapshot.identity.title)
-                        .put("type", snapshot.identity.type.routeName)
-                        .put("state", snapshot.state.name)
-                        .put("fetchedAt", snapshot.fetchedAtMillis)
-                        .apply {
-                            snapshot.identity.year?.let { put("year", it) }
-                            snapshot.rating?.let { put("rating", it) }
-                            snapshot.voteCount?.let { put("votes", it) }
-                        },
-                )
-                if (previous != null) {
-                    (0 until previous.length())
-                        .mapNotNull(previous::optJSONObject)
-                        .filterNot { it.optString("key") == mediaKey }
-                        .sortedByDescending { it.optLong("fetchedAt") }
-                        .take(MAX_IMDB_RATING_ENTRIES - 1)
-                        .forEach(::add)
+    override suspend fun saveImdbRating(mediaKey: String, snapshot: ImdbRatingSnapshot) {
+        mutex.withLock {
+            val value = withContext(computationDispatcher) {
+                val previous = cacheValueOrNull { fileReader(imdbRatingFile) }?.let { JSONObject(it) }
+                    ?.optJSONArray("entries")
+                val entries = JSONArray()
+                val updated = JSONObject().apply {
+                    put("key", mediaKey)
+                    put("imdbId", snapshot.identity.imdbId)
+                    put("title", snapshot.identity.title)
+                    put("type", snapshot.identity.type.routeName)
+                    snapshot.identity.year?.let { put("year", it) }
+                    snapshot.rating?.let { put("rating", it) }
+                    snapshot.voteCount?.let { put("votes", it) }
+                    put("state", snapshot.state.name)
+                    put("fetchedAt", snapshot.fetchedAtMillis)
                 }
+                entries.put(updated)
+                if (previous != null) {
+                    for (i in 0 until previous.length()) {
+                        val entry = previous.optJSONObject(i) ?: continue
+                        if (entry.optString("key") != mediaKey) {
+                            entries.put(entry)
+                        }
+                    }
+                }
+                JSONObject().put("entries", entries).toString()
             }
-            writeAtomically(
-                imdbRatingFile,
-                JSONObject().put("entries", JSONArray(entries)).toString(),
-            )
+            withContext(ioDispatcher) { writeAtomically(imdbRatingFile, value) }
+        }
+    }
+    override suspend fun loadRottenTomatoesRating(
+        mediaKey: String,
+        maxAgeMs: Long,
+    ): RottenTomatoesSnapshot? = mutex.withLock {
+        cacheLoadOrNull {
+            val value = withContext(ioDispatcher) { fileReader(rottenTomatoesRatingFile) }
+            withContext(computationDispatcher) decode@{
+                val entries = JSONObject(value).optJSONArray("entries") ?: return@decode null
+                val entry = (0 until entries.length())
+                    .mapNotNull(entries::optJSONObject)
+                    .firstOrNull { it.optString("key") == mediaKey }
+                    ?: return@decode null
+                val fetchedAt = entry.optLong("fetchedAt")
+                val state = com.aliflix.app.model.RatingSourceState.entries
+                    .firstOrNull { it.name == entry.optString("state") }
+                    ?: return@decode null
+                val ageMs = System.currentTimeMillis() - fetchedAt
+                if (state == com.aliflix.app.model.RatingSourceState.NOT_RATED) {
+                    if (ageMs > 24 * 60 * 60 * 1000L) {
+                        return@decode null
+                    }
+                } else if (ageMs > maxAgeMs) {
+                    return@decode null
+                }
+                RottenTomatoesSnapshot(
+                    rating = entry.optInt("rating").takeIf { entry.has("rating") && it > 0 },
+                    state = if (
+                        state == com.aliflix.app.model.RatingSourceState.VERIFIED &&
+                        ageMs > 7 * 24 * 60 * 60 * 1000L
+                    ) com.aliflix.app.model.RatingSourceState.STALE else state,
+                )
+            }
+        }
+    }
+
+    override suspend fun saveRottenTomatoesRating(mediaKey: String, snapshot: RottenTomatoesSnapshot) {
+        if (snapshot.state == com.aliflix.app.model.RatingSourceState.UNAVAILABLE ||
+            snapshot.state == com.aliflix.app.model.RatingSourceState.LOADING) return
+        mutex.withLock {
+            val value = withContext(computationDispatcher) {
+                val previous = cacheValueOrNull { fileReader(rottenTomatoesRatingFile) }?.let { JSONObject(it) }
+                    ?.optJSONArray("entries")
+                val entries = JSONArray()
+                val updated = JSONObject().apply {
+                    put("key", mediaKey)
+                    snapshot.rating?.let { put("rating", it) }
+                    put("state", snapshot.state.name)
+                    put("fetchedAt", System.currentTimeMillis())
+                }
+                entries.put(updated)
+                if (previous != null) {
+                    for (i in 0 until previous.length()) {
+                        val entry = previous.optJSONObject(i) ?: continue
+                        if (entry.optString("key") != mediaKey) {
+                            entries.put(entry)
+                        }
+                    }
+                }
+                JSONObject().put("entries", entries).toString()
+            }
+            withContext(ioDispatcher) { writeAtomically(rottenTomatoesRatingFile, value) }
         }
     }
 
@@ -546,10 +619,13 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         if (pendingMetadata.isEmpty()) return@withLock
         val batch = pendingMetadata.values.toList()
         pendingMetadata.clear()
-        withContext(Dispatchers.IO) {
-            val previous = runCatching {
-                JSONObject(metadataFile.readText()).optJSONArray("entries")
-            }.getOrNull()
+        val previousValue = withContext(ioDispatcher) {
+            cacheValueOrNull { fileReader(metadataFile) }
+        }
+        val value = withContext(computationDispatcher) {
+            val previous = previousValue?.let {
+                runCatching { JSONObject(it).optJSONArray("entries") }.getOrNull()
+            }
             val batchKeys = batch.mapTo(hashSetOf()) { it.media.key }
             val entries = buildList {
                 batch.asReversed().forEach { item ->
@@ -563,11 +639,9 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
                         .forEach(::add)
                 }
             }.take(MAX_METADATA_CACHE_ENTRIES)
-            writeAtomically(
-                metadataFile,
-                JSONObject().put("entries", JSONArray(entries)).toString(),
-            )
+            JSONObject().put("entries", JSONArray(entries)).toString()
         }
+        withContext(ioDispatcher) { writeAtomically(metadataFile, value) }
     }
 
     private fun metadataEntryToJson(
@@ -642,6 +716,10 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
     )
 
     private fun writeAtomically(target: File, value: String) {
+        fileWriter?.let { writer ->
+            writer(target, value)
+            return
+        }
         cacheDir.mkdirs()
         val atomic = AtomicFile(target)
         val output = atomic.startWrite()
@@ -723,7 +801,6 @@ class AndroidCatalogCacheStore(context: Context) : CatalogCacheStore {
         )
 
     private companion object {
-        const val MAX_PLOT_CACHE_ENTRIES = 24
         const val MAX_RECOMMENDATION_CACHE_ENTRIES = 80
         const val MAX_RECOMMENDATION_PAGE_CACHE_ENTRIES = 72
         const val MAX_IMDB_RATING_ENTRIES = 600

@@ -2,12 +2,7 @@ package com.aliflix.app.data
 
 import com.aliflix.app.model.Media
 
-/**
- * Ranks title candidates against a natural-language description.
- *
- * It deliberately works locally after candidate discovery so search remains
- * useful if one of the public suggestion endpoints is temporarily unavailable.
- */
+/** Shared lexical relevance helpers used by recommendation discovery. */
 object PlotSearchRanker {
     private val stopWords = setOf(
         "a", "about", "after", "all", "an", "and", "are", "as", "at", "be", "but",
@@ -31,29 +26,6 @@ object PlotSearchRanker {
         setOf("school", "student", "teacher", "teen"),
         setOf("love", "romance", "relationship", "couple"),
     )
-
-    fun rank(description: String, candidates: List<Media>): List<Media> {
-        return candidates
-            .distinctBy(Media::key)
-            .map { item ->
-                val literalEvidence = listOf(
-                    item.title,
-                    item.overview,
-                    item.genres.joinToString(" "),
-                    item.cast.joinToString(" "),
-                ).joinToString(" ")
-                item to (
-                    relevanceScore(description, item) +
-                        literalTextRelevanceScore(description, literalEvidence) * 1.5
-                    )
-            }
-            .sortedWith(
-                compareByDescending<Pair<Media, Double>> { it.second }
-                    .thenByDescending { it.first.rating }
-                    .thenBy { it.first.title },
-            )
-            .map(Pair<Media, Double>::first)
-    }
 
     fun relevanceScore(description: String, item: Media): Double {
         val queryTokens = expandedTokens(description)

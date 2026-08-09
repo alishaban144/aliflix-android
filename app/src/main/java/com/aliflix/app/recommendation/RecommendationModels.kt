@@ -4,6 +4,15 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import java.security.MessageDigest
 
+data class RetrievalLedger(
+    val searchedKeywordPhrases: MutableSet<String> = mutableSetOf(),
+    val searchedBroadPhrases: MutableSet<String> = mutableSetOf(),
+    val resolvedKeywordIds: MutableSet<Int> = mutableSetOf(),
+    val searchedDiscoverParams: MutableSet<String> = mutableSetOf(),
+    val searchedPages: MutableSet<String> = mutableSetOf(),
+    val discoveredTmdbIds: MutableSet<Int> = mutableSetOf(),
+)
+
 enum class PreferenceOrigin {
     EXPLICIT,
     REJECTED,
@@ -49,25 +58,9 @@ data class UnmatchedPreference(
     val confidence: Double = 0.65,
 )
 
-data class ConstraintSignal(
-    val key: String,
-    val value: String,
-    val origin: PreferenceOrigin,
-    val strength: ConstraintStrength,
-    val confidence: Double = 1.0,
-)
-
 data class PreferenceCorrection(
     val key: String,
     val replacement: String?,
-)
-
-data class RecommendationIntentV2(
-    val mediaKind: RecommendationMediaKind,
-    val hardConstraints: List<ConstraintSignal>,
-    val softFacets: List<SemanticFacet>,
-    val excludedFacets: List<SemanticFacet>,
-    val unmatchedPreferences: List<UnmatchedPreference>,
 )
 
 enum class RecommendationContentType {
@@ -125,8 +118,12 @@ data class CatalogDiscoverySpec(
     val similarityTitle: String? = null,
     val semanticFacets: List<String> = emptyList(),
     val excludedFacets: List<String> = emptyList(),
+    val creatorNames: List<String> = emptyList(),
+    val castNames: List<String> = emptyList(),
+    val countries: List<String> = emptyList(),
     val supplementalTerms: List<String> = emptyList(),
     val discoveryText: String = "",
+    val surpriseMe: Boolean = false,
     val sourcePolicyVersion: Int = 2,
     val semanticModelVersion: String = "use-v1",
 ) {
@@ -153,7 +150,12 @@ data class CatalogDiscoverySpec(
             similarityTitle.orEmpty().trim().lowercase(),
             semanticFacets.normalizedKey(),
             excludedFacets.normalizedKey(),
+            creatorNames.normalizedKey(),
+            castNames.normalizedKey(),
+            countries.normalizedKey(),
             stableHash(supplementalTerms.normalizedKey()),
+            stableHash(discoveryText.trim().lowercase()),
+            surpriseMe.toString(),
             sourcePolicyVersion.toString(),
             semanticModelVersion,
         ).joinToString("|")
@@ -202,16 +204,45 @@ data class CatalogDiscoverySpec(
                 similarityTitle = preferences.similarityTitle?.value,
                 semanticFacets = preferences.semanticFacets.map { it.value.label },
                 excludedFacets = preferences.excludedFacets.map { it.value.label },
+                creatorNames = preferences.creatorNames.map { it.value },
+                castNames = preferences.castNames.map { it.value },
+                countries = preferences.countryPreferences.map { it.value },
                 supplementalTerms = (
                     preferences.semanticFacets.flatMap { it.value.discoveryTerms } +
                         preferences.unmatchedPreferences.map { it.text } +
                         preferences.unverifiedTerms
                     ).distinct(),
                 discoveryText = RecommendationQueryBuilder.build(preferences),
+                surpriseMe = preferences.surpriseMe,
             )
         }
     }
 }
+
+data class RecommendationRequestDraft(
+    val mediaType: MediaType? = null,
+    val genres: List<String> = emptyList(),
+    val moods: List<String> = emptyList(),
+    val themes: List<String> = emptyList(),
+    val yearRule: String? = null,
+    val runtimeRule: String? = null,
+    val minimumImdb: Double? = null,
+    val language: String? = null,
+    val status: String? = null,
+    val exclusions: List<String> = emptyList(),
+    val similarityTitle: String? = null,
+    val similarityAnchor: Media? = null,
+    val similarityAnchorTmdbId: Int? = null,
+    val similarityAnchorMediaType: MediaType? = null,
+    val similarityAnchorImdbId: String? = null,
+    val freeText: String = "",
+)
+
+data class ResolvedKeywordGroup(
+    val groupId: String,
+    val keywordIds: List<Int>,
+    val phrases: List<String> = emptyList(),
+)
 
 data class RecommendationPageCursor(
     val page: Int = 1,
@@ -433,6 +464,97 @@ data class VerifiedMediaMetadata(
     val verifiedAtMillis: Long = System.currentTimeMillis(),
 )
 
+enum class MetadataSource {
+    IMDB_PUBLIC,
+    TMDB,
+    LOCAL_ANALYSIS,
+    RELATIONSHIP_DATA,
+    USER_INPUT,
+    CACHE
+}
+
+enum class RecommendationRejectionReason {
+    WRONG_MEDIA_TYPE,
+    EXCLUDED_GENRE,
+    EXCLUDED_TRAIT,
+    EXCLUDED_TITLE,
+    CONTRADICTION,
+    LOW_RELEVANCE,
+    BELOW_RATING_THRESHOLD,
+    ALREADY_SEEN,
+    EXCLUDED_KEYWORD,
+    OUTSIDE_YEAR_RANGE,
+    OUTSIDE_RUNTIME_RANGE,
+    WRONG_LANGUAGE,
+    WRONG_COUNTRY,
+}
+
+data class RecommendationTag(
+    val name: String,
+    val category: String = "trait",
+    val specificityWeight: Double = 1.0,
+    val source: MetadataSource = MetadataSource.LOCAL_ANALYSIS,
+)
+
+data class WeightedTagMatch(
+    val tag: String,
+    val weight: Double,
+    val matchedText: String,
+    val source: MetadataSource = MetadataSource.LOCAL_ANALYSIS,
+)
+
+data class WeightedTagConflict(
+    val tag: String,
+    val weight: Double,
+    val conflictReason: String,
+)
+
+data class AnchorTitleProfile(
+    val titleId: String,
+    val mediaType: MediaType,
+    val genres: Set<String> = emptySet(),
+    val keywords: Set<RecommendationTag> = emptySet(),
+    val themes: Set<String> = emptySet(),
+    val tones: Set<String> = emptySet(),
+    val settings: Set<String> = emptySet(),
+    val narrativeTraits: Set<String> = emptySet(),
+    val creators: Set<String> = emptySet(),
+    val writers: Set<String> = emptySet(),
+    val directors: Set<String> = emptySet(),
+    val mainCast: Set<String> = emptySet(),
+    val companies: Set<String> = emptySet(),
+    val networks: Set<String> = emptySet(),
+    val franchiseIds: Set<String> = emptySet(),
+    val relatedTitleIds: Set<String> = emptySet(),
+    val releaseYear: Int? = null,
+    val runtimeMinutes: Int? = null,
+    val rating: Double? = null,
+    val voteCount: Long? = null,
+)
+
+data class CandidateRelevanceProfile(
+    val mediaKey: String,
+    val mediaType: MediaType,
+    val genres: Set<String> = emptySet(),
+    val keywords: Set<RecommendationTag> = emptySet(),
+    val themes: Set<String> = emptySet(),
+    val tones: Set<String> = emptySet(),
+    val settings: Set<String> = emptySet(),
+    val narrativeTraits: Set<String> = emptySet(),
+    val creators: Set<String> = emptySet(),
+    val writers: Set<String> = emptySet(),
+    val directors: Set<String> = emptySet(),
+    val mainCast: Set<String> = emptySet(),
+    val companies: Set<String> = emptySet(),
+    val networks: Set<String> = emptySet(),
+    val franchiseIds: Set<String> = emptySet(),
+    val relatedTitleIds: Set<String> = emptySet(),
+    val releaseYear: Int? = null,
+    val runtimeMinutes: Int? = null,
+    val rating: Double? = null,
+    val voteCount: Long? = null,
+)
+
 data class RecommendationScoreBreakdown(
     val contentMatch: Double = 0.0,
     val similarity: Double = 0.0,
@@ -443,6 +565,19 @@ data class RecommendationScoreBreakdown(
     val novelty: Double = 0.0,
     val coverage: Double = 1.0,
     val total: Double = 0.0,
+    val anchorRelevance: Double = 0.0,
+    val semanticRelevance: Double = 0.0,
+    val confidence: Double = 0.0,
+    val hardConstraintsPassed: Boolean = true,
+    val matchedTags: List<WeightedTagMatch> = emptyList(),
+    val contradictedTags: List<WeightedTagConflict> = emptyList(),
+    val relationshipScore: Double = 0.0,
+    val traitScore: Double = 0.0,
+    val semanticScore: Double = 0.0,
+    val qualityScore: Double = 0.0,
+    val personalizationScore: Double = 0.0,
+    val finalScore: Double = 0.0,
+    val rejectionReason: RecommendationRejectionReason? = null,
 )
 
 data class RecommendationCandidate(
@@ -455,6 +590,10 @@ data class RecommendationCandidate(
     val sourcePosition: Int = 99,
     val score: RecommendationScoreBreakdown = RecommendationScoreBreakdown(),
     val explanation: String = "",
+    val relevanceEvidence: List<RecommendationEvidence> = emptyList(),
+    val precomputedSemanticScore: Double? = null,
+    val matchReasons: List<RecommendationMatchReason> = emptyList(),
+    val alternativeTitles: Set<String> = emptySet(),
 )
 
 data class CandidateSourceEvidence(

@@ -44,8 +44,4 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    override fun onResume() {
-        super.onResume()
-        viewModel.refreshHomeIfStale()
-    }
 }

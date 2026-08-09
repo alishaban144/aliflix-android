@@ -1,0 +1,8 @@
+{
+  "versionCode": 65,
+  "versionName": "2.9.14",
+  "apkUrl": "https://github.com/alishaban144/aliflix-android/releases/download/v2.9.14/aliflix-mobile.apk",
+  "sha256": "198e421e60ee7cdac76373c12224cfe4d311ece61b16359cd0224d95abce8573",
+  "sizeBytes": 77670922,
+  "releaseNotes": "Fixes Ask Aliflix submission by wiring the OMDb recommendation engine into the real production flow, preserves complete structured filters, activates Gemini structured interpretation for Describe and the dedicated Similar engine, and redesigns Ask Aliflix with a cohesive animated workspace, segmented navigation, modern filters, compact result summaries and fluid transitions throughout."
+}

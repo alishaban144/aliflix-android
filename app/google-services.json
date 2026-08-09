@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "166825996633",
+    "project_id": "aliflix-e6332",
+    "storage_bucket": "aliflix-e6332.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:166825996633:android:25c71c0e1b013179211c48",
+        "android_client_info": {
+          "package_name": "com.aliflix.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCav3OfHDwS4tWDeECM91wuy9zkBs_Ti1E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

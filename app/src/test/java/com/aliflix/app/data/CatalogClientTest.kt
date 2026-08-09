@@ -1,7 +1,14 @@
 package com.aliflix.app.data
 
-import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.Media
+import com.aliflix.app.model.MediaType
+import com.aliflix.app.recommendation.CanonicalMediaIdentity
+import com.aliflix.app.recommendation.CanonicalTitleAnchor
+import com.aliflix.app.recommendation.CanonicalTitleResolver
+import com.aliflix.app.recommendation.RecommendationContentType
+import com.aliflix.app.recommendation.TitleAnchorResolution
+import java.util.concurrent.ConcurrentLinkedQueue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,6 +18,7 @@ import org.junit.Test
 
 class CatalogClientTest {
     private val client = CatalogClient { error("Network must not be used by parser tests") }
+    private val rtClient = RottenTomatoesClient { error("Network must not be used by parser tests") }
 
     @Test
     fun parsesNativeRailsAndHeroFromServerRenderedHtml() {
@@ -143,6 +151,56 @@ class CatalogClientTest {
     }
 
     @Test
+    fun parsedAlternativeTitlesResolveToTheCanonicalCatalogueIdentity() {
+        val html = """
+            <main>
+              <p><strong>Original Name:</strong> La casa de papel</p>
+              <p><strong>Also Known As:</strong> Money Heist / Haus des Geldes; Paper House</p>
+              <p><strong>Status:</strong> Ended</p>
+            </main>
+        """.trimIndent()
+
+        val aliases = client.parseRecommendationAlternativeTitles(
+            html = html,
+            canonicalTitle = "La casa de papel",
+        )
+        val canonical = CanonicalTitleAnchor(
+            identity = CanonicalMediaIdentity(MediaType.TV, 71446),
+            canonicalTitle = "La casa de papel",
+            alternativeTitles = aliases,
+            year = 2017,
+        )
+        val resolution = CanonicalTitleResolver.resolve(
+            query = "Haus des Geldes",
+            requiredType = RecommendationContentType.TV,
+            candidates = listOf(canonical),
+        )
+
+        assertEquals(setOf("Money Heist", "Haus des Geldes", "Paper House"), aliases)
+        assertTrue(resolution is TitleAnchorResolution.Resolved)
+        assertEquals(
+            canonical.identity,
+            (resolution as TitleAnchorResolution.Resolved).anchor.identity,
+        )
+        assertEquals("Haus des Geldes", resolution.matchedTitle)
+    }
+
+    @Test(expected = CancellationException::class)
+    fun alternativeTitleLookupPropagatesCancellation() = runTest {
+        val cancelledClient = CatalogClient {
+            throw CancellationException("new recommendation session")
+        }
+
+        cancelledClient.recommendationAlternativeTitles(
+            Media(
+                id = 27205,
+                type = MediaType.MOVIE,
+                title = "Inception",
+            ),
+        )
+    }
+
+    @Test
     fun parsesSeasonsAndEpisodesForNativeTvPicker() {
         val seasonsHtml = """
             <main>
@@ -248,7 +306,7 @@ class CatalogClientTest {
         """.trimIndent()
 
         assertEquals(8.8, client.parseImdbRating(imdb) ?: 0.0, 0.001)
-        assertEquals(87, client.parseRottenTomatoesRating(rottenTomatoes))
+        assertEquals(87, rtClient.parseRating(rottenTomatoes))
     }
 
     @Test
@@ -266,7 +324,7 @@ class CatalogClientTest {
             </script>
         """.trimIndent()
 
-        val paths = client.parseRottenTomatoesCandidatePaths(
+        val paths = rtClient.parseCandidatePaths(
             html,
             Media(
                 id = 155,
@@ -299,21 +357,19 @@ class CatalogClientTest {
     }
 
     @Test
-    fun searchRemovesTrailingTypeAndYearBeforeQueryingOnlyTheRequestedMediaType() = runTest {
-        val requestedUrls = mutableListOf<String>()
+    fun searchDirectlyQueriesTmdbAndRanksResults() = runTest {
+        val requestedUrls = ConcurrentLinkedQueue<String>()
         val client = CatalogClient(
             pageLoader = { url ->
                 requestedUrls += url
                 when {
-                    "/search/tv?" in url -> tmdbSearchHtml(
+                    "/search/movie?" in url || "/search/tv?" in url -> tmdbSearchHtml(
                         id = 438631,
                         type = "tv",
                         title = "Dune",
                         year = "2021",
                     )
-
-                    "media-imdb.com/suggestion/" in url -> """{"d":[]}"""
-                    else -> error("Unexpected request: $url")
+                    else -> "<main></main>"
                 }
             },
         )
@@ -323,144 +379,40 @@ class CatalogClientTest {
         assertEquals(listOf("Dune"), results.map(Media::title))
         assertTrue(
             requestedUrls.any {
-                it.contains("/search/tv?query=Dune&language=en-US")
+                it.contains("/search/tv?query=")
             },
         )
-        assertFalse(requestedUrls.any { "/search/movie?" in it })
-        assertFalse(requestedUrls.any { "media-imdb.com/suggestion/" in it })
     }
 
     @Test
-    fun searchUsesImdbSuggestionToCorrectATypoAndRetryTmdb() = runTest {
-        val requestedUrls = mutableListOf<String>()
+    fun searchRanksProviderResultsDirectly() = runTest {
+        val requestedUrls = ConcurrentLinkedQueue<String>()
         val client = CatalogClient(
             pageLoader = { url ->
                 requestedUrls += url
                 when {
-                    "media-imdb.com/suggestion/" in url -> """
-                        {
-                          "d": [
-                            {
-                              "id": "tt0816692",
-                              "l": "Interstellar",
-                              "q": "feature",
-                              "y": 2014
-                            }
-                          ]
-                        }
-                    """.trimIndent()
-
-                    "query=Interstellar" in url && "/search/movie?" in url ->
-                        tmdbSearchHtml(
-                            id = 157336,
-                            type = "movie",
-                            title = "Interstellar",
-                            year = "2014",
-                        )
-
-                    "/search/" in url -> "<main></main>"
-                    else -> error("Unexpected request: $url")
+                    "/search/movie?" in url -> tmdbSearchHtml(
+                        id = 157336,
+                        type = "movie",
+                        title = "Interstellar",
+                        year = "2014",
+                    )
+                    else -> "<main></main>"
                 }
             },
         )
 
-        val results = client.search("Intersteller")
+        val results = client.search("Interstelar")
 
         assertEquals("Interstellar", results.firstOrNull()?.title)
         assertTrue(
             requestedUrls.any {
-                it.contains("/search/movie?query=Interstellar&language=en-US")
-            },
-        )
-        assertTrue(
-            requestedUrls.any {
-                it.contains("/search/tv?query=Interstellar&language=en-US")
+                it.contains("/search/movie?query=Interstelar&language=en-US")
             },
         )
     }
 
-    @Test
-    fun strongDirectSearchMatchDoesNotTriggerACorrectedTmdbLookup() = runTest {
-        val requestedUrls = mutableListOf<String>()
-        val client = CatalogClient(
-            pageLoader = { url ->
-                requestedUrls += url
-                when {
-                    "media-imdb.com/suggestion/" in url -> """
-                        {
-                          "d": [
-                            {
-                              "id": "tt15239678",
-                              "l": "Dune: Part Two",
-                              "q": "feature",
-                              "y": 2024
-                            }
-                          ]
-                        }
-                    """.trimIndent()
 
-                    "/search/movie?query=Dune&" in url -> tmdbSearchHtml(
-                        id = 438631,
-                        type = "movie",
-                        title = "Dune",
-                        year = "2021",
-                    )
-
-                    "/search/tv?query=Dune&" in url -> "<main></main>"
-                    else -> error("Unexpected request: $url")
-                }
-            },
-        )
-
-        val results = client.search("Dune")
-
-        assertEquals("Dune", results.firstOrNull()?.title)
-        assertEquals(
-            2,
-            requestedUrls.count { "/search/" in it },
-        )
-        assertFalse(
-            requestedUrls.any {
-                "/search/" in it && "query=Dune%3A+Part+Two" in it
-            },
-        )
-        assertFalse(requestedUrls.any { "media-imdb.com/suggestion/" in it })
-    }
-
-    @Test
-    fun exactLocalFallbackAvoidsSuggestionWhenTmdbIsUnavailable() = runTest {
-        val requestedUrls = mutableListOf<String>()
-        val client = CatalogClient(
-            pageLoader = { url ->
-                requestedUrls += url
-                if ("/search/" in url) {
-                    "<main></main>"
-                } else {
-                    error("An exact local title must not need suggestions: $url")
-                }
-            },
-        )
-
-        val results = client.search("Inception")
-
-        assertEquals("Inception", results.firstOrNull()?.title)
-        assertFalse(requestedUrls.any { "media-imdb.com/suggestion/" in it })
-    }
-
-    @Test
-    fun explicitTvQualifierDoesNotLeakALocalMovieFallback() = runTest {
-        val client = CatalogClient(
-            pageLoader = { url ->
-                when {
-                    "/search/tv?" in url -> "<main></main>"
-                    "media-imdb.com/suggestion/" in url -> """{"d":[]}"""
-                    else -> error("Unexpected request: $url")
-                }
-            },
-        )
-
-        assertTrue(client.search("Inception TV").isEmpty())
-    }
 
     @Test
     fun offlineHomeKeepsSeparateTrendingMovieAndTvRails() = runTest {

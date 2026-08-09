@@ -44,4 +44,41 @@ class RelatedContentEngineTest {
                 RelatedContentEngine.similarity(source, unrelated),
         )
     }
+
+    @Test
+    fun localSimilarityScoresOnlyTheDeterministicBoundedPrefix() {
+        val source = Media(
+            id = 1,
+            type = MediaType.MOVIE,
+            title = "Reference Point",
+            genres = listOf("Crime", "Drama"),
+            cast = listOf("Lead Actor"),
+            overview = "A meticulous investigator follows a criminal conspiracy.",
+        )
+        val ordinaryPrefix = (2..41).map { id ->
+            Media(
+                id = id,
+                type = MediaType.MOVIE,
+                title = "Catalogue Film $id",
+                genres = listOf("Drama"),
+            )
+        }
+        val perfectButOutsideBound = source.copy(id = 9_999, title = "Reference Point II")
+        val candidates = ordinaryPrefix + perfectButOutsideBound
+
+        val first = RelatedContentEngine.rank(
+            source = source,
+            candidates = candidates,
+            candidateScoreLimit = 24,
+        )
+        val second = RelatedContentEngine.rank(
+            source = source,
+            candidates = candidates,
+            candidateScoreLimit = 24,
+        )
+
+        assertEquals(24, first.size)
+        assertEquals(first.map(Media::key), second.map(Media::key))
+        assertTrue(first.none { it.key == perfectButOutsideBound.key })
+    }
 }

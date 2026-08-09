@@ -4,6 +4,7 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -44,12 +45,14 @@ interface ImdbRatingRepository {
     suspend fun ratingFor(media: Media): ImdbRatingSnapshot
 }
 
-object HttpImdbGraphQlTransport : ImdbGraphQlTransport {
+class HttpImdbGraphQlTransport(
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : ImdbGraphQlTransport {
     override suspend fun postJson(
         url: String,
         body: String,
         headers: Map<String, String>,
-    ): String = withContext(Dispatchers.IO) {
+    ): String = withContext(ioDispatcher) {
         val payload = body.toByteArray(StandardCharsets.UTF_8)
         suspendCancellableCoroutine { continuation ->
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {

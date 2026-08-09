@@ -5,7 +5,23 @@ import java.util.Locale
 data class RecommendationParseResult(
     val preferences: RecommendationPreferences,
     val confirmation: RecommendationQuestion? = null,
-)
+) {
+    /** Structured intent before catalogue title resolution. */
+    val intent: RecommendationIntent
+        get() = RecommendationIntent.from(preferences)
+
+    fun resolveTitleAnchor(
+        candidates: List<CanonicalTitleAnchor>,
+    ): RecommendationIntent {
+        val title = preferences.similarityTitle?.value ?: return intent
+        val resolution = CanonicalTitleResolver.resolve(
+            query = title,
+            requiredType = preferences.contentType?.value,
+            candidates = candidates,
+        )
+        return RecommendationIntent.from(preferences, resolution)
+    }
+}
 
 object RecommendationPreferenceParser {
     private val strongConstraintWords = Regex(
@@ -191,6 +207,22 @@ object RecommendationPreferenceParser {
                 } ?: updated.preferredRuntimeMinutes,
                 answeredDimensions = updated.answeredDimensions + RecommendationDimension.RUNTIME,
             )
+            if (
+                current.contentType == null &&
+                !containsTv &&
+                Regex("""\b(?:minutes?|mins?)\b""", RegexOption.IGNORE_CASE)
+                    .containsMatchIn(clean)
+            ) {
+                updated = updated.copy(
+                    contentType = PreferenceSignal(
+                        RecommendationContentType.MOVIE,
+                        explicit,
+                        hard,
+                    ),
+                    answeredDimensions =
+                        updated.answeredDimensions + RecommendationDimension.CONTENT_TYPE,
+                )
+            }
         }
 
         parseYears(normalized)?.let { range ->

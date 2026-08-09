@@ -226,7 +226,7 @@ class WebPlayerController(
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
-                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 allowFileAccess = false
                 allowContentAccess = false
                 setSupportMultipleWindows(false)

@@ -1,0 +1,20 @@
+{
+  "name": "aliflix-recommendations",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-04-05",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": false
+  },
+  "placement": {
+    "mode": "smart"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "OMDB_CACHE",
+      "id": "22b09d733de948df87b602342be0a52a"
+    }
+  ]
+}

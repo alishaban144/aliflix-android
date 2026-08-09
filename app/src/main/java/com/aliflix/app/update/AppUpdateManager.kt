@@ -7,12 +7,14 @@ import androidx.activity.ComponentActivity
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import com.aliflix.app.BuildConfig
+import com.aliflix.app.data.SafeHttpTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
 data class UpdateInfo(
@@ -192,30 +194,28 @@ class AppUpdateManager(
             check(length <= MAX_MANIFEST_BYTES || length < 0) {
                 "The update manifest is too large."
             }
-            connection.inputStream.bufferedReader().use { reader ->
-                val text = reader.readText()
-                check(text.toByteArray().size <= MAX_MANIFEST_BYTES) {
-                    "The update manifest is too large."
-                }
-                text
+            val text = SafeHttpTransport.readResponseText(connection)
+            check(text.toByteArray(StandardCharsets.UTF_8).size <= MAX_MANIFEST_BYTES) {
+                "The update manifest is too large."
             }
+            text
         } finally {
             connection.disconnect()
         }
     }
 
     private fun openConnection(url: String): HttpURLConnection {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 12_000
-        connection.readTimeout = 30_000
-        connection.instanceFollowRedirects = true
-        connection.setRequestProperty("Accept", "application/json, application/octet-stream")
         val formFactor = if (BuildConfig.IS_TV) "TV" else "Mobile"
-        connection.setRequestProperty(
-            "User-Agent",
-            "Aliflix-$formFactor/${BuildConfig.VERSION_NAME}",
+        val extraHeaders = mapOf(
+            "Accept" to "application/json, application/octet-stream",
+            "User-Agent" to "Aliflix-$formFactor/${BuildConfig.VERSION_NAME}",
         )
-        connection.connect()
+        val connection = SafeHttpTransport.openConnection(
+            urlString = url,
+            connectTimeoutMs = 12_000,
+            readTimeoutMs = 30_000,
+            headers = extraHeaders,
+        )
         check(connection.responseCode in 200..299) {
             "The update server returned HTTP ${connection.responseCode}."
         }
