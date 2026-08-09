@@ -5,7 +5,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -24,123 +23,12 @@ class RecommendationAiClient(
     private val baseUrl: String,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
-    suspend fun interpretIntent(request: InterpretationRequest): InterpretationResponse =
+    suspend fun getRecommendations(request: V3RecommendationRequest): V3RecommendationResponse =
         withContext(ioDispatcher) {
             val jsonReq = request.toJson()
-            val response = postJson("$baseUrl/v1/interpret", jsonReq)
-            InterpretationResponse.fromJson(JSONObject(response))
+            val responseText = postJson("$baseUrl/v3/recommendations", jsonReq)
+            V3RecommendationResponse.fromJson(JSONObject(responseText))
         }
-
-    suspend fun expandSearch(request: ExpansionRequest): ExpansionResponse =
-        withContext(ioDispatcher) {
-            val jsonReq = request.toJson()
-            val response = postJson("$baseUrl/v1/expand", jsonReq)
-            ExpansionResponse.fromJson(JSONObject(response))
-        }
-
-    suspend fun verifyCandidates(request: VerificationRequest): VerificationResponse =
-        withContext(ioDispatcher) {
-            val jsonReq = request.toJson()
-            val response = postJson("$baseUrl/v1/verify", jsonReq)
-            VerificationResponse.fromJson(JSONObject(response))
-        }
-
-    suspend fun interpretV2(mediaType: String, requestText: String): com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec =
-        withContext(ioDispatcher) {
-            val reqObj = JSONObject().apply {
-                put("mediaType", mediaType.lowercase())
-                put("request", requestText)
-            }
-            val responseText = postJson("$baseUrl/v2/recommendations/interpret", reqObj)
-            val json = JSONObject(responseText)
-
-            val mType = if (json.optString("mediaType").lowercase() == "tv") com.aliflix.app.model.MediaType.TV else com.aliflix.app.model.MediaType.MOVIE
-
-            fun optStringSet(key: String): Set<String> {
-                val arr = json.optJSONArray(key) ?: return emptySet()
-                return List(arr.length()) { arr.getString(it) }.filter { it.isNotBlank() }.toSet()
-            }
-            fun optStringList(key: String): List<String> {
-                val arr = json.optJSONArray(key) ?: return emptyList()
-                return List(arr.length()) { arr.getString(it) }.filter { it.isNotBlank() }
-            }
-            fun optInt(key: String): Int? = if (json.isNull(key)) null else json.optInt(key).takeIf { it > 0 }
-            fun optDouble(key: String): Double? = if (json.isNull(key)) null else json.optDouble(key).takeIf { !it.isNaN() && it > 0.0 }
-
-            com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec(
-                mediaType = mType,
-                includedGenres = optStringSet("includedGenres"),
-                excludedGenres = optStringSet("excludedGenres"),
-                minimumYear = optInt("minimumYear"),
-                maximumYear = optInt("maximumYear"),
-                minimumRuntimeMinutes = optInt("minimumRuntimeMinutes"),
-                maximumRuntimeMinutes = optInt("maximumRuntimeMinutes"),
-                minimumImdbRating = optDouble("minimumImdbRating"),
-                minimumImdbVotes = optInt("minimumImdbVotes"),
-                minimumRottenTomatoesRating = optInt("minimumRottenTomatoesRating"),
-                minimumMetascore = optInt("minimumMetascore"),
-                contentRatings = optStringSet("contentRatings"),
-                languages = optStringSet("languages"),
-                countries = optStringSet("countries"),
-                actors = optStringSet("actors"),
-                directors = optStringSet("directors"),
-                writers = optStringSet("writers"),
-                minimumSeasons = optInt("minimumSeasons"),
-                maximumSeasons = optInt("maximumSeasons"),
-                plotRequirements = optStringList("plotRequirements"),
-                discoveryConcepts = optStringList("discoveryConcepts")
-            )
-        }
-
-    suspend fun verifyPlots(
-        plotRequirements: List<String>,
-        candidates: List<com.aliflix.app.recommendation.omdb.VerifiedRecommendationItem>
-    ): VerifyPlotsResponse = withContext(ioDispatcher) {
-        val candArray = JSONArray()
-        for (item in candidates) {
-            val candObj = JSONObject().apply {
-                put("candidateId", item.media.imdbId ?: "tmdb:${item.media.id}")
-                put("title", item.media.title)
-                put("genres", JSONArray(item.omdbMetadata.genres))
-                put("plot", item.omdbMetadata.plot ?: item.media.overview)
-            }
-            candArray.put(candObj)
-        }
-
-        val reqObj = JSONObject().apply {
-            put("plotRequirements", JSONArray(plotRequirements))
-            put("candidates", candArray)
-        }
-
-        val responseText = postJson("$baseUrl/v2/recommendations/verify-plots", reqObj)
-        val json = JSONObject(responseText)
-
-        val resultsArr = json.optJSONArray("results") ?: JSONArray()
-        val resultsList = mutableListOf<VerifyPlotsResultItem>()
-        for (i in 0 until resultsArr.length()) {
-            val res = resultsArr.getJSONObject(i)
-            resultsList.add(
-                VerifyPlotsResultItem(
-                    candidateId = res.getString("candidateId"),
-                    decision = res.optString("decision", "INSUFFICIENT_EVIDENCE"),
-                    confidence = res.optDouble("confidence", 0.0),
-                    evidence = res.optString("evidence", "")
-                )
-            )
-        }
-        VerifyPlotsResponse(resultsList)
-    }
-
-data class VerifyPlotsResultItem(
-    val candidateId: String,
-    val decision: String,
-    val confidence: Double,
-    val evidence: String,
-)
-
-data class VerifyPlotsResponse(
-    val results: List<VerifyPlotsResultItem>
-)
 
     private suspend fun postJson(url: String, jsonBody: JSONObject): String =
         suspendCancellableCoroutine { continuation ->
@@ -149,7 +37,7 @@ data class VerifyPlotsResponse(
                 connection = URL(url).openConnection() as HttpURLConnection
                 connection.requestMethod = "POST"
                 connection.connectTimeout = 8_000
-                connection.readTimeout = 20_000 // Worker can take up to 12s
+                connection.readTimeout = 40_000 // Complex recommendations may take some time
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 
@@ -170,6 +58,9 @@ data class VerifyPlotsResponse(
                 if (status == 429) {
                     throw RecommendationAiClientException("Rate limit exceeded")
                 }
+                if (status == 503) {
+                    throw RecommendationAiClientException("TMDB service error: $response")
+                }
                 if (status !in 200..299) {
                     throw RecommendationAiClientException("Worker request failed ($status): $response")
                 }
@@ -188,357 +79,94 @@ data class VerifyPlotsResponse(
 }
 
 // Models
-
-data class InterpretationRequest(
+data class V3RecommendationRequest(
     val requestId: String,
     val query: String,
-    val mediaType: String,
-    val deterministicConstraints: DeterministicConstraints
+    val mediaType: String, // "movie" or "tv"
+    val filters: Map<String, Any> = emptyMap(),
+    val pageSize: Int = 20,
+    val cursor: String? = null
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("requestId", requestId)
         put("query", query)
-        put("mediaType", mediaType.lowercase())
-        put("deterministicConstraints", JSONObject().apply {
-            put("genres", JSONArray(deterministicConstraints.genres))
-            put("moods", JSONArray(deterministicConstraints.moods))
-            put("themes", JSONArray(deterministicConstraints.themes))
-            put("yearRule", deterministicConstraints.yearRule ?: JSONObject.NULL)
-            put("runtimeRule", deterministicConstraints.runtimeRule ?: JSONObject.NULL)
-            put("minimumImdb", deterministicConstraints.minimumImdb ?: JSONObject.NULL)
-            put("language", deterministicConstraints.language ?: JSONObject.NULL)
-            put("status", deterministicConstraints.status ?: JSONObject.NULL)
-            put("exclusions", JSONArray(deterministicConstraints.exclusions))
-            put("similarityTitle", deterministicConstraints.similarityTitle ?: JSONObject.NULL)
-        })
-    }
-}
-
-data class DeterministicConstraints(
-    val genres: List<String> = emptyList(),
-    val moods: List<String> = emptyList(),
-    val themes: List<String> = emptyList(),
-    val yearRule: String? = null,
-    val runtimeRule: String? = null,
-    val minimumImdb: Double? = null,
-    val language: String? = null,
-    val status: String? = null,
-    val exclusions: List<String> = emptyList(),
-    val similarityTitle: String? = null,
-)
-
-data class RequiredConceptGroup(
-    val id: String,
-    val label: String,
-    val description: String,
-    val alternatives: List<String>,
-    val specificSubtypes: List<String>,
-    val centralityRequired: Boolean
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("id", id)
-        put("label", label)
-        put("description", description)
-        put("alternatives", JSONArray(alternatives))
-        put("specificSubtypes", JSONArray(specificSubtypes))
-        put("centralityRequired", centralityRequired)
-    }
-
-    companion object {
-        fun fromJson(json: JSONObject): RequiredConceptGroup = RequiredConceptGroup(
-            id = json.getString("id"),
-            label = json.getString("label"),
-            description = json.getString("description"),
-            alternatives = json.optJSONArray("alternatives")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            specificSubtypes = json.optJSONArray("specificSubtypes")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            centralityRequired = json.optBoolean("centralityRequired", false)
-        )
-    }
-}
-
-data class AiHardConstraints(
-    val mediaType: String,
-    val includedGenres: List<String>,
-    val excludedGenres: List<String>,
-    val minimumYear: Int?,
-    val maximumYear: Int?,
-    val maximumRuntimeMinutes: Int?,
-    val minimumRating: Double?,
-    val originalLanguage: String?
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
         put("mediaType", mediaType)
-        put("includedGenres", JSONArray(includedGenres))
-        put("excludedGenres", JSONArray(excludedGenres))
-        put("minimumYear", minimumYear ?: JSONObject.NULL)
-        put("maximumYear", maximumYear ?: JSONObject.NULL)
-        put("maximumRuntimeMinutes", maximumRuntimeMinutes ?: JSONObject.NULL)
-        put("minimumRating", minimumRating ?: JSONObject.NULL)
-        put("originalLanguage", originalLanguage ?: JSONObject.NULL)
-    }
-
-    companion object {
-        fun fromJson(json: JSONObject): AiHardConstraints = AiHardConstraints(
-            mediaType = json.optString("mediaType", "movie"),
-            includedGenres = json.optJSONArray("includedGenres")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            excludedGenres = json.optJSONArray("excludedGenres")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            minimumYear = if (json.isNull("minimumYear")) null else json.optInt("minimumYear"),
-            maximumYear = if (json.isNull("maximumYear")) null else json.optInt("maximumYear"),
-            maximumRuntimeMinutes = if (json.isNull("maximumRuntimeMinutes")) null else json.optInt("maximumRuntimeMinutes"),
-            minimumRating = if (json.isNull("minimumRating")) null else json.optDouble("minimumRating"),
-            originalLanguage = if (json.isNull("originalLanguage")) null else json.optString("originalLanguage")
-        )
+        put("filters", JSONObject(filters))
+        put("pageSize", pageSize)
+        cursor?.let { put("cursor", it) }
     }
 }
 
-data class InterpretationResponse(
+data class V3RecommendationResponse(
     val requestId: String,
-    val normalizedRequest: String,
-    val summary: String,
-    val requiredConceptGroups: List<RequiredConceptGroup>,
-    val optionalConcepts: List<String>,
-    val excludedConcepts: List<String>,
-    val genreHypotheses: List<String>,
-    val keywordSearchPhrases: List<String>,
-    val broadSearchPhrases: List<String>,
-    val anchorTitle: String?,
-    val anchorModifiers: List<String>,
-    val contradictions: List<String>,
-    val hardConstraints: AiHardConstraints,
+    val results: List<V3RecommendationResult>,
+    val nextCursor: String?,
+    val hasMore: Boolean
 ) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("requestId", requestId)
-        put("normalizedRequest", normalizedRequest)
-        put("summary", summary)
-        put("requiredConceptGroups", JSONArray(requiredConceptGroups.map { it.toJson() }))
-        put("optionalConcepts", JSONArray(optionalConcepts))
-        put("excludedConcepts", JSONArray(excludedConcepts))
-        put("genreHypotheses", JSONArray(genreHypotheses))
-        put("keywordSearchPhrases", JSONArray(keywordSearchPhrases))
-        put("broadSearchPhrases", JSONArray(broadSearchPhrases))
-        put("anchorTitle", anchorTitle ?: JSONObject.NULL)
-        put("anchorModifiers", JSONArray(anchorModifiers))
-        put("contradictions", JSONArray(contradictions))
-        put("hardConstraints", hardConstraints.toJson())
-    }
-
     companion object {
-        fun fromJson(json: JSONObject): InterpretationResponse = InterpretationResponse(
-            requestId = json.getString("requestId"),
-            normalizedRequest = json.getString("normalizedRequest"),
-            summary = json.getString("summary"),
-            requiredConceptGroups = json.optJSONArray("requiredConceptGroups")?.let { arr -> List(arr.length()) { RequiredConceptGroup.fromJson(arr.getJSONObject(it)) } } ?: emptyList(),
-            optionalConcepts = json.optJSONArray("optionalConcepts")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            excludedConcepts = json.optJSONArray("excludedConcepts")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            genreHypotheses = json.optJSONArray("genreHypotheses")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            keywordSearchPhrases = json.optJSONArray("keywordSearchPhrases")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            broadSearchPhrases = json.optJSONArray("broadSearchPhrases")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            anchorTitle = if (json.isNull("anchorTitle")) null else json.getString("anchorTitle"),
-            anchorModifiers = json.optJSONArray("anchorModifiers")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            contradictions = json.optJSONArray("contradictions")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            hardConstraints = json.optJSONObject("hardConstraints")?.let { AiHardConstraints.fromJson(it) } ?: AiHardConstraints(
-                mediaType = "movie",
-                includedGenres = emptyList(),
-                excludedGenres = emptyList(),
-                minimumYear = null,
-                maximumYear = null,
-                maximumRuntimeMinutes = null,
-                minimumRating = null,
-                originalLanguage = null
+        fun fromJson(json: JSONObject): V3RecommendationResponse {
+            val resultsArr = json.optJSONArray("results") ?: JSONArray()
+            val resultsList = mutableListOf<V3RecommendationResult>()
+            for (i in 0 until resultsArr.length()) {
+                val resObj = resultsArr.getJSONObject(i)
+                resultsList.add(V3RecommendationResult.fromJson(resObj))
+            }
+            return V3RecommendationResponse(
+                requestId = json.optString("requestId", ""),
+                results = resultsList,
+                nextCursor = if (json.isNull("nextCursor")) null else json.optString("nextCursor"),
+                hasMore = json.optBoolean("hasMore", false)
             )
-        )
+        }
     }
 }
 
-data class ExpansionRequest(
-    val requestId: String,
-    val originalQuery: String,
-    val interpretation: JSONObject,
-    val coveredConcepts: List<String>,
-    val underrepresentedConcepts: List<String>,
-    val successfulSearchPhrases: List<String>,
-    val failedSearchPhrases: List<String>
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("requestId", requestId)
-        put("originalQuery", originalQuery)
-        put("interpretation", interpretation)
-        put("coveredConcepts", JSONArray(coveredConcepts))
-        put("underrepresentedConcepts", JSONArray(underrepresentedConcepts))
-        put("successfulSearchPhrases", JSONArray(successfulSearchPhrases))
-        put("failedSearchPhrases", JSONArray(failedSearchPhrases))
-    }
-}
-
-data class PairwiseSearch(val leftConcept: String, val rightConcept: String) {
-    companion object {
-        fun fromJson(json: JSONObject): PairwiseSearch = PairwiseSearch(
-            leftConcept = json.getString("leftConcept"),
-            rightConcept = json.getString("rightConcept")
-        )
-    }
-}
-
-data class ExpansionResponse(
-    val requestId: String,
-    val additionalKeywordPhrases: List<String>,
-    val additionalPairwiseSearches: List<PairwiseSearch>,
-    val additionalBroadPhrases: List<String>
-) {
-    companion object {
-        fun fromJson(json: JSONObject): ExpansionResponse = ExpansionResponse(
-            requestId = json.getString("requestId"),
-            additionalKeywordPhrases = json.optJSONArray("additionalKeywordPhrases")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            additionalPairwiseSearches = json.optJSONArray("additionalPairwiseSearches")?.let { arr -> List(arr.length()) { PairwiseSearch.fromJson(arr.getJSONObject(it)) } } ?: emptyList(),
-            additionalBroadPhrases = json.optJSONArray("additionalBroadPhrases")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList()
-        )
-    }
-}
-
-data class VerificationCandidate(
-    val candidateId: String,
+data class V3RecommendationResult(
     val tmdbId: Int,
     val mediaType: String,
     val title: String,
-    val originalTitle: String,
-    val overview: String,
+    val originalTitle: String?,
+    val overview: String?,
+    val posterPath: String?,
+    val backdropPath: String?,
+    val releaseDate: String?,
     val genres: List<String>,
-    val keywords: List<String>,
-    val releaseYear: Int?,
-    val directorOrCreators: List<String>,
-    val principalCast: List<String>,
-    val originalLanguage: String? = null,
-    val omdbVerified: Boolean = false,
-    val omdbGenres: List<String> = emptyList(),
-    val fullPlot: String? = null,
-    val runtimeMinutes: Int? = null,
-    val imdbRating: Double? = null,
-    val imdbVotes: Int? = null,
-    val rottenTomatoesRating: Int? = null,
-    val metascore: Int? = null,
-    val director: String? = null,
-    val actors: List<String> = emptyList(),
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("candidateId", candidateId)
-        put("tmdbId", tmdbId)
-        put("mediaType", mediaType.lowercase())
-        put("title", title)
-        put("originalTitle", originalTitle)
-        put("overview", overview)
-        put("genres", JSONArray(genres))
-        put("keywords", JSONArray(keywords))
-        put("releaseYear", releaseYear ?: JSONObject.NULL)
-        put("directorOrCreators", JSONArray(directorOrCreators))
-        put("principalCast", JSONArray(principalCast))
-        put("originalLanguage", originalLanguage ?: JSONObject.NULL)
-        put("omdbVerified", omdbVerified)
-        put("omdbGenres", JSONArray(omdbGenres))
-        fullPlot?.let { put("fullPlot", it) }
-        runtimeMinutes?.let { put("runtimeMinutes", it) }
-        imdbRating?.let { put("imdbRating", it) }
-        imdbVotes?.let { put("imdbVotes", it) }
-        rottenTomatoesRating?.let { put("rottenTomatoesRating", it) }
-        metascore?.let { put("metascore", it) }
-        director?.let { put("director", it) }
-        put("actors", JSONArray(actors))
-    }
-}
-
-data class VerificationRequest(
-    val requestId: String,
-    val originalQuery: String,
-    val mediaType: String,
-    val requiredConceptGroups: List<RequiredConceptGroup>,
-    val excludedConcepts: List<String>,
-    val hardConstraints: JSONObject,
-    val candidates: List<VerificationCandidate>
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("requestId", requestId)
-        put("originalQuery", originalQuery)
-        put("mediaType", mediaType.lowercase())
-        put("requiredConceptGroups", JSONArray(requiredConceptGroups.map { it.toJson() }))
-        put("excludedConcepts", JSONArray(excludedConcepts))
-        put("hardConstraints", hardConstraints)
-        put("candidates", JSONArray(candidates.map { it.toJson() }))
-    }
-}
-
-/**
- * The decision values that the Cloudflare verification Worker returns.
- *
- * Android previously compared against the nonexistent value "ACCEPT",
- * which silently rejected every candidate.  This typed enum makes the
- * contract explicit.
- */
-enum class VerificationDecision {
-    DEFINITE_MATCH,
-    PROBABLE_MATCH,
-    INSUFFICIENT_EVIDENCE,
-    REJECT;
-
-    /** True when the candidate should be accepted into the ranking pool. */
-    fun isAccepted(confidence: Double): Boolean = when (this) {
-        DEFINITE_MATCH -> true
-        PROBABLE_MATCH -> confidence >= 0.85
-        INSUFFICIENT_EVIDENCE -> false
-        REJECT -> false
-    }
-
-    companion object {
-        fun parse(raw: String): VerificationDecision =
-            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
-                ?: REJECT
-    }
-}
-
-data class VerifiedConceptEvidence(
-    val groupId: String,
-    val status: String,
-    val evidence: String
+    val voteAverage: Double?,
+    val voteCount: Int?,
+    val matchTier: String,
+    val finalScore: Double,
+    val retrievalSources: List<String>
 ) {
     companion object {
-        fun fromJson(json: JSONObject): VerifiedConceptEvidence = VerifiedConceptEvidence(
-            groupId = json.getString("groupId"),
-            status = json.getString("status"),
-            evidence = json.getString("evidence")
-        )
-    }
-}
+        fun fromJson(json: JSONObject): V3RecommendationResult {
+            val genresArr = json.optJSONArray("genres") ?: JSONArray()
+            val genresList = mutableListOf<String>()
+            for (i in 0 until genresArr.length()) {
+                genresList.add(genresArr.getString(i))
+            }
+            
+            val sourcesArr = json.optJSONArray("retrievalSources") ?: JSONArray()
+            val sourcesList = mutableListOf<String>()
+            for (i in 0 until sourcesArr.length()) {
+                sourcesList.add(sourcesArr.getString(i))
+            }
 
-data class VerificationResult(
-    val candidateId: String,
-    val decision: VerificationDecision,
-    val confidence: Double,
-    val centralityScore: Double,
-    val requiredGroupAssessments: List<VerifiedConceptEvidence>,
-    val matchedConcepts: List<String>,
-    val evidenceSummary: String,
-    val rejectionReason: String?
-) {
-    companion object {
-        fun fromJson(json: JSONObject): VerificationResult = VerificationResult(
-            candidateId = json.getString("candidateId"),
-            decision = VerificationDecision.parse(json.getString("decision")),
-            confidence = json.getDouble("confidence"),
-            centralityScore = json.getDouble("centralityScore"),
-            requiredGroupAssessments = json.optJSONArray("requiredGroupAssessments")?.let { arr -> List(arr.length()) { VerifiedConceptEvidence.fromJson(arr.getJSONObject(it)) } } ?: emptyList(),
-            matchedConcepts = json.optJSONArray("matchedConcepts")?.let { arr -> List(arr.length()) { arr.getString(it) } } ?: emptyList(),
-            evidenceSummary = json.getString("evidenceSummary"),
-            rejectionReason = if (json.isNull("rejectionReason")) null else json.getString("rejectionReason")
-        )
-    }
-}
-
-data class VerificationResponse(
-    val requestId: String,
-    val results: List<VerificationResult>
-) {
-    companion object {
-        fun fromJson(json: JSONObject): VerificationResponse = VerificationResponse(
-            requestId = json.getString("requestId"),
-            results = json.optJSONArray("results")?.let { arr -> List(arr.length()) { VerificationResult.fromJson(arr.getJSONObject(it)) } } ?: emptyList()
-        )
+            return V3RecommendationResult(
+                tmdbId = json.getInt("tmdbId"),
+                mediaType = json.optString("mediaType", "movie"),
+                title = json.getString("title"),
+                originalTitle = if (json.isNull("originalTitle")) null else json.optString("originalTitle"),
+                overview = if (json.isNull("overview")) null else json.optString("overview"),
+                posterPath = if (json.isNull("posterPath")) null else json.optString("posterPath"),
+                backdropPath = if (json.isNull("backdropPath")) null else json.optString("backdropPath"),
+                releaseDate = if (json.isNull("releaseDate")) null else json.optString("releaseDate"),
+                genres = genresList,
+                voteAverage = if (json.isNull("voteAverage")) null else json.optDouble("voteAverage"),
+                voteCount = if (json.isNull("voteCount")) null else json.optInt("voteCount"),
+                matchTier = json.optString("matchTier", "D"),
+                finalScore = json.optDouble("finalScore", 0.0),
+                retrievalSources = sourcesList
+            )
+        }
     }
 }

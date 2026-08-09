@@ -49,9 +49,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.recommendation.omdb.OmdbGenre
-import com.aliflix.app.recommendation.omdb.OmdbRecommendationSort
-import com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec
+import com.aliflix.app.recommendation.RecommendationMediaKind
+import com.aliflix.app.recommendation.CatalogDiscoverySpec
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
@@ -61,8 +60,8 @@ import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AskAliflixFilters(
-    spec: OmdbRecommendationSpec,
-    onSpecChanged: (OmdbRecommendationSpec) -> Unit,
+    spec: CatalogDiscoverySpec,
+    onSpecChanged: (CatalogDiscoverySpec) -> Unit,
     onSubmit: () -> Unit,
     loading: Boolean,
     modifier: Modifier = Modifier,
@@ -72,27 +71,19 @@ fun AskAliflixFilters(
     var expExcludedGenres by rememberSaveable { mutableStateOf(false) }
     var expYearRuntime by rememberSaveable { mutableStateOf(false) }
     var expRatings by rememberSaveable { mutableStateOf(false) }
-    var expContentLang by rememberSaveable { mutableStateOf(false) }
-    var expSeasons by rememberSaveable { mutableStateOf(false) }
-    var expSort by rememberSaveable { mutableStateOf(false) }
 
     // Active pill builder
     val activePills = rememberActivePills(spec, onSpecChanged)
 
     val isFilterActive = spec.includedGenres.isNotEmpty() ||
         spec.excludedGenres.isNotEmpty() ||
-        spec.minimumYear != null ||
-        spec.maximumYear != null ||
-        spec.minimumRuntimeMinutes != null ||
-        spec.maximumRuntimeMinutes != null ||
-        spec.minimumImdbRating != null ||
-        spec.minimumImdbVotes != null ||
-        spec.minimumRottenTomatoesRating != null ||
-        spec.minimumMetascore != null ||
-        spec.contentRatings.isNotEmpty() ||
-        spec.languages.isNotEmpty() ||
-        spec.minimumSeasons != null ||
-        spec.maximumSeasons != null
+        spec.yearMinimum != null ||
+        spec.yearMaximum != null ||
+        spec.runtimeMinimumMinutes != null ||
+        spec.runtimeMaximumMinutes != null ||
+        spec.minimumImdb != null ||
+        spec.minimumRottenTomatoes != null ||
+        spec.originalLanguage != null
 
     Column(modifier = modifier.fillMaxSize()) {
         // Selected Filter Pills Horizontal Strip
@@ -201,8 +192,8 @@ fun AskAliflixFilters(
             item {
                 FilterCategoryHeader(
                     title = "Year & runtime",
-                    badgeCount = (if (spec.minimumYear != null || spec.maximumYear != null) 1 else 0) +
-                        (if (spec.minimumRuntimeMinutes != null || spec.maximumRuntimeMinutes != null) 1 else 0),
+                    badgeCount = (if (spec.yearMinimum != null || spec.yearMaximum != null) 1 else 0) +
+                        (if (spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null) 1 else 0),
                     isExpanded = expYearRuntime,
                     onToggle = { expYearRuntime = !expYearRuntime }
                 ) {
@@ -218,12 +209,12 @@ fun AskAliflixFilters(
                                 "Before 2000" to (null to 1999)
                             )
                             yearPresets.forEach { (label, bounds) ->
-                                val isSel = spec.minimumYear == bounds.first && spec.maximumYear == bounds.second
+                                val isSel = spec.yearMinimum == bounds.first && spec.yearMaximum == bounds.second
                                 AskAliflixChip(
                                     label = label,
                                     isSelected = isSel,
                                     onClick = {
-                                        onSpecChanged(spec.copy(minimumYear = bounds.first, maximumYear = bounds.second))
+                                        onSpecChanged(spec.copy(yearMinimum = bounds.first, yearMaximum = bounds.second))
                                     }
                                 )
                             }
@@ -231,7 +222,7 @@ fun AskAliflixFilters(
 
                         Spacer(modifier = Modifier.height(4.dp))
                         Text("Runtime", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        val runtimePresets = if (spec.mediaType == MediaType.TV) {
+                        val runtimePresets = if (spec.mediaKind == RecommendationMediaKind.SERIES) {
                             listOf(
                                 "Any" to (null to null),
                                 "< 30 min" to (null to 29),
@@ -251,12 +242,12 @@ fun AskAliflixFilters(
                         }
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             runtimePresets.forEach { (label, bounds) ->
-                                val isSel = spec.minimumRuntimeMinutes == bounds.first && spec.maximumRuntimeMinutes == bounds.second
+                                val isSel = spec.runtimeMinimumMinutes == bounds.first && spec.runtimeMaximumMinutes == bounds.second
                                 AskAliflixChip(
                                     label = label,
                                     isSelected = isSel,
                                     onClick = {
-                                        onSpecChanged(spec.copy(minimumRuntimeMinutes = bounds.first, maximumRuntimeMinutes = bounds.second))
+                                        onSpecChanged(spec.copy(runtimeMinimumMinutes = bounds.first, runtimeMaximumMinutes = bounds.second))
                                     }
                                 )
                             }
@@ -269,9 +260,8 @@ fun AskAliflixFilters(
             item {
                 FilterCategoryHeader(
                     title = "Ratings",
-                    badgeCount = (if (spec.minimumImdbRating != null) 1 else 0) +
-                        (if (spec.minimumRottenTomatoesRating != null) 1 else 0) +
-                        (if (spec.minimumMetascore != null) 1 else 0),
+                    badgeCount = (if (spec.minimumImdb != null) 1 else 0) +
+                        (if (spec.minimumRottenTomatoes != null) 1 else 0),
                     isExpanded = expRatings,
                     onToggle = { expRatings = !expRatings }
                 ) {
@@ -288,11 +278,11 @@ fun AskAliflixFilters(
                                 "8.5+" to 8.5,
                                 "9+" to 9.0
                             ).forEach { (label, rating) ->
-                                val isSel = spec.minimumImdbRating == rating
+                                val isSel = spec.minimumImdb == rating
                                 AskAliflixChip(
                                     label = label,
                                     isSelected = isSel,
-                                    onClick = { onSpecChanged(spec.copy(minimumImdbRating = rating)) }
+                                    onClick = { onSpecChanged(spec.copy(minimumImdb = rating)) }
                                 )
                             }
                         }
@@ -307,135 +297,13 @@ fun AskAliflixFilters(
                                 "80%+" to 80,
                                 "90%+" to 90
                             ).forEach { (label, rt) ->
-                                val isSel = spec.minimumRottenTomatoesRating == rt
+                                val isSel = spec.minimumRottenTomatoes == rt
                                 AskAliflixChip(
                                     label = label,
                                     isSelected = isSel,
-                                    onClick = { onSpecChanged(spec.copy(minimumRottenTomatoesRating = rt)) }
+                                    onClick = { onSpecChanged(spec.copy(minimumRottenTomatoes = rt)) }
                                 )
                             }
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Metascore", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(
-                                "Any" to null,
-                                "50+" to 50,
-                                "60+" to 60,
-                                "70+" to 70,
-                                "80+" to 80,
-                                "90+" to 90
-                            ).forEach { (label, meta) ->
-                                val isSel = spec.minimumMetascore == meta
-                                AskAliflixChip(
-                                    label = label,
-                                    isSelected = isSel,
-                                    onClick = { onSpecChanged(spec.copy(minimumMetascore = meta)) }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 5. Content & Language
-            item {
-                FilterCategoryHeader(
-                    title = "Content rating & language",
-                    badgeCount = spec.contentRatings.size + spec.languages.size,
-                    isExpanded = expContentLang,
-                    onToggle = { expContentLang = !expContentLang }
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Content rating", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            CONTENT_RATINGS.forEach { rating ->
-                                val isSel = spec.contentRatings.contains(rating)
-                                AskAliflixChip(
-                                    label = rating,
-                                    isSelected = isSel,
-                                    onClick = {
-                                        val next = if (isSel) spec.contentRatings - rating else spec.contentRatings + rating
-                                        onSpecChanged(spec.copy(contentRatings = next))
-                                    }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Language", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            LANGUAGES.forEach { lang ->
-                                val isSel = spec.languages.contains(lang)
-                                AskAliflixChip(
-                                    label = lang,
-                                    isSelected = isSel,
-                                    onClick = {
-                                        val next = if (isSel) spec.languages - lang else spec.languages + lang
-                                        onSpecChanged(spec.copy(languages = next))
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 6. Series Seasons (Series only)
-            if (spec.mediaType == MediaType.TV) {
-                item {
-                    FilterCategoryHeader(
-                        title = "Seasons",
-                        badgeCount = if (spec.minimumSeasons != null || spec.maximumSeasons != null) 1 else 0,
-                        isExpanded = expSeasons,
-                        onToggle = { expSeasons = !expSeasons }
-                    ) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(
-                                "Any" to (null to null),
-                                "1 season" to (1 to 1),
-                                "2+" to (2 to null),
-                                "3+" to (3 to null),
-                                "5+" to (5 to null),
-                                "10+" to (10 to null)
-                            ).forEach { (label, bounds) ->
-                                val isSel = spec.minimumSeasons == bounds.first && spec.maximumSeasons == bounds.second
-                                AskAliflixChip(
-                                    label = label,
-                                    isSelected = isSel,
-                                    onClick = { onSpecChanged(spec.copy(minimumSeasons = bounds.first, maximumSeasons = bounds.second)) }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 7. Sort By
-            item {
-                FilterCategoryHeader(
-                    title = "Sort by",
-                    badgeCount = if (spec.sortMode != OmdbRecommendationSort.BEST_MATCH) 1 else 0,
-                    isExpanded = expSort,
-                    onToggle = { expSort = !expSort }
-                ) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(
-                            "Best match" to OmdbRecommendationSort.BEST_MATCH,
-                            "IMDb rating" to OmdbRecommendationSort.IMDB_RATING,
-                            "Rotten Tomatoes" to OmdbRecommendationSort.ROTTEN_TOMATOES,
-                            "Metascore" to OmdbRecommendationSort.METASCORE,
-                            "Newest" to OmdbRecommendationSort.NEWEST,
-                            "Oldest" to OmdbRecommendationSort.OLDEST,
-                            "Most IMDb votes" to OmdbRecommendationSort.MOST_IMDB_VOTES
-                        ).forEach { (label, sort) ->
-                            val isSel = spec.sortMode == sort
-                            AskAliflixChip(
-                                label = label,
-                                isSelected = isSel,
-                                onClick = { onSpecChanged(spec.copy(sortMode = sort)) }
-                            )
                         }
                     }
                 }
@@ -529,8 +397,8 @@ private fun FilterCategoryHeader(
 
 @Composable
 private fun rememberActivePills(
-    spec: OmdbRecommendationSpec,
-    onSpecChanged: (OmdbRecommendationSpec) -> Unit
+    spec: CatalogDiscoverySpec,
+    onSpecChanged: (CatalogDiscoverySpec) -> Unit
 ): List<Pair<String, () -> Unit>> {
     val list = mutableListOf<Pair<String, () -> Unit>>()
     spec.includedGenres.forEach { g ->
@@ -539,40 +407,30 @@ private fun rememberActivePills(
     spec.excludedGenres.forEach { g ->
         list.add("No $g" to { onSpecChanged(spec.copy(excludedGenres = spec.excludedGenres - g)) })
     }
-    if (spec.minimumYear != null || spec.maximumYear != null) {
+    if (spec.yearMinimum != null || spec.yearMaximum != null) {
         val label = when {
-            spec.minimumYear != null && spec.maximumYear != null -> "${spec.minimumYear}–${spec.maximumYear}"
-            spec.minimumYear != null -> "${spec.minimumYear}+"
-            else -> "Before ${spec.maximumYear!! + 1}"
+            spec.yearMinimum != null && spec.yearMaximum != null -> "${spec.yearMinimum}\u2013${spec.yearMaximum}"
+            spec.yearMinimum != null -> "${spec.yearMinimum}+"
+            else -> "Before ${spec.yearMaximum!! + 1}"
         }
-        list.add(label to { onSpecChanged(spec.copy(minimumYear = null, maximumYear = null)) })
+        list.add(label to { onSpecChanged(spec.copy(yearMinimum = null, yearMaximum = null)) })
     }
-    if (spec.minimumRuntimeMinutes != null || spec.maximumRuntimeMinutes != null) {
+    if (spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null) {
         val label = when {
-            spec.minimumRuntimeMinutes != null && spec.maximumRuntimeMinutes != null -> "${spec.minimumRuntimeMinutes}–${spec.maximumRuntimeMinutes} min"
-            spec.minimumRuntimeMinutes != null -> "${spec.minimumRuntimeMinutes}+ min"
-            else -> "< ${spec.maximumRuntimeMinutes!! + 1} min"
+            spec.runtimeMinimumMinutes != null && spec.runtimeMaximumMinutes != null -> "${spec.runtimeMinimumMinutes}\u2013${spec.runtimeMaximumMinutes} min"
+            spec.runtimeMinimumMinutes != null -> "${spec.runtimeMinimumMinutes}+ min"
+            else -> "< ${spec.runtimeMaximumMinutes!! + 1} min"
         }
-        list.add(label to { onSpecChanged(spec.copy(minimumRuntimeMinutes = null, maximumRuntimeMinutes = null)) })
+        list.add(label to { onSpecChanged(spec.copy(runtimeMinimumMinutes = null, runtimeMaximumMinutes = null)) })
     }
-    if (spec.minimumImdbRating != null) {
-        list.add("IMDb ${spec.minimumImdbRating}+" to { onSpecChanged(spec.copy(minimumImdbRating = null)) })
+    if (spec.minimumImdb != null) {
+        list.add("IMDb ${spec.minimumImdb}+" to { onSpecChanged(spec.copy(minimumImdb = null)) })
     }
-    if (spec.minimumRottenTomatoesRating != null) {
-        list.add("RT ${spec.minimumRottenTomatoesRating}%+" to { onSpecChanged(spec.copy(minimumRottenTomatoesRating = null)) })
+    if (spec.minimumRottenTomatoes != null) {
+        list.add("RT ${spec.minimumRottenTomatoes}%+" to { onSpecChanged(spec.copy(minimumRottenTomatoes = null)) })
     }
-    if (spec.minimumMetascore != null) {
-        list.add("Meta ${spec.minimumMetascore}+" to { onSpecChanged(spec.copy(minimumMetascore = null)) })
-    }
-    spec.contentRatings.forEach { cr ->
-        list.add(cr to { onSpecChanged(spec.copy(contentRatings = spec.contentRatings - cr)) })
-    }
-    spec.languages.forEach { lang ->
-        list.add(lang to { onSpecChanged(spec.copy(languages = spec.languages - lang)) })
-    }
-    if (spec.minimumSeasons != null || spec.maximumSeasons != null) {
-        val label = if (spec.minimumSeasons == 1 && spec.maximumSeasons == 1) "1 season" else "${spec.minimumSeasons}+ seasons"
-        list.add(label to { onSpecChanged(spec.copy(minimumSeasons = null, maximumSeasons = null)) })
+    if (spec.originalLanguage != null) {
+        list.add(spec.originalLanguage to { onSpecChanged(spec.copy(originalLanguage = null)) })
     }
     return list
 }

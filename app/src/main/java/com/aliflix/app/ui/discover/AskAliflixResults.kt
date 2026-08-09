@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.recommendation.omdb.VerifiedRecommendationItem
+import com.aliflix.app.recommendation.RecommendationCandidate
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixBackgroundBase
 import com.aliflix.app.ui.theme.AliflixContentPrimary
@@ -306,7 +306,7 @@ fun AskAliflixResults(
 
 @Composable
 private fun ResultCard(
-    item: VerifiedRecommendationItem,
+    item: RecommendationCandidate,
     onClick: () -> Unit,
 ) {
     Surface(
@@ -342,10 +342,10 @@ private fun ResultCard(
                 )
 
                 val yearRuntimeStr = buildString {
-                    item.omdbMetadata.year?.let { append(it) }
-                    item.omdbMetadata.runtimeMinutes?.let {
+                    item.media.year.takeIf { it.isNotBlank() }?.let { append(it) }
+                    item.media.runtime.takeIf { it.isNotBlank() }?.let {
                         if (isNotEmpty()) append(" · ")
-                        append("${it}m")
+                        append(it)
                     }
                 }
                 if (yearRuntimeStr.isNotBlank()) {
@@ -356,7 +356,7 @@ private fun ResultCard(
                     )
                 }
 
-                val genresStr = item.omdbMetadata.genres.take(3).joinToString(" · ")
+                val genresStr = item.media.genres.take(3).joinToString(" · ")
                 if (genresStr.isNotBlank()) {
                     Text(
                         text = genresStr,
@@ -371,7 +371,7 @@ private fun ResultCard(
 
                 // Ratings + Match Reason
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    item.omdbMetadata.imdbRating?.let { rating ->
+                    item.media.rating.takeIf { it > 0.0 }?.let { rating ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Rounded.Star,
@@ -391,7 +391,7 @@ private fun ResultCard(
                     }
 
                     Text(
-                        text = item.matchExplanation,
+                        text = item.explanation,
                         color = AliflixAccentPrimary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,

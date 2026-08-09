@@ -73,10 +73,7 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationUiState
-import com.aliflix.app.recommendation.omdb.OmdbGenre
-import com.aliflix.app.recommendation.omdb.OmdbRecommendationAnchor
-import com.aliflix.app.recommendation.omdb.OmdbRecommendationSort
-import com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec
+import com.aliflix.app.recommendation.CatalogDiscoverySpec
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBackgroundBase
@@ -113,7 +110,7 @@ internal fun RecommendationComposer(
     selectedKind: RecommendationMediaKind?,
     onSelectType: (RecommendationMediaKind) -> Unit,
     onSearchTitles: suspend (String) -> List<Media>,
-    onSubmitSpec: (OmdbRecommendationSpec) -> Unit,
+    onSubmitSpec: (CatalogDiscoverySpec) -> Unit,
     onResetSession: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -159,7 +156,7 @@ internal fun RecommendationComposer(
     var expandedSeasons by rememberSaveable { mutableStateOf(false) }
     var expandedSort by rememberSaveable { mutableStateOf(false) }
 
-    var lastExecutedSpec by remember { mutableStateOf<OmdbRecommendationSpec?>(null) }
+    var lastExecutedSpec by remember { mutableStateOf<CatalogDiscoverySpec?>(null) }
 
     LaunchedEffect(state) {
         if (state is RecommendationUiState.Results) {
@@ -213,7 +210,7 @@ internal fun RecommendationComposer(
         onResetSession()
     }
 
-    fun buildSpecFromFilters(): OmdbRecommendationSpec {
+    fun buildSpecFromFilters(): CatalogDiscoverySpec {
         var minYear: Int? = when (selectedYearPreset) {
             "2020+" -> 2020
             "2015+" -> 2015
@@ -295,33 +292,16 @@ internal fun RecommendationComposer(
         }
         val maxSeasons: Int? = if (selectedSeasonsPreset == "1 season") 1 else null
 
-        val sort = when (selectedSortMode) {
-            "IMDb rating" -> OmdbRecommendationSort.IMDB_RATING
-            "Rotten Tomatoes" -> OmdbRecommendationSort.ROTTEN_TOMATOES
-            "Metascore" -> OmdbRecommendationSort.METASCORE
-            "Newest" -> OmdbRecommendationSort.NEWEST
-            "Oldest" -> OmdbRecommendationSort.OLDEST
-            "Most IMDb votes" -> OmdbRecommendationSort.MOST_IMDB_VOTES
-            else -> OmdbRecommendationSort.BEST_MATCH
-        }
-
-        return OmdbRecommendationSpec(
-            mediaType = mediaType,
-            includedGenres = includedGenres,
-            excludedGenres = excludedGenres,
-            minimumYear = minYear,
-            maximumYear = maxYear,
-            minimumRuntimeMinutes = minRuntime,
-            maximumRuntimeMinutes = maxRuntime,
-            minimumImdbRating = minImdb,
-            minimumImdbVotes = minVotes,
-            minimumRottenTomatoesRating = minRt,
-            minimumMetascore = minMeta,
-            contentRatings = selectedContentRatings,
-            languages = selectedLanguages,
-            minimumSeasons = if (mediaType == MediaType.TV) minSeasons else null,
-            maximumSeasons = if (mediaType == MediaType.TV) maxSeasons else null,
-            sortMode = sort
+        return CatalogDiscoverySpec(
+            mediaKind = if (mediaType == com.aliflix.app.model.MediaType.TV) com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE,
+            includedGenres = includedGenres.toList(),
+            excludedGenres = excludedGenres.toList(),
+            yearMinimum = minYear,
+            yearMaximum = maxYear,
+            runtimeMinimumMinutes = minRuntime,
+            runtimeMaximumMinutes = maxRuntime,
+            minimumImdb = minImdb,
+            minimumRottenTomatoes = minRt
         )
     }
 
@@ -411,7 +391,7 @@ internal fun RecommendationComposer(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = spec.summaryLabel(),
+                        text = "",
                         color = AliflixContentSecondary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
@@ -577,9 +557,9 @@ internal fun RecommendationComposer(
                                 Button(
                                     onClick = {
                                         if (describeText.isNotBlank()) {
-                                            val spec = OmdbRecommendationSpec(
-                                                mediaType = mediaType,
-                                                plotRequirements = listOf(describeText)
+                                            val spec = CatalogDiscoverySpec(
+                                                mediaKind = if (mediaType == com.aliflix.app.model.MediaType.TV) com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE,
+                                                semanticFacets = listOf(describeText)
                                             )
                                             lastExecutedSpec = spec
                                             onSubmitSpec(spec)
@@ -730,13 +710,9 @@ internal fun RecommendationComposer(
                                         val anchor = selectedAnchor
                                         val anchorTitle = anchor?.title ?: similarQuery.trim()
                                         if (anchorTitle.isNotBlank()) {
-                                            val spec = OmdbRecommendationSpec(
-                                                mediaType = mediaType,
-                                                similarityAnchor = OmdbRecommendationAnchor(
-                                                    title = anchorTitle,
-                                                    imdbId = anchor?.imdbId,
-                                                    mediaType = mediaType
-                                                )
+                                            val spec = CatalogDiscoverySpec(
+                                                mediaKind = if (mediaType == com.aliflix.app.model.MediaType.TV) com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE,
+                                                similarityTitle = anchorTitle
                                             )
                                             lastExecutedSpec = spec
                                             onSubmitSpec(spec)

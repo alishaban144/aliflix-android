@@ -2,8 +2,8 @@ package com.aliflix.app.ui.discover
 
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec
-import com.aliflix.app.recommendation.omdb.VerifiedRecommendationItem
+import com.aliflix.app.recommendation.CatalogDiscoverySpec
+import com.aliflix.app.recommendation.RecommendationCandidate
 
 sealed interface AskAliflixRequest {
     data class Describe(
@@ -17,7 +17,7 @@ sealed interface AskAliflixRequest {
     ) : AskAliflixRequest
 
     data class Filters(
-        val spec: OmdbRecommendationSpec
+        val spec: CatalogDiscoverySpec
     ) : AskAliflixRequest
 }
 
@@ -36,8 +36,8 @@ sealed interface AskAliflixUiState {
 
     data class Results(
         val requestSummary: String,
-        val spec: OmdbRecommendationSpec,
-        val items: List<VerifiedRecommendationItem>,
+        val spec: CatalogDiscoverySpec,
+        val items: List<RecommendationCandidate>,
         val loadingMore: Boolean = false,
         val hasMore: Boolean = true
     ) : AskAliflixUiState
@@ -64,5 +64,5 @@ data class AskAliflixEditorState(
     val describeText: String = "",
     val similarQuery: String = "",
     val selectedAnchor: Media? = null,
-    val spec: OmdbRecommendationSpec = OmdbRecommendationSpec()
+    val spec: CatalogDiscoverySpec = CatalogDiscoverySpec(mediaKind = com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)
 )

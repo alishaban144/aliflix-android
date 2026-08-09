@@ -1,120 +1,60 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import worker from '../src/index';
 
 describe('Cloudflare Worker', () => {
-  const env = { GEMINI_API_KEY: 'test-key' };
-  const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as any;
+  const env: any = {
+    GEMINI_API_KEY: 'test-key',
+    TMDB_API_KEY: 'test-key'
+  };
+  const ctx: any = {
+    waitUntil: () => {},
+    passThroughOnException: () => {}
+  };
 
   it('should return 200 OK for GET /health', async () => {
     const request = new Request('http://localhost/health', { method: 'GET' });
     const response = await worker.fetch(request, env, ctx);
+    
     expect(response.status).toBe(200);
-    const body = await response.json();
+    const body: any = await response.json();
     expect(body).toEqual({
       status: 'ok',
       service: 'aliflix-recommendations',
       geminiConfigured: true,
-      omdbConfigured: false,
-      omdbCacheConfigured: false,
+      tmdbConfigured: true,
     });
   });
 
   it('should return 404 for unsupported routes', async () => {
-    const request = new Request('http://localhost/unsupported', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const request = new Request('http://localhost/v1/interpret', { method: 'POST', body: '{}' });
     const response = await worker.fetch(request, env, ctx);
     expect(response.status).toBe(404);
   });
 
   it('should return 405 for wrong method', async () => {
-    const request = new Request('http://localhost/v1/interpret', { method: 'GET' });
+    const request = new Request('http://localhost/v3/recommendations', { method: 'GET' });
     const response = await worker.fetch(request, env, ctx);
     expect(response.status).toBe(405);
   });
 
   it('should return 415 for wrong content type', async () => {
-    const request = new Request('http://localhost/v1/interpret', { method: 'POST' });
+    const request = new Request('http://localhost/v3/recommendations', { 
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: 'bad'
+    });
     const response = await worker.fetch(request, env, ctx);
     expect(response.status).toBe(415);
   });
 
   it('should return 413 for oversized requests', async () => {
-    const hugeBody = 'x'.repeat(131073);
-    const request = new Request('http://localhost/v1/interpret', {
+    const hugeBody = JSON.stringify({ data: 'x'.repeat(150000) });
+    const request = new Request('http://localhost/v3/recommendations', { 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: hugeBody
     });
     const response = await worker.fetch(request, env, ctx);
     expect(response.status).toBe(413);
-  });
-
-  it('should return 400 for invalid schemas on /v1/interpret', async () => {
-    const request = new Request('http://localhost/v1/interpret', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ missingFields: true })
-    });
-    const response = await worker.fetch(request, env, ctx);
-    expect(response.status).toBe(400);
-  });
-
-  it('should return 400 if verification candidates exceed 25', async () => {
-    const request = new Request('http://localhost/v1/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId: '123',
-        originalQuery: 'test',
-        mediaType: 'movie',
-        requiredConceptGroups: [],
-        excludedConcepts: [],
-        hardConstraints: {},
-        candidates: new Array(26).fill({
-          candidateId: "movie:123", tmdbId: 123, mediaType: "movie", title: "T", originalTitle: "T", overview: "O", genres: [], keywords: [], releaseYear: 2020, directorOrCreators: [], principalCast: []
-        })
-      })
-    });
-    const response = await worker.fetch(request, env, ctx);
-    expect(response.status).toBe(400);
-  });
-
-  it('should validate request schema for /v2/recommendations/interpret', async () => {
-    const request = new Request('http://localhost/v2/recommendations/interpret', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mediaType: 'movie',
-        request: 'action sci fi movies after 2015'
-      })
-    });
-    // Will attempt to call gemini mock/fail with key error or pass parse stage
-    const response = await worker.fetch(request, env, ctx);
-    expect([200, 500, 502, 504]).toContain(response.status);
-  });
-
-  it('should return 400 for invalid mediaType on /v2/recommendations/interpret', async () => {
-    const request = new Request('http://localhost/v2/recommendations/interpret', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mediaType: 'invalid',
-        request: 'test'
-      })
-    });
-    const response = await worker.fetch(request, env, ctx);
-    expect(response.status).toBe(400);
-  });
-
-  it('should return 400 for candidates exceeding 25 on /v2/recommendations/verify-plots', async () => {
-    const request = new Request('http://localhost/v2/recommendations/verify-plots', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        plotRequirements: ['test'],
-        candidates: new Array(26).fill({ candidateId: '1', title: 'T' })
-      })
-    });
-    const response = await worker.fetch(request, env, ctx);
-    expect(response.status).toBe(400);
   });
 });

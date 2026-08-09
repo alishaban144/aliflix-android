@@ -18,7 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec
+import com.aliflix.app.recommendation.CatalogDiscoverySpec
 import com.aliflix.app.ui.theme.AliflixBackgroundBase
 
 @Composable
@@ -72,7 +72,7 @@ fun AskAliflixScreen(
                             onEditorStateChanged(
                                 editorState.copy(
                                     mediaType = newType,
-                                    spec = editorState.spec.copy(mediaType = newType)
+                                    spec = editorState.spec.copy(mediaKind = if (newType == com.aliflix.app.model.MediaType.TV) com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)
                                 )
                             )
                         }

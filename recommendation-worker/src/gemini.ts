@@ -2,6 +2,7 @@ import { INTERPRETATION_PROMPT, EXPANSION_PROMPT, VERIFICATION_PROMPT } from './
 
 export interface Env {
   GEMINI_API_KEY: string;
+  TMDB_API_KEY?: string;
   OMDB_API_KEY?: string;
   OMDB_CACHE?: KVNamespace;
 }
@@ -12,7 +13,7 @@ export async function callGemini(
   requestJson: any,
   schema: any
 ): Promise<any> {
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=' + env.GEMINI_API_KEY;
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + env.GEMINI_API_KEY;
 
   const payload = {
     contents: [
@@ -76,6 +77,47 @@ export async function callGemini(
     if (error.name === 'AbortError') {
       throw new Error('GEMINI_TIMEOUT');
     }
+    throw error;
+  }
+}
+
+export async function callGeminiEmbeddingsBatch(
+  env: Env,
+  texts: string[]
+): Promise<number[][]> {
+  // Using text-embedding-004 as it is the current stable model
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key=' + env.GEMINI_API_KEY;
+  
+  const payload = {
+    requests: texts.map(t => ({
+      model: 'models/text-embedding-004',
+      content: {
+        parts: [{ text: t }]
+      }
+    }))
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    if (!response.ok) {
+      throw new Error(`GEMINI_EMBEDDING_ERROR: ${response.status}`);
+    }
+    
+    const data: any = await response.json();
+    return data.embeddings.map((e: any) => e.values);
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') throw new Error('GEMINI_EMBEDDING_TIMEOUT');
     throw error;
   }
 }
