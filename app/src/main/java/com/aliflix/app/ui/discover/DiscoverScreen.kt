@@ -196,6 +196,7 @@ internal fun DiscoverScreen(
     onEditAskAliflix: () -> Unit = {},
     onSetAskEditorState: (AskAliflixEditorState) -> Unit = {},
     onLoadMoreAskAliflix: () -> Unit = {},
+    onRetryAskAliflix: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -316,13 +317,7 @@ internal fun DiscoverScreen(
                     suggestions = similarSuggestions,
                     suggestionsLoading = similarSuggestionsLoading,
                     onLoadMore = onLoadMoreAskAliflix,
-                    onRetry = {
-                        val req = when (val s = askUiState) {
-                            is AskAliflixUiState.Results -> AskAliflixRequest.Filters(s.spec)
-                            else -> AskAliflixRequest.Filters(askEditorState.spec)
-                        }
-                        onSubmitAskAliflix(req)
-                    },
+                    onRetry = onRetryAskAliflix,
                     onBack = {
                         recommendModeActive = false
                         onModeChange(SearchMode.TITLE)

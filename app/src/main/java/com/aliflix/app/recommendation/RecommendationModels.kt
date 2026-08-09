@@ -457,6 +457,8 @@ data class VerifiedMediaMetadata(
     val genresVerified: Boolean = true,
     val runtimeMinutes: Int? = null,
     val originalLanguage: String? = null,
+    val originCountries: List<String> = emptyList(),
+    val tmdbVoteCount: Int? = null,
     val status: String? = null,
     val director: String? = null,
     val seasonCount: Int? = null,

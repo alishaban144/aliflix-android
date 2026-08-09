@@ -19,8 +19,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "69"
-  RELEASE_VERSION_NAME: "2.9.18"
+  RELEASE_VERSION_CODE: "70"
+  RELEASE_VERSION_NAME: "2.9.19"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -132,7 +132,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Ask Aliflix Rebuild - OMDb Recommendation Engine"
+            "releaseNotes": "Ask Aliflix V3 now delivers TMDB-only movie and series recommendations with Gemini semantic ranking, strict filters, and real Load More pagination."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -141,8 +141,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "Aliflix ${RELEASE_VERSION_NAME}"
-          body: "Aliflix ${RELEASE_VERSION_NAME} release with Ask Aliflix OMDb-verified recommendation engine."
+          name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
+          body: "Ask Aliflix V3: TMDB-only movie and series discovery, Gemini semantic ranking, strict filters, resilient fallback ranking, and persistent Load More pagination."
           files: |
             aliflix-mobile.apk
             update-mobile.json

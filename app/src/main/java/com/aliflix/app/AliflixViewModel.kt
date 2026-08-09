@@ -165,65 +165,42 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     private var activeAskJob: Job? = null
     private var askSessionToken = 0L
+    private var activeAskRequest: com.aliflix.app.recommendation.V3RecommendationRequest? = null
+    private var activeAskSummary: String? = null
+    private var activeAskSpec: com.aliflix.app.recommendation.CatalogDiscoverySpec? = null
 
     fun submitAskAliflix(request: com.aliflix.app.ui.discover.AskAliflixRequest) {
         pauseBackgroundHomeRefresh()
         activeAskJob?.cancel()
         val token = ++askSessionToken
         
-        val summary = when (request) {
-            is com.aliflix.app.ui.discover.AskAliflixRequest.Describe -> "${if (request.mediaType == com.aliflix.app.model.MediaType.MOVIE) "Movies" else "Series"} - \"${request.text}\""
-            is com.aliflix.app.ui.discover.AskAliflixRequest.Similar -> "${if (request.outputMediaType == com.aliflix.app.model.MediaType.MOVIE) "Movies" else "Series"} - Similar to ${request.anchor.title}"
-            is com.aliflix.app.ui.discover.AskAliflixRequest.Filters -> "Filtered Search"
-        }
+        val mapped = com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(request)
+        val summary = mapped.summary
+        activeAskRequest = mapped.workerRequest
+        activeAskSummary = summary
+        activeAskSpec = mapped.spec
 
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Searching(summary)
         activeAskJob = viewModelScope.launch {
             try {
-                val clientAi = aiClient ?: throw IllegalStateException("Gemini AI service unavailable")
-                val v3Request = com.aliflix.app.recommendation.V3RecommendationRequest(
-                    requestId = java.util.UUID.randomUUID().toString(),
-                    query = summary,
-                    mediaType = "movie"
-                )
-                
+                val clientAi = aiClient
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    clientAi.getRecommendations(v3Request)
+                    clientAi.getRecommendations(mapped.workerRequest)
                 }
                 
                 if (token != askSessionToken) return@launch
 
-                val candidates = response.results.map { result ->
-                    com.aliflix.app.recommendation.RecommendationCandidate(
-                        media = com.aliflix.app.model.Media(
-                            id = result.tmdbId,
-                            title = result.title,
-                            overview = result.overview ?: "",
-                            posterPath = result.posterPath,
-                            backdropPath = result.backdropPath,
-                            type = if (result.mediaType == "tv") com.aliflix.app.model.MediaType.TV else com.aliflix.app.model.MediaType.MOVIE
-                        ),
-                        metadata = com.aliflix.app.recommendation.VerifiedMediaMetadata(genresVerified = true, verifiedAtMillis = System.currentTimeMillis()),
-                        evidence = result.overview ?: "",
-                        sources = emptySet(),
-                        sourceRanks = emptyMap(),
-                        sourceCount = 1,
-                        sourcePosition = 0,
-                        relevanceEvidence = emptyList(),
-                        precomputedSemanticScore = null,
-                        matchReasons = emptyList(),
-                        alternativeTitles = emptySet()
-                    )
-                }
+                val candidates = response.results.mapIndexed(::mapAskResult)
 
                 if (candidates.isEmpty()) {
                     _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Empty(summary, "No titles found.")
                 } else {
                     _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Results(
                         requestSummary = summary,
-                        spec = com.aliflix.app.recommendation.CatalogDiscoverySpec(mediaKind = if (v3Request.mediaType == "tv") com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE),
+                        spec = mapped.spec,
                         items = candidates,
-                        hasMore = false
+                        hasMore = response.hasMore,
+                        nextCursor = response.nextCursor,
                     )
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -243,6 +220,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskJob?.cancel()
         activeAskJob = null
         askSessionToken++
+        activeAskRequest = null
+        activeAskSummary = null
+        activeAskSpec = null
         _askEditorState.value = com.aliflix.app.ui.discover.AskAliflixEditorState()
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Editing
     }
@@ -253,20 +233,95 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun loadMoreAskAliflix() {
         val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results ?: return
-        if (currentResults.loadingMore) return
+        val original = activeAskRequest ?: return
+        val cursor = currentResults.nextCursor ?: return
+        if (currentResults.loadingMore || !currentResults.hasMore) return
 
         val token = askSessionToken
         _askUiState.value = currentResults.copy(loadingMore = true)
 
         activeAskJob = viewModelScope.launch {
-            // V3 pagination is disabled for now, simply return the same state
-            if (token != askSessionToken) return@launch
-            _askUiState.value = currentResults.copy(
-                loadingMore = false,
-                hasMore = false
-            )
+            try {
+                val response = aiClient.getRecommendations(original.copy(cursor = cursor))
+                if (token != askSessionToken) return@launch
+                val appended = (currentResults.items + response.results.mapIndexed(::mapAskResult))
+                    .distinctBy { it.media.key }
+                _askUiState.value = currentResults.copy(
+                    items = appended,
+                    loadingMore = false,
+                    hasMore = response.hasMore,
+                    nextCursor = response.nextCursor,
+                    loadMoreError = null,
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (token != askSessionToken) return@launch
+                _askUiState.value = currentResults.copy(loadingMore = false, loadMoreError = error.message ?: "Could not load more matches")
+            }
         }
     }
+
+    fun retryAskAliflix() {
+        val original = activeAskRequest ?: return
+        val summary = activeAskSummary ?: return
+        val spec = activeAskSpec ?: return
+        activeAskJob?.cancel()
+        val token = ++askSessionToken
+        _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Searching(summary)
+        activeAskJob = viewModelScope.launch {
+            try {
+                val response = aiClient.getRecommendations(original.copy(cursor = null))
+                if (token != askSessionToken) return@launch
+                val candidates = response.results.mapIndexed(::mapAskResult)
+                _askUiState.value = if (candidates.isEmpty()) {
+                    com.aliflix.app.ui.discover.AskAliflixUiState.Empty(summary, "No titles found.")
+                } else {
+                    com.aliflix.app.ui.discover.AskAliflixUiState.Results(summary, spec, candidates, hasMore = response.hasMore, nextCursor = response.nextCursor)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (token == askSessionToken) _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, error.message ?: "Failed to find titles")
+            }
+        }
+    }
+
+    private fun mapAskResult(index: Int, result: com.aliflix.app.recommendation.V3RecommendationResult) =
+        com.aliflix.app.recommendation.RecommendationCandidate(
+            media = com.aliflix.app.model.Media(
+                id = result.tmdbId,
+                title = result.title,
+                overview = result.overview.orEmpty(),
+                posterPath = result.posterPath,
+                backdropPath = result.backdropPath,
+                type = com.aliflix.app.model.MediaType.from(result.mediaType),
+                year = result.releaseDate?.take(4).orEmpty(),
+                rating = result.tmdbRating ?: 0.0,
+                genres = result.genres,
+                runtime = result.runtimeMinutes?.let { "$it min" }.orEmpty(),
+            ),
+            metadata = com.aliflix.app.recommendation.VerifiedMediaMetadata(
+                genresVerified = true,
+                runtimeMinutes = result.runtimeMinutes,
+                originalLanguage = result.originalLanguage,
+                originCountries = result.originCountries,
+                tmdbVoteCount = result.tmdbVoteCount,
+                verifiedAtMillis = System.currentTimeMillis(),
+            ),
+            evidence = result.overview.orEmpty(),
+            sources = result.retrievalSources.toSet(),
+            sourceCount = result.retrievalSources.size,
+            sourcePosition = index,
+            score = com.aliflix.app.recommendation.RecommendationScoreBreakdown(
+                semanticRelevance = result.finalScore,
+                confidence = result.finalScore,
+                total = result.finalScore,
+                finalScore = result.finalScore,
+            ),
+            explanation = result.matchReasons.joinToString(" · ").ifBlank { result.matchLevel },
+            precomputedSemanticScore = result.finalScore,
+            alternativeTitles = setOfNotNull(result.originalTitle).filterNot { it == result.title }.toSet(),
+        )
 
     val playbackPreferences: StateFlow<PlaybackPreferences> =
         playbackProviderRepository.preferences

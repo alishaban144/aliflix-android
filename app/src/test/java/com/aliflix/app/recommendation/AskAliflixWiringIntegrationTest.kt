@@ -2,86 +2,77 @@ package com.aliflix.app.recommendation
 
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.recommendation.omdb.OmdbRecommendationSort
-import com.aliflix.app.recommendation.omdb.OmdbRecommendationSpec
 import com.aliflix.app.ui.discover.AskAliflixRequest
+import com.aliflix.app.ui.discover.AskAliflixRequestMapper
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AskAliflixWiringIntegrationTest {
-
     @Test
-    fun testOmdbRecommendationSpecPreservesAllFieldsIntact() {
-        val originalSpec = OmdbRecommendationSpec(
-            mediaType = MediaType.MOVIE,
-            includedGenres = setOf("Action", "Sci-Fi"),
-            excludedGenres = setOf("Horror"),
-            minimumYear = 2016,
-            maximumYear = 2024,
-            minimumRuntimeMinutes = 90,
-            maximumRuntimeMinutes = 150,
-            minimumImdbRating = 7.5,
-            minimumImdbVotes = 50000,
-            minimumRottenTomatoesRating = 80,
-            minimumMetascore = 70,
-            languages = setOf("English"),
-            contentRatings = setOf("PG-13", "R"),
-            minimumSeasons = 1,
-            maximumSeasons = 5,
-            sortMode = OmdbRecommendationSort.IMDB_RATING
+    fun describeForwardsRawQueryAndSelectedTvType() {
+        val mapped = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Describe(MediaType.TV, "  kids with supernatural powers  "),
+            "00000000-0000-4000-8000-000000000001",
         )
-
-        val request = AskAliflixRequest.Filters(originalSpec)
-        val specFromRequest = request.spec
-
-        assertEquals(originalSpec.mediaType, specFromRequest.mediaType)
-        assertEquals(originalSpec.includedGenres, specFromRequest.includedGenres)
-        assertEquals(originalSpec.excludedGenres, specFromRequest.excludedGenres)
-        assertEquals(originalSpec.minimumYear, specFromRequest.minimumYear)
-        assertEquals(originalSpec.maximumYear, specFromRequest.maximumYear)
-        assertEquals(originalSpec.minimumRuntimeMinutes, specFromRequest.minimumRuntimeMinutes)
-        assertEquals(originalSpec.maximumRuntimeMinutes, specFromRequest.maximumRuntimeMinutes)
-        assertEquals(originalSpec.minimumImdbRating, specFromRequest.minimumImdbRating)
-        assertEquals(originalSpec.minimumImdbVotes, specFromRequest.minimumImdbVotes)
-        assertEquals(originalSpec.minimumRottenTomatoesRating, specFromRequest.minimumRottenTomatoesRating)
-        assertEquals(originalSpec.minimumMetascore, specFromRequest.minimumMetascore)
-        assertEquals(originalSpec.languages, specFromRequest.languages)
-        assertEquals(originalSpec.contentRatings, specFromRequest.contentRatings)
-        assertEquals(originalSpec.minimumSeasons, specFromRequest.minimumSeasons)
-        assertEquals(originalSpec.maximumSeasons, specFromRequest.maximumSeasons)
-        assertEquals(originalSpec.sortMode, specFromRequest.sortMode)
+        val json = mapped.workerRequest.toJson()
+        assertEquals("kids with supernatural powers", json.getString("query"))
+        assertEquals("tv", json.getString("mediaType"))
+        assertEquals("describe", json.getString("mode"))
+        assertFalse(json.getString("query").contains("Series —"))
     }
 
     @Test
-    fun testSingleFieldFiltersAreValidRequests() {
-        val yearOnly = OmdbRecommendationSpec(minimumYear = 2020)
-        val imdbOnly = OmdbRecommendationSpec(minimumImdbRating = 8.0)
-        val rtOnly = OmdbRecommendationSpec(minimumRottenTomatoesRating = 85)
-        val runtimeOnly = OmdbRecommendationSpec(maximumRuntimeMinutes = 100)
-
-        assertTrue(AskAliflixRequest.Filters(yearOnly).spec.minimumYear == 2020)
-        assertTrue(AskAliflixRequest.Filters(imdbOnly).spec.minimumImdbRating == 8.0)
-        assertTrue(AskAliflixRequest.Filters(rtOnly).spec.minimumRottenTomatoesRating == 85)
-        assertTrue(AskAliflixRequest.Filters(runtimeOnly).spec.maximumRuntimeMinutes == 100)
+    fun similarPreservesAnchorTmdbIdentityAndRequestedOutputType() {
+        val anchor = Media(id = 1396, type = MediaType.TV, title = "Breaking Bad")
+        val json = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Similar(outputMediaType = MediaType.TV, anchor = anchor),
+            "00000000-0000-4000-8000-000000000002",
+        ).workerRequest.toJson()
+        assertEquals("similar", json.getString("mode"))
+        assertEquals("tv", json.getString("mediaType"))
+        assertEquals(1396, json.getJSONObject("anchor").getInt("tmdbId"))
+        assertEquals("tv", json.getJSONObject("anchor").getString("mediaType"))
+        assertTrue(json.getString("query").contains("Breaking Bad"))
     }
 
     @Test
-    fun testSimilarRequestRetainsCanonicalAnchor() {
-        val anchorMedia = Media(
-            id = 1396,
-            imdbId = "tt0903747",
-            title = "Breaking Bad",
-            overview = "A high school chemistry teacher diagnosed with inoperable lung cancer...",
-            type = MediaType.TV,
-            year = "2008"
+    fun filtersSerializeEverySupportedTmdbConstraintWithoutOmdbFields() {
+        val spec = CatalogDiscoverySpec(
+            mediaKind = RecommendationMediaKind.SERIES,
+            includedGenres = listOf("Crime"), excludedGenres = listOf("Comedy"),
+            runtimeMinimumMinutes = 40, runtimeMaximumMinutes = 70,
+            yearMinimum = 2021, yearMaximum = 2025, minimumTmdb = 7.5,
+            originalLanguage = "ko", countries = listOf("KR"), discoveryText = "serial killers",
         )
-        val request = AskAliflixRequest.Similar(outputMediaType = MediaType.TV, anchor = anchorMedia)
+        val filters = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Filters(spec), "00000000-0000-4000-8000-000000000003",
+        ).workerRequest.toJson().getJSONObject("filters")
+        assertEquals(2021, filters.getInt("minimumYear"))
+        assertEquals("ko", filters.getString("originalLanguage"))
+        assertEquals("KR", filters.getJSONArray("originCountries").getString(0))
+        assertEquals(7.5, filters.getDouble("minimumTmdbRating"), 0.0)
+        assertFalse(filters.has("minimumImdb"))
+        assertFalse(filters.has("minimumRottenTomatoes"))
+    }
 
-        assertEquals("Breaking Bad", request.anchor.title)
-        assertEquals("tt0903747", request.anchor.imdbId)
-        assertEquals(1396, request.anchor.id)
-        assertEquals(MediaType.TV, request.outputMediaType)
+    @Test
+    fun responseMappingRetainsTmdbMetadataAndCursor() {
+        val response = V3RecommendationResponse.fromJson(JSONObject("""
+            {"requestId":"r","nextCursor":"cursor","hasMore":true,"results":[{
+              "tmdbId":60059,"mediaType":"tv","title":"Better Call Saul","originalTitle":"Better Call Saul",
+              "overview":"A lawyer's transformation","releaseDate":"2015-02-08","genres":["Crime","Drama"],
+              "runtimeMinutes":47,"originalLanguage":"en","originCountries":["US"],"tmdbRating":8.7,
+              "tmdbVoteCount":6000,"matchLevel":"Exceptional","finalScore":0.92,
+              "matchReasons":["Recommended by TMDB"],"retrievalSources":["recommendations:page-1"]}
+        ]} """))
+        val item = response.results.single()
+        assertEquals(listOf("Crime", "Drama"), item.genres)
+        assertEquals(47, item.runtimeMinutes)
+        assertEquals(8.7, item.tmdbRating!!, 0.0)
+        assertEquals("cursor", response.nextCursor)
+        assertTrue(response.hasMore)
     }
 }

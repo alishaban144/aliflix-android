@@ -74,6 +74,7 @@ fun AskAliflixFilters(
 
     // Active pill builder
     val activePills = rememberActivePills(spec, onSpecChanged)
+    val availableGenres = if (spec.mediaKind == RecommendationMediaKind.SERIES) ASK_TMDB_TV_GENRES else ASK_TMDB_MOVIE_GENRES
 
     val isFilterActive = spec.includedGenres.isNotEmpty() ||
         spec.excludedGenres.isNotEmpty() ||
@@ -81,8 +82,7 @@ fun AskAliflixFilters(
         spec.yearMaximum != null ||
         spec.runtimeMinimumMinutes != null ||
         spec.runtimeMaximumMinutes != null ||
-        spec.minimumImdb != null ||
-        spec.minimumRottenTomatoes != null ||
+        spec.minimumTmdb != null ||
         spec.originalLanguage != null
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -146,7 +146,7 @@ fun AskAliflixFilters(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        CANONICAL_OMDB_GENRES.forEach { genre ->
+                        availableGenres.forEach { genre ->
                             val isSel = spec.includedGenres.contains(genre)
                             AskAliflixChip(
                                 label = genre,
@@ -173,7 +173,7 @@ fun AskAliflixFilters(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        CANONICAL_OMDB_GENRES.forEach { genre ->
+                        availableGenres.forEach { genre ->
                             val isSel = spec.excludedGenres.contains(genre)
                             AskAliflixChip(
                                 label = genre,
@@ -260,13 +260,12 @@ fun AskAliflixFilters(
             item {
                 FilterCategoryHeader(
                     title = "Ratings",
-                    badgeCount = (if (spec.minimumImdb != null) 1 else 0) +
-                        (if (spec.minimumRottenTomatoes != null) 1 else 0),
+                    badgeCount = if (spec.minimumTmdb != null) 1 else 0,
                     isExpanded = expRatings,
                     onToggle = { expRatings = !expRatings }
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("IMDb rating", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text("TMDB rating", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             listOf(
                                 "Any" to null,
@@ -278,30 +277,11 @@ fun AskAliflixFilters(
                                 "8.5+" to 8.5,
                                 "9+" to 9.0
                             ).forEach { (label, rating) ->
-                                val isSel = spec.minimumImdb == rating
+                                val isSel = spec.minimumTmdb == rating
                                 AskAliflixChip(
                                     label = label,
                                     isSelected = isSel,
-                                    onClick = { onSpecChanged(spec.copy(minimumImdb = rating)) }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Rotten Tomatoes", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(
-                                "Any" to null,
-                                "60%+" to 60,
-                                "70%+" to 70,
-                                "80%+" to 80,
-                                "90%+" to 90
-                            ).forEach { (label, rt) ->
-                                val isSel = spec.minimumRottenTomatoes == rt
-                                AskAliflixChip(
-                                    label = label,
-                                    isSelected = isSel,
-                                    onClick = { onSpecChanged(spec.copy(minimumRottenTomatoes = rt)) }
+                                    onClick = { onSpecChanged(spec.copy(minimumTmdb = rating)) }
                                 )
                             }
                         }
@@ -423,14 +403,21 @@ private fun rememberActivePills(
         }
         list.add(label to { onSpecChanged(spec.copy(runtimeMinimumMinutes = null, runtimeMaximumMinutes = null)) })
     }
-    if (spec.minimumImdb != null) {
-        list.add("IMDb ${spec.minimumImdb}+" to { onSpecChanged(spec.copy(minimumImdb = null)) })
-    }
-    if (spec.minimumRottenTomatoes != null) {
-        list.add("RT ${spec.minimumRottenTomatoes}%+" to { onSpecChanged(spec.copy(minimumRottenTomatoes = null)) })
+    if (spec.minimumTmdb != null) {
+        list.add("TMDB ${spec.minimumTmdb}+" to { onSpecChanged(spec.copy(minimumTmdb = null)) })
     }
     if (spec.originalLanguage != null) {
         list.add(spec.originalLanguage to { onSpecChanged(spec.copy(originalLanguage = null)) })
     }
     return list
 }
+
+private val ASK_TMDB_MOVIE_GENRES = listOf(
+    "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy",
+    "History", "Horror", "Music", "Mystery", "Romance", "Science Fiction", "TV Movie", "Thriller", "War", "Western",
+)
+
+private val ASK_TMDB_TV_GENRES = listOf(
+    "Action & Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Kids", "Mystery",
+    "News", "Reality", "Sci-Fi & Fantasy", "Soap", "Talk", "War & Politics", "Western",
+)

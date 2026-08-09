@@ -13,3 +13,9 @@ device-debug/
 *.jks
 *.keystore
 keystore.properties
+node_modules/
+.gradle-agent/
+scratch/
+recommendation-worker/dist/
+recommendation-worker/coverage/
+recommendation-worker/.wrangler/

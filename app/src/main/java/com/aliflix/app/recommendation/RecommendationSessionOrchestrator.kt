@@ -455,20 +455,34 @@ class RecommendationOrchestrator(
             else -> (draft.genres + draft.moods).joinToString(" ")
         }
 
-        val filters = mutableMapOf<String, Any>()
+        var minimumYear: Int? = null
+        var maximumYear: Int? = null
         if (draft.yearRule != null) {
-            val min = parseYearMin(draft.yearRule)
-            val max = parseYearMax(draft.yearRule)
-            if (min != null) filters["minimumYear"] = min
-            if (max != null) filters["maximumYear"] = max
+            minimumYear = parseYearMin(draft.yearRule)
+            maximumYear = parseYearMax(draft.yearRule)
         }
-        if (draft.language != null) filters["originalLanguage"] = draft.language
+        val outputType = if (wantedKind == MediaType.MOVIE) "movie" else "tv"
+        val similarityAnchor = draft.similarityAnchor
+        val similarityTitle = draft.similarityTitle ?: similarityAnchor?.title
         
         val request = V3RecommendationRequest(
             requestId = java.util.UUID.randomUUID().toString(),
+            mode = if (isSimilarTo) "similar" else "describe",
             query = queryText,
-            mediaType = if (wantedKind == MediaType.MOVIE) "movie" else "tv",
-            filters = filters,
+            mediaType = outputType,
+            anchor = similarityTitle?.let {
+                V3RecommendationAnchor(
+                    tmdbId = similarityAnchor?.id,
+                    title = it,
+                    mediaType = similarityAnchor?.type?.routeName ?: outputType,
+                )
+            },
+            filters = V3RecommendationFilters(
+                minimumYear = minimumYear,
+                maximumYear = maximumYear,
+                originalLanguage = draft.language,
+                includedGenres = draft.genres,
+            ),
             pageSize = 40
         )
 
@@ -482,7 +496,7 @@ class RecommendationOrchestrator(
                 year = res.releaseDate?.take(4) ?: "",
                 posterPath = res.posterPath,
                 backdropPath = res.backdropPath,
-                rating = res.voteAverage ?: 0.0,
+                rating = res.tmdbRating ?: 0.0,
                 overview = res.overview ?: "",
                 genres = res.genres
             )

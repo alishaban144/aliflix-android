@@ -188,7 +188,7 @@ fun AskAliflixResults(
                     ) {
                         itemsIndexed(
                             items = uiState.items,
-                            key = { _, item -> item.media.imdbId ?: "tmdb:${item.media.id}" }
+                            key = { _, item -> item.media.key }
                         ) { _, item ->
                             ResultCard(item = item, onClick = { onOpenMedia(item.media) })
                         }
@@ -216,6 +216,16 @@ fun AskAliflixResults(
                                         }
                                     }
                                 }
+                            }
+                        }
+                        uiState.loadMoreError?.let { message ->
+                            item {
+                                Text(
+                                    text = message,
+                                    color = AliflixError,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                )
                             }
                         }
                     }
@@ -381,7 +391,7 @@ private fun ResultCard(
                             )
                             Spacer(modifier = Modifier.width(2.dp))
                             Text(
-                                text = "$rating",
+                                text = "TMDB $rating",
                                 color = AliflixContentPrimary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold

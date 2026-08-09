@@ -39,7 +39,9 @@ sealed interface AskAliflixUiState {
         val spec: CatalogDiscoverySpec,
         val items: List<RecommendationCandidate>,
         val loadingMore: Boolean = false,
-        val hasMore: Boolean = true
+        val hasMore: Boolean = true,
+        val nextCursor: String? = null,
+        val loadMoreError: String? = null,
     ) : AskAliflixUiState
 
     data class Empty(
