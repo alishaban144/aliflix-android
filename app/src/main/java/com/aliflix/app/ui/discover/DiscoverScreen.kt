@@ -163,6 +163,8 @@ internal fun DiscoverScreen(
     shouldOfferSemanticModel: Boolean,
     focusRequestId: Int?,
     onFocusRequestConsumed: (Int) -> Unit,
+    askOpenRequestId: Int? = null,
+    onAskOpenRequestConsumed: (Int) -> Unit = {},
     onQueryChange: (String) -> Unit,
     onSubmitSearch: (String) -> Unit,
     onSearchTitles: suspend (String) -> List<Media>,
@@ -243,6 +245,14 @@ internal fun DiscoverScreen(
         }
     }
 
+    LaunchedEffect(askOpenRequestId) {
+        if (askOpenRequestId != null) {
+            recommendModeActive = true
+            onModeChange(SearchMode.AI)
+            onAskOpenRequestConsumed(askOpenRequestId)
+        }
+    }
+
     androidx.activity.compose.BackHandler(enabled = recommendModeActive) {
         recommendModeActive = false
     }
@@ -288,7 +298,8 @@ internal fun DiscoverScreen(
                 var similarSuggestionsLoading by remember { mutableStateOf(false) }
 
                 LaunchedEffect(askEditorState.similarQuery, askEditorState.mode) {
-                    if (askEditorState.mode == 1 && askEditorState.similarQuery.trim().isNotBlank() && askEditorState.selectedAnchor == null) {
+                    if (askEditorState.mode == 1 && askEditorState.similarQuery.trim().length >= 2 && askEditorState.selectedAnchor == null) {
+                        delay(280)
                         similarSuggestionsLoading = true
                         similarSuggestions = try {
                             onSearchTitles(askEditorState.similarQuery.trim())
@@ -313,7 +324,6 @@ internal fun DiscoverScreen(
                     onReset = onResetAskAliflix,
                     onEdit = onEditAskAliflix,
                     onOpenMedia = onOpen,
-                    onSearchTitles = onSearchTitles,
                     suggestions = similarSuggestions,
                     suggestionsLoading = similarSuggestionsLoading,
                     onLoadMore = onLoadMoreAskAliflix,
@@ -458,60 +468,58 @@ internal fun DiscoverScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 6.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            color = AliflixSurfaceElevated,
+                            shape = RoundedCornerShape(22.dp),
+                            color = Color.Transparent,
                             contentColor = AliflixContentPrimary,
-                            tonalElevation = 2.dp,
+                            tonalElevation = 0.dp,
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(16.dp),
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(
+                                                AliflixAccentPrimary.copy(alpha = 0.32f),
+                                                AliflixSurfaceElevated,
+                                                AliflixSurfacePrimary,
+                                            )
+                                        )
+                                    )
+                                    .border(1.dp, AliflixAccentPrimary.copy(alpha = 0.34f), RoundedCornerShape(22.dp))
+                                    .padding(horizontal = 16.dp, vertical = 15.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.AutoAwesome,
-                                    contentDescription = null,
-                                    tint = AliflixAccentPrimary,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = "Ask Aliflix",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp,
-                                            color = AliflixContentPrimary
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Surface(
-                                            color = AliflixAccentPrimary.copy(alpha = 0.1f),
-                                            shape = RoundedCornerShape(4.dp),
-                                            modifier = Modifier.padding(vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = "BETA",
-                                                fontWeight = FontWeight.Black,
-                                                fontSize = 9.sp,
-                                                color = AliflixAccentPrimary,
-                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                Box(
+                                    modifier = Modifier
+                                        .size(46.dp)
+                                        .clip(RoundedCornerShape(15.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(AliflixAccentPrimary, Color(0xFF9277EC))
                                             )
-                                        }
-                                    }
-                                    Text(
-                                        text = "Describe what you want and refine the matches",
-                                        color = AliflixContentSecondary,
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(23.dp)
                                     )
                                 }
+                                Spacer(modifier = Modifier.width(13.dp))
+                                Text(
+                                    text = "Ask Aliflix",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 17.sp,
+                                    color = AliflixContentPrimary,
+                                    modifier = Modifier.weight(1f),
+                                )
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
                                     contentDescription = "Open Ask Aliflix recommendations",
-                                    tint = AliflixContentTertiary,
-                                    modifier = Modifier.size(20.dp)
+                                    tint = AliflixAccentSecondary,
+                                    modifier = Modifier.size(21.dp)
                                 )
                             }
                         }
@@ -863,7 +871,6 @@ private fun CatalogueContent(
         ) {
             Text(
                 text = when (state.phase) {
-                    SearchPhase.TYPING -> "Keeping your last matches while you type"
                     SearchPhase.LOADING -> "Updating matches"
                     else -> "Best catalogue matches"
                 },
@@ -968,8 +975,8 @@ private fun DiscoverIdleContent(
         if (recentItems.isEmpty() && rails.isEmpty()) {
             item(key = "catalogue-warming", contentType = "status") {
                 InlineNotice(
-                    title = "Discovery is warming up",
-                    message = "Start with a title above. Catalogue collections will appear here as they become available.",
+                    title = "No titles yet",
+                    message = "Browse or search to begin.",
                     actionLabel = null,
                     onAction = null,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),

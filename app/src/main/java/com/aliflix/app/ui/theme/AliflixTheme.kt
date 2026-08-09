@@ -19,31 +19,31 @@ import androidx.compose.ui.unit.sp
  * The primary accent deliberately supports white text at WCAG AA contrast while
  * remaining restrained against the deep blue-black surfaces used by the app.
  */
-val AliflixBackgroundBase = Color(0xFF05070D)
-val AliflixBackgroundImmersive = Color(0xFF070A12)
-val AliflixSurfacePrimary = Color(0xFF0D111A)
-val AliflixSurfaceSecondary = Color(0xFF131824)
-val AliflixSurfaceElevated = Color(0xFF1A2030)
-val AliflixSurfacePressed = Color(0xFF22293A)
-val AliflixSurfaceDisabled = Color(0xFF181C25)
+val AliflixBackgroundBase = Color(0xFF07080C)
+val AliflixBackgroundImmersive = Color(0xFF090B12)
+val AliflixSurfacePrimary = Color(0xFF10131A)
+val AliflixSurfaceSecondary = Color(0xFF171B24)
+val AliflixSurfaceElevated = Color(0xFF1E2430)
+val AliflixSurfacePressed = Color(0xFF293140)
+val AliflixSurfaceDisabled = Color(0xFF1A1D24)
 
-val AliflixContentPrimary = Color(0xFFEDECF2)
-val AliflixContentSecondary = Color(0xFFA6AAB8)
-val AliflixContentTertiary = Color(0xFF777D8D)
-val AliflixContentInverse = Color(0xFF0D1017)
+val AliflixContentPrimary = Color(0xFFF7F5FF)
+val AliflixContentSecondary = Color(0xFFB8BAC7)
+val AliflixContentTertiary = Color(0xFF858A99)
+val AliflixContentInverse = Color(0xFF111019)
 
-val AliflixBorderSubtle = Color(0xFF252B39)
-val AliflixBorderStrong = Color(0xFF3B4355)
-val AliflixAccentPrimary = Color(0xFF6650B8)
-val AliflixAccentPrimaryContainer = Color(0xFF211A39)
-val AliflixAccentSecondary = Color(0xFF9A8BB8)
-val AliflixEditorialWarm = Color(0xFFC28B53)
+val AliflixBorderSubtle = Color(0xFF2A303C)
+val AliflixBorderStrong = Color(0xFF454D5D)
+val AliflixAccentPrimary = Color(0xFF6E59D9)
+val AliflixAccentPrimaryContainer = Color(0xFF251D45)
+val AliflixAccentSecondary = Color(0xFFC5B9FF)
+val AliflixEditorialWarm = Color(0xFFFFB86B)
 
-val AliflixSuccess = Color(0xFF52AD79)
-val AliflixWarning = Color(0xFFC89755)
-val AliflixError = Color(0xFFD25E6C)
-val AliflixInfo = Color(0xFF5B9FC5)
-val AliflixFocus = Color(0xFFA394C8)
+val AliflixSuccess = Color(0xFF63D69A)
+val AliflixWarning = Color(0xFFF1B967)
+val AliflixError = Color(0xFFFF7184)
+val AliflixInfo = Color(0xFF70B8EA)
+val AliflixFocus = Color(0xFFC5B9FF)
 val AliflixScrimLight = Color(0x70020409)
 val AliflixScrimStrong = Color(0xE0020409)
 
@@ -78,10 +78,10 @@ object AliflixSpacing {
 
 object AliflixRadii {
     val none = 0.dp
-    val small = 8.dp
-    val medium = 12.dp
-    val large = 18.dp
-    val extraLarge = 28.dp
+    val small = 10.dp
+    val medium = 14.dp
+    val large = 20.dp
+    val extraLarge = 30.dp
     val full = 999.dp
 }
 

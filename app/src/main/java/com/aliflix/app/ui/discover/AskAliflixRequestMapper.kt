@@ -26,9 +26,9 @@ object AskAliflixRequestMapper {
             else -> CatalogDiscoverySpec(if (outputType == MediaType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE)
         }
         val summary = when (request) {
-            is AskAliflixRequest.Describe -> "${outputType.label()} — \"${request.text.trim()}\""
-            is AskAliflixRequest.Similar -> "${outputType.label()} — Similar to ${request.anchor.title}"
-            is AskAliflixRequest.Filters -> "${outputType.label()} — Filtered search"
+            is AskAliflixRequest.Describe -> "${outputType.label()} — “${request.text.trim()}”"
+            is AskAliflixRequest.Similar -> "${outputType.label()} — similar to ${request.anchor.title}"
+            is AskAliflixRequest.Filters -> "${outputType.label()} — your selected filters"
         }
         val rawQuery = when (request) {
             is AskAliflixRequest.Describe -> request.text.trim()

@@ -318,7 +318,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 total = result.finalScore,
                 finalScore = result.finalScore,
             ),
-            explanation = result.matchReasons.joinToString(" · ").ifBlank { result.matchLevel },
+            explanation = result.matchLevel,
             precomputedSemanticScore = result.finalScore,
             alternativeTitles = setOfNotNull(result.originalTitle).filterNot { it == result.title }.toSet(),
         )

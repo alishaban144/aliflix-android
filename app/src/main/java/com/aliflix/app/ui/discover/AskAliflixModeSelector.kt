@@ -1,34 +1,60 @@
 package com.aliflix.app.ui.discover
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
+import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
+import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
+
+private data class AskModeTab(
+    val label: String,
+    val icon: ImageVector,
+)
 
 @Composable
 fun AskAliflixModeSelector(
@@ -38,92 +64,134 @@ fun AskAliflixModeSelector(
     onMediaTypeSelected: (MediaType) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Segmented Media Type Control (Movies | Series)
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(AliflixSurfaceElevated)
-                .padding(2.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(AliflixSurfaceElevated.copy(alpha = 0.86f))
+                .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            listOf(MediaType.MOVIE to "Movies", MediaType.TV to "Series").forEach { (type, label) ->
-                val isSelected = selectedMediaType == type
-                val bgColor by animateColorAsState(
-                    targetValue = if (isSelected) AliflixAccentPrimary else Color.Transparent,
-                    animationSpec = AskAliflixMotion.chipSpec(),
-                    label = "media-type-bg"
+            MediaType.entries.forEach { type ->
+                val selected = selectedMediaType == type
+                val label = if (type == MediaType.MOVIE) "Movies" else "Series"
+                val icon = if (type == MediaType.MOVIE) Icons.Rounded.Movie else Icons.Rounded.Tv
+                val background by animateColorAsState(
+                    if (selected) AliflixAccentPrimary else Color.Transparent,
+                    AskAliflixMotion.chipSpec(),
+                    label = "ask-media-background",
                 )
-                val textColor by animateColorAsState(
-                    targetValue = if (isSelected) Color.White else AliflixContentSecondary,
-                    animationSpec = AskAliflixMotion.chipSpec(),
-                    label = "media-type-fg"
+                val foreground by animateColorAsState(
+                    if (selected) Color.White else AliflixContentSecondary,
+                    AskAliflixMotion.chipSpec(),
+                    label = "ask-media-foreground",
                 )
-
-                Box(
+                Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(bgColor)
-                        .clickable { onMediaTypeSelected(type) }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center
+                        .weight(1f)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(background)
+                        .semantics {
+                            role = Role.RadioButton
+                            this.selected = selected
+                        }
+                        .clickable { onMediaTypeSelected(type) },
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = label,
-                        color = textColor,
-                        fontSize = 12.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                    )
+                    Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text(label, color = foreground, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        // Segmented Mode Rail (Describe | Similar | Filters)
         Row(
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(AliflixSurfaceElevated)
-                .padding(2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("Describe", "Similar", "Filters").forEachIndexed { idx, label ->
-                val isSelected = selectedMode == idx
-                val bgColor by animateColorAsState(
-                    targetValue = if (isSelected) AliflixAccentPrimary else Color.Transparent,
-                    animationSpec = AskAliflixMotion.chipSpec(),
-                    label = "mode-rail-bg"
+            listOf(
+                AskModeTab("Describe", Icons.Rounded.AutoAwesome),
+                AskModeTab("Similar", Icons.Rounded.Search),
+                AskModeTab("Filters", Icons.Rounded.Tune),
+            ).forEachIndexed { index, tab ->
+                AskModeButton(
+                    tab = tab,
+                    selected = selectedMode == index,
+                    onClick = { onModeSelected(index) },
+                    modifier = Modifier.weight(1f),
                 )
-                val textColor by animateColorAsState(
-                    targetValue = if (isSelected) Color.White else AliflixContentSecondary,
-                    animationSpec = AskAliflixMotion.chipSpec(),
-                    label = "mode-rail-fg"
-                )
-
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(bgColor)
-                        .clickable { onModeSelected(idx) }
-                        .padding(vertical = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = label,
-                        color = textColor,
-                        fontSize = 12.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                    )
-                }
             }
+        }
+    }
+}
+
+@Composable
+private fun AskModeButton(
+    tab: AskModeTab,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) 0.96f else 1f,
+        AskAliflixMotion.pressSpec(),
+        label = "ask-mode-press",
+    )
+    val background by animateColorAsState(
+        if (selected) AliflixAccentPrimary.copy(alpha = 0.18f) else AliflixSurfaceSecondary.copy(alpha = 0.74f),
+        AskAliflixMotion.chipSpec(),
+        label = "ask-mode-background",
+    )
+    val border by animateColorAsState(
+        if (selected) AliflixAccentPrimary.copy(alpha = 0.9f) else AliflixBorderSubtle,
+        AskAliflixMotion.chipSpec(),
+        label = "ask-mode-border",
+    )
+    val foreground by animateColorAsState(
+        if (selected) AliflixContentPrimary else AliflixContentSecondary,
+        AskAliflixMotion.chipSpec(),
+        label = "ask-mode-foreground",
+    )
+
+    Column(
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .height(52.dp)
+            .clip(RoundedCornerShape(15.dp))
+            .background(background)
+            .border(1.dp, border, RoundedCornerShape(15.dp))
+            .semantics {
+                role = Role.Tab
+                this.selected = selected
+            }
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = tab.icon,
+                contentDescription = null,
+                tint = if (selected) AliflixAccentSecondary else foreground,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(tab.label, color = foreground, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
         }
     }
 }

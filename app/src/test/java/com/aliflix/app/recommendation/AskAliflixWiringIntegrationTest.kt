@@ -63,7 +63,7 @@ class AskAliflixWiringIntegrationTest {
         val response = V3RecommendationResponse.fromJson(JSONObject("""
             {"requestId":"r","nextCursor":"cursor","hasMore":true,"results":[{
               "tmdbId":60059,"mediaType":"tv","title":"Better Call Saul","originalTitle":"Better Call Saul",
-              "overview":"A lawyer's transformation","releaseDate":"2015-02-08","genres":["Crime","Drama"],
+              "overview":"A lawyer's transformation","posterPath":"/better-call-saul.jpg","releaseDate":"2015-02-08","genres":["Crime","Drama"],
               "runtimeMinutes":47,"originalLanguage":"en","originCountries":["US"],"tmdbRating":8.7,
               "tmdbVoteCount":6000,"matchLevel":"Exceptional","finalScore":0.92,
               "matchReasons":["Recommended by TMDB"],"retrievalSources":["recommendations:page-1"]}
@@ -72,6 +72,10 @@ class AskAliflixWiringIntegrationTest {
         assertEquals(listOf("Crime", "Drama"), item.genres)
         assertEquals(47, item.runtimeMinutes)
         assertEquals(8.7, item.tmdbRating!!, 0.0)
+        assertEquals(
+            "https://image.tmdb.org/t/p/w500/better-call-saul.jpg",
+            Media(id = item.tmdbId, type = MediaType.TV, title = item.title, posterPath = item.posterPath).posterUrl,
+        )
         assertEquals("cursor", response.nextCursor)
         assertTrue(response.hasMore)
     }

@@ -7,19 +7,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
+import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
-import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 
@@ -32,53 +35,59 @@ fun AskAliflixDescribe(
     loading: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Text(
-            text = "What should it feel like?",
-            color = AliflixContentPrimary,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = text,
-            onValueChange = onTextChanged,
-            placeholder = {
-                Text(
-                    text = if (mediaType == MediaType.MOVIE)
-                        "e.g. Dark sci-fi after 2015 with IMDb 7+, no horror"
-                    else
-                        "e.g. Gritty crime drama series with IMDb 8+, ended",
-                    color = AliflixContentTertiary,
-                    fontSize = 14.sp
-                )
-            },
+    Column(modifier = modifier.fillMaxSize()) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(115.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = AliflixAccentPrimary,
-                unfocusedBorderColor = AliflixBorderSubtle,
-                focusedContainerColor = AliflixSurfaceElevated,
-                unfocusedContainerColor = AliflixSurfaceElevated,
-                focusedTextColor = AliflixContentPrimary,
-                unfocusedTextColor = AliflixContentPrimary
+                .weight(1f)
+                .padding(horizontal = 16.dp, vertical = 18.dp),
+        ) {
+            Text(
+                text = "What are you in the mood for?",
+                color = AliflixContentPrimary,
+                fontSize = 24.sp,
+                lineHeight = 29.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.4).sp,
             )
-        )
-
-        Spacer(modifier = Modifier.weight(1f))
+            Spacer(Modifier.height(16.dp))
+            OutlinedTextField(
+                value = text,
+                onValueChange = { onTextChanged(it.take(500)) },
+                placeholder = {
+                    Text(
+                        text = if (mediaType == MediaType.MOVIE) {
+                            "A visually stunning sci-fi movie after 2015, thoughtful rather than scary…"
+                        } else {
+                            "A Korean crime series after 2020 about serial killers…"
+                        },
+                        color = AliflixContentTertiary,
+                        fontSize = 14.sp,
+                        lineHeight = 21.sp,
+                    )
+                },
+                minLines = 7,
+                maxLines = 10,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) onSubmit() }),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AliflixAccentPrimary,
+                    unfocusedBorderColor = AliflixBorderSubtle,
+                    focusedContainerColor = AliflixSurfaceElevated,
+                    unfocusedContainerColor = AliflixSurfaceElevated.copy(alpha = 0.82f),
+                    focusedTextColor = AliflixContentPrimary,
+                    unfocusedTextColor = AliflixContentPrimary,
+                    cursorColor = AliflixAccentSecondary,
+                ),
+            )
+        }
 
         AskAliflixStickyCta(
-            label = if (loading) "Understanding request…" else "Find matches",
-            enabled = text.trim().isNotEmpty(),
+            label = if (loading) "Creating matches…" else "Find matches",
+            enabled = text.isNotBlank(),
             loading = loading,
-            onClick = onSubmit
+            onClick = onSubmit,
         )
     }
 }

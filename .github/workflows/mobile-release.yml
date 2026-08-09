@@ -19,8 +19,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "70"
-  RELEASE_VERSION_NAME: "2.9.19"
+  RELEASE_VERSION_CODE: "71"
+  RELEASE_VERSION_NAME: "2.9.20"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -132,7 +132,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Ask Aliflix V3 now delivers TMDB-only movie and series recommendations with Gemini semantic ranking, strict filters, and real Load More pagination."
+            "releaseNotes": "A redesigned Ask Aliflix, synchronized IMDb and Tomatometer ratings, smoother navigation, and a smarter personalized Home experience."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -142,7 +142,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Ask Aliflix V3: TMDB-only movie and series discovery, Gemini semantic ranking, strict filters, resilient fallback ranking, and persistent Load More pagination."
+          body: "A polished mobile redesign with a cleaner Ask Aliflix flow, visible TMDB posters, synchronized IMDb and Tomatometer ratings, smoother navigation, and a smarter personalized Home experience."
           files: |
             aliflix-mobile.apk
             update-mobile.json
