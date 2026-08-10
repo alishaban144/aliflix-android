@@ -432,6 +432,36 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 loading = showLoading && previous.content == null,
                 error = null,
             )
+            if (!BuildConfig.IS_TV) {
+                _home.value = runCatching {
+                    aiClient.getHomeFeed().toStableMobileHome(
+                        previousContent = previous.content,
+                        previousEditorialPicks = previous.editorialPicks,
+                    )
+                }.fold(
+                    onSuccess = { snapshot ->
+                        lastHomeRefreshAt = System.currentTimeMillis()
+                        HomeUiState(
+                            loading = false,
+                            content = snapshot.content,
+                            editorialPicks = snapshot.editorialPicks,
+                        )
+                    },
+                    onFailure = { error ->
+                        HomeUiState(
+                            loading = false,
+                            content = previous.content,
+                            editorialPicks = previous.editorialPicks,
+                            error = if (previous.content == null) {
+                                error.message ?: "Unable to load TMDB Home."
+                            } else {
+                                null
+                            },
+                        )
+                    },
+                )
+                return@launch
+            }
             val editorialRequest = async {
                 runCatching {
                     aiClient.getEditorialPicks()
@@ -668,7 +698,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 val tmdbDetails = runCatching {
                     aiClient.getTitleDetails(item.type.routeName, item.id)
                 }.getOrNull()
-                val authoritativeItem = tmdbDetails?.toMedia(item) ?: item
+                val authoritativeItem = if (!BuildConfig.IS_TV) {
+                    tmdbDetails?.toStableMobileMedia(item) ?: item
+                } else {
+                    tmdbDetails?.toMedia(item) ?: item
+                }
                 _detail.value = _detail.value.copy(item = authoritativeItem)
 
                 val seasonsRequest = async {
@@ -699,10 +733,15 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 }
 
                 client.details(authoritativeItem) { details, recommendations ->
-                    library.refreshMetadata(details)
+                    val displayDetails = if (!BuildConfig.IS_TV) {
+                        authoritativeItem.mergeStableMobileDetailUpdate(details)
+                    } else {
+                        details
+                    }
+                    library.refreshMetadata(displayDetails)
                     _detail.value = _detail.value.copy(
                         loading = false,
-                        item = details,
+                        item = displayDetails,
                         recommendations = recommendations ?: emptyList(),
                     )
                 }

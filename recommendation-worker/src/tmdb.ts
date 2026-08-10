@@ -15,6 +15,8 @@ export interface TmdbCombinedCredits {
   crew?: Array<TmdbListItem & { media_type?: MediaType; job?: string; department?: string }>;
 }
 
+export type TmdbTrendingItem = TmdbListItem & { media_type?: MediaType | 'person' };
+
 export class TmdbClient {
   private used = 0;
   constructor(private readonly env: RecommendationEnv, private readonly budget = 40) {}
@@ -68,6 +70,18 @@ export class TmdbClient {
     return this.request(`/person/${id}/combined_credits`, { language: 'en-US' });
   }
   genres(type: MediaType): Promise<{ genres: TmdbGenre[] }> { return this.request(`/genre/${type}/list`); }
+  trendingAll(page: number): Promise<TmdbPage<TmdbTrendingItem>> {
+    return this.request('/trending/all/week', { page, language: 'en-US' });
+  }
+  nowPlayingMovies(page: number): Promise<TmdbPage> {
+    return this.request('/movie/now_playing', { page, language: 'en-US' });
+  }
+  onTheAirTv(page: number): Promise<TmdbPage> {
+    return this.request('/tv/on_the_air', { page, language: 'en-US' });
+  }
+  popular(type: MediaType, page: number): Promise<TmdbPage> {
+    return this.request(`/${type}/popular`, { page, language: 'en-US' });
+  }
 }
 
 export function applyTmdbAuthentication(env: Pick<RecommendationEnv, 'TMDB_API_KEY' | 'TMDB_READ_ACCESS_TOKEN'>, url: URL, headers: HeadersInit): void {

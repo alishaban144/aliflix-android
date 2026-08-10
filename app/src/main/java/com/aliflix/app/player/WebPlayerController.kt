@@ -14,6 +14,7 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -37,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.io.ByteArrayInputStream
 import java.net.URI
 
 class WebPlayerController(
@@ -276,6 +278,12 @@ class WebPlayerController(
                             )
                         }
                         if (selection != null) {
+                            if (
+                                !BuildConfig.IS_TV &&
+                                selection.source.provider == PlaybackProviderId.MOVIEPIRE
+                            ) {
+                                installMobileMoviepireAdShield(view, selection)
+                            }
                             view.postDelayed(
                                 {
                                     if (isActiveSelection(view, selection)) {
@@ -327,12 +335,32 @@ class WebPlayerController(
                     }
                     view?.alpha = 1f
                     _loading.value = false
-                    Toast.makeText(
-                        activity,
-                        "External navigation blocked",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    if (!isMobileMoviepireSelection()) {
+                        Toast.makeText(
+                            activity,
+                            "External navigation blocked",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                     return true
+                }
+
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                ): WebResourceResponse? {
+                    if (
+                        isMobileMoviepireSelection() &&
+                        request != null &&
+                        PlaybackNavigationPolicy.isBlockedAdResource(request.url.toString())
+                    ) {
+                        return WebResourceResponse(
+                            "text/plain",
+                            "UTF-8",
+                            ByteArrayInputStream(ByteArray(0)),
+                        )
+                    }
+                    return super.shouldInterceptRequest(view, request)
                 }
 
                 override fun onReceivedError(
@@ -371,11 +399,13 @@ class WebPlayerController(
                     isUserGesture: Boolean,
                     resultMsg: android.os.Message?,
                 ): Boolean {
-                    Toast.makeText(
-                        activity,
-                        "Pop-up blocked",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    if (!isMobileMoviepireSelection()) {
+                        Toast.makeText(
+                            activity,
+                            "Pop-up blocked",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                     return false
                 }
 
@@ -408,6 +438,10 @@ class WebPlayerController(
 
     private fun customHostsForActiveSelection(): Set<String> =
         activeSelection?.source?.approvedTopLevelHosts.orEmpty()
+
+    private fun isMobileMoviepireSelection(): Boolean =
+        !BuildConfig.IS_TV &&
+            activeSelection?.source?.provider == PlaybackProviderId.MOVIEPIRE
 
     private fun isMoviepireWrapper(view: WebView): Boolean {
         val selection = activeSelection ?: return false
@@ -963,9 +997,79 @@ class WebPlayerController(
     ) {
         when (selection.source.provider) {
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
-            PlaybackProviderId.MOVIEPIRE -> { /* Moviepire owns its full-screen player layout. */ }
+            PlaybackProviderId.MOVIEPIRE -> {
+                if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)
+            }
             PlaybackProviderId.DORABY -> { /* Doraby webpage loads directly */ }
         }
+    }
+
+    private fun installMobileMoviepireAdShield(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        if (BuildConfig.IS_TV || selection.source.provider != PlaybackProviderId.MOVIEPIRE) return
+        if (!isActiveSelection(view, selection)) return
+        view.evaluateJavascript(
+            """
+            (() => {
+              const blocked = [
+                "doubleclick.net", "googlesyndication.com", "googleadservices.com",
+                "adnxs.com", "criteo.com", "taboola.com", "outbrain.com",
+                "popads.net", "popcash.net", "propellerads.com", "monetag.com",
+                "adsterra.com", "exoclick.com", "trafficjunky.net", "juicyads.com",
+                "clickadu.com", "hilltopads.net", "realsrv.com", "onclicka.com",
+                "onclickperformance.com"
+              ];
+              const hostMatches = (host) => blocked.some((value) =>
+                host === value || host.endsWith("." + value)
+              );
+              window.open = () => null;
+              const removeAds = () => {
+                document.querySelectorAll(
+                  'ins.adsbygoogle, [id^="google_ads"], [id*="ad-container" i], ' +
+                  '[class*="ad-container" i], [class*="advertisement" i], ' +
+                  '[data-ad-slot], [data-ad-unit], [aria-label="advertisement" i]'
+                ).forEach((node) => node.remove());
+                document.querySelectorAll('iframe[src], script[src], a[href]').forEach((node) => {
+                  const raw = node.getAttribute(node.tagName === "A" ? "href" : "src");
+                  if (!raw) return;
+                  try {
+                    const target = new URL(raw, location.href);
+                    if (hostMatches(target.hostname.toLowerCase().replace(/^www\./, ""))) {
+                      node.remove();
+                    }
+                  } catch (_) {}
+                });
+                document.querySelectorAll('a[href]').forEach((anchor) => {
+                  if (anchor.querySelector('video, iframe, [class*="player" i]')) return;
+                  let target;
+                  try { target = new URL(anchor.href, location.href); } catch (_) { return; }
+                  if (!/^https?:$/.test(target.protocol) || target.hostname === location.hostname) return;
+                  const rect = anchor.getBoundingClientRect();
+                  const style = getComputedStyle(anchor);
+                  const coverage = (rect.width * rect.height) / Math.max(1, innerWidth * innerHeight);
+                  const layer = Number.parseInt(style.zIndex || "0", 10) || 0;
+                  if ((style.position === "fixed" || style.position === "absolute") && coverage > 0.45 && layer >= 100) {
+                    anchor.remove();
+                  }
+                });
+              };
+              removeAds();
+              if (!window.__aliflixMoviepireAdShield) {
+                window.__aliflixMoviepireAdShield = true;
+                new MutationObserver(removeAds).observe(document.documentElement, {
+                  childList: true,
+                  subtree: true,
+                  attributes: true,
+                  attributeFilter: ["src", "href", "class", "style"]
+                });
+              }
+              return true;
+            })();
+            """.trimIndent(),
+            null,
+        )
     }
 
     private fun alignVidloveContent(

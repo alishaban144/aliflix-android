@@ -43,6 +43,10 @@ class RecommendationAiClient(
         json.optJSONArray("results").toStringList { V3CatalogMedia.fromJson(it) }
     }
 
+    suspend fun getHomeFeed(): V3HomeFeed = withContext(ioDispatcher) {
+        V3HomeFeed.fromJson(JSONObject(getJson("$baseUrl/v3/home")))
+    }
+
     private suspend fun getJson(url: String): String = suspendCancellableCoroutine { continuation ->
         var connection: HttpURLConnection? = null
         try {
@@ -224,6 +228,32 @@ data class V3CatalogMedia(
             runtimeMinutes = json.optInt("runtimeMinutes").takeIf { json.has("runtimeMinutes") && !json.isNull("runtimeMinutes") },
             tmdbRating = json.optDouble("tmdbRating").takeIf { json.has("tmdbRating") && !json.isNull("tmdbRating") },
             tmdbVoteCount = json.optInt("tmdbVoteCount").takeIf { json.has("tmdbVoteCount") && !json.isNull("tmdbVoteCount") },
+        )
+    }
+}
+
+data class V3HomeRail(
+    val title: String,
+    val items: List<V3CatalogMedia>,
+) {
+    companion object {
+        fun fromJson(json: JSONObject) = V3HomeRail(
+            title = json.getString("title"),
+            items = json.optJSONArray("items").toStringList { V3CatalogMedia.fromJson(it) },
+        )
+    }
+}
+
+data class V3HomeFeed(
+    val hero: V3CatalogMedia,
+    val rails: List<V3HomeRail>,
+    val editorialPicks: List<V3CatalogMedia>,
+) {
+    companion object {
+        fun fromJson(json: JSONObject) = V3HomeFeed(
+            hero = V3CatalogMedia.fromJson(json.getJSONObject("hero")),
+            rails = json.optJSONArray("rails").toStringList { V3HomeRail.fromJson(it) },
+            editorialPicks = json.optJSONArray("editorialPicks").toStringList { V3CatalogMedia.fromJson(it) },
         )
     }
 }

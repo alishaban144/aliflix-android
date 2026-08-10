@@ -62,4 +62,30 @@ class V3CatalogMappingTest {
         assertEquals(listOf("tv", "movie"), parsed.results.map { it.mediaType })
         assertEquals(listOf(1396, 37165), parsed.results.map { it.tmdbId })
     }
+
+    @Test
+    fun homeFeedParserKeepsOneTmdbSnapshotAndEditorialPicks() {
+        val parsed = V3HomeFeed.fromJson(
+            JSONObject(
+                """
+                {
+                  "hero": {"tmdbId": 10, "mediaType": "movie", "title": "Hero", "posterPath": "/hero.jpg", "genres": ["Drama"], "originCountries": ["US"]},
+                  "rails": [
+                    {"title": "Trending this week", "items": [
+                      {"tmdbId": 10, "mediaType": "movie", "title": "Hero", "posterPath": "/hero.jpg", "genres": ["Drama"], "originCountries": ["US"]},
+                      {"tmdbId": 20, "mediaType": "tv", "title": "Series", "posterPath": "/series.jpg", "genres": ["Crime"], "originCountries": ["KR"]}
+                    ]}
+                  ],
+                  "editorialPicks": [
+                    {"tmdbId": 30, "mediaType": "movie", "title": "Pick", "posterPath": "/pick.jpg", "genres": ["Comedy"], "originCountries": ["GB"]}
+                  ]
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals(10, parsed.hero.tmdbId)
+        assertEquals(listOf("movie", "tv"), parsed.rails.single().items.map { it.mediaType })
+        assertEquals("Pick", parsed.editorialPicks.single().title)
+    }
 }

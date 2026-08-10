@@ -3,7 +3,7 @@ import { processRecommendation } from './engine';
 import { RecommendationRequestSchema } from './schemas';
 import { createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
 import { RecommendationEnv, RecommendationResponse, ServiceError } from './types';
-import { editorialPicks, personCredits, titleDetails } from './catalog';
+import { editorialPicks, homeFeed, personCredits, titleDetails } from './catalog';
 
 export { RecommendationSession };
 
@@ -68,7 +68,8 @@ export default {
     const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);
     const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);
     const isEditorialPicks = url.pathname === '/v3/editorial-picks';
-    if (titleMatch || personMatch || isEditorialPicks) {
+    const isHomeFeed = url.pathname === '/v3/home';
+    if (titleMatch || personMatch || isEditorialPicks || isHomeFeed) {
       if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
       try {
         await enforceRateLimit(request, env);
@@ -77,6 +78,7 @@ export default {
           const name = url.searchParams.get('name')?.trim() || 'Creator';
           return catalogJson(await personCredits(env, Number(personMatch[1]), name));
         }
+        if (isHomeFeed) return catalogJson(await homeFeed(env));
         return catalogJson(await editorialPicks(env));
       } catch (error) { return errorResponse(error); }
     }

@@ -118,4 +118,75 @@ describe('TMDB-backed mobile catalogue routes', () => {
     expect(body.results.some((item: any) => item.title === 'Future Movie')).toBe(false);
     expect(body.results.every((item: any) => item.posterPath && item.tmdbRating >= 7)).toBe(true);
   });
+
+  it('returns one complete TMDB-only Home snapshot with stable rails and released picks', async () => {
+    const year = new Date().getUTCFullYear();
+    const movie = (id: number, title: string, day = '03-04') => ({
+      id,
+      title,
+      release_date: `${year}-${day}`,
+      poster_path: `/movie-${id}.jpg`,
+      backdrop_path: `/movie-${id}-wide.jpg`,
+      genre_ids: [35],
+      vote_average: 8.1,
+      vote_count: 1200,
+    });
+    const tv = (id: number, name: string, day = '02-03') => ({
+      id,
+      name,
+      first_air_date: `${year}-${day}`,
+      poster_path: `/tv-${id}.jpg`,
+      backdrop_path: `/tv-${id}-wide.jpg`,
+      genre_ids: [18],
+      vote_average: 8.3,
+      vote_count: 900,
+    });
+    const seenHosts: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      seenHosts.push(url.hostname);
+      expect(url.searchParams.get('api_key')).toBe('tmdb-v3-key');
+      if (url.pathname.endsWith('/genre/movie/list')) return response({ genres: [{ id: 35, name: 'Comedy' }] });
+      if (url.pathname.endsWith('/genre/tv/list')) return response({ genres: [{ id: 18, name: 'Drama' }] });
+      if (url.pathname.endsWith('/trending/all/week')) return response({
+        page: Number(url.searchParams.get('page')),
+        total_pages: 2,
+        total_results: 3,
+        results: Number(url.searchParams.get('page')) === 1
+          ? [{ ...movie(10, 'Trending Film'), media_type: 'movie' }, { ...tv(20, 'Trending Series'), media_type: 'tv' }]
+          : [{ id: 30, name: 'Ignored Person', media_type: 'person', profile_path: '/person.jpg' }],
+      });
+      if (url.pathname.endsWith('/movie/now_playing')) return response({ page: 1, total_pages: 1, total_results: 1, results: [movie(11, 'Now Film')] });
+      if (url.pathname.endsWith('/tv/on_the_air')) return response({ page: 1, total_pages: 1, total_results: 1, results: [tv(21, 'Airing Series')] });
+      if (url.pathname.endsWith('/movie/popular')) return response({
+        page: Number(url.searchParams.get('page')),
+        total_pages: 2,
+        total_results: 3,
+        results: Number(url.searchParams.get('page')) === 1
+          ? [movie(12, 'Popular Film')]
+          : [movie(13, 'More Popular Film'), { ...movie(14, 'Future Film'), release_date: '2999-01-01' }],
+      });
+      if (url.pathname.endsWith('/tv/popular')) return response({
+        page: Number(url.searchParams.get('page')),
+        total_pages: 2,
+        total_results: 2,
+        results: Number(url.searchParams.get('page')) === 1 ? [tv(22, 'Popular Series')] : [tv(23, 'More Popular Series')],
+      });
+      if (url.pathname.endsWith('/discover/movie')) return response({ page: 1, total_pages: 1, total_results: 1, results: [movie(15, 'Acclaimed Film')] });
+      if (url.pathname.endsWith('/discover/tv')) return response({ page: 1, total_pages: 1, total_results: 1, results: [tv(24, 'Acclaimed Series')] });
+      throw new Error(`Unexpected URL ${url}`);
+    }));
+
+    const result = await worker.fetch(new Request('https://worker.test/v3/home'), env);
+    expect(result.status).toBe(200);
+    const body: any = await result.json();
+    expect(body.hero).toMatchObject({ tmdbId: 10, mediaType: 'movie', title: 'Trending Film' });
+    expect(body.rails.map((rail: any) => rail.title)).toEqual([
+      'Trending this week', 'Now playing', 'Airing now', 'Popular movies', 'Popular series',
+    ]);
+    expect(body.rails.flatMap((rail: any) => rail.items).some((item: any) => item.title === 'Future Film')).toBe(false);
+    expect(body.editorialPicks.map((item: any) => item.title).sort()).toEqual(['Acclaimed Film', 'Acclaimed Series']);
+    expect(body.rails.flatMap((rail: any) => rail.items).every((item: any) => item.posterPath && item.releaseDate)).toBe(true);
+    expect(seenHosts.every(host => host === 'api.themoviedb.org')).toBe(true);
+  });
 });

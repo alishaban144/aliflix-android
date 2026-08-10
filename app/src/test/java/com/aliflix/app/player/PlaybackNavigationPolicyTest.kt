@@ -82,4 +82,24 @@ class PlaybackNavigationPolicyTest {
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("http://345movie.nl/watch"))
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("intent://ad-app"))
     }
+
+    @Test
+    fun blocksKnownAdResourcesWithoutBlockingPlaybackCdnHosts() {
+        listOf(
+            "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js",
+            "https://static.doubleclick.net/instream/ad_status.js",
+            "https://delivery.realsrv.com/banner.js",
+            "https://subdomain.onclickperformance.com/click",
+        ).forEach { url ->
+            assertTrue(url, PlaybackNavigationPolicy.isBlockedAdResource(url))
+        }
+
+        listOf(
+            "https://moviepire.ru/watch/1396",
+            "https://cloudorchestranova.com/rcp/player-token",
+            "https://player.vidlove.cc/embed/tv/1396/1/1",
+        ).forEach { url ->
+            assertFalse(url, PlaybackNavigationPolicy.isBlockedAdResource(url))
+        }
+    }
 }

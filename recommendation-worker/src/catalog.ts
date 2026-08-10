@@ -1,5 +1,5 @@
 import { TmdbClient, TmdbDetails } from './tmdb';
-import { MediaType, RecommendationEnv, TmdbGenre, TmdbListItem } from './types';
+import { MediaType, RecommendationEnv, ServiceError, TmdbGenre, TmdbListItem } from './types';
 
 export interface CatalogPerson {
   tmdbId: number;
@@ -28,6 +28,17 @@ export interface CatalogTitleDetails extends CatalogMediaSummary {
   status?: string;
   creators: CatalogPerson[];
   cast: CatalogPerson[];
+}
+
+export interface CatalogHomeRail {
+  title: string;
+  items: CatalogMediaSummary[];
+}
+
+export interface CatalogHomeFeed {
+  hero: CatalogMediaSummary;
+  rails: CatalogHomeRail[];
+  editorialPicks: CatalogMediaSummary[];
 }
 
 const present = (value: string | null | undefined): string | undefined => value?.trim() || undefined;
@@ -155,4 +166,94 @@ export async function editorialPicks(env: RecommendationEnv): Promise<{ results:
     .sort((left, right) => score(right) - score(left))
     .slice(0, 40);
   return { results: values };
+}
+
+export async function homeFeed(env: RecommendationEnv): Promise<CatalogHomeFeed> {
+  const tmdb = new TmdbClient(env, 20);
+  const today = new Date().toISOString().slice(0, 10);
+  const currentYear = new Date().getUTCFullYear();
+  const recentFrom = `${currentYear - 4}-01-01`;
+
+  // Keep each batch at six concurrent requests. This avoids request bursts while
+  // still delivering one complete, internally consistent Home snapshot.
+  const [movieGenres, tvGenres, trending1, trending2, nowPlaying, onTheAir] = await Promise.all([
+    tmdb.genres('movie'),
+    tmdb.genres('tv'),
+    tmdb.trendingAll(1),
+    tmdb.trendingAll(2),
+    tmdb.nowPlayingMovies(1),
+    tmdb.onTheAirTv(1),
+  ]);
+  const [popularMovies1, popularMovies2, popularTv1, popularTv2, ratedMovies, ratedTv] = await Promise.all([
+    tmdb.popular('movie', 1),
+    tmdb.popular('movie', 2),
+    tmdb.popular('tv', 1),
+    tmdb.popular('tv', 2),
+    tmdb.discover('movie', {
+      page: 1,
+      sort_by: 'vote_average.desc',
+      'vote_average.gte': 7,
+      'vote_count.gte': 500,
+      'primary_release_date.gte': recentFrom,
+      'primary_release_date.lte': today,
+    }),
+    tmdb.discover('tv', {
+      page: 1,
+      sort_by: 'vote_average.desc',
+      'vote_average.gte': 7,
+      'vote_count.gte': 250,
+      'first_air_date.gte': recentFrom,
+      'first_air_date.lte': today,
+    }),
+  ]);
+
+  const movieGenreMap = genreMap(movieGenres.genres);
+  const tvGenreMap = genreMap(tvGenres.genres);
+  const released = (item: CatalogMediaSummary): boolean =>
+    Boolean(item.posterPath && item.releaseDate && item.releaseDate <= today && item.title !== 'Untitled');
+  const unique = (items: CatalogMediaSummary[], limit = 20): CatalogMediaSummary[] => items
+    .filter(released)
+    .filter((item, index, values) =>
+      values.findIndex(other => other.mediaType === item.mediaType && other.tmdbId === item.tmdbId) === index,
+    )
+    .slice(0, limit);
+  const movieSummaries = (items: TmdbListItem[]): CatalogMediaSummary[] =>
+    items.map(item => summary(item, 'movie', movieGenreMap));
+  const tvSummaries = (items: TmdbListItem[]): CatalogMediaSummary[] =>
+    items.map(item => summary(item, 'tv', tvGenreMap));
+
+  const trending = unique([...trending1.results, ...trending2.results].flatMap(item => {
+    if (item.media_type === 'movie') return [summary(item, 'movie', movieGenreMap)];
+    if (item.media_type === 'tv') return [summary(item, 'tv', tvGenreMap)];
+    return [];
+  }));
+  const rails: CatalogHomeRail[] = [
+    { title: 'Trending this week', items: trending },
+    { title: 'Now playing', items: unique(movieSummaries(nowPlaying.results)) },
+    { title: 'Airing now', items: unique(tvSummaries(onTheAir.results)) },
+    {
+      title: 'Popular movies',
+      items: unique(movieSummaries([...popularMovies1.results, ...popularMovies2.results])),
+    },
+    {
+      title: 'Popular series',
+      items: unique(tvSummaries([...popularTv1.results, ...popularTv2.results])),
+    },
+  ].filter(rail => rail.items.length > 0);
+
+  const qualityScore = (item: CatalogMediaSummary): number => {
+    const year = Number(item.releaseDate?.slice(0, 4)) || currentYear - 4;
+    const recency = Math.max(0, year - (currentYear - 4));
+    return (item.tmdbRating || 0) * 10 + recency * 1.4 + Math.log10(Math.max(1, item.tmdbVoteCount || 0));
+  };
+  const editorial = unique([
+    ...movieSummaries(ratedMovies.results),
+    ...tvSummaries(ratedTv.results),
+  ], 40).sort((left, right) => qualityScore(right) - qualityScore(left));
+  const hero = trending.find(item => item.backdropPath)
+    || rails.flatMap(rail => rail.items).find(item => item.backdropPath)
+    || rails.flatMap(rail => rail.items)[0];
+  if (!hero) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB returned no usable Home titles', 503, true);
+
+  return { hero, rails, editorialPicks: editorial };
 }

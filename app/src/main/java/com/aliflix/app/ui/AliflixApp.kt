@@ -3503,19 +3503,20 @@ private fun HistoryCollection(
                         width = 132.dp,
                         onClick = { onOpen(item) },
                     )
-                    IconButton(
-                        onClick = { onRemove(item) },
+                    Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(5.dp)
-                            .size(24.dp)
+                            .padding(6.dp)
+                            .size(22.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.75f)),
+                            .background(Color.Black.copy(alpha = 0.78f))
+                            .clickable { onRemove(item) },
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Filled.Close,
                             contentDescription = "Remove from viewing history",
-                            modifier = Modifier.size(12.dp),
+                            modifier = Modifier.size(11.dp),
                         )
                     }
                 }

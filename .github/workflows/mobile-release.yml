@@ -19,8 +19,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "72"
-  RELEASE_VERSION_NAME: "2.9.21"
+  RELEASE_VERSION_CODE: "73"
+  RELEASE_VERSION_NAME: "2.9.22"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -132,7 +132,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Ask Aliflix V3, unified mobile design, TMDB creator and title details, smoother featured transitions, and recent top-rated picks."
+            "releaseNotes": "Stable TMDB Home rails, flicker-free title artwork, restored TMDB creators, a compact History remove button, and quieter Moviepire Beta playback."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -142,7 +142,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Ask Aliflix V3 with reliable TMDB-only discovery and paging, a unified mobile design, creator filmographies, richer title details, smoother featured transitions, and recent top-rated Home picks."
+          body: "Mobile-only stability update with a single TMDB-backed Home snapshot, flicker-free detail artwork, restored TMDB creators, a compact History remove control, and Moviepire Beta popup/ad suppression that preserves playback."
           files: |
             aliflix-mobile.apk
             update-mobile.json
