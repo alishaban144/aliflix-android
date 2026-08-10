@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,24 +53,10 @@ fun AskAliflixHeader(
                     tint = AliflixContentPrimary,
                 )
             }
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(AliflixAccentPrimary, Color(0xFF9277EC)),
-                        ),
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.AutoAwesome,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(19.dp),
-                )
-            }
+            AskAliflixSparkMark(
+                modifier = Modifier.size(38.dp),
+                animated = true,
+            )
             Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = "Ask Aliflix",
@@ -80,6 +65,8 @@ fun AskAliflixHeader(
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = (-0.2).sp,
             )
+            Spacer(modifier = Modifier.width(8.dp))
+            AskAliflixBetaBadge()
         }
 
         TextButton(

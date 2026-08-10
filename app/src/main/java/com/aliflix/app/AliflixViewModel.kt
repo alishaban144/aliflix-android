@@ -10,6 +10,7 @@ import com.aliflix.app.data.PlaybackProviderRepository
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
+import com.aliflix.app.model.MediaCreator
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
@@ -25,6 +26,8 @@ import com.aliflix.app.recommendation.RecommendationUiState
 import com.aliflix.app.recommendation.RecommendationRequestDraft
 import com.aliflix.app.recommendation.AndroidSemanticModelManager
 import com.aliflix.app.recommendation.SemanticModelState
+import com.aliflix.app.recommendation.V3CatalogMedia
+import com.aliflix.app.recommendation.V3TitleDetails
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -39,6 +42,7 @@ import kotlinx.coroutines.withContext
 data class HomeUiState(
     val loading: Boolean = true,
     val content: HomeContent? = null,
+    val editorialPicks: List<Media> = emptyList(),
     val error: String? = null,
 )
 
@@ -46,6 +50,37 @@ enum class SearchMode {
     TITLE,
     AI,
 }
+
+private fun V3CatalogMedia.toMedia(fallback: Media? = null): Media {
+    val type = MediaType.from(mediaType)
+    return (fallback ?: Media(id = tmdbId, type = type, title = title)).copy(
+        id = tmdbId,
+        type = type,
+        title = title,
+        overview = overview ?: fallback?.overview.orEmpty(),
+        posterPath = posterPath ?: fallback?.posterPath,
+        backdropPath = backdropPath ?: fallback?.backdropPath,
+        year = releaseDate?.take(4) ?: fallback?.year.orEmpty(),
+        rating = tmdbRating ?: fallback?.rating ?: 0.0,
+        tmdbVoteCount = tmdbVoteCount ?: fallback?.tmdbVoteCount,
+        genres = genres.ifEmpty { fallback?.genres.orEmpty() },
+        originalLanguage = originalLanguage ?: fallback?.originalLanguage.orEmpty(),
+        runtime = runtimeMinutes?.takeIf { it > 0 }?.let { "$it min" }
+            ?: fallback?.runtime.orEmpty(),
+    )
+}
+
+private fun V3TitleDetails.toMedia(fallback: Media): Media = media.toMedia(fallback).copy(
+    status = status.orEmpty(),
+    creators = creators.map { creator ->
+        MediaCreator(
+            tmdbId = creator.tmdbId,
+            name = creator.name,
+            profilePath = creator.profilePath,
+        )
+    },
+    cast = cast.map { it.name },
+)
 
 enum class SearchPhase {
     IDLE,
@@ -79,6 +114,13 @@ data class DetailUiState(
 data class GenreUiState(
     val genre: String = "",
     val type: MediaType = MediaType.MOVIE,
+    val loading: Boolean = false,
+    val items: List<Media> = emptyList(),
+    val error: String? = null,
+)
+
+data class PersonUiState(
+    val creator: MediaCreator? = null,
     val loading: Boolean = false,
     val items: List<Media> = emptyList(),
     val error: String? = null,
@@ -136,6 +178,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private var detailJob: Job? = null
     private var episodeJob: Job? = null
     private var genreJob: Job? = null
+    private var personJob: Job? = null
     private var homeRefreshJob: Job? = null
     private var lastHomeRefreshAt = 0L
 
@@ -150,6 +193,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     private val _genre = MutableStateFlow(GenreUiState())
     val genre: StateFlow<GenreUiState> = _genre.asStateFlow()
+
+    private val _person = MutableStateFlow(PersonUiState())
+    val person: StateFlow<PersonUiState> = _person.asStateFlow()
 
     val myList = library.myList
     val recent = library.recent
@@ -386,23 +432,38 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 loading = showLoading && previous.content == null,
                 error = null,
             )
-            _home.value = runCatching {
+            val editorialRequest = async {
+                runCatching {
+                    aiClient.getEditorialPicks()
+                        .map { it.toMedia() }
+                        .distinctBy(Media::key)
+                }.getOrDefault(previous.editorialPicks)
+            }
+            val homeResult = runCatching {
                 client.home { partial ->
                     _home.value = HomeUiState(
                         loading = false,
                         content = partial,
+                        editorialPicks = previous.editorialPicks,
                     )
                 }
             }
+            val editorialPicks = editorialRequest.await()
+            _home.value = homeResult
                 .fold(
                     onSuccess = {
                         lastHomeRefreshAt = System.currentTimeMillis()
-                        HomeUiState(loading = false, content = it)
+                        HomeUiState(
+                            loading = false,
+                            content = it,
+                            editorialPicks = editorialPicks,
+                        )
                     },
                     onFailure = {
                         HomeUiState(
                             loading = false,
                             content = previous.content,
+                            editorialPicks = editorialPicks,
                             error = if (previous.content == null) {
                                 it.message ?: "Unable to load the Aliflix catalogue."
                             } else {
@@ -604,8 +665,18 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _detail.value = DetailUiState(loading = true, item = item)
         detailJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
             try {
+                val tmdbDetails = runCatching {
+                    aiClient.getTitleDetails(item.type.routeName, item.id)
+                }.getOrNull()
+                val authoritativeItem = tmdbDetails?.toMedia(item) ?: item
+                _detail.value = _detail.value.copy(item = authoritativeItem)
+
                 val seasonsRequest = async {
-                    if (item.type == MediaType.TV) client.seasons(item) else emptyList()
+                    if (authoritativeItem.type == MediaType.TV) {
+                        client.seasons(authoritativeItem)
+                    } else {
+                        emptyList()
+                    }
                 }
 
                 launch {
@@ -614,11 +685,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     _detail.value = _detail.value.copy(
                         seasons = seasons,
                         selectedSeason = selectedSeason,
-                        episodesLoading = item.type == MediaType.TV,
+                        episodesLoading = authoritativeItem.type == MediaType.TV,
                     )
                     
-                    if (item.type == MediaType.TV) {
-                        val currentItem = _detail.value.item ?: item
+                    if (authoritativeItem.type == MediaType.TV) {
+                        val currentItem = _detail.value.item ?: authoritativeItem
                         val episodes = client.episodes(currentItem, selectedSeason)
                         _detail.value = _detail.value.copy(
                             episodes = episodes,
@@ -627,7 +698,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
 
-                client.details(item) { details, recommendations ->
+                client.details(authoritativeItem) { details, recommendations ->
                     library.refreshMetadata(details)
                     _detail.value = _detail.value.copy(
                         loading = false,
@@ -680,6 +751,41 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         detailJob?.cancel()
         episodeJob?.cancel()
         _detail.value = DetailUiState()
+    }
+
+    fun openPerson(creator: MediaCreator) {
+        personJob?.cancel()
+        _person.value = PersonUiState(creator = creator, loading = true)
+        personJob = viewModelScope.launch {
+            _person.value = runCatching {
+                aiClient.getPersonCredits(creator.tmdbId, creator.name)
+            }.fold(
+                onSuccess = { response ->
+                    PersonUiState(
+                        creator = creator.copy(
+                            name = response.person.name,
+                            profilePath = response.person.profilePath ?: creator.profilePath,
+                        ),
+                        items = response.results.map { it.toMedia() }.distinctBy(Media::key),
+                    )
+                },
+                onFailure = { error ->
+                    PersonUiState(
+                        creator = creator,
+                        error = error.message ?: "Creator credits could not be loaded.",
+                    )
+                },
+            )
+        }
+    }
+
+    fun retryPerson() {
+        _person.value.creator?.let(::openPerson)
+    }
+
+    fun closePerson() {
+        personJob?.cancel()
+        _person.value = PersonUiState()
     }
 
     fun toggleMyList(item: Media) = library.toggleMyList(item)

@@ -2,9 +2,15 @@ package com.aliflix.app.ui.discover
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,7 +29,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -50,12 +56,121 @@ import coil.compose.AsyncImage
 import com.aliflix.app.model.Media
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
+import com.aliflix.app.ui.theme.AliflixEditorialWarm
 import com.aliflix.app.ui.theme.AliflixBackgroundBase
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
+
+@Composable
+fun AskAliflixSparkMark(
+    modifier: Modifier = Modifier,
+    animated: Boolean = false,
+) {
+    val transition = rememberInfiniteTransition(label = "ask-spark-mark")
+    val rotation = if (animated) {
+        transition.animateFloat(
+            initialValue = -3.5f,
+            targetValue = 3.5f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1_800),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "ask-spark-rotation",
+        ).value
+    } else {
+        0f
+    }
+    val scale = if (animated) {
+        transition.animateFloat(
+            initialValue = 0.96f,
+            targetValue = 1.04f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1_250),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "ask-spark-scale",
+        ).value
+    } else {
+        1f
+    }
+
+    Canvas(
+        modifier = modifier.graphicsLayer {
+            rotationZ = rotation
+            scaleX = scale
+            scaleY = scale
+        },
+    ) {
+        fun sparkle(cx: Float, cy: Float, rx: Float, ry: Float): Path = Path().apply {
+            val pinchX = rx * 0.18f
+            val pinchY = ry * 0.18f
+            moveTo(cx, cy - ry)
+            cubicTo(cx + pinchX, cy - pinchY, cx + rx - pinchX, cy - pinchY, cx + rx, cy)
+            cubicTo(cx + rx - pinchX, cy + pinchY, cx + pinchX, cy + ry - pinchY, cx, cy + ry)
+            cubicTo(cx - pinchX, cy + ry - pinchY, cx - rx + pinchX, cy + pinchY, cx - rx, cy)
+            cubicTo(cx - rx + pinchX, cy - pinchY, cx - pinchX, cy - ry + pinchY, cx, cy - ry)
+            close()
+        }
+
+        drawCircle(
+            color = AliflixAccentPrimary.copy(alpha = 0.15f),
+            radius = size.minDimension * 0.47f,
+            center = center,
+        )
+        drawPath(
+            path = sparkle(
+                cx = size.width * 0.48f,
+                cy = size.height * 0.53f,
+                rx = size.width * 0.27f,
+                ry = size.height * 0.35f,
+            ),
+            brush = Brush.linearGradient(
+                colors = listOf(Color.White, AliflixAccentSecondary, AliflixAccentPrimary),
+            ),
+        )
+        drawPath(
+            path = sparkle(
+                cx = size.width * 0.78f,
+                cy = size.height * 0.25f,
+                rx = size.width * 0.10f,
+                ry = size.height * 0.13f,
+            ),
+            color = AliflixEditorialWarm,
+        )
+        drawPath(
+            path = sparkle(
+                cx = size.width * 0.20f,
+                cy = size.height * 0.77f,
+                rx = size.width * 0.065f,
+                ry = size.height * 0.085f,
+            ),
+            color = Color.White.copy(alpha = 0.88f),
+        )
+    }
+}
+
+@Composable
+fun AskAliflixBetaBadge(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(7.dp))
+            .background(AliflixAccentPrimary.copy(alpha = 0.18f))
+            .border(1.dp, AliflixAccentSecondary.copy(alpha = 0.48f), RoundedCornerShape(7.dp))
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "BETA",
+            color = AliflixAccentSecondary,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 0.7.sp,
+        )
+    }
+}
 
 @Composable
 fun AskAliflixChip(
@@ -184,10 +299,9 @@ fun AskAliflixStickyCta(
                     color = Color.White,
                 )
             } else {
-                Icon(
-                    imageVector = Icons.Rounded.AutoAwesome,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
+                AskAliflixSparkMark(
+                    modifier = Modifier.size(20.dp),
+                    animated = false,
                 )
             }
             Spacer(Modifier.width(9.dp))

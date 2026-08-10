@@ -287,7 +287,7 @@ fun AskAliflixFilters(
         }
 
         AskAliflixStickyCta(
-            label = if (loading) "Building your shortlist…" else "Show filtered matches",
+            label = if (loading) "Loading…" else "Show matches",
             enabled = hasFilters,
             loading = loading,
             onClick = onSubmit,

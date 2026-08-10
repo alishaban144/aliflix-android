@@ -135,13 +135,9 @@ export interface SecretBindings {
   TMDB_API_KEY?: string;
   TMDB_READ_ACCESS_TOKEN?: string;
   CURSOR_SIGNING_SECRET: string;
-  GEMINI_GENERATION_MODEL?: string;
-  GEMINI_EMBEDDING_MODEL?: string;
-  RECOMMENDATION_SESSIONS: DurableObjectNamespace;
-  RECOMMENDATION_RATE_LIMITER: RateLimit;
 }
 
-export type RecommendationEnv = SecretBindings;
+export type RecommendationEnv = Env & SecretBindings;
 
 export class ServiceError extends Error {
   constructor(

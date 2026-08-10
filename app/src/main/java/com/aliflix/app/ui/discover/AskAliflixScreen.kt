@@ -1,7 +1,6 @@
 package com.aliflix.app.ui.discover
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -11,10 +10,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import com.aliflix.app.model.Media
-import com.aliflix.app.ui.theme.AliflixBackgroundBase
-import com.aliflix.app.ui.theme.AliflixSurfaceElevated
+import com.aliflix.app.ui.common.aliflixScreenBackground
 
 @Composable
 fun AskAliflixScreen(
@@ -36,15 +33,7 @@ fun AskAliflixScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        AliflixSurfaceElevated.copy(alpha = 0.54f),
-                        AliflixBackgroundBase,
-                        AliflixBackgroundBase,
-                    )
-                )
-            )
+            .aliflixScreenBackground()
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {

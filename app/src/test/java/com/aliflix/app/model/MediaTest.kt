@@ -138,6 +138,37 @@ class MediaTest {
     }
 
     @Test
+    fun tmdbDetailFieldsSurviveSavedStateRoundTrip() {
+        val item = Media(
+            id = 1396,
+            type = MediaType.TV,
+            title = "Breaking Bad",
+            posterPath = "/poster.jpg",
+            backdropPath = "/backdrop.jpg",
+            year = "2008",
+            rating = 8.9,
+            tmdbVoteCount = 15_000,
+            genres = listOf("Drama", "Crime"),
+            cast = listOf("Bryan Cranston"),
+            status = "Ended",
+            originalLanguage = "en",
+            creators = listOf(
+                MediaCreator(
+                    tmdbId = 66633,
+                    name = "Vince Gilligan",
+                    profilePath = "/vince.jpg",
+                ),
+            ),
+        )
+
+        val restored = Media.fromJson(item.toJson())
+
+        assertEquals(item, restored)
+        assertEquals("https://image.tmdb.org/t/p/w500/poster.jpg", restored.posterUrl)
+        assertEquals("https://image.tmdb.org/t/p/w185/vince.jpg", restored.creators.single().profileUrl)
+    }
+
+    @Test
     fun dorabyBuildsMovieAndTvWatchUrl() {
         val movie = Media(id = 1083381, type = MediaType.MOVIE, title = "Descendants: Wicked Wonderland")
         val movieSelection = PlaybackSelection(

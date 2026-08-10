@@ -23,6 +23,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.aliflix.app.ui.common.MobileTopSafeArea
+import com.aliflix.app.ui.common.aliflixScreenBackground
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -260,7 +261,7 @@ internal fun DiscoverScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(AliflixBackgroundBase),
+            .aliflixScreenBackground(),
     ) {
         AnimatedContent(
             targetState = recommendModeActive,
@@ -489,32 +490,24 @@ internal fun DiscoverScreen(
                                     .padding(horizontal = 16.dp, vertical = 15.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(46.dp)
-                                        .clip(RoundedCornerShape(15.dp))
-                                        .background(
-                                            Brush.linearGradient(
-                                                listOf(AliflixAccentPrimary, Color(0xFF9277EC))
-                                            )
-                                        ),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(23.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(13.dp))
-                                Text(
-                                    text = "Ask Aliflix",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 17.sp,
-                                    color = AliflixContentPrimary,
-                                    modifier = Modifier.weight(1f),
+                                AskAliflixSparkMark(
+                                    modifier = Modifier.size(46.dp),
+                                    animated = false,
                                 )
+                                Spacer(modifier = Modifier.width(13.dp))
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = "Ask Aliflix",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 17.sp,
+                                        color = AliflixContentPrimary,
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    AskAliflixBetaBadge()
+                                }
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
                                     contentDescription = "Open Ask Aliflix recommendations",

@@ -54,11 +54,21 @@ describe('TMDB-only recommendation engine', () => {
     expect(tokenUrl.searchParams.has('api_key')).toBe(false);
     expect(tokenHeaders.authorization).toBe('Bearer read-token');
 
-    const legacyUrl = new URL('https://api.themoviedb.org/3/discover/tv');
-    const legacyHeaders: Record<string, string> = {};
-    applyTmdbAuthentication({ TMDB_API_KEY: `eyJ${'x'.repeat(120)}` }, legacyUrl, legacyHeaders);
-    expect(legacyUrl.searchParams.has('api_key')).toBe(false);
-    expect(legacyHeaders.authorization).toMatch(/^Bearer eyJ/);
+    const bothUrl = new URL('https://api.themoviedb.org/3/discover/movie');
+    const bothHeaders: Record<string, string> = {};
+    applyTmdbAuthentication(
+      { TMDB_API_KEY: 'updated-v3-key', TMDB_READ_ACCESS_TOKEN: 'older-read-token' },
+      bothUrl,
+      bothHeaders,
+    );
+    expect(bothUrl.searchParams.get('api_key')).toBe('updated-v3-key');
+    expect(bothHeaders.authorization).toBeUndefined();
+
+    const unambiguousUrl = new URL('https://api.themoviedb.org/3/discover/tv');
+    const unambiguousHeaders: Record<string, string> = {};
+    applyTmdbAuthentication({ TMDB_API_KEY: `eyJ${'x'.repeat(120)}` }, unambiguousUrl, unambiguousHeaders);
+    expect(unambiguousUrl.searchParams.get('api_key')).toMatch(/^eyJ/);
+    expect(unambiguousHeaders.authorization).toBeUndefined();
   });
 
   it('deduplicates by media type and TMDB ID, retains TMDB retrieval evidence, and survives embedding failure', async () => {

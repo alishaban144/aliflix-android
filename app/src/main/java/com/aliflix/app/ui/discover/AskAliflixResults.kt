@@ -40,7 +40,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
@@ -181,7 +180,7 @@ private fun QuerySummaryCard(summary: String, onEdit: () -> Unit) {
                 .background(AliflixAccentPrimary.copy(alpha = 0.22f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = AliflixAccentSecondary, modifier = Modifier.size(16.dp))
+            AskAliflixSparkMark(modifier = Modifier.size(18.dp))
         }
         Spacer(Modifier.width(10.dp))
         Text(
@@ -220,15 +219,7 @@ private fun ResultsList(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "YOUR MATCHES",
-                        color = AliflixAccentSecondary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 1.15.sp,
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        "Ranked for this request",
+                        "Matches",
                         color = AliflixContentPrimary,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold,
@@ -267,7 +258,7 @@ private fun ResultsList(
                     if (state.loadingMore) {
                         CircularProgressIndicator(color = AliflixAccentSecondary, strokeWidth = 2.dp, modifier = Modifier.size(25.dp))
                         Spacer(Modifier.height(8.dp))
-                        Text("Adding more matches…", color = AliflixContentSecondary, fontSize = 11.sp)
+                        Text("Loading…", color = AliflixContentSecondary, fontSize = 11.sp)
                     } else {
                         OutlinedButton(
                             onClick = onLoadMore,
@@ -284,7 +275,7 @@ private fun ResultsList(
         } else {
             item {
                 Text(
-                    text = "You’ve reached the end of this shortlist",
+                    text = "End of results",
                     color = AliflixContentTertiary,
                     fontSize = 11.sp,
                     modifier = Modifier
@@ -488,7 +479,7 @@ private fun AskLoadingState(title: String) {
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
+            AskAliflixSparkMark(modifier = Modifier.size(34.dp), animated = true)
         }
         Spacer(Modifier.height(17.dp))
         Text(title, color = AliflixContentPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)

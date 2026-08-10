@@ -9,6 +9,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -26,6 +27,50 @@ class RecommendationAiClient(
 ) {
     suspend fun getRecommendations(request: V3RecommendationRequest): V3RecommendationResponse = withContext(ioDispatcher) {
         V3RecommendationResponse.fromJson(JSONObject(postJson("$baseUrl/v3/recommendations", request.toJson())))
+    }
+
+    suspend fun getTitleDetails(mediaType: String, tmdbId: Int): V3TitleDetails = withContext(ioDispatcher) {
+        V3TitleDetails.fromJson(JSONObject(getJson("$baseUrl/v3/titles/$mediaType/$tmdbId")))
+    }
+
+    suspend fun getPersonCredits(tmdbId: Int, name: String): V3PersonCredits = withContext(ioDispatcher) {
+        val encodedName = URLEncoder.encode(name, StandardCharsets.UTF_8.toString())
+        V3PersonCredits.fromJson(JSONObject(getJson("$baseUrl/v3/people/$tmdbId/credits?name=$encodedName")))
+    }
+
+    suspend fun getEditorialPicks(): List<V3CatalogMedia> = withContext(ioDispatcher) {
+        val json = JSONObject(getJson("$baseUrl/v3/editorial-picks"))
+        json.optJSONArray("results").toStringList { V3CatalogMedia.fromJson(it) }
+    }
+
+    private suspend fun getJson(url: String): String = suspendCancellableCoroutine { continuation ->
+        var connection: HttpURLConnection? = null
+        try {
+            connection = URL(url).openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 8_000
+            connection.readTimeout = 20_000
+            connection.setRequestProperty("Accept", "application/json")
+            continuation.invokeOnCancellation { connection.disconnect() }
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+            if (status !in 200..299) {
+                val error = runCatching { JSONObject(response).optJSONObject("error") }.getOrNull()
+                throw RecommendationAiClientException(
+                    code = error?.optString("code")?.takeIf(String::isNotBlank) ?: "WORKER_ERROR",
+                    retryable = error?.optBoolean("retryable", status == 429 || status >= 500) ?: (status == 429 || status >= 500),
+                    message = error?.optString("message")?.takeIf(String::isNotBlank) ?: "TMDB request failed ($status)",
+                )
+            }
+            if (continuation.isActive) continuation.resume(response)
+        } catch (error: Throwable) {
+            if (continuation.isActive) continuation.resumeWithException(
+                if (error is RecommendationAiClientException) error else RecommendationAiClientException(message = "Network error", cause = error),
+            )
+        } finally {
+            connection?.disconnect()
+        }
     }
 
     private suspend fun postJson(url: String, jsonBody: JSONObject): String = suspendCancellableCoroutine { continuation ->
@@ -129,6 +174,84 @@ data class V3RecommendationResult(
             tmdbVoteCount = json.optInt("tmdbVoteCount").takeIf { json.has("tmdbVoteCount") && !json.isNull("tmdbVoteCount") },
             matchLevel = json.optString("matchLevel", "Relevant"), finalScore = json.optDouble("finalScore"),
             matchReasons = json.optJSONArray("matchReasons").stringValues(), retrievalSources = json.optJSONArray("retrievalSources").stringValues(),
+        )
+    }
+}
+
+data class V3CatalogPerson(
+    val tmdbId: Int,
+    val name: String,
+    val profilePath: String?,
+) {
+    companion object {
+        fun fromJson(json: JSONObject) = V3CatalogPerson(
+            tmdbId = json.getInt("tmdbId"),
+            name = json.getString("name"),
+            profilePath = json.nullableString("profilePath"),
+        )
+    }
+}
+
+data class V3CatalogMedia(
+    val tmdbId: Int,
+    val mediaType: String,
+    val title: String,
+    val originalTitle: String?,
+    val overview: String?,
+    val posterPath: String?,
+    val backdropPath: String?,
+    val releaseDate: String?,
+    val genres: List<String>,
+    val originalLanguage: String?,
+    val originCountries: List<String>,
+    val runtimeMinutes: Int?,
+    val tmdbRating: Double?,
+    val tmdbVoteCount: Int?,
+) {
+    companion object {
+        fun fromJson(json: JSONObject) = V3CatalogMedia(
+            tmdbId = json.getInt("tmdbId"),
+            mediaType = json.getString("mediaType"),
+            title = json.getString("title"),
+            originalTitle = json.nullableString("originalTitle"),
+            overview = json.nullableString("overview"),
+            posterPath = json.nullableString("posterPath"),
+            backdropPath = json.nullableString("backdropPath"),
+            releaseDate = json.nullableString("releaseDate"),
+            genres = json.optJSONArray("genres").stringValues(),
+            originalLanguage = json.nullableString("originalLanguage"),
+            originCountries = json.optJSONArray("originCountries").stringValues(),
+            runtimeMinutes = json.optInt("runtimeMinutes").takeIf { json.has("runtimeMinutes") && !json.isNull("runtimeMinutes") },
+            tmdbRating = json.optDouble("tmdbRating").takeIf { json.has("tmdbRating") && !json.isNull("tmdbRating") },
+            tmdbVoteCount = json.optInt("tmdbVoteCount").takeIf { json.has("tmdbVoteCount") && !json.isNull("tmdbVoteCount") },
+        )
+    }
+}
+
+data class V3TitleDetails(
+    val media: V3CatalogMedia,
+    val status: String?,
+    val creators: List<V3CatalogPerson>,
+    val cast: List<V3CatalogPerson>,
+) {
+    companion object {
+        fun fromJson(json: JSONObject) = V3TitleDetails(
+            media = V3CatalogMedia.fromJson(json),
+            status = json.nullableString("status"),
+            creators = json.optJSONArray("creators").toStringList { V3CatalogPerson.fromJson(it) },
+            cast = json.optJSONArray("cast").toStringList { V3CatalogPerson.fromJson(it) },
+        )
+    }
+}
+
+data class V3PersonCredits(
+    val person: V3CatalogPerson,
+    val results: List<V3CatalogMedia>,
+) {
+    companion object {
+        fun fromJson(json: JSONObject) = V3PersonCredits(
+            person = V3CatalogPerson.fromJson(json.getJSONObject("person")),
+            results = json.optJSONArray("results").toStringList { V3CatalogMedia.fromJson(it) },
         )
     }
 }

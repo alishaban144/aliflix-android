@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Tune
@@ -53,7 +52,7 @@ import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 
 private data class AskModeTab(
     val label: String,
-    val icon: ImageVector,
+    val icon: ImageVector?,
 )
 
 @Composable
@@ -119,7 +118,7 @@ fun AskAliflixModeSelector(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             listOf(
-                AskModeTab("Describe", Icons.Rounded.AutoAwesome),
+                AskModeTab("Describe", null),
                 AskModeTab("Similar", Icons.Rounded.Search),
                 AskModeTab("Filters", Icons.Rounded.Tune),
             ).forEachIndexed { index, tab ->
@@ -184,12 +183,16 @@ private fun AskModeButton(
         verticalArrangement = Arrangement.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = tab.icon,
-                contentDescription = null,
-                tint = if (selected) AliflixAccentSecondary else foreground,
-                modifier = Modifier.size(16.dp),
-            )
+            if (tab.icon == null) {
+                AskAliflixSparkMark(modifier = Modifier.size(18.dp))
+            } else {
+                Icon(
+                    imageVector = tab.icon,
+                    contentDescription = null,
+                    tint = if (selected) AliflixAccentSecondary else foreground,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
             Spacer(Modifier.width(5.dp))
             Text(tab.label, color = foreground, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
         }

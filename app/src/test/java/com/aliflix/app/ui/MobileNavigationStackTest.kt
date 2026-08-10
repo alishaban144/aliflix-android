@@ -1,6 +1,7 @@
 package com.aliflix.app.ui
 
 import com.aliflix.app.model.Media
+import com.aliflix.app.model.MediaCreator
 import com.aliflix.app.model.MediaType
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -48,5 +49,29 @@ class MobileNavigationStackTest {
         )
 
         assertEquals(root, popMobileDestinationStack(root))
+    }
+
+    @Test
+    fun creatorWorksAndNestedDetailsPopInChronologicalOrder() {
+        val show = Media(id = 1396, type = MediaType.TV, title = "Breaking Bad")
+        val work = Media(id = 60059, type = MediaType.TV, title = "Better Call Saul")
+        val creator = MediaCreator(66633, "Vince Gilligan", "/vince.jpg")
+        val creatorWorks = MobileDestination.Person(
+            creator = creator,
+            firstVisibleItemIndex = 18,
+            firstVisibleItemScrollOffset = 24,
+        )
+        var stack = listOf<MobileDestination>(
+            MobileDestination.Root(AppTab.HOME),
+            MobileDestination.Detail(show),
+            creatorWorks,
+            MobileDestination.Detail(work),
+        )
+
+        stack = popMobileDestinationStack(stack)
+        assertEquals(creatorWorks, stack.last())
+
+        stack = popMobileDestinationStack(stack)
+        assertEquals(MobileDestination.Detail(show), stack.last())
     }
 }

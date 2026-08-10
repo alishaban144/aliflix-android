@@ -19,8 +19,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "71"
-  RELEASE_VERSION_NAME: "2.9.20"
+  RELEASE_VERSION_CODE: "72"
+  RELEASE_VERSION_NAME: "2.9.21"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -39,11 +39,11 @@ jobs:
           set -euo pipefail
           EXPECTED_TAG="v${RELEASE_VERSION_NAME}"
           GRADLE_VERSION_CODE="$(
-            sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' \
+            sed -nE 's/^val mobileVersionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' \
               app/build.gradle.kts
           )"
           GRADLE_VERSION_NAME="$(
-            sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' \
+            sed -nE 's/^val mobileVersionName[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' \
               app/build.gradle.kts
           )"
 
@@ -132,7 +132,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "A redesigned Ask Aliflix, synchronized IMDb and Tomatometer ratings, smoother navigation, and a smarter personalized Home experience."
+            "releaseNotes": "Ask Aliflix V3, unified mobile design, TMDB creator and title details, smoother featured transitions, and recent top-rated picks."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -142,7 +142,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "A polished mobile redesign with a cleaner Ask Aliflix flow, visible TMDB posters, synchronized IMDb and Tomatometer ratings, smoother navigation, and a smarter personalized Home experience."
+          body: "Ask Aliflix V3 with reliable TMDB-only discovery and paging, a unified mobile design, creator filmographies, richer title details, smoother featured transitions, and recent top-rated Home picks."
           files: |
             aliflix-mobile.apk
             update-mobile.json

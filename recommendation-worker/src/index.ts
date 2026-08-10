@@ -3,11 +3,22 @@ import { processRecommendation } from './engine';
 import { RecommendationRequestSchema } from './schemas';
 import { createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
 import { RecommendationEnv, RecommendationResponse, ServiceError } from './types';
+import { editorialPicks, personCredits, titleDetails } from './catalog';
 
 export { RecommendationSession };
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+const catalogJson = (body: unknown): Response => new Response(JSON.stringify(body), {
+  status: 200,
+  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' },
+});
+
+async function enforceRateLimit(request: Request, env: RecommendationEnv): Promise<void> {
+  const key = request.headers.get('cf-connecting-ip') || 'unknown';
+  const limit = await env.RECOMMENDATION_RATE_LIMITER.limit({ key });
+  if (!limit.success) throw new ServiceError('RATE_LIMITED', 'Too many requests', 429, true);
+}
 
 function errorResponse(error: unknown): Response {
   if (error instanceof ServiceError) return json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, error.status);
@@ -54,13 +65,26 @@ export default {
     if (url.pathname === '/health' && request.method === 'GET') {
       return json({ status: 'ok', service: 'aliflix-recommendations', geminiConfigured: Boolean(env.GEMINI_API_KEY), tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN) });
     }
+    const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);
+    const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);
+    const isEditorialPicks = url.pathname === '/v3/editorial-picks';
+    if (titleMatch || personMatch || isEditorialPicks) {
+      if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
+      try {
+        await enforceRateLimit(request, env);
+        if (titleMatch) return catalogJson(await titleDetails(env, titleMatch[1] as 'movie' | 'tv', Number(titleMatch[2])));
+        if (personMatch) {
+          const name = url.searchParams.get('name')?.trim() || 'Creator';
+          return catalogJson(await personCredits(env, Number(personMatch[1]), name));
+        }
+        return catalogJson(await editorialPicks(env));
+      } catch (error) { return errorResponse(error); }
+    }
     if (url.pathname !== '/v3/recommendations') return json({ error: { code: 'NOT_FOUND', message: 'Not found', retryable: false } }, 404);
     if (request.method !== 'POST') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
     if (!request.headers.get('content-type')?.toLowerCase().includes('application/json')) return json({ error: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Expected application/json', retryable: false } }, 415);
     try {
-      const key = request.headers.get('cf-connecting-ip') || 'unknown';
-      const limit = await env.RECOMMENDATION_RATE_LIMITER.limit({ key });
-      if (!limit.success) throw new ServiceError('RATE_LIMITED', 'Too many recommendation requests', 429, true);
+      await enforceRateLimit(request, env);
       return await routeRecommendation(request, env);
     } catch (error) { return errorResponse(error); }
   },

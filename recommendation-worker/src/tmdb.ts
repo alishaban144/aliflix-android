@@ -5,8 +5,14 @@ const BASE_URL = 'https://api.themoviedb.org/3';
 export interface TmdbPage<T = TmdbListItem> { page: number; results: T[]; total_pages: number; total_results: number }
 export interface TmdbDetails extends TmdbListItem {
   genres?: TmdbGenre[]; runtime?: number | null; episode_run_time?: number[]; keywords?: { keywords?: TmdbKeyword[]; results?: TmdbKeyword[] };
-  credits?: { cast?: Array<{ id: number; name: string }>; crew?: Array<{ id: number; name: string; job?: string }> };
-  aggregate_credits?: { cast?: Array<{ id: number; name: string }> };
+  credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }>; crew?: Array<{ id: number; name: string; job?: string; profile_path?: string | null }> };
+  aggregate_credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }> };
+  status?: string; created_by?: Array<{ id: number; name: string; profile_path?: string | null }>;
+}
+
+export interface TmdbCombinedCredits {
+  cast?: Array<TmdbListItem & { media_type?: MediaType; character?: string }>;
+  crew?: Array<TmdbListItem & { media_type?: MediaType; job?: string; department?: string }>;
 }
 
 export class TmdbClient {
@@ -58,17 +64,18 @@ export class TmdbClient {
   details(type: MediaType, id: number): Promise<TmdbDetails> {
     return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits' : 'keywords,credits' });
   }
+  personCombinedCredits(id: number): Promise<TmdbCombinedCredits> {
+    return this.request(`/person/${id}/combined_credits`, { language: 'en-US' });
+  }
   genres(type: MediaType): Promise<{ genres: TmdbGenre[] }> { return this.request(`/genre/${type}/list`); }
 }
 
 export function applyTmdbAuthentication(env: Pick<RecommendationEnv, 'TMDB_API_KEY' | 'TMDB_READ_ACCESS_TOKEN'>, url: URL, headers: HeadersInit): void {
   const explicitReadToken = env.TMDB_READ_ACCESS_TOKEN?.trim();
   const configuredApiKey = env.TMDB_API_KEY?.trim();
-  const legacyMisnamedReadToken = configuredApiKey?.startsWith('eyJ') && configuredApiKey.length > 100 ? configuredApiKey : undefined;
-  const readToken = explicitReadToken || legacyMisnamedReadToken;
-  if (readToken) {
-    (headers as Record<string, string>).authorization = `Bearer ${readToken}`;
-  } else if (configuredApiKey) {
+  if (configuredApiKey) {
     url.searchParams.set('api_key', configuredApiKey);
+  } else if (explicitReadToken) {
+    (headers as Record<string, string>).authorization = `Bearer ${explicitReadToken}`;
   }
 }
