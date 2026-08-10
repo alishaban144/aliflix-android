@@ -135,6 +135,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -262,6 +263,22 @@ internal fun popMobileDestinationStack(
     destinations: List<MobileDestination>,
 ): List<MobileDestination> =
     if (destinations.size <= 1) destinations else destinations.dropLast(1)
+
+internal fun mobileDestinationSaveKey(
+    destinations: List<MobileDestination>,
+): String {
+    val destination = destinations.last()
+    return when (destination) {
+        is MobileDestination.Root ->
+            "${destinations.size}:root:${destination.tab.name}"
+        is MobileDestination.Detail ->
+            "${destinations.size}:detail:${destination.item.key}"
+        is MobileDestination.Genre ->
+            "${destinations.size}:genre:${destination.mediaType.name}:${destination.name}"
+        is MobileDestination.Person ->
+            "${destinations.size}:person:${destination.creator.tmdbId}"
+    }
+}
 
 private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>(
     save = { destinations ->
@@ -408,17 +425,8 @@ fun AliflixApp(
         )
     }
     val currentDestination = destinationStack.last()
-    val currentDestinationKey = when (currentDestination) {
-        is MobileDestination.Root ->
-            "${destinationStack.size}:root:${currentDestination.tab.name}"
-        is MobileDestination.Detail ->
-            "${destinationStack.size}:detail:${currentDestination.item.key}"
-        is MobileDestination.Genre ->
-            "${destinationStack.size}:genre:${currentDestination.mediaType.name}:" +
-                currentDestination.name
-        is MobileDestination.Person ->
-            "${destinationStack.size}:person:${currentDestination.creator.tmdbId}"
-    }
+    val currentDestinationKey = mobileDestinationSaveKey(destinationStack)
+    val destinationStateHolder = rememberSaveableStateHolder()
     val selectedTab = (destinationStack.first() as MobileDestination.Root).tab
     var playerSelection by remember { mutableStateOf<PlaybackSelection?>(null) }
     var playerVisible by remember { mutableStateOf(false) }
@@ -827,8 +835,9 @@ fun AliflixApp(
                     }
                 },
                 label = "aliflix-screen",
-            ) { (target, _) ->
-                when (target) {
+            ) { (target, destinationKey) ->
+                destinationStateHolder.SaveableStateProvider(destinationKey) {
+                    when (target) {
                     AppScreen.PERSON -> PersonCreditsScreen(
                         state = person,
                         onRetry = viewModel::retryPerson,
@@ -842,24 +851,27 @@ fun AliflixApp(
                     )
 
                     AppScreen.GENRE_EXPLORE -> {
-                        val destination =
-                            currentDestination as? MobileDestination.Genre ?: return@AnimatedContent
-                        GenreExploreScreen(
-                            genreName = destination.name,
-                            mediaType = destination.mediaType,
-                            state = genre,
-                            onRetry = viewModel::retryGenre,
-                            onBack = {
-                                captureGenreScrollPosition()
-                                popDestination()
-                            },
-                            onOpen = { item ->
-                                captureGenreScrollPosition()
-                                openDetails(item)
-                            },
-                            gridState = genreScrollState,
-                            modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
-                        )
+                        val destination = currentDestination as? MobileDestination.Genre
+                        if (destination != null) {
+                            GenreExploreScreen(
+                                genreName = destination.name,
+                                mediaType = destination.mediaType,
+                                state = genre,
+                                onRetry = viewModel::retryGenre,
+                                onBack = {
+                                    captureGenreScrollPosition()
+                                    popDestination()
+                                },
+                                onOpen = { item ->
+                                    captureGenreScrollPosition()
+                                    openDetails(item)
+                                },
+                                gridState = genreScrollState,
+                                modifier = Modifier.padding(
+                                    bottom = padding.calculateBottomPadding(),
+                                ),
+                            )
+                        }
                     }
 
                     AppScreen.DETAIL -> DetailScreen(
@@ -1004,6 +1016,7 @@ fun AliflixApp(
                     )
                 }
             }
+        }
         }
 
         AnimatedVisibility(
@@ -3033,7 +3046,7 @@ private fun MobileSettingsDialog(
                                     AskAliflixBetaBadge()
                                 }
                                 Text(
-                                    text = "Show Ask Aliflix in Search",
+                                    text = "Show Aliflix in Discover",
                                     color = AliflixMuted,
                                     fontSize = 10.sp,
                                 )
@@ -4131,7 +4144,9 @@ private fun DetailScreen(
     onOpenCreator: (MediaCreator) -> Unit = {},
 ) {
     val item = state.item ?: return
+    val detailListState = rememberLazyListState()
     LazyColumn(
+        state = detailListState,
         modifier = Modifier
             .fillMaxSize()
             .aliflixScreenBackground(),
@@ -4212,6 +4227,27 @@ private fun DetailScreen(
                             fontSize = 13.sp,
                         )
                     }
+                    if (item.status.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(AliflixAccentSecondary.copy(alpha = 0.12f))
+                                .border(
+                                    1.dp,
+                                    AliflixAccentSecondary.copy(alpha = 0.28f),
+                                    CircleShape,
+                                )
+                                .padding(horizontal = 9.dp, vertical = 5.dp),
+                        ) {
+                            Text(
+                                text = item.status,
+                                color = AliflixAccentSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                     listOf(
                         item.year,
                         if (item.type == MediaType.MOVIE) "Movie" else "Series",
@@ -4291,16 +4327,6 @@ private fun DetailScreen(
                         lineHeight = 23.sp,
                         color = AliflixContentSecondary,
                     )
-                }
-                if (item.status.isNotBlank()) {
-                    DetailInfoSection(title = "Status") {
-                        Text(
-                            text = item.status,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = AliflixContentPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
                 }
                 if (item.creators.isNotEmpty()) {
                     DetailInfoSection(title = "Creators") {
@@ -4488,13 +4514,31 @@ private fun DetailInfoSection(
     title: String,
     content: @Composable () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        Text(
-            text = title,
-            color = AliflixContentPrimary,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.ExtraBold,
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(15.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(AliflixAccentSecondary, AliflixAccentPrimary),
+                        ),
+                    ),
+            )
+            Text(
+                text = title.uppercase(Locale.ROOT),
+                color = AliflixAccentSecondary,
+                style = MaterialTheme.typography.labelLarge,
+                fontSize = 12.sp,
+                letterSpacing = 1.25.sp,
+                fontWeight = FontWeight.ExtraBold,
+            )
+        }
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),

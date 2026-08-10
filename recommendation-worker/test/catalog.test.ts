@@ -142,6 +142,7 @@ describe('TMDB-backed mobile catalogue routes', () => {
       vote_count: 900,
     });
     const seenHosts: string[] = [];
+    const genreDiscoveries: Array<{ path: string; genres: string }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input));
       seenHosts.push(url.hostname);
@@ -172,8 +173,28 @@ describe('TMDB-backed mobile catalogue routes', () => {
         total_results: 2,
         results: Number(url.searchParams.get('page')) === 1 ? [tv(22, 'Popular Series')] : [tv(23, 'More Popular Series')],
       });
-      if (url.pathname.endsWith('/discover/movie')) return response({ page: 1, total_pages: 1, total_results: 1, results: [movie(15, 'Acclaimed Film')] });
-      if (url.pathname.endsWith('/discover/tv')) return response({ page: 1, total_pages: 1, total_results: 1, results: [tv(24, 'Acclaimed Series')] });
+      if (url.pathname.endsWith('/discover/movie')) {
+        const genres = url.searchParams.get('with_genres');
+        if (genres) {
+          genreDiscoveries.push({ path: url.pathname, genres });
+          const id = Number(`1${genres.replaceAll(',', '')}`);
+          return response({ page: 1, total_pages: 1, total_results: 1, results: [
+            { ...movie(id, `Movie genres ${genres}`), genre_ids: genres.split(',').map(Number) },
+          ] });
+        }
+        return response({ page: 1, total_pages: 1, total_results: 1, results: [movie(15, 'Acclaimed Film')] });
+      }
+      if (url.pathname.endsWith('/discover/tv')) {
+        const genres = url.searchParams.get('with_genres');
+        if (genres) {
+          genreDiscoveries.push({ path: url.pathname, genres });
+          const id = Number(`2${genres.replaceAll(',', '')}`);
+          return response({ page: 1, total_pages: 1, total_results: 1, results: [
+            { ...tv(id, `TV genres ${genres}`), genre_ids: genres.split(',').map(Number) },
+          ] });
+        }
+        return response({ page: 1, total_pages: 1, total_results: 1, results: [tv(24, 'Acclaimed Series')] });
+      }
       throw new Error(`Unexpected URL ${url}`);
     }));
 
@@ -181,12 +202,30 @@ describe('TMDB-backed mobile catalogue routes', () => {
     expect(result.status).toBe(200);
     const body: any = await result.json();
     expect(body.hero).toMatchObject({ tmdbId: 10, mediaType: 'movie', title: 'Trending Film' });
-    expect(body.rails.map((rail: any) => rail.title)).toEqual([
+    expect(body.rails.slice(0, 5).map((rail: any) => rail.title)).toEqual([
       'Trending this week', 'Now playing', 'Airing now', 'Popular movies', 'Popular series',
     ]);
+    expect(body.rails.map((rail: any) => rail.title)).toEqual(expect.arrayContaining([
+      'Action movies',
+      'Comedy movies',
+      'Crime series',
+      'Science fiction & fantasy series',
+      'Action thrillers',
+      'Romantic comedies',
+      'Crime dramas',
+    ]));
+    expect(body.rails.length).toBeGreaterThanOrEqual(19);
+    expect(genreDiscoveries).toEqual(expect.arrayContaining([
+      { path: '/3/discover/movie', genres: '28,53' },
+      { path: '/3/discover/movie', genres: '10749,35' },
+      { path: '/3/discover/tv', genres: '80,18' },
+    ]));
+    expect(genreDiscoveries).toHaveLength(14);
     expect(body.rails.flatMap((rail: any) => rail.items).some((item: any) => item.title === 'Future Film')).toBe(false);
     expect(body.editorialPicks.map((item: any) => item.title).sort()).toEqual(['Acclaimed Film', 'Acclaimed Series']);
     expect(body.rails.flatMap((rail: any) => rail.items).every((item: any) => item.posterPath && item.releaseDate)).toBe(true);
+    const homeKeys = body.rails.flatMap((rail: any) => rail.items.map((item: any) => `${item.mediaType}:${item.tmdbId}`));
+    expect(new Set(homeKeys).size).toBe(homeKeys.length);
     expect(seenHosts.every(host => host === 'api.themoviedb.org')).toBe(true);
   });
 });

@@ -1019,17 +1019,62 @@ class WebPlayerController(
                 "popads.net", "popcash.net", "propellerads.com", "monetag.com",
                 "adsterra.com", "exoclick.com", "trafficjunky.net", "juicyads.com",
                 "clickadu.com", "hilltopads.net", "realsrv.com", "onclicka.com",
-                "onclickperformance.com"
+                "onclickperformance.com", "adskeeper.co.uk", "mgid.com",
+                "revcontent.com", "admaven.com", "ad-maven.com", "pushground.com",
+                "richads.com", "evadav.com", "zeropark.com", "clickaine.com",
+                "cpmstar.com", "yllix.com", "adcash.com", "directrev.com"
               ];
               const hostMatches = (host) => blocked.some((value) =>
                 host === value || host.endsWith("." + value)
               );
               window.open = () => null;
+              if (!document.getElementById("aliflix-moviepire-ad-style")) {
+                const style = document.createElement("style");
+                style.id = "aliflix-moviepire-ad-style";
+                style.textContent = `
+                  ins.adsbygoogle, [id^="google_ads"], [id^="ad-" i],
+                  [id^="ads-" i], [id$="-ad" i], [class~="ad" i],
+                  [class^="ad-" i], [class*=" ad-" i], [class$="-ad" i],
+                  [class*="ad-container" i], [class*="ad-banner" i],
+                  [class*="advertisement" i], [class*="adsbox" i],
+                  [data-ad-slot], [data-ad-unit], [data-ad], [data-advertisement],
+                  [aria-label="advertisement" i], [aria-label="sponsored" i] {
+                    display: none !important;
+                    visibility: hidden !important;
+                    pointer-events: none !important;
+                    width: 0 !important;
+                    height: 0 !important;
+                    min-width: 0 !important;
+                    min-height: 0 !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                  }
+                `;
+                (document.head || document.documentElement).appendChild(style);
+              }
+              const protectedPlayerNode = (node) => Boolean(
+                node?.querySelector?.('video, iframe, [class*="player" i], [id*="player" i]')
+              );
+              const externalTarget = (anchor) => {
+                try {
+                  const target = new URL(anchor.href, location.href);
+                  const host = target.hostname.toLowerCase().replace(/^www\./, "");
+                  const current = location.hostname.toLowerCase().replace(/^www\./, "");
+                  return /^https?:$/.test(target.protocol) && host !== current
+                    ? { target, host }
+                    : null;
+                } catch (_) { return null; }
+              };
               const removeAds = () => {
                 document.querySelectorAll(
                   'ins.adsbygoogle, [id^="google_ads"], [id*="ad-container" i], ' +
-                  '[class*="ad-container" i], [class*="advertisement" i], ' +
-                  '[data-ad-slot], [data-ad-unit], [aria-label="advertisement" i]'
+                  '[id^="ad-" i], [id^="ads-" i], [id$="-ad" i], ' +
+                  '[class~="ad" i], [class^="ad-" i], [class*=" ad-" i], ' +
+                  '[class$="-ad" i], [class*="ad-container" i], ' +
+                  '[class*="ad-banner" i], [class*="advertisement" i], ' +
+                  '[class*="adsbox" i], [data-ad-slot], [data-ad-unit], ' +
+                  '[data-ad], [data-advertisement], [aria-label="advertisement" i], ' +
+                  '[aria-label="sponsored" i]'
                 ).forEach((node) => node.remove());
                 document.querySelectorAll('iframe[src], script[src], a[href]').forEach((node) => {
                   const raw = node.getAttribute(node.tagName === "A" ? "href" : "src");
@@ -1042,28 +1087,68 @@ class WebPlayerController(
                   } catch (_) {}
                 });
                 document.querySelectorAll('a[href]').forEach((anchor) => {
-                  if (anchor.querySelector('video, iframe, [class*="player" i]')) return;
-                  let target;
-                  try { target = new URL(anchor.href, location.href); } catch (_) { return; }
-                  if (!/^https?:$/.test(target.protocol) || target.hostname === location.hostname) return;
+                  if (protectedPlayerNode(anchor)) return;
+                  const external = externalTarget(anchor);
+                  if (!external) return;
+                  if (hostMatches(external.host)) {
+                    anchor.remove();
+                    return;
+                  }
                   const rect = anchor.getBoundingClientRect();
                   const style = getComputedStyle(anchor);
                   const coverage = (rect.width * rect.height) / Math.max(1, innerWidth * innerHeight);
                   const layer = Number.parseInt(style.zIndex || "0", 10) || 0;
-                  if ((style.position === "fixed" || style.position === "absolute") && coverage > 0.45 && layer >= 100) {
+                  const floating = style.position === "fixed" || style.position === "sticky";
+                  const clickJack = style.position === "absolute" && coverage > 0.45 && layer >= 100;
+                  const visibleSmallAd = floating && rect.width >= 20 && rect.height >= 10 && layer >= 10;
+                  if (clickJack || visibleSmallAd) {
                     anchor.remove();
                   }
+                });
+                document.querySelectorAll(
+                  '[role="dialog"], aside, [class*="sponsor" i], [class*="popup" i]'
+                ).forEach((node) => {
+                  if (protectedPlayerNode(node)) return;
+                  const anchor = node.matches?.('a[href]') ? node : node.querySelector?.('a[href]');
+                  if (!anchor || !externalTarget(anchor)) return;
+                  const style = getComputedStyle(node);
+                  if (style.position === "fixed" || style.position === "sticky") node.remove();
                 });
               };
               removeAds();
               if (!window.__aliflixMoviepireAdShield) {
                 window.__aliflixMoviepireAdShield = true;
-                new MutationObserver(removeAds).observe(document.documentElement, {
+                let cleanupScheduled = false;
+                const scheduleCleanup = () => {
+                  if (cleanupScheduled) return;
+                  cleanupScheduled = true;
+                  requestAnimationFrame(() => {
+                    cleanupScheduled = false;
+                    removeAds();
+                  });
+                };
+                new MutationObserver(scheduleCleanup).observe(document.documentElement, {
                   childList: true,
                   subtree: true,
                   attributes: true,
                   attributeFilter: ["src", "href", "class", "style"]
                 });
+                document.addEventListener("click", (event) => {
+                  const anchor = event.target?.closest?.('a[href]');
+                  if (!anchor || protectedPlayerNode(anchor)) return;
+                  const external = externalTarget(anchor);
+                  if (!external) return;
+                  const style = getComputedStyle(anchor);
+                  if (
+                    hostMatches(external.host) ||
+                    style.position === "fixed" ||
+                    style.position === "sticky"
+                  ) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    anchor.remove();
+                  }
+                }, true);
               }
               return true;
             })();

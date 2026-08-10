@@ -47,6 +47,20 @@ object PlaybackNavigationPolicy {
         "realsrv.com",
         "onclicka.com",
         "onclickperformance.com",
+        "adskeeper.co.uk",
+        "mgid.com",
+        "revcontent.com",
+        "admaven.com",
+        "ad-maven.com",
+        "pushground.com",
+        "richads.com",
+        "evadav.com",
+        "zeropark.com",
+        "clickaine.com",
+        "cpmstar.com",
+        "yllix.com",
+        "adcash.com",
+        "directrev.com",
     )
 
     fun isAllowedTopLevel(url: String, customHosts: Set<String> = emptySet()): Boolean = runCatching {

@@ -132,7 +132,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Stable TMDB Home rails, flicker-free title artwork, restored TMDB creators, a compact History remove button, and quieter Moviepire Beta playback."
+            "releaseNotes": "Exact Back-navigation scroll restoration, 18 TMDB Home rails with genre and subgenre collections, refined detail metadata styling, and stronger Moviepire Beta ad suppression."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -142,7 +142,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile-only stability update with a single TMDB-backed Home snapshot, flicker-free detail artwork, restored TMDB creators, a compact History remove control, and Moviepire Beta popup/ad suppression that preserves playback."
+          body: "Mobile-only navigation and discovery update with exact saved scroll positions, a much larger TMDB-backed Home feed with genre and subgenre rails, refined detail metadata styling, and stronger Moviepire Beta ad suppression that preserves playback."
           files: |
             aliflix-mobile.apk
             update-mobile.json

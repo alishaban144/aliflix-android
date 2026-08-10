@@ -90,6 +90,9 @@ class PlaybackNavigationPolicyTest {
             "https://static.doubleclick.net/instream/ad_status.js",
             "https://delivery.realsrv.com/banner.js",
             "https://subdomain.onclickperformance.com/click",
+            "https://cdn.mgid.com/native-ad.js",
+            "https://static.richads.com/banner.js",
+            "https://delivery.admaven.com/popunder",
         ).forEach { url ->
             assertTrue(url, PlaybackNavigationPolicy.isBlockedAdResource(url))
         }

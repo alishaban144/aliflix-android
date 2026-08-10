@@ -1,4 +1,4 @@
-import { TmdbClient, TmdbDetails } from './tmdb';
+import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
 import { MediaType, RecommendationEnv, ServiceError, TmdbGenre, TmdbListItem } from './types';
 
 export interface CatalogPerson {
@@ -39,6 +39,50 @@ export interface CatalogHomeFeed {
   hero: CatalogMediaSummary;
   rails: CatalogHomeRail[];
   editorialPicks: CatalogMediaSummary[];
+}
+
+interface HomeGenreRailSpec {
+  title: string;
+  mediaType: MediaType;
+  genreIds: number[];
+}
+
+const HOME_GENRE_RAILS: HomeGenreRailSpec[] = [
+  { title: 'Action movies', mediaType: 'movie', genreIds: [28] },
+  { title: 'Comedy movies', mediaType: 'movie', genreIds: [35] },
+  { title: 'Crime series', mediaType: 'tv', genreIds: [80] },
+  { title: 'Drama series', mediaType: 'tv', genreIds: [18] },
+  { title: 'Science fiction movies', mediaType: 'movie', genreIds: [878] },
+  { title: 'Science fiction & fantasy series', mediaType: 'tv', genreIds: [10765] },
+  { title: 'Horror movies', mediaType: 'movie', genreIds: [27] },
+  { title: 'Romance movies', mediaType: 'movie', genreIds: [10749] },
+  { title: 'Mystery series', mediaType: 'tv', genreIds: [9648] },
+  { title: 'Animated movies', mediaType: 'movie', genreIds: [16] },
+  { title: 'Documentaries', mediaType: 'movie', genreIds: [99] },
+  { title: 'Action thrillers', mediaType: 'movie', genreIds: [28, 53] },
+  { title: 'Romantic comedies', mediaType: 'movie', genreIds: [10749, 35] },
+  { title: 'Crime dramas', mediaType: 'tv', genreIds: [80, 18] },
+];
+
+async function discoverHomeGenreRails(
+  tmdb: TmdbClient,
+  today: string,
+): Promise<Array<{ spec: HomeGenreRailSpec; page: TmdbPage }>> {
+  const results: Array<{ spec: HomeGenreRailSpec; page: TmdbPage }> = [];
+  for (let start = 0; start < HOME_GENRE_RAILS.length; start += 6) {
+    const batch = HOME_GENRE_RAILS.slice(start, start + 6);
+    results.push(...await Promise.all(batch.map(async spec => ({
+      spec,
+      page: await tmdb.discover(spec.mediaType, {
+        page: 1,
+        sort_by: 'popularity.desc',
+        with_genres: spec.genreIds.join(','),
+        'vote_count.gte': spec.mediaType === 'movie' ? 50 : 20,
+        [spec.mediaType === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte']: today,
+      }),
+    }))));
+  }
+  return results;
 }
 
 const present = (value: string | null | undefined): string | undefined => value?.trim() || undefined;
@@ -169,7 +213,7 @@ export async function editorialPicks(env: RecommendationEnv): Promise<{ results:
 }
 
 export async function homeFeed(env: RecommendationEnv): Promise<CatalogHomeFeed> {
-  const tmdb = new TmdbClient(env, 20);
+  const tmdb = new TmdbClient(env, 40);
   const today = new Date().toISOString().slice(0, 10);
   const currentYear = new Date().getUTCFullYear();
   const recentFrom = `${currentYear - 4}-01-01`;
@@ -206,6 +250,7 @@ export async function homeFeed(env: RecommendationEnv): Promise<CatalogHomeFeed>
       'first_air_date.lte': today,
     }),
   ]);
+  const genreRailPages = await discoverHomeGenreRails(tmdb, today);
 
   const movieGenreMap = genreMap(movieGenres.genres);
   const tvGenreMap = genreMap(tvGenres.genres);
@@ -227,7 +272,7 @@ export async function homeFeed(env: RecommendationEnv): Promise<CatalogHomeFeed>
     if (item.media_type === 'tv') return [summary(item, 'tv', tvGenreMap)];
     return [];
   }));
-  const rails: CatalogHomeRail[] = [
+  const primaryRails: CatalogHomeRail[] = [
     { title: 'Trending this week', items: trending },
     { title: 'Now playing', items: unique(movieSummaries(nowPlaying.results)) },
     { title: 'Airing now', items: unique(tvSummaries(onTheAir.results)) },
@@ -240,6 +285,26 @@ export async function homeFeed(env: RecommendationEnv): Promise<CatalogHomeFeed>
       items: unique(tvSummaries([...popularTv1.results, ...popularTv2.results])),
     },
   ].filter(rail => rail.items.length > 0);
+  const genreRails: CatalogHomeRail[] = genreRailPages.map(({ spec, page }) => ({
+    title: spec.title,
+    items: unique(
+      spec.mediaType === 'movie'
+        ? movieSummaries(page.results)
+        : tvSummaries(page.results),
+    ),
+  }));
+  const seenHomeTitles = new Set<string>();
+  const rails = [...primaryRails, ...genreRails]
+    .map(rail => ({
+      ...rail,
+      items: rail.items.filter(item => {
+        const key = `${item.mediaType}:${item.tmdbId}`;
+        if (seenHomeTitles.has(key)) return false;
+        seenHomeTitles.add(key);
+        return true;
+      }),
+    }))
+    .filter(rail => rail.items.length > 0);
 
   const qualityScore = (item: CatalogMediaSummary): number => {
     const year = Number(item.releaseDate?.slice(0, 4)) || currentYear - 4;

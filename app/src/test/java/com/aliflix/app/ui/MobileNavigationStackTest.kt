@@ -74,4 +74,33 @@ class MobileNavigationStackTest {
         stack = popMobileDestinationStack(stack)
         assertEquals(MobileDestination.Detail(show), stack.last())
     }
+
+    @Test
+    fun destinationSaveKeysStayStableAfterOpeningAndClosingAChild() {
+        val root = MobileDestination.Root(AppTab.HOME)
+        val show = MobileDestination.Detail(
+            Media(id = 1396, type = MediaType.TV, title = "Breaking Bad"),
+        )
+        val genre = MobileDestination.Genre("Crime", MediaType.TV)
+
+        val rootStack = listOf<MobileDestination>(root)
+        val detailStack = rootStack + show
+        val genreStack = detailStack + genre
+        val nestedStack = genreStack + MobileDestination.Detail(
+            Media(id = 60059, type = MediaType.TV, title = "Better Call Saul"),
+        )
+
+        assertEquals(
+            mobileDestinationSaveKey(genreStack),
+            mobileDestinationSaveKey(popMobileDestinationStack(nestedStack)),
+        )
+        assertEquals(
+            mobileDestinationSaveKey(detailStack),
+            mobileDestinationSaveKey(popMobileDestinationStack(genreStack)),
+        )
+        assertEquals(
+            mobileDestinationSaveKey(rootStack),
+            mobileDestinationSaveKey(popMobileDestinationStack(detailStack)),
+        )
+    }
 }
