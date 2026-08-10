@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 74
-val mobileVersionName = "2.9.23"
+val mobileVersionCode = 75
+val mobileVersionName = "2.9.24"
 val githubReleaseBaseUrl =
     "https://github.com/alishaban144/aliflix-android/releases/latest/download"
 val legacyUpdateManifestOverride = providers.gradleProperty("ALIFLIX_UPDATE_MANIFEST_URL")
