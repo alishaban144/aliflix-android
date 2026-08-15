@@ -490,9 +490,8 @@ internal fun DiscoverScreen(
                                     .padding(horizontal = 16.dp, vertical = 15.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                AskAliflixSparkMark(
+                                AskAliflixOrbAnimation(
                                     modifier = Modifier.size(46.dp),
-                                    animated = false,
                                 )
                                 Spacer(modifier = Modifier.width(13.dp))
                                 Row(

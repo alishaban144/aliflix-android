@@ -470,21 +470,29 @@ private fun AskLoadingState(title: String) {
         Spacer(Modifier.height(24.dp))
         Box(
             modifier = Modifier
-                .size(68.dp)
+                .size(148.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
-                        listOf(AliflixAccentPrimary.copy(alpha = pulse), AliflixAccentPrimary.copy(alpha = 0.08f))
+                        listOf(
+                            AliflixAccentSecondary.copy(alpha = pulse * 0.34f),
+                            AliflixAccentPrimary.copy(alpha = pulse * 0.24f),
+                            Color.Transparent,
+                        )
                     )
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            AskAliflixSparkMark(modifier = Modifier.size(34.dp), animated = true)
+            AskAliflixOrbAnimation(
+                modifier = Modifier.size(132.dp),
+                zoom = 2.05f,
+                contentDescription = "$title in progress",
+            )
         }
-        Spacer(Modifier.height(17.dp))
+        Spacer(Modifier.height(13.dp))
         Text(title, color = AliflixContentPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
-        Spacer(Modifier.height(24.dp))
-        repeat(3) { index ->
+        Spacer(Modifier.height(20.dp))
+        repeat(2) { index ->
             LoadingResultCard(alpha = (pulse - index * 0.08f).coerceIn(0.28f, 0.8f))
             Spacer(Modifier.height(10.dp))
         }

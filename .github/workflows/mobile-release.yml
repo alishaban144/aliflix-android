@@ -19,8 +19,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "76"
-  RELEASE_VERSION_NAME: "2.9.25"
+  RELEASE_VERSION_CODE: "77"
+  RELEASE_VERSION_NAME: "2.9.26"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -135,7 +135,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Modern mirrored mobile navigation with exact Back-state restoration, a cinematic details redesign, exact TMDB creator filmographies, and document-start Moviepire ad and scam blocking."
+            "releaseNotes": "Makes Moviepire the first and default mobile streaming source without a beta label, adds the animated Ask Aliflix orb throughout Discover and matching, and synchronizes TMDB, IMDb, and Tomatometer ratings on details."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -145,7 +145,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile-only release with mirrored page transitions, exact nested Back-state restoration, a cinematic details redesign, exact TMDB creator filmographies, episode-rating fixes, and document-start Moviepire ad and scam blocking that preserves playback."
+          body: "Mobile-only release that makes Moviepire the first and default streaming source without a beta label, adds the animated Ask Aliflix orb throughout Discover and matching, and presents synchronized TMDB, IMDb, and Tomatometer ratings on details."
           files: |
             aliflix-mobile.apk
             update-mobile.json

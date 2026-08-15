@@ -184,6 +184,7 @@ import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.mobileGeneralPlaybackProviders
 import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.player.WebPlayerScreen
 import com.aliflix.app.recommendation.PersonalMatch
@@ -2455,7 +2456,7 @@ private fun PlaybackProviderSelector(
     modifier: Modifier = Modifier,
     onEditProviderUrl: ((PlaybackProviderId) -> Unit)? = null,
 ) {
-    val providers = PlaybackProviderId.entries.filter(PlaybackProviderId::supportsGeneralPlayback)
+    val providers = mobileGeneralPlaybackProviders()
 
     Column(
         modifier = modifier
@@ -2582,28 +2583,6 @@ private fun PlaybackProviderSelector(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (provider.isBeta) {
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(
-                                    if (selected) {
-                                        Color.White.copy(alpha = 0.22f)
-                                    } else {
-                                        AliflixRed.copy(alpha = 0.22f)
-                                    },
-                                )
-                                .padding(horizontal = 4.dp, vertical = 1.dp),
-                        ) {
-                            Text(
-                                text = "BETA",
-                                color = if (selected) Color.White else AliflixRed,
-                                fontSize = 7.sp,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 0.4.sp,
-                            )
-                        }
-                    }
                 }
 
                 if (selected) {
@@ -3017,8 +2996,7 @@ private fun MobileSettingsDialog(
                         fontWeight = FontWeight.Bold,
                     )
                     var sourceExpanded by remember { mutableStateOf(false) }
-                    val providers = PlaybackProviderId.entries
-                        .filter(PlaybackProviderId::supportsGeneralPlayback)
+                    val providers = mobileGeneralPlaybackProviders()
                     Box {
                         Row(
                             modifier = Modifier
@@ -4879,6 +4857,17 @@ private fun RatingsRow(item: Media) {
             horizontalArrangement = Arrangement.spacedBy(9.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
+            RatingPill(
+                source = "TMDB",
+                value = if (item.rating > 0.0) {
+                    String.format(java.util.Locale.US, "%.1f", item.rating)
+                } else {
+                    "Not rated"
+                },
+                accent = Color(0xFF01B4E4),
+                darkText = true,
+                loading = !ready,
+            )
             RatingPill(
                 source = "IMDb",
                 value = when {

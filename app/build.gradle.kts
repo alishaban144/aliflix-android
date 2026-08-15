@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 76
-val mobileVersionName = "2.9.25"
+val mobileVersionCode = 77
+val mobileVersionName = "2.9.26"
 val githubReleaseBaseUrl =
     "https://github.com/alishaban144/aliflix-android/releases/latest/download"
 val legacyUpdateManifestOverride = providers.gradleProperty("ALIFLIX_UPDATE_MANIFEST_URL")
@@ -143,6 +143,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.coil-kt:coil-gif:2.7.0")
     implementation("org.jsoup:jsoup:1.19.1")
     implementation("com.google.mediapipe:tasks-text:0.10.14")
 

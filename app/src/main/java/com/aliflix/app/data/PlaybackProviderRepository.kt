@@ -3,8 +3,10 @@ package com.aliflix.app.data
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.defaultGeneralPlaybackProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,7 +93,7 @@ class PlaybackProviderRepository(context: Context) {
             ?: prefs.getString(KEY_LEGACY_ACTIVE_SOURCE_ID, null)
         val generalProvider = PlaybackProviderId.fromStoredValue(storedProvider)
             ?.takeIf(PlaybackProviderId::supportsGeneralPlayback)
-            ?: PlaybackProviderId.RAMOFLIX
+            ?: defaultGeneralPlaybackProvider(isTv = BuildConfig.IS_TV)
         if (storedProvider != null) {
             prefs.edit {
                 putString(KEY_GENERAL_PROVIDER_ID, generalProvider.name)

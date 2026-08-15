@@ -53,9 +53,8 @@ fun AskAliflixHeader(
                     tint = AliflixContentPrimary,
                 )
             }
-            AskAliflixSparkMark(
-                modifier = Modifier.size(38.dp),
-                animated = true,
+            AskAliflixOrbAnimation(
+                modifier = Modifier.size(42.dp),
             )
             Spacer(modifier = Modifier.width(10.dp))
             Text(

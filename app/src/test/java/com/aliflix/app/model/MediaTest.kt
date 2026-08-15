@@ -119,6 +119,30 @@ class MediaTest {
     }
 
     @Test
+    fun mobilePlaybackProvidersStartWithMoviepire() {
+        assertEquals(
+            listOf(
+                PlaybackProviderId.MOVIEPIRE,
+                PlaybackProviderId.RAMOFLIX,
+                PlaybackProviderId.DORABY,
+            ),
+            mobileGeneralPlaybackProviders(),
+        )
+    }
+
+    @Test
+    fun newInstallDefaultChangesOnlyForMobile() {
+        assertEquals(
+            PlaybackProviderId.MOVIEPIRE,
+            defaultGeneralPlaybackProvider(isTv = false),
+        )
+        assertEquals(
+            PlaybackProviderId.RAMOFLIX,
+            defaultGeneralPlaybackProvider(isTv = true),
+        )
+    }
+
+    @Test
     fun moviepireIsTheOnlyBetaPlaybackProvider() {
         assertEquals(
             listOf(PlaybackProviderId.MOVIEPIRE),

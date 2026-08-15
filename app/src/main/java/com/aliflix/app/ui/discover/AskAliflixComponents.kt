@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -47,12 +48,16 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.ImageLoader
 import coil.compose.AsyncImage
+import coil.decode.ImageDecoderDecoder
+import com.aliflix.app.R
 import com.aliflix.app.model.Media
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
@@ -63,6 +68,45 @@ import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
+
+@Composable
+fun AskAliflixOrbAnimation(
+    modifier: Modifier = Modifier,
+    zoom: Float = 2.05f,
+    contentDescription: String? = null,
+) {
+    val context = LocalContext.current
+    val animatedImageLoader = remember(context) {
+        ImageLoader.Builder(context.applicationContext)
+            .components { add(ImageDecoderDecoder.Factory()) }
+            .build()
+    }
+
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(Color.Black)
+            .border(
+                width = 1.dp,
+                color = AliflixAccentSecondary.copy(alpha = 0.24f),
+                shape = CircleShape,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        AsyncImage(
+            model = R.drawable.ask_aliflix_orb,
+            imageLoader = animatedImageLoader,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = zoom
+                    scaleY = zoom
+                },
+        )
+    }
+}
 
 @Composable
 fun AskAliflixSparkMark(

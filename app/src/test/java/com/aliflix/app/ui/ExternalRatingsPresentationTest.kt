@@ -8,10 +8,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExternalRatingsPresentationTest {
-    private val title = Media(id = 238, type = MediaType.MOVIE, title = "The Godfather")
+    private val title = Media(
+        id = 238,
+        type = MediaType.MOVIE,
+        title = "The Godfather",
+        rating = 9.0,
+    )
 
     @Test
-    fun `ratings stay together while either source is loading`() {
+    fun `tmdb imdb and rt stay together while either external source is loading`() {
         val imdbFirst = title.copy(
             imdbRating = 9.2,
             imdbRatingState = RatingSourceState.VERIFIED,
@@ -22,7 +27,7 @@ class ExternalRatingsPresentationTest {
     }
 
     @Test
-    fun `ratings appear together when both sources resolve`() {
+    fun `tmdb imdb and rt appear together when both external sources resolve`() {
         val resolved = title.copy(
             imdbRating = 9.2,
             imdbRatingState = RatingSourceState.VERIFIED,
