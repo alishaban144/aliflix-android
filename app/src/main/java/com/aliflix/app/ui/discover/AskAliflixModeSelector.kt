@@ -183,17 +183,15 @@ private fun AskModeButton(
         verticalArrangement = Arrangement.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (tab.icon == null) {
-                AskAliflixSparkMark(modifier = Modifier.size(18.dp))
-            } else {
+            tab.icon?.let { icon ->
                 Icon(
-                    imageVector = tab.icon,
+                    imageVector = icon,
                     contentDescription = null,
                     tint = if (selected) AliflixAccentSecondary else foreground,
                     modifier = Modifier.size(16.dp),
                 )
+                Spacer(Modifier.width(5.dp))
             }
-            Spacer(Modifier.width(5.dp))
             Text(tab.label, color = foreground, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
         }
     }

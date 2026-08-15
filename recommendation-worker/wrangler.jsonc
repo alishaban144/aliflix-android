@@ -1,5 +1,6 @@
 {
   "name": "aliflix-recommendations",
+  "account_id": "2bd02586ce22e6e64d878d35d25e44c9",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-08",
   "compatibility_flags": [

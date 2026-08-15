@@ -16,6 +16,18 @@ const TMDB_DETAIL_RESERVE = 10;
 const DISCOVERY_CONCURRENCY = 4;
 const MAX_KEYWORD_SEARCHES = 18;
 
+async function optionalTmdbCall<T>(operation: string, call: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof ServiceError && error.code === 'TMDB_UNAVAILABLE' && error.retryable) {
+      console.warn(JSON.stringify({ event: 'tmdb_optional_call_skipped', operation }));
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<number, string>): Candidate | undefined {
   const title = (mediaType === 'movie' ? item.title : item.name)?.trim();
   if (!item.id || !title) return undefined;
@@ -119,7 +131,16 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     matchedConceptGroups: number[] = [],
   ) => {
     if (tmdb.callsRemaining <= TMDB_DETAIL_RESERVE || candidates.size >= MAX_CANDIDATES) return;
-    const first = await tmdb.discover(request.mediaType, { ...baseParams, ...extra, page: 1 });
+    const discoverPage = async (page: number): Promise<TmdbPage | undefined> => {
+      // A broad sweep can span well over one hundred TMDB pages. Do not discard
+      // every useful candidate because one page exhausted its transient retries.
+      return optionalTmdbCall(
+        `${source}:page-${page}`,
+        () => tmdb.discover(request.mediaType, { ...baseParams, ...extra, page }),
+      );
+    };
+    const first = await discoverPage(1);
+    if (!first) return;
     addPage(first, `${source}:page-1`, matched, matchedConceptGroups);
     const lastPage = Math.min(pages, first.total_pages || 1);
     if (!first.results?.length || lastPage <= 1) return;
@@ -129,13 +150,9 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       const batchSize = Math.min(DISCOVERY_CONCURRENCY, usableCalls, lastPage - page + 1);
       if (batchSize <= 0) break;
       const pageNumbers = Array.from({ length: batchSize }, (_, index) => page + index);
-      const results = await Promise.all(
-        pageNumbers.map(pageNumber => tmdb.discover(
-          request.mediaType,
-          { ...baseParams, ...extra, page: pageNumber },
-        )),
-      );
+      const results = await Promise.all(pageNumbers.map(discoverPage));
       results.forEach((result, index) => {
+        if (!result) return;
         addPage(
           result,
           `${source}:page-${pageNumbers[index]}`,
@@ -143,7 +160,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
           matchedConceptGroups,
         );
       });
-      if (results.every(result => !result.results?.length)) break;
+      if (results.every(result => !result?.results?.length)) break;
       page += batchSize;
     }
   };
@@ -162,8 +179,16 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     anchorDetails = await tmdb.details(anchor.mediaType, anchorId);
     if (anchor.mediaType === request.mediaType) {
       for (let page = 1; page <= 3 && tmdb.callsRemaining > 12; page++) {
-        addPage(await tmdb.recommendations(anchor.mediaType, anchorId, page), `recommendations:page-${page}`, [], [], 1);
-        addPage(await tmdb.similar(anchor.mediaType, anchorId, page), `similar:page-${page}`, [], [], .85);
+        const recommendations = await optionalTmdbCall(
+          `recommendations:page-${page}`,
+          () => tmdb.recommendations(anchor.mediaType, anchorId!, page),
+        );
+        if (recommendations) addPage(recommendations, `recommendations:page-${page}`, [], [], 1);
+        const similar = await optionalTmdbCall(
+          `similar:page-${page}`,
+          () => tmdb.similar(anchor.mediaType, anchorId!, page),
+        );
+        if (similar) addPage(similar, `similar:page-${page}`, [], [], .85);
       }
     }
     const anchorKeywords = anchorDetails.keywords?.keywords || anchorDetails.keywords?.results || [];
@@ -184,7 +209,11 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       const ids: number[] = [];
       for (const phrase of group.synonyms) {
         if (keywordSearches++ >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= 18) break;
-        const response = await tmdb.searchKeyword(phrase);
+        const response = await optionalTmdbCall(
+          `keyword:${phrase}`,
+          () => tmdb.searchKeyword(phrase),
+        );
+        if (!response) continue;
         const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(phrase));
         for (const keyword of [...exact, ...response.results].slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
       }
@@ -216,7 +245,11 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
     for (const phrase of intent.broadSearchPhrases.slice(0, 3)) {
       if (keywordSearches++ >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= 14) break;
-      const response = await tmdb.searchKeyword(phrase);
+      const response = await optionalTmdbCall(
+        `broad-keyword:${phrase}`,
+        () => tmdb.searchKeyword(phrase),
+      );
+      if (!response) continue;
       const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(phrase));
       const ids = [...exact, ...response.results]
         .map(keyword => keyword.id)
@@ -255,8 +288,15 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
   const preliminary = [...candidates.values()].sort((a, b) => b.retrievalSources.size - a.retrievalSources.size || (b.tmdbVoteCount || 0) - (a.tmdbVoteCount || 0));
   const detailsCount = Math.min(preliminary.length, Math.max(0, Math.min(10, tmdb.callsRemaining)));
   for (let index = 0; index < detailsCount; index++) {
-    try { mergeDetails(preliminary[index], await tmdb.details(request.mediaType, preliminary[index].tmdbId)); }
-    catch (error) { if (!(error instanceof ServiceError && error.code === 'TMDB_NOT_FOUND')) throw error; }
+    try {
+      const details = await optionalTmdbCall(
+        `details:${request.mediaType}:${preliminary[index].tmdbId}`,
+        () => tmdb.details(request.mediaType, preliminary[index].tmdbId),
+      );
+      if (details) mergeDetails(preliminary[index], details);
+    } catch (error) {
+      if (!(error instanceof ServiceError && error.code === 'TMDB_NOT_FOUND')) throw error;
+    }
   }
 
   let embeddingsAvailable = false;

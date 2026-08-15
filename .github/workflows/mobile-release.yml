@@ -5,7 +5,7 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v2.9.27"
+      - "release/v2.9.28"
   workflow_dispatch:
     inputs:
       tag:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "78"
-  RELEASE_VERSION_NAME: "2.9.27"
+  RELEASE_VERSION_CODE: "79"
+  RELEASE_VERSION_NAME: "2.9.28"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ACCOUNT_ID: "2bd02586ce22e6e64d878d35d25e44c9"
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -89,7 +89,7 @@ jobs:
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
           else
             test "${GITHUB_REF_TYPE}" = "branch"
-            test "${GITHUB_REF_NAME}" = "release/v2.9.27"
+            test "${GITHUB_REF_NAME}" = "release/v2.9.28"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then

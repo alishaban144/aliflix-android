@@ -59,10 +59,10 @@ export class TmdbClient {
             retryDelayMs = Math.min(2_000, retryAfterSeconds * 1_000);
           }
         }
-        if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request failed (${response.status})`, 503, true);
+        if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request failed (${response.status}) for ${path}`, 503, true);
       } catch (error) {
         if (error instanceof ServiceError) throw error;
-        if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request timed out or failed', 503, true);
+        if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request timed out or failed for ${path}`, 503, true);
       } finally { clearTimeout(timeout); }
       await new Promise(resolve => setTimeout(resolve, retryDelayMs));
     }

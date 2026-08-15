@@ -18,7 +18,7 @@ const interpreted: InterpretedIntent = {
   genreHints: ['Comedy'], toneAndMood: ['funny'], broadSearchPhrases: [],
 };
 
-function fakeTmdb(options: { fail?: boolean; empty?: boolean } = {}) {
+function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean } = {}) {
   let remaining = 40;
   return {
     get callsRemaining() { return remaining; },
@@ -30,6 +30,7 @@ function fakeTmdb(options: { fail?: boolean; empty?: boolean } = {}) {
     details: async (_type: string, id: number) => ({ id, title: 'Funny Fixture', overview: 'A funny comedy', genre_ids: [35], genres: [{ id: 35, name: 'Comedy' }] }),
     discover: async () => {
       remaining--;
+      if (options.authFail) throw new ServiceError('TMDB_AUTH_FAILED', 'TMDB rejected the credential', 503, false);
       if (options.fail) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB failed', 503, true);
       const results = options.empty ? [] : [
         { id: 7, title: 'Funny Fixture', overview: 'A funny comedy', genre_ids: [35], vote_average: 7.2, vote_count: 500 },
@@ -82,9 +83,17 @@ describe('TMDB-only recommendation engine', () => {
     expect(JSON.stringify(results)).not.toMatch(/home|omdb|localSearch|scrap/i);
   });
 
-  it('propagates a retryable TMDB failure instead of using a fallback', async () => {
-    await expect(processRecommendation({} as any, request, { tmdb: fakeTmdb({ fail: true }), interpret: async () => interpreted }))
-      .rejects.toMatchObject({ code: 'TMDB_UNAVAILABLE', retryable: true });
+  it('skips exhausted transient discovery pages without inventing fallback results', async () => {
+    const results = await processRecommendation({} as any, request, {
+      tmdb: fakeTmdb({ fail: true }), interpret: async () => interpreted,
+    });
+    expect(results).toEqual([]);
+  });
+
+  it('still propagates a non-retryable TMDB credential failure', async () => {
+    await expect(processRecommendation({} as any, request, {
+      tmdb: fakeTmdb({ authFail: true }), interpret: async () => interpreted,
+    })).rejects.toMatchObject({ code: 'TMDB_AUTH_FAILED', retryable: false });
   });
 
   it('returns a true empty pool for a narrow no-result request', async () => {

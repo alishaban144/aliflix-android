@@ -44,6 +44,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -78,31 +80,31 @@ fun AskAliflixOrbAnimation(
     modifier: Modifier = Modifier,
     contentDescription: String? = null,
 ) {
-    val transition = rememberInfiniteTransition(label = "ask-intelligence-core")
-    val shellRotation by transition.animateFloat(
+    val transition = rememberInfiniteTransition(label = "ask-particle-orb")
+    val orbitPhase by transition.animateFloat(
         initialValue = 0f,
-        targetValue = 360f,
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 12_800, easing = LinearEasing),
+            animation = tween(durationMillis = 7_200, easing = LinearEasing),
         ),
-        label = "ask-core-shell-flow",
+        label = "ask-orb-rotation",
     )
-    val innerRotation by transition.animateFloat(
-        initialValue = 360f,
-        targetValue = 0f,
+    val currentPhase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 17_600, easing = LinearEasing),
+            animation = tween(durationMillis = 4_800, easing = LinearEasing),
         ),
-        label = "ask-core-inner-flow",
+        label = "ask-orb-current",
     )
     val breath by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2_800, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 2_400, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
         ),
-        label = "ask-core-breath",
+        label = "ask-orb-breath",
     )
     val semanticModifier = if (contentDescription == null) {
         Modifier
@@ -112,230 +114,133 @@ fun AskAliflixOrbAnimation(
 
     Canvas(modifier = modifier.then(semanticModifier)) {
         val diameter = size.minDimension
-        val coreCenter = Offset(
-            x = center.x,
-            y = center.y + diameter * 0.025f,
-        )
-        val pulse = 0.985f + breath * 0.025f
-        val shellWidth = (diameter * 0.024f).coerceAtLeast(1.1f)
-        val shellDrift = kotlin.math.sin(Math.toRadians(shellRotation.toDouble())).toFloat() * 2.4f
-        val innerDrift = kotlin.math.sin(Math.toRadians(innerRotation.toDouble())).toFloat() * 3.2f
+        val orbCenter = Offset(center.x, center.y + diameter * 0.014f)
+        val tau = (Math.PI * 2.0).toFloat()
+        val rotation = orbitPhase * tau
+        val pulse = 0.985f + breath * 0.022f
+        val radius = diameter * 0.322f * pulse
+        val particleCount = if (diameter < 150f) 108 else 196
+        val goldenAngle = (Math.PI * (3.0 - kotlin.math.sqrt(5.0))).toFloat()
+        val tilt = 0.30f
+        val cosTilt = kotlin.math.cos(tilt)
+        val sinTilt = kotlin.math.sin(tilt)
 
-        fun outerShell(expansion: Float = 0f): Path {
-            val d = diameter
-            val x = coreCenter.x
-            val y = coreCenter.y
-            return Path().apply {
-                moveTo(x - d * (0.090f + expansion), y - d * (0.276f + expansion))
-                cubicTo(
-                    x - d * 0.026f,
-                    y - d * (0.332f + expansion),
-                    x + d * 0.040f,
-                    y - d * 0.267f,
-                    x + d * 0.112f,
-                    y - d * (0.258f + expansion),
-                )
-                cubicTo(
-                    x + d * (0.254f + expansion),
-                    y - d * 0.224f,
-                    x + d * (0.345f + expansion),
-                    y - d * 0.076f,
-                    x + d * (0.318f + expansion),
-                    y + d * 0.112f,
-                )
-                cubicTo(
-                    x + d * 0.287f,
-                    y + d * (0.238f + expansion),
-                    x + d * 0.102f,
-                    y + d * (0.348f + expansion),
-                    x - d * 0.075f,
-                    y + d * (0.330f + expansion),
-                )
-                cubicTo(
-                    x - d * (0.226f + expansion),
-                    y + d * 0.306f,
-                    x - d * (0.335f + expansion),
-                    y + d * 0.158f,
-                    x - d * (0.326f + expansion),
-                    y - d * 0.018f,
-                )
-                cubicTo(
-                    x - d * 0.316f,
-                    y - d * (0.170f + expansion),
-                    x - d * 0.206f,
-                    y - d * 0.264f,
-                    x - d * (0.090f + expansion),
-                    y - d * (0.276f + expansion),
-                )
-                close()
-            }
-        }
-
-        fun innerCurrent(): Path {
-            val d = diameter
-            val x = coreCenter.x
-            val y = coreCenter.y
-            return Path().apply {
-                moveTo(x - d * 0.205f, y - d * 0.132f)
-                cubicTo(
-                    x - d * 0.267f,
-                    y + d * 0.010f,
-                    x - d * 0.184f,
-                    y + d * 0.165f,
-                    x - d * 0.040f,
-                    y + d * 0.213f,
-                )
-                cubicTo(
-                    x + d * 0.102f,
-                    y + d * 0.254f,
-                    x + d * 0.238f,
-                    y + d * 0.114f,
-                    x + d * 0.213f,
-                    y - d * 0.023f,
-                )
-                cubicTo(
-                    x + d * 0.193f,
-                    y - d * 0.130f,
-                    x + d * 0.096f,
-                    y - d * 0.184f,
-                    x + d * 0.028f,
-                    y - d * 0.151f,
-                )
-            }
-        }
-
+        // A restrained bloom gives the particles volume without introducing a cut-out backdrop.
         drawCircle(
             brush = Brush.radialGradient(
                 colorStops = arrayOf(
                     0f to Color.Transparent,
-                    0.50f to Color(0xFF7E5CFF).copy(alpha = 0.035f + breath * 0.018f),
-                    0.74f to Color(0xFF14E8FF).copy(alpha = 0.10f + breath * 0.025f),
+                    0.40f to Color(0xFF6D4BFF).copy(alpha = 0.025f + breath * 0.015f),
+                    0.72f to Color(0xFF18E7FF).copy(alpha = 0.105f + breath * 0.025f),
                     1f to Color.Transparent,
                 ),
-                center = coreCenter,
-                radius = diameter * 0.47f,
+                center = orbCenter,
+                radius = diameter * 0.43f,
             ),
-            radius = diameter * 0.47f,
-            center = coreCenter,
+            radius = diameter * 0.43f,
+            center = orbCenter,
         )
 
-        withTransform({
-            rotate(degrees = shellDrift, pivot = coreCenter)
-            scale(scaleX = pulse, scaleY = pulse, pivot = coreCenter)
-        }) {
-            drawPath(
-                path = outerShell(),
-                brush = Brush.radialGradient(
-                    colorStops = arrayOf(
-                        0f to Color.Transparent,
-                        0.48f to Color(0xFF7E67FF).copy(alpha = 0.025f),
-                        0.78f to Color(0xFF18DFF4).copy(alpha = 0.075f + breath * 0.018f),
-                        1f to Color.Transparent,
-                    ),
-                    center = coreCenter,
-                    radius = diameter * 0.39f,
-                ),
+        // Fibonacci-distributed points stay evenly spaced and rotate as a coherent 3D shell.
+        repeat(particleCount) { index ->
+            val normalized = (index + 0.5f) / particleCount
+            val y = 1f - 2f * normalized
+            val latitudeRadius = kotlin.math.sqrt((1f - y * y).coerceAtLeast(0f))
+            val longitude = index * goldenAngle
+            val sourceX = kotlin.math.cos(longitude) * latitudeRadius
+            val sourceZ = kotlin.math.sin(longitude) * latitudeRadius
+            val rotatedX = sourceX * kotlin.math.cos(rotation) + sourceZ * kotlin.math.sin(rotation)
+            val rotatedZ = -sourceX * kotlin.math.sin(rotation) + sourceZ * kotlin.math.cos(rotation)
+            val projectedY = y * cosTilt - rotatedZ * sinTilt
+            val depth = y * sinTilt + rotatedZ * cosTilt
+            val perspective = 1f + depth * 0.085f
+            val point = Offset(
+                x = orbCenter.x + rotatedX * radius * perspective,
+                y = orbCenter.y + projectedY * radius * perspective,
             )
-            drawPath(
-                path = outerShell(0.026f),
-                brush = Brush.sweepGradient(
-                    colorStops = arrayOf(
-                        0f to Color.Transparent,
-                        0.13f to Color(0xFF28E7FF).copy(alpha = 0.07f),
-                        0.44f to Color(0xFF34F0FF).copy(alpha = 0.16f),
-                        0.70f to Color(0xFF736AFF).copy(alpha = 0.08f),
-                        1f to Color.Transparent,
-                    ),
-                    center = coreCenter,
-                ),
-                style = Stroke(
-                    width = diameter * 0.078f,
-                    cap = StrokeCap.Round,
-                ),
+            val front = ((depth + 1f) * 0.5f).coerceIn(0f, 1f)
+            val edge = kotlin.math.abs(rotatedX).coerceIn(0f, 1f)
+            val shimmer = 0.72f + 0.28f * kotlin.math.sin(longitude * 1.7f + currentPhase * tau)
+            val alpha = (0.16f + front * 0.46f + edge * 0.22f) * shimmer
+            val dotRadius = (diameter * (0.0042f + front * 0.0026f)).coerceAtLeast(0.72f)
+            val blend = ((rotatedX + projectedY + 1.4f) / 2.8f).coerceIn(0f, 1f)
+            val color = Color(
+                red = 0.36f + blend * 0.05f,
+                green = 0.38f + blend * 0.52f,
+                blue = 1f,
+                alpha = alpha.coerceIn(0.08f, 0.88f),
             )
-            drawPath(
-                path = outerShell(),
-                brush = Brush.sweepGradient(
-                    colorStops = arrayOf(
-                        0f to Color(0xFFB1FBFF).copy(alpha = 0.74f),
-                        0.11f to Color(0xFF28E9FF).copy(alpha = 0.92f),
-                        0.42f to Color(0xFF11DDF4).copy(alpha = 0.69f),
-                        0.69f to Color(0xFF7183FF).copy(alpha = 0.52f),
-                        0.84f to Color(0xFF20E7FF).copy(alpha = 0.84f),
-                        1f to Color(0xFFB1FBFF).copy(alpha = 0.74f),
-                    ),
-                    center = coreCenter,
-                ),
-                style = Stroke(
-                    width = shellWidth,
-                    cap = StrokeCap.Round,
-                ),
-            )
-            val crest = Path().apply {
-                moveTo(coreCenter.x - diameter * 0.096f, coreCenter.y - diameter * 0.276f)
-                cubicTo(
-                    coreCenter.x - diameter * 0.012f,
-                    coreCenter.y - diameter * 0.332f,
-                    coreCenter.x + diameter * 0.024f,
-                    coreCenter.y - diameter * 0.258f,
-                    coreCenter.x + diameter * 0.118f,
-                    coreCenter.y - diameter * 0.258f,
+            if (front > 0.70f) {
+                drawCircle(
+                    color = color.copy(alpha = color.alpha * 0.12f),
+                    radius = dotRadius * 2.8f,
+                    center = point,
                 )
             }
-            drawPath(
-                path = crest,
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color(0xFF35E9FF).copy(alpha = 0.34f),
-                        Color(0xFFE9FEFF),
-                        Color(0xFF1BE8FA).copy(alpha = 0.78f),
-                    ),
-                    start = Offset(coreCenter.x - diameter * 0.10f, coreCenter.y - diameter * 0.31f),
-                    end = Offset(coreCenter.x + diameter * 0.15f, coreCenter.y - diameter * 0.26f),
+            drawCircle(color = color, radius = dotRadius, center = point)
+        }
+
+        val ovalBounds = Rect(
+            offset = Offset(orbCenter.x - radius * 0.76f, orbCenter.y - radius * 0.49f),
+            size = Size(radius * 1.52f, radius * 0.98f),
+        )
+        val currentRotation = -13f + kotlin.math.sin(currentPhase * tau) * 4f
+        withTransform({
+            rotate(degrees = currentRotation, pivot = orbCenter)
+        }) {
+            drawArc(
+                brush = Brush.sweepGradient(
+                    colorStops = arrayOf(
+                        0f to Color.Transparent,
+                        0.18f to Color(0xFF7C64FF).copy(alpha = 0.18f),
+                        0.48f to Color(0xFFC47CFF).copy(alpha = 0.34f),
+                        0.76f to Color(0xFF38E9FF).copy(alpha = 0.25f),
+                        1f to Color.Transparent,
+                    ), center = orbCenter,
                 ),
-                style = Stroke(width = shellWidth * 0.72f, cap = StrokeCap.Round),
+                startAngle = 18f,
+                sweepAngle = 292f,
+                useCenter = false,
+                topLeft = ovalBounds.topLeft,
+                size = ovalBounds.size,
+                style = Stroke(width = diameter * 0.052f, cap = StrokeCap.Round),
+            )
+            drawArc(
+                brush = Brush.sweepGradient(
+                    colorStops = arrayOf(
+                        0f to Color.Transparent,
+                        0.16f to Color(0xFFA896FF).copy(alpha = 0.68f),
+                        0.44f to Color(0xFFDB8CFF).copy(alpha = 0.94f),
+                        0.71f to Color(0xFF6B7DFF).copy(alpha = 0.82f),
+                        0.91f to Color(0xFFB9FBFF).copy(alpha = 0.94f),
+                        1f to Color.Transparent,
+                    ), center = orbCenter,
+                ),
+                startAngle = 18f,
+                sweepAngle = 292f,
+                useCenter = false,
+                topLeft = ovalBounds.topLeft,
+                size = ovalBounds.size,
+                style = Stroke(width = (diameter * 0.012f).coerceAtLeast(1.1f), cap = StrokeCap.Round),
             )
         }
 
-        withTransform({
-            rotate(degrees = innerDrift, pivot = coreCenter)
-            scale(
-                scaleX = 0.99f + breath * 0.018f,
-                scaleY = 1.01f - breath * 0.014f,
-                pivot = coreCenter,
-            )
-        }) {
-            drawPath(
-                path = innerCurrent(),
-                brush = Brush.sweepGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        Color(0xFF806BFF).copy(alpha = 0.22f),
-                        Color(0xFF24E5FF).copy(alpha = 0.17f),
-                        Color.Transparent,
-                    ),
-                    center = coreCenter,
-                ),
-                style = Stroke(width = diameter * 0.062f, cap = StrokeCap.Round),
-            )
-            drawPath(
-                path = innerCurrent(),
-                brush = Brush.linearGradient(
-                    colorStops = arrayOf(
-                        0f to Color(0xFFC3F8FF).copy(alpha = 0.84f),
-                        0.22f to Color(0xFF7F72FF).copy(alpha = 0.92f),
-                        0.60f to Color(0xFFB76DFF).copy(alpha = 0.82f),
-                        1f to Color(0xFF27E7F9).copy(alpha = 0.74f),
-                    ),
-                    start = Offset(coreCenter.x - diameter * 0.24f, coreCenter.y - diameter * 0.16f),
-                    end = Offset(coreCenter.x + diameter * 0.24f, coreCenter.y + diameter * 0.12f),
-                ),
-                style = Stroke(
-                    width = (diameter * 0.020f).coerceAtLeast(1f),
-                    cap = StrokeCap.Round,
-                ),
-            )
-        }
+        // A moving highlight makes the loop feel alive without flashing or spinning aggressively.
+        val highlightAngle = (currentPhase * tau) - 0.35f
+        val highlight = Offset(
+            x = orbCenter.x + kotlin.math.cos(highlightAngle) * radius * 0.72f,
+            y = orbCenter.y + kotlin.math.sin(highlightAngle) * radius * 0.37f,
+        )
+        drawCircle(
+            color = Color(0xFFDDFFFF).copy(alpha = 0.16f + breath * 0.08f),
+            radius = diameter * 0.035f,
+            center = highlight,
+        )
+        drawCircle(
+            color = Color(0xFFEFFFFF).copy(alpha = 0.90f),
+            radius = (diameter * 0.008f).coerceAtLeast(1f),
+            center = highlight,
+        )
     }
 }
 
