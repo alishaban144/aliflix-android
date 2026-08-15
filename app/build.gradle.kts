@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 75
-val mobileVersionName = "2.9.24"
+val mobileVersionCode = 76
+val mobileVersionName = "2.9.25"
 val githubReleaseBaseUrl =
     "https://github.com/alishaban144/aliflix-android/releases/latest/download"
 val legacyUpdateManifestOverride = providers.gradleProperty("ALIFLIX_UPDATE_MANIFEST_URL")
@@ -134,6 +134,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
+    implementation("androidx.webkit:webkit:1.17.0")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")

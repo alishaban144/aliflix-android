@@ -149,13 +149,17 @@ export async function titleDetails(env: RecommendationEnv, mediaType: MediaType,
   return detailsSummary(await new TmdbClient(env, 4).details(mediaType, id), mediaType);
 }
 
-export async function personCredits(env: RecommendationEnv, id: number, name: string): Promise<{ person: CatalogPerson; results: CatalogMediaSummary[] }> {
-  const tmdb = new TmdbClient(env, 6);
-  const [credits, movieGenres, tvGenres] = await Promise.all([
+export async function personCredits(env: RecommendationEnv, id: number): Promise<{ person: CatalogPerson; results: CatalogMediaSummary[] }> {
+  const tmdb = new TmdbClient(env, 8);
+  const [person, credits, movieGenres, tvGenres] = await Promise.all([
+    tmdb.person(id),
     tmdb.personCombinedCredits(id),
     tmdb.genres('movie'),
     tmdb.genres('tv'),
   ]);
+  if (person.id !== id || !present(person.name)) {
+    throw new ServiceError('TMDB_NOT_FOUND', 'TMDB person identity could not be verified', 404, false);
+  }
   const movieGenreMap = genreMap(movieGenres.genres);
   const tvGenreMap = genreMap(tvGenres.genres);
   const values = [...(credits.crew || []), ...(credits.cast || [])]
@@ -169,7 +173,14 @@ export async function personCredits(env: RecommendationEnv, id: number, name: st
       return (right.tmdbRating || 0) - (left.tmdbRating || 0);
     })
     .slice(0, 120);
-  return { person: { tmdbId: id, name }, results: values };
+  return {
+    person: {
+      tmdbId: person.id,
+      name: person.name,
+      profilePath: present(person.profile_path),
+    },
+    results: values,
+  };
 }
 
 export async function editorialPicks(env: RecommendationEnv): Promise<{ results: CatalogMediaSummary[] }> {

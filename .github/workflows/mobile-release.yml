@@ -19,8 +19,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "75"
-  RELEASE_VERSION_NAME: "2.9.24"
+  RELEASE_VERSION_CODE: "76"
+  RELEASE_VERSION_NAME: "2.9.25"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -106,16 +106,18 @@ jobs:
           set -euo pipefail
           APK_PATH="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
           test -f "$APK_PATH"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
           ACTUAL_SHA256="$(
-            keytool -printcert -jarfile "$APK_PATH" \
-              | sed -nE 's/^[[:space:]]*SHA256:[[:space:]]*([0-9A-Fa-f:]+)[[:space:]]*$/\1/p' \
-              | tr -d ':' \
+            "$APKSIGNER" verify --print-certs "$APK_PATH" \
+              | sed -nE 's/^Signer #1 certificate SHA-256 digest:[[:space:]]*([0-9A-Fa-f]+)[[:space:]]*$/\1/p' \
               | tr '[:upper:]' '[:lower:]' \
               | head -n 1
           )"
+          test -n "$ACTUAL_SHA256"
           echo "Actual SHA256: $ACTUAL_SHA256"
           echo "Expected SHA256: $EXPECTED_MOBILE_SIGNER_SHA256"
-          # test "$ACTUAL_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
+          test "$ACTUAL_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
       - name: Build mobile update manifest
         run: |
@@ -132,7 +134,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Exact Back-navigation scroll restoration, 18 TMDB Home rails with genre and subgenre collections, refined detail metadata styling, and stronger Moviepire Beta ad suppression."
+            "releaseNotes": "Modern mirrored mobile navigation with exact Back-state restoration, a cinematic details redesign, exact TMDB creator filmographies, and document-start Moviepire ad and scam blocking."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -142,7 +144,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile-only navigation and discovery update with exact saved scroll positions, a much larger TMDB-backed Home feed with genre and subgenre rails, refined detail metadata styling, and stronger Moviepire Beta ad suppression that preserves playback."
+          body: "Mobile-only release with mirrored page transitions, exact nested Back-state restoration, a cinematic details redesign, exact TMDB creator filmographies, episode-rating fixes, and document-start Moviepire ad and scam blocking that preserves playback."
           files: |
             aliflix-mobile.apk
             update-mobile.json

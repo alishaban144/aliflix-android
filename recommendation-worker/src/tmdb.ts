@@ -15,6 +15,12 @@ export interface TmdbCombinedCredits {
   crew?: Array<TmdbListItem & { media_type?: MediaType; job?: string; department?: string }>;
 }
 
+export interface TmdbPerson {
+  id: number;
+  name: string;
+  profile_path?: string | null;
+}
+
 export type TmdbTrendingItem = TmdbListItem & { media_type?: MediaType | 'person' };
 
 export class TmdbClient {
@@ -68,6 +74,9 @@ export class TmdbClient {
   }
   personCombinedCredits(id: number): Promise<TmdbCombinedCredits> {
     return this.request(`/person/${id}/combined_credits`, { language: 'en-US' });
+  }
+  person(id: number): Promise<TmdbPerson> {
+    return this.request(`/person/${id}`, { language: 'en-US' });
   }
   genres(type: MediaType): Promise<{ genres: TmdbGenre[] }> { return this.request(`/genre/${type}/list`); }
   trendingAll(page: number): Promise<TmdbPage<TmdbTrendingItem>> {

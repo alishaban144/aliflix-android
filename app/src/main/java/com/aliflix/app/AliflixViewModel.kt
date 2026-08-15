@@ -797,12 +797,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _person.value = PersonUiState(creator = creator, loading = true)
         personJob = viewModelScope.launch {
             _person.value = runCatching {
-                aiClient.getPersonCredits(creator.tmdbId, creator.name)
+                aiClient.getPersonCredits(creator.tmdbId)
             }.fold(
                 onSuccess = { response ->
                     PersonUiState(
                         creator = creator.copy(
-                            name = response.person.name,
+                            name = response.person.name.takeUnless { name ->
+                                name.isBlank() || name.equals("Creator", ignoreCase = true)
+                            } ?: creator.name,
                             profilePath = response.person.profilePath ?: creator.profilePath,
                         ),
                         items = response.results.map { it.toMedia() }.distinctBy(Media::key),

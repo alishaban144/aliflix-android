@@ -75,8 +75,7 @@ export default {
         await enforceRateLimit(request, env);
         if (titleMatch) return catalogJson(await titleDetails(env, titleMatch[1] as 'movie' | 'tv', Number(titleMatch[2])));
         if (personMatch) {
-          const name = url.searchParams.get('name')?.trim() || 'Creator';
-          return catalogJson(await personCredits(env, Number(personMatch[1]), name));
+          return catalogJson(await personCredits(env, Number(personMatch[1])));
         }
         if (isHomeFeed) return catalogJson(await homeFeed(env));
         return catalogJson(await editorialPicks(env));

@@ -61,6 +61,9 @@ describe('TMDB-backed mobile catalogue routes', () => {
   it('deduplicates combined person credits by media type and TMDB ID', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input));
+      if (url.pathname.endsWith('/person/66633')) {
+        return response({ id: 66633, name: 'Vince Gilligan', profile_path: '/vince.jpg' });
+      }
       if (url.pathname.endsWith('/person/66633/combined_credits')) {
         return response({
           crew: [
@@ -77,10 +80,10 @@ describe('TMDB-backed mobile catalogue routes', () => {
       throw new Error(`Unexpected URL ${url}`);
     }));
 
-    const result = await worker.fetch(new Request('https://worker.test/v3/people/66633/credits?name=Vince%20Gilligan'), env);
+    const result = await worker.fetch(new Request('https://worker.test/v3/people/66633/credits?name=Wrong%20Gilligan'), env);
     expect(result.status).toBe(200);
     const body: any = await result.json();
-    expect(body.person).toEqual({ tmdbId: 66633, name: 'Vince Gilligan' });
+    expect(body.person).toEqual({ tmdbId: 66633, name: 'Vince Gilligan', profilePath: '/vince.jpg' });
     expect(body.results).toHaveLength(2);
     expect(body.results.filter((item: any) => item.mediaType === 'tv' && item.tmdbId === 1396)).toHaveLength(1);
     expect(body.results.find((item: any) => item.tmdbId === 1396).genres).toEqual(['Drama', 'Crime']);

@@ -9,7 +9,6 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -33,9 +32,11 @@ class RecommendationAiClient(
         V3TitleDetails.fromJson(JSONObject(getJson("$baseUrl/v3/titles/$mediaType/$tmdbId")))
     }
 
-    suspend fun getPersonCredits(tmdbId: Int, name: String): V3PersonCredits = withContext(ioDispatcher) {
-        val encodedName = URLEncoder.encode(name, StandardCharsets.UTF_8.toString())
-        V3PersonCredits.fromJson(JSONObject(getJson("$baseUrl/v3/people/$tmdbId/credits?name=$encodedName")))
+    suspend fun getPersonCredits(tmdbId: Int): V3PersonCredits = withContext(ioDispatcher) {
+        require(tmdbId > 0) { "A valid TMDB person ID is required." }
+        V3PersonCredits
+            .fromJson(JSONObject(getJson("$baseUrl/v3/people/$tmdbId/credits")))
+            .validatedFor(tmdbId)
     }
 
     suspend fun getEditorialPicks(): List<V3CatalogMedia> = withContext(ioDispatcher) {
@@ -284,6 +285,17 @@ data class V3PersonCredits(
             results = json.optJSONArray("results").toStringList { V3CatalogMedia.fromJson(it) },
         )
     }
+}
+
+internal fun V3PersonCredits.validatedFor(requestedTmdbId: Int): V3PersonCredits {
+    if (person.tmdbId != requestedTmdbId) {
+        throw RecommendationAiClientException(
+            code = "PERSON_IDENTITY_MISMATCH",
+            retryable = false,
+            message = "Creator identity could not be verified.",
+        )
+    }
+    return this
 }
 
 private fun JSONObject.nullableString(name: String) = optString(name).takeIf { has(name) && !isNull(name) && it.isNotBlank() && it != "null" }

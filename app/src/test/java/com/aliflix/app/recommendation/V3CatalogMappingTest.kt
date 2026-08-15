@@ -3,6 +3,7 @@ package com.aliflix.app.recommendation
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class V3CatalogMappingTest {
@@ -61,6 +62,28 @@ class V3CatalogMappingTest {
 
         assertEquals(listOf("tv", "movie"), parsed.results.map { it.mediaType })
         assertEquals(listOf(1396, 37165), parsed.results.map { it.tmdbId })
+        assertEquals(66633, parsed.validatedFor(66633).person.tmdbId)
+    }
+
+    @Test
+    fun personCreditsRejectsAResponseForADifferentTmdbIdentity() {
+        val parsed = V3PersonCredits.fromJson(
+            JSONObject(
+                """
+                {
+                  "person": {"tmdbId": 42, "name": "Someone Else"},
+                  "results": []
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val error = assertThrows(RecommendationAiClientException::class.java) {
+            parsed.validatedFor(66633)
+        }
+
+        assertEquals("PERSON_IDENTITY_MISMATCH", error.code)
+        assertEquals(false, error.retryable)
     }
 
     @Test

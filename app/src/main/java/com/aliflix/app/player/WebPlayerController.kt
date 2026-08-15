@@ -5,12 +5,18 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.net.Uri
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
+import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -29,6 +35,9 @@ import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.webkit.ScriptHandler
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackProviderId
@@ -50,6 +59,8 @@ class WebPlayerController(
     private var customView: View? = null
     private var customViewContainer: FrameLayout? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
+    private var moviepireDocumentStartScriptHandler: ScriptHandler? = null
+    private var moviepireProtectedSourceHost: String? = null
     private var playerVisible = false
 
     private val _loading = MutableStateFlow(false)
@@ -64,6 +75,7 @@ class WebPlayerController(
     fun viewFor(selection: PlaybackSelection): WebView {
         val view = webView ?: createWebView().also { webView = it }
         activeSelection = selection
+        configureMobileMoviepireDocumentStartProtection(view, selection)
         val defaultKey = selection.key
         if (loadedKey != defaultKey) {
             loadedKey = defaultKey
@@ -147,6 +159,9 @@ class WebPlayerController(
         hideCustomView()
         playerVisible = false
         setSystemBarsVisible(activity, true)
+        moviepireDocumentStartScriptHandler?.remove()
+        moviepireDocumentStartScriptHandler = null
+        moviepireProtectedSourceHost = null
         webView?.apply {
             stopLoading()
             loadUrl("about:blank")
@@ -173,6 +188,44 @@ class WebPlayerController(
         } else {
             view.loadUrl(entryUrl)
         }
+    }
+
+    private fun configureMobileMoviepireDocumentStartProtection(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        if (BuildConfig.IS_TV) return
+        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE) {
+            view.setDownloadListener(null)
+            moviepireDocumentStartScriptHandler?.remove()
+            moviepireDocumentStartScriptHandler = null
+            moviepireProtectedSourceHost = null
+            return
+        }
+        view.setDownloadListener { _, _, _, _, _ ->
+            // Embedded playback never initiates downloads. Moviepire ad scripts use fake
+            // APK/security downloads as a conversion path; consume them in-app.
+        }
+
+        val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
+        if (
+            moviepireDocumentStartScriptHandler != null &&
+            moviepireProtectedSourceHost == sourceHost
+        ) {
+            return
+        }
+        moviepireDocumentStartScriptHandler?.remove()
+        moviepireDocumentStartScriptHandler = null
+        moviepireProtectedSourceHost = sourceHost
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+
+        moviepireDocumentStartScriptHandler = runCatching {
+            WebViewCompat.addDocumentStartJavaScript(
+                view,
+                mobileMoviepireAdShieldScript(),
+                mobileMoviepireShieldOriginRules(sourceHost),
+            )
+        }.getOrNull()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -245,6 +298,29 @@ class WebPlayerController(
                     _loading.value = true
                     _error.value = null
                     view?.alpha = 1f
+                    val selection = activeSelection
+                    if (
+                        view != null &&
+                        selection?.source?.provider == PlaybackProviderId.MOVIEPIRE &&
+                        !BuildConfig.IS_TV
+                    ) {
+                        // Document-start injection is the primary path. These short retries are a
+                        // deterministic fallback for devices whose WebView provider is too old to
+                        // support DOCUMENT_START_SCRIPT.
+                        view.post {
+                            if (isActiveSelection(view, selection)) {
+                                installMobileMoviepireAdShield(view, selection)
+                            }
+                        }
+                        view.postDelayed(
+                            {
+                                if (isActiveSelection(view, selection)) {
+                                    installMobileMoviepireAdShield(view, selection)
+                                }
+                            },
+                            180L,
+                        )
+                    }
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
@@ -322,8 +398,18 @@ class WebPlayerController(
                     view: WebView?,
                     request: WebResourceRequest?,
                 ): Boolean {
-                    if (request?.isForMainFrame != true) return false
+                    if (request == null) return true
                     val uri = request.url ?: return true
+                    if (
+                        isMobileMoviepireSelection() &&
+                        !request.isForMainFrame &&
+                        PlaybackNavigationPolicy.isBlockedMoviepireSubframeNavigation(
+                            uri.toString(),
+                        )
+                    ) {
+                        return true
+                    }
+                    if (!request.isForMainFrame) return false
                     val customHosts = customHostsForActiveSelection()
                     if (
                         PlaybackNavigationPolicy.isAllowedTopLevel(
@@ -352,7 +438,9 @@ class WebPlayerController(
                     if (
                         isMobileMoviepireSelection() &&
                         request != null &&
-                        PlaybackNavigationPolicy.isBlockedAdResource(request.url.toString())
+                        PlaybackNavigationPolicy.isBlockedMoviepireResource(
+                            request.url.toString(),
+                        )
                     ) {
                         return WebResourceResponse(
                             "text/plain",
@@ -383,6 +471,9 @@ class WebPlayerController(
                     _loading.value = false
                     _error.value = "The web player stopped unexpectedly. Tap Retry."
                     if (webView === view) {
+                        moviepireDocumentStartScriptHandler?.remove()
+                        moviepireDocumentStartScriptHandler = null
+                        moviepireProtectedSourceHost = null
                         (view?.parent as? ViewGroup)?.removeView(view)
                         view?.destroy()
                         webView = null
@@ -407,6 +498,75 @@ class WebPlayerController(
                         ).show()
                     }
                     return false
+                }
+
+                override fun onPermissionRequest(request: PermissionRequest?) {
+                    if (isMobileMoviepireSelection()) {
+                        request?.deny()
+                    } else {
+                        super.onPermissionRequest(request)
+                    }
+                }
+
+                override fun onGeolocationPermissionsShowPrompt(
+                    origin: String?,
+                    callback: GeolocationPermissions.Callback?,
+                ) {
+                    if (isMobileMoviepireSelection()) {
+                        callback?.invoke(origin, false, false)
+                    } else {
+                        super.onGeolocationPermissionsShowPrompt(origin, callback)
+                    }
+                }
+
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>?,
+                    fileChooserParams: FileChooserParams?,
+                ): Boolean {
+                    if (!isMobileMoviepireSelection()) return false
+                    filePathCallback?.onReceiveValue(null)
+                    return true
+                }
+
+                override fun onJsAlert(
+                    view: WebView?,
+                    url: String?,
+                    message: String?,
+                    result: JsResult?,
+                ): Boolean {
+                    if (!isMobileMoviepireSelection()) {
+                        return super.onJsAlert(view, url, message, result)
+                    }
+                    result?.cancel()
+                    return true
+                }
+
+                override fun onJsConfirm(
+                    view: WebView?,
+                    url: String?,
+                    message: String?,
+                    result: JsResult?,
+                ): Boolean {
+                    if (!isMobileMoviepireSelection()) {
+                        return super.onJsConfirm(view, url, message, result)
+                    }
+                    result?.cancel()
+                    return true
+                }
+
+                override fun onJsPrompt(
+                    view: WebView?,
+                    url: String?,
+                    message: String?,
+                    defaultValue: String?,
+                    result: JsPromptResult?,
+                ): Boolean {
+                    if (!isMobileMoviepireSelection()) {
+                        return super.onJsPrompt(view, url, message, defaultValue, result)
+                    }
+                    result?.cancel()
+                    return true
                 }
 
                 override fun onShowCustomView(
@@ -1011,148 +1171,7 @@ class WebPlayerController(
         if (BuildConfig.IS_TV || selection.source.provider != PlaybackProviderId.MOVIEPIRE) return
         if (!isActiveSelection(view, selection)) return
         view.evaluateJavascript(
-            """
-            (() => {
-              const blocked = [
-                "doubleclick.net", "googlesyndication.com", "googleadservices.com",
-                "adnxs.com", "criteo.com", "taboola.com", "outbrain.com",
-                "popads.net", "popcash.net", "propellerads.com", "monetag.com",
-                "adsterra.com", "exoclick.com", "trafficjunky.net", "juicyads.com",
-                "clickadu.com", "hilltopads.net", "realsrv.com", "onclicka.com",
-                "onclickperformance.com", "adskeeper.co.uk", "mgid.com",
-                "revcontent.com", "admaven.com", "ad-maven.com", "pushground.com",
-                "richads.com", "evadav.com", "zeropark.com", "clickaine.com",
-                "cpmstar.com", "yllix.com", "adcash.com", "directrev.com"
-              ];
-              const hostMatches = (host) => blocked.some((value) =>
-                host === value || host.endsWith("." + value)
-              );
-              window.open = () => null;
-              if (!document.getElementById("aliflix-moviepire-ad-style")) {
-                const style = document.createElement("style");
-                style.id = "aliflix-moviepire-ad-style";
-                style.textContent = `
-                  ins.adsbygoogle, [id^="google_ads"], [id^="ad-" i],
-                  [id^="ads-" i], [id$="-ad" i], [class~="ad" i],
-                  [class^="ad-" i], [class*=" ad-" i], [class$="-ad" i],
-                  [class*="ad-container" i], [class*="ad-banner" i],
-                  [class*="advertisement" i], [class*="adsbox" i],
-                  [data-ad-slot], [data-ad-unit], [data-ad], [data-advertisement],
-                  [aria-label="advertisement" i], [aria-label="sponsored" i] {
-                    display: none !important;
-                    visibility: hidden !important;
-                    pointer-events: none !important;
-                    width: 0 !important;
-                    height: 0 !important;
-                    min-width: 0 !important;
-                    min-height: 0 !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                  }
-                `;
-                (document.head || document.documentElement).appendChild(style);
-              }
-              const protectedPlayerNode = (node) => Boolean(
-                node?.querySelector?.('video, iframe, [class*="player" i], [id*="player" i]')
-              );
-              const externalTarget = (anchor) => {
-                try {
-                  const target = new URL(anchor.href, location.href);
-                  const host = target.hostname.toLowerCase().replace(/^www\./, "");
-                  const current = location.hostname.toLowerCase().replace(/^www\./, "");
-                  return /^https?:$/.test(target.protocol) && host !== current
-                    ? { target, host }
-                    : null;
-                } catch (_) { return null; }
-              };
-              const removeAds = () => {
-                document.querySelectorAll(
-                  'ins.adsbygoogle, [id^="google_ads"], [id*="ad-container" i], ' +
-                  '[id^="ad-" i], [id^="ads-" i], [id$="-ad" i], ' +
-                  '[class~="ad" i], [class^="ad-" i], [class*=" ad-" i], ' +
-                  '[class$="-ad" i], [class*="ad-container" i], ' +
-                  '[class*="ad-banner" i], [class*="advertisement" i], ' +
-                  '[class*="adsbox" i], [data-ad-slot], [data-ad-unit], ' +
-                  '[data-ad], [data-advertisement], [aria-label="advertisement" i], ' +
-                  '[aria-label="sponsored" i]'
-                ).forEach((node) => node.remove());
-                document.querySelectorAll('iframe[src], script[src], a[href]').forEach((node) => {
-                  const raw = node.getAttribute(node.tagName === "A" ? "href" : "src");
-                  if (!raw) return;
-                  try {
-                    const target = new URL(raw, location.href);
-                    if (hostMatches(target.hostname.toLowerCase().replace(/^www\./, ""))) {
-                      node.remove();
-                    }
-                  } catch (_) {}
-                });
-                document.querySelectorAll('a[href]').forEach((anchor) => {
-                  if (protectedPlayerNode(anchor)) return;
-                  const external = externalTarget(anchor);
-                  if (!external) return;
-                  if (hostMatches(external.host)) {
-                    anchor.remove();
-                    return;
-                  }
-                  const rect = anchor.getBoundingClientRect();
-                  const style = getComputedStyle(anchor);
-                  const coverage = (rect.width * rect.height) / Math.max(1, innerWidth * innerHeight);
-                  const layer = Number.parseInt(style.zIndex || "0", 10) || 0;
-                  const floating = style.position === "fixed" || style.position === "sticky";
-                  const clickJack = style.position === "absolute" && coverage > 0.45 && layer >= 100;
-                  const visibleSmallAd = floating && rect.width >= 20 && rect.height >= 10 && layer >= 10;
-                  if (clickJack || visibleSmallAd) {
-                    anchor.remove();
-                  }
-                });
-                document.querySelectorAll(
-                  '[role="dialog"], aside, [class*="sponsor" i], [class*="popup" i]'
-                ).forEach((node) => {
-                  if (protectedPlayerNode(node)) return;
-                  const anchor = node.matches?.('a[href]') ? node : node.querySelector?.('a[href]');
-                  if (!anchor || !externalTarget(anchor)) return;
-                  const style = getComputedStyle(node);
-                  if (style.position === "fixed" || style.position === "sticky") node.remove();
-                });
-              };
-              removeAds();
-              if (!window.__aliflixMoviepireAdShield) {
-                window.__aliflixMoviepireAdShield = true;
-                let cleanupScheduled = false;
-                const scheduleCleanup = () => {
-                  if (cleanupScheduled) return;
-                  cleanupScheduled = true;
-                  requestAnimationFrame(() => {
-                    cleanupScheduled = false;
-                    removeAds();
-                  });
-                };
-                new MutationObserver(scheduleCleanup).observe(document.documentElement, {
-                  childList: true,
-                  subtree: true,
-                  attributes: true,
-                  attributeFilter: ["src", "href", "class", "style"]
-                });
-                document.addEventListener("click", (event) => {
-                  const anchor = event.target?.closest?.('a[href]');
-                  if (!anchor || protectedPlayerNode(anchor)) return;
-                  const external = externalTarget(anchor);
-                  if (!external) return;
-                  const style = getComputedStyle(anchor);
-                  if (
-                    hostMatches(external.host) ||
-                    style.position === "fixed" ||
-                    style.position === "sticky"
-                  ) {
-                    event.preventDefault();
-                    event.stopImmediatePropagation();
-                    anchor.remove();
-                  }
-                }, true);
-              }
-              return true;
-            })();
-            """.trimIndent(),
+            mobileMoviepireAdShieldScript(),
             null,
         )
     }
@@ -1363,3 +1382,243 @@ internal fun browserCompatibleUserAgent(userAgent: String): String =
         .replace(Regex("""\s+Aliflix(?:Android|TV)/[^\s]+""", RegexOption.IGNORE_CASE), "")
         .replace(Regex("""\s{2,}"""), " ")
         .trim()
+
+internal fun mobileMoviepireShieldOriginRules(sourceHost: String): Set<String> {
+    val cleanSourceHost = sourceHost
+        .trim()
+        .lowercase()
+        .removePrefix("www.")
+        .takeIf { host ->
+            host.isNotBlank() &&
+                host.none(Char::isWhitespace) &&
+                host.all { character ->
+                    character.isLetterOrDigit() || character == '.' || character == '-'
+                }
+        }
+    return (PlaybackNavigationPolicy.moviepirePlayerDocumentHosts + listOfNotNull(cleanSourceHost))
+        .flatMapTo(linkedSetOf()) { host ->
+            listOf("https://$host", "https://*.$host")
+        }
+}
+
+/**
+ * Runs at document start in Moviepire and each of its player frames. Native interception remains
+ * authoritative; this layer prevents inline/dynamically-generated ad code and removes scam UI
+ * without altering video, player controls, fullscreen, or Cast APIs.
+ */
+internal fun mobileMoviepireAdShieldScript(): String {
+    val blockedHostsJson = PlaybackNavigationPolicy.blockedAdvertisingHosts
+        .sorted()
+        .joinToString(separator = ",") { host -> JSONObject.quote(host) }
+    return """
+        (() => {
+          "use strict";
+          if (window.__aliflixMoviepireAdShield === true) return true;
+          try {
+            Object.defineProperty(window, "__aliflixMoviepireAdShield", {
+              value: true,
+              configurable: false,
+              writable: false
+            });
+          } catch (_) {
+            window.__aliflixMoviepireAdShield = true;
+          }
+
+          const blockedHosts = [$blockedHostsJson];
+          const cleanHost = (host) => String(host || "").toLowerCase().replace(/^www\./, "");
+          const hostBlocked = (host) => {
+            const clean = cleanHost(host);
+            return blockedHosts.some((blocked) =>
+              clean === blocked || clean.endsWith("." + blocked)
+            );
+          };
+          const urlBlocked = (raw) => {
+            if (!raw) return false;
+            try {
+              const target = new URL(String(raw), location.href);
+              if (hostBlocked(target.hostname)) return true;
+              const path = target.pathname.toLowerCase();
+              if (cleanHost(target.hostname).endsWith("vidrock.ru") && path === "/sbx.js") {
+                return true;
+              }
+              return ["/popunder", "/clickunder", "/push-sdk", "/adserver/", "/ads/"]
+                .some((token) => path.includes(token));
+            } catch (_) {
+              return false;
+            }
+          };
+          const resourceUrl = (node) => {
+            if (!node || !node.tagName) return "";
+            const tag = node.tagName.toUpperCase();
+            if (tag === "OBJECT") return node.getAttribute("data") || "";
+            if (tag === "SCRIPT" || tag === "IFRAME" || tag === "EMBED" || tag === "SOURCE") {
+              return node.getAttribute("src") || "";
+            }
+            if (tag === "A" || tag === "LINK") return node.getAttribute("href") || "";
+            return "";
+          };
+          const blockedNode = (node) => urlBlocked(resourceUrl(node));
+
+          const nativeAppendChild = Node.prototype.appendChild;
+          const nativeInsertBefore = Node.prototype.insertBefore;
+          Node.prototype.appendChild = function(node) {
+            if (blockedNode(node)) return node;
+            return nativeAppendChild.call(this, node);
+          };
+          Node.prototype.insertBefore = function(node, reference) {
+            if (blockedNode(node)) return node;
+            return nativeInsertBefore.call(this, node, reference);
+          };
+
+          const nativeAddEventListener = EventTarget.prototype.addEventListener;
+          EventTarget.prototype.addEventListener = function(type, listener, options) {
+            if (this === document && type === "click" && listener) {
+              let source = "";
+              try { source = Function.prototype.toString.call(listener).toLowerCase(); } catch (_) {}
+              if ([
+                "adnetworks", "adlastfired", "popunder", "clickunder",
+                "profiton", "hilltopads", "monetag"
+              ].some((token) => source.includes(token))) {
+                return;
+              }
+            }
+            return nativeAddEventListener.call(this, type, listener, options);
+          };
+
+          const noPopup = () => null;
+          try {
+            Object.defineProperty(window, "open", {
+              value: noPopup,
+              configurable: false,
+              writable: false
+            });
+          } catch (_) {
+            window.open = noPopup;
+          }
+
+          const adSelector = [
+            "#paldo-ad",
+            "ins.adsbygoogle",
+            "[id^='google_ads']",
+            "[id^='ad-']",
+            "[id^='ads-']",
+            "[class~='ad']",
+            "[class^='ad-']",
+            "[class*=' ad-']",
+            "[class*='ad-container']",
+            "[class*='ad-banner']",
+            "[class*='advertisement']",
+            "[class*='adsbox']",
+            "[data-ad-slot]",
+            "[data-ad-unit]",
+            "[data-advertisement]",
+            "[aria-label='advertisement']",
+            "[aria-label='sponsored']"
+          ].join(",");
+          const scamPhrases = [
+            "system warning detected",
+            "device has been infected",
+            "security alert",
+            "file is ready to download",
+            "install the recommended security app",
+            "run the app to remove all threats",
+            "tap the button below",
+            "time remaining",
+            "your sim card",
+            "remove all threats"
+          ];
+          const ownsVideo = (node) => Boolean(
+            node && (
+              node.matches && node.matches("video, audio") ||
+              node.querySelector && node.querySelector("video, audio")
+            )
+          );
+          const removeNode = (node) => {
+            if (!node || ownsVideo(node)) return;
+            try { node.remove(); } catch (_) {}
+          };
+          const ensureStyle = () => {
+            if (document.getElementById("aliflix-moviepire-ad-style")) return;
+            const parent = document.head || document.documentElement;
+            if (!parent) return;
+            const style = document.createElement("style");
+            style.id = "aliflix-moviepire-ad-style";
+            style.textContent = adSelector + "{" +
+              "display:none!important;visibility:hidden!important;" +
+              "pointer-events:none!important;width:0!important;height:0!important;" +
+              "min-width:0!important;min-height:0!important;margin:0!important;padding:0!important}";
+            nativeAppendChild.call(parent, style);
+          };
+          const cleanup = () => {
+            ensureStyle();
+            try {
+              document.querySelectorAll(adSelector).forEach(removeNode);
+              document.querySelectorAll(
+                "script[src],iframe[src],object[data],embed[src],source[src],link[href]"
+              ).forEach((node) => {
+                if (blockedNode(node)) removeNode(node);
+              });
+              document.querySelectorAll("a[href]").forEach((anchor) => {
+                if (urlBlocked(anchor.getAttribute("href"))) {
+                  removeNode(anchor);
+                  return;
+                }
+                const style = getComputedStyle(anchor);
+                const rect = anchor.getBoundingClientRect();
+                const viewport = Math.max(1, innerWidth * innerHeight);
+                const coverage = (rect.width * rect.height) / viewport;
+                const external = (() => {
+                  try {
+                    return cleanHost(new URL(anchor.href, location.href).hostname) !==
+                      cleanHost(location.hostname);
+                  } catch (_) { return false; }
+                })();
+                if (
+                  external &&
+                  !ownsVideo(anchor) &&
+                  (style.position === "fixed" || style.position === "sticky") &&
+                  coverage > 0.2
+                ) {
+                  removeNode(anchor);
+                }
+              });
+              document.querySelectorAll(
+                "[role='dialog'],dialog,aside,[class*='modal'],[class*='popup'],[class*='overlay']"
+              ).forEach((node) => {
+                if (ownsVideo(node)) return;
+                const copy = String(node.innerText || node.textContent || "").toLowerCase();
+                const matches = scamPhrases.reduce(
+                  (count, phrase) => count + (copy.includes(phrase) ? 1 : 0),
+                  0
+                );
+                if (matches >= 2) removeNode(node);
+              });
+            } catch (_) {}
+          };
+
+          let cleanupScheduled = false;
+          const scheduleCleanup = () => {
+            if (cleanupScheduled) return;
+            cleanupScheduled = true;
+            requestAnimationFrame(() => {
+              cleanupScheduled = false;
+              cleanup();
+            });
+          };
+          const observer = new MutationObserver(scheduleCleanup);
+          observer.observe(document, { childList: true, subtree: true });
+          nativeAddEventListener.call(document, "DOMContentLoaded", cleanup, { once: true });
+          nativeAddEventListener.call(document, "click", (event) => {
+            const anchor = event.target && event.target.closest
+              ? event.target.closest("a[href]")
+              : null;
+            if (!anchor || !urlBlocked(anchor.getAttribute("href"))) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            removeNode(anchor);
+          }, true);
+          scheduleCleanup();
+          return true;
+        })();
+    """.trimIndent()
+}

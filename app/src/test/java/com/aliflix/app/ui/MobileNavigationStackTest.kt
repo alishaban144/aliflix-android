@@ -1,5 +1,6 @@
 package com.aliflix.app.ui
 
+import com.aliflix.app.DetailUiState
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaCreator
 import com.aliflix.app.model.MediaType
@@ -7,6 +8,89 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class MobileNavigationStackTest {
+    @Test
+    fun stackDepthAlwaysControlsPushAndPopMotion() {
+        assertEquals(
+            MobileNavigationMotion.PUSH,
+            mobileNavigationMotion(
+                initialDepth = 2,
+                targetDepth = 3,
+                initialTab = AppTab.HOME,
+                targetTab = AppTab.HOME,
+            ),
+        )
+        assertEquals(
+            MobileNavigationMotion.POP,
+            mobileNavigationMotion(
+                initialDepth = 3,
+                targetDepth = 2,
+                initialTab = AppTab.HOME,
+                targetTab = AppTab.HOME,
+            ),
+        )
+    }
+
+    @Test
+    fun rootTabsAnimateInTheirVisualOrder() {
+        assertEquals(
+            MobileNavigationMotion.TAB_FORWARD,
+            mobileNavigationMotion(
+                initialDepth = 1,
+                targetDepth = 1,
+                initialTab = AppTab.HOME,
+                targetTab = AppTab.MY_SPACE,
+            ),
+        )
+        assertEquals(
+            MobileNavigationMotion.TAB_BACKWARD,
+            mobileNavigationMotion(
+                initialDepth = 1,
+                targetDepth = 1,
+                initialTab = AppTab.MY_SPACE,
+                targetTab = AppTab.SEARCH,
+            ),
+        )
+    }
+
+    @Test
+    fun outgoingDetailKeepsItsOwnSnapshotWhileNestedDetailOpens() {
+        val original = Media(id = 101, type = MediaType.MOVIE, title = "Origin")
+        val nested = Media(id = 202, type = MediaType.MOVIE, title = "Nested title")
+        val originalState = DetailUiState(
+            item = original,
+            recommendations = listOf(nested),
+        )
+        val nestedState = DetailUiState(item = nested)
+
+        assertEquals(
+            originalState,
+            mobileAnimatedDetailState(
+                targetItem = original,
+                targetSaveKey = "2:detail:${original.key}",
+                liveState = nestedState,
+                snapshots = mapOf("2:detail:${original.key}" to originalState),
+            ),
+        )
+        assertEquals(
+            nestedState,
+            mobileAnimatedDetailState(
+                targetItem = nested,
+                targetSaveKey = "3:detail:${nested.key}",
+                liveState = nestedState,
+                snapshots = emptyMap(),
+            ),
+        )
+        assertEquals(
+            originalState,
+            mobileAnimatedDetailState(
+                targetItem = original,
+                targetSaveKey = "2:detail:${original.key}",
+                liveState = DetailUiState(loading = true, item = original),
+                snapshots = mapOf("2:detail:${original.key}" to originalState),
+            ),
+        )
+    }
+
     @Test
     fun nestedGenreDetailsPopInChronologicalOrderAndKeepScrollPosition() {
         val detailA = Media(
@@ -82,10 +166,14 @@ class MobileNavigationStackTest {
             Media(id = 1396, type = MediaType.TV, title = "Breaking Bad"),
         )
         val genre = MobileDestination.Genre("Crime", MediaType.TV)
+        val creator = MobileDestination.Person(
+            MediaCreator(66633, "Vince Gilligan", "/vince.jpg"),
+        )
 
         val rootStack = listOf<MobileDestination>(root)
         val detailStack = rootStack + show
         val genreStack = detailStack + genre
+        val creatorStack = detailStack + creator
         val nestedStack = genreStack + MobileDestination.Detail(
             Media(id = 60059, type = MediaType.TV, title = "Better Call Saul"),
         )
@@ -97,6 +185,10 @@ class MobileNavigationStackTest {
         assertEquals(
             mobileDestinationSaveKey(detailStack),
             mobileDestinationSaveKey(popMobileDestinationStack(genreStack)),
+        )
+        assertEquals(
+            mobileDestinationSaveKey(detailStack),
+            mobileDestinationSaveKey(popMobileDestinationStack(creatorStack)),
         )
         assertEquals(
             mobileDestinationSaveKey(rootStack),
