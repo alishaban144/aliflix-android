@@ -66,10 +66,24 @@ async function embedBatch(env: RecommendationEnv, texts: string[], taskType: 'RE
 }
 
 export async function embedForSearch(env: RecommendationEnv, query: string, documents: string[]): Promise<{ query: number[]; documents: number[][] }> {
-  const [queryVector] = await embedBatch(env, [`search query: ${query}`], 'RETRIEVAL_QUERY');
-  const vectors: number[][] = [];
+  const documentBatches: string[][] = [];
   for (let index = 0; index < documents.length; index += 50) {
-    vectors.push(...await embedBatch(env, documents.slice(index, index + 50).map(text => `search document: ${text}`), 'RETRIEVAL_DOCUMENT'));
+    documentBatches.push(documents.slice(index, index + 50).map(text => `search document: ${text}`));
   }
+  const embedDocuments = async (): Promise<number[][]> => {
+    const vectors: number[][] = [];
+    for (let index = 0; index < documentBatches.length; index += 3) {
+      const group = await Promise.all(
+        documentBatches.slice(index, index + 3)
+          .map(batch => embedBatch(env, batch, 'RETRIEVAL_DOCUMENT')),
+      );
+      group.forEach(batchVectors => vectors.push(...batchVectors));
+    }
+    return vectors;
+  };
+  const [[queryVector], vectors] = await Promise.all([
+    embedBatch(env, [`search query: ${query}`], 'RETRIEVAL_QUERY'),
+    embedDocuments(),
+  ]);
   return { query: queryVector, documents: vectors };
 }

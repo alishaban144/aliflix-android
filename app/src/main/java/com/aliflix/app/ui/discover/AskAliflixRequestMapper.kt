@@ -42,6 +42,7 @@ object AskAliflixRequestMapper {
             mediaType = outputType.routeName,
             anchor = (request as? AskAliflixRequest.Similar)?.anchor?.let { V3RecommendationAnchor(it.id, it.title, it.type.routeName) },
             filters = spec.toWorkerFilters(),
+            pageSize = 24,
         ))
     }
 

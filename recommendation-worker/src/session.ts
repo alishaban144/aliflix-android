@@ -87,7 +87,11 @@ export class RecommendationSession extends DurableObject<RecommendationEnv> {
     await this.ctx.storage.setAlarm(expiresAt);
   }
 
-  async getPage(fingerprint: string, offset: number, pageSize: number): Promise<{ results: RecommendationResult[]; nextOffset: number | null }> {
+  async getPage(
+    fingerprint: string,
+    offset: number,
+    pageSize: number,
+  ): Promise<{ results: RecommendationResult[]; nextOffset: number | null; totalCount: number }> {
     const meta = this.readMeta();
     if (!meta || meta.expiresAt <= Date.now()) {
       if (meta) await this.ctx.storage.deleteAll();
@@ -97,7 +101,11 @@ export class RecommendationSession extends DurableObject<RecommendationEnv> {
     const rows = [...this.ctx.storage.sql.exec<{ resultJson: string }>('SELECT result_json AS resultJson FROM ranked_results WHERE position >= ? ORDER BY position LIMIT ?', offset, pageSize)];
     await this.touch();
     const next = offset + rows.length;
-    return { results: rows.map(row => JSON.parse(row.resultJson) as RecommendationResult), nextOffset: next < meta.resultCount ? next : null };
+    return {
+      results: rows.map(row => JSON.parse(row.resultJson) as RecommendationResult),
+      nextOffset: next < meta.resultCount ? next : null,
+      totalCount: meta.resultCount,
+    };
   }
 
   async alarm(): Promise<void> { await this.ctx.storage.deleteAll(); }

@@ -10,6 +10,12 @@ export interface EngineDependencies {
   tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchTitle' | 'discover' | 'recommendations' | 'similar' | 'details'>;
 }
 
+const MAX_CANDIDATES = 2_500;
+const MAX_SEMANTIC_CANDIDATES = 1_000;
+const TMDB_DETAIL_RESERVE = 10;
+const DISCOVERY_CONCURRENCY = 4;
+const MAX_KEYWORD_SEARCHES = 18;
+
 function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<number, string>): Candidate | undefined {
   const title = (mediaType === 'movie' ? item.title : item.name)?.trim();
   if (!item.id || !title) return undefined;
@@ -21,7 +27,8 @@ function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<n
     originalLanguage: item.original_language, originCountries: item.origin_country || [], genreIds: item.genre_ids || [],
     genres: (item.genre_ids || []).map(id => genreNames.get(id)).filter((name): name is string => Boolean(name)),
     tmdbRating: item.vote_average, tmdbVoteCount: item.vote_count, popularity: item.popularity, keywords: [],
-    matchedKeywordIds: new Set(), retrievalSources: new Set(), hardFiltersVerified: false,
+    matchedKeywordIds: new Set(), matchedConceptGroupIndexes: new Set(),
+    retrievalSources: new Set(), hardFiltersVerified: false,
     directRelationshipScore: 0, anchorOverlapScore: 0, matchReasons: [],
   };
 }
@@ -83,13 +90,20 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
   }
   const candidates = new Map<string, Candidate>();
-  const addPage = (page: TmdbPage, source: string, matchedIds: number[] = [], direct = 0) => {
+  const addPage = (
+    page: TmdbPage,
+    source: string,
+    matchedIds: number[] = [],
+    matchedConceptGroups: number[] = [],
+    direct = 0,
+  ) => {
     for (const item of page.results || []) {
       const fresh = toCandidate(item, request.mediaType, genresById);
       if (!fresh) continue;
       const candidate = candidates.get(fresh.key) || fresh;
       candidate.retrievalSources.add(source);
       matchedIds.forEach(id => candidate.matchedKeywordIds.add(id));
+      matchedConceptGroups.forEach(index => candidate.matchedConceptGroupIndexes.add(index));
       candidate.directRelationshipScore = Math.max(candidate.directRelationshipScore, direct);
       candidate.hardFiltersVerified ||= source.startsWith('discover:');
       candidates.set(candidate.key, candidate);
@@ -97,13 +111,40 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
   };
 
   const baseParams = discoverParams(request.mediaType, filters, genresByName);
-  const runDiscover = async (source: string, extra: Record<string, string | number | boolean | undefined>, pages: number, matched: number[] = []) => {
-    let lastTotal = pages;
-    for (let page = 1; page <= pages && page <= lastTotal && tmdb.callsRemaining > 10 && candidates.size < 400; page++) {
-      const result = await tmdb.discover(request.mediaType, { ...baseParams, ...extra, page });
-      addPage(result, `${source}:page-${page}`, matched);
-      lastTotal = Math.min(pages, result.total_pages || page);
-      if (!result.results?.length) break;
+  const runDiscover = async (
+    source: string,
+    extra: Record<string, string | number | boolean | undefined>,
+    pages: number,
+    matched: number[] = [],
+    matchedConceptGroups: number[] = [],
+  ) => {
+    if (tmdb.callsRemaining <= TMDB_DETAIL_RESERVE || candidates.size >= MAX_CANDIDATES) return;
+    const first = await tmdb.discover(request.mediaType, { ...baseParams, ...extra, page: 1 });
+    addPage(first, `${source}:page-1`, matched, matchedConceptGroups);
+    const lastPage = Math.min(pages, first.total_pages || 1);
+    if (!first.results?.length || lastPage <= 1) return;
+
+    for (let page = 2; page <= lastPage && candidates.size < MAX_CANDIDATES;) {
+      const usableCalls = Math.max(0, tmdb.callsRemaining - TMDB_DETAIL_RESERVE);
+      const batchSize = Math.min(DISCOVERY_CONCURRENCY, usableCalls, lastPage - page + 1);
+      if (batchSize <= 0) break;
+      const pageNumbers = Array.from({ length: batchSize }, (_, index) => page + index);
+      const results = await Promise.all(
+        pageNumbers.map(pageNumber => tmdb.discover(
+          request.mediaType,
+          { ...baseParams, ...extra, page: pageNumber },
+        )),
+      );
+      results.forEach((result, index) => {
+        addPage(
+          result,
+          `${source}:page-${pageNumbers[index]}`,
+          matched,
+          matchedConceptGroups,
+        );
+      });
+      if (results.every(result => !result.results?.length)) break;
+      page += batchSize;
     }
   };
 
@@ -121,8 +162,8 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     anchorDetails = await tmdb.details(anchor.mediaType, anchorId);
     if (anchor.mediaType === request.mediaType) {
       for (let page = 1; page <= 3 && tmdb.callsRemaining > 12; page++) {
-        addPage(await tmdb.recommendations(anchor.mediaType, anchorId, page), `recommendations:page-${page}`, [], 1);
-        addPage(await tmdb.similar(anchor.mediaType, anchorId, page), `similar:page-${page}`, [], .85);
+        addPage(await tmdb.recommendations(anchor.mediaType, anchorId, page), `recommendations:page-${page}`, [], [], 1);
+        addPage(await tmdb.similar(anchor.mediaType, anchorId, page), `similar:page-${page}`, [], [], .85);
       }
     }
     const anchorKeywords = anchorDetails.keywords?.keywords || anchorDetails.keywords?.results || [];
@@ -142,22 +183,71 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     for (const group of intent.requiredConceptGroups) {
       const ids: number[] = [];
       for (const phrase of group.synonyms) {
-        if (keywordSearches++ >= 10 || tmdb.callsRemaining <= 18) break;
+        if (keywordSearches++ >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= 18) break;
         const response = await tmdb.searchKeyword(phrase);
         const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(phrase));
         for (const keyword of [...exact, ...response.results].slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
       }
       groupKeywordIds.push(ids.slice(0, 4));
     }
-    const expressions = buildKeywordExpressions(groupKeywordIds, 6);
-    for (const expression of expressions.slice(0, 3)) {
+    const expressions = buildKeywordExpressions(groupKeywordIds, 8);
+    for (const expression of expressions.slice(0, 4)) {
       const matched = expression.split(/[|,]/).map(Number).filter(Boolean);
-      await runDiscover('discover:concept-intersection', { with_keywords: expression }, expressions.length === 1 ? 8 : 3, matched);
+      const matchedGroups = groupKeywordIds.flatMap((ids, index) =>
+        ids.some(id => matched.includes(id)) ? [index] : [],
+      );
+      await runDiscover(
+        'discover:concept-intersection',
+        { with_keywords: expression },
+        expressions.length === 1 ? 24 : 10,
+        matched,
+        matchedGroups,
+      );
+    }
+    for (const [groupIndex, ids] of groupKeywordIds.entries()) {
+      if (groupIndex >= 4 || !ids.length || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE) break;
+      await runDiscover(
+        `discover:concept-${groupIndex + 1}`,
+        { with_keywords: ids.join('|') },
+        6,
+        ids,
+        [groupIndex],
+      );
+    }
+    for (const phrase of intent.broadSearchPhrases.slice(0, 3)) {
+      if (keywordSearches++ >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= 14) break;
+      const response = await tmdb.searchKeyword(phrase);
+      const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(phrase));
+      const ids = [...exact, ...response.results]
+        .map(keyword => keyword.id)
+        .filter((id, index, values) => values.indexOf(id) === index)
+        .slice(0, 3);
+      if (ids.length) {
+        await runDiscover('discover:broad-phrase', { with_keywords: ids.join('|') }, 6, ids);
+      }
     }
     const hintedGenreIds = intent.genreHints.map(name => genresByName.get(normalize(name))).filter((id): id is number => id !== undefined);
-    if (hintedGenreIds.length && tmdb.callsRemaining > 10) await runDiscover('discover:genre-hints', { with_genres: hintedGenreIds.join('|') }, 10);
-    if (tmdb.callsRemaining > 10 && (candidates.size < 200 || Object.values(baseParams).some(value => value !== undefined))) {
-      await runDiscover('discover:hard-filters', {}, candidates.size < 40 ? 8 : 4);
+    if (hintedGenreIds.length && tmdb.callsRemaining > TMDB_DETAIL_RESERVE) {
+      await runDiscover('discover:genre-hints', { with_genres: hintedGenreIds.join('|') }, 30);
+      await runDiscover(
+        'discover:genre-hints-popular',
+        { with_genres: hintedGenreIds.join('|'), sort_by: 'popularity.desc' },
+        18,
+      );
+    }
+    if (tmdb.callsRemaining > TMDB_DETAIL_RESERVE && candidates.size < MAX_CANDIDATES) {
+      await runDiscover('discover:hard-filters', {}, 60);
+      await runDiscover('discover:hard-filters-popular', { sort_by: 'popularity.desc' }, 40);
+      await runDiscover(
+        'discover:hard-filters-recent',
+        { sort_by: request.mediaType === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc' },
+        30,
+      );
+      await runDiscover(
+        'discover:hard-filters-rated',
+        { sort_by: 'vote_average.desc', 'vote_count.gte': Math.max(25, Number(baseParams['vote_count.gte']) || 0) },
+        20,
+      );
     }
   }
 
@@ -171,16 +261,29 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
 
   let embeddingsAvailable = false;
   if (preliminary.length) {
-    const queryText = [request.query, ...intent.requiredConceptGroups.map(group => `${group.label}: ${group.synonyms.join(', ')}`), ...intent.softConcepts].filter(Boolean).join('\n');
-    const docs = preliminary.map(candidate => [candidate.title, candidate.originalTitle, candidate.overview, candidate.genres.join(', '), candidate.keywords.map(k => k.name).join(', ')].filter(Boolean).join('\n'));
+    const queryText = [
+      request.query,
+      ...intent.requiredConceptGroups.map(group => `${group.label}: ${group.synonyms.join(', ')}`),
+      ...intent.softConcepts,
+      ...intent.toneAndMood,
+      ...intent.broadSearchPhrases,
+    ].filter(Boolean).join('\n');
+    const semanticCandidates = preliminary.slice(0, MAX_SEMANTIC_CANDIDATES);
+    const docs = semanticCandidates.map(candidate => [candidate.title, candidate.originalTitle, candidate.overview, candidate.genres.join(', '), candidate.keywords.map(k => k.name).join(', ')].filter(Boolean).join('\n'));
     try {
       const vectors = await (dependencies.embed || embedForSearch)(env, queryText || request.anchor?.title || '', docs);
-      preliminary.forEach((candidate, index) => { candidate.semanticScore = cosineSimilarity(vectors.query, vectors.documents[index]); });
+      semanticCandidates.forEach((candidate, index) => { candidate.semanticScore = cosineSimilarity(vectors.query, vectors.documents[index]); });
       embeddingsAvailable = true;
     } catch (error) {
       console.warn('Gemini embeddings unavailable; using deterministic relevance ranking', error instanceof Error ? error.message : error);
     }
   }
 
-  return rankCandidates(preliminary, effectiveIntent, filters, request.mode === 'similar', embeddingsAvailable).slice(0, 400);
+  return rankCandidates(
+    preliminary,
+    effectiveIntent,
+    filters,
+    request.mode === 'similar',
+    embeddingsAvailable,
+  ).slice(0, MAX_CANDIDATES);
 }

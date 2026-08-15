@@ -25,7 +25,7 @@ export type TmdbTrendingItem = TmdbListItem & { media_type?: MediaType | 'person
 
 export class TmdbClient {
   private used = 0;
-  constructor(private readonly env: RecommendationEnv, private readonly budget = 40) {}
+  constructor(private readonly env: RecommendationEnv, private readonly budget = 180) {}
   get callsUsed(): number { return this.used; }
   get callsRemaining(): number { return this.budget - this.used; }
 
@@ -39,6 +39,7 @@ export class TmdbClient {
     applyTmdbAuthentication(this.env, url, headers);
 
     for (let attempt = 0; attempt < 3; attempt++) {
+      let retryDelayMs = 100 * (attempt + 1);
       if (++this.used > this.budget) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request budget exhausted', 503, true);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -52,12 +53,18 @@ export class TmdbClient {
         if (response.status !== 429 && response.status < 500) {
           throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request failed (${response.status})`, 502, false);
         }
+        if (response.status === 429) {
+          const retryAfterSeconds = Number(response.headers.get('retry-after'));
+          if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+            retryDelayMs = Math.min(2_000, retryAfterSeconds * 1_000);
+          }
+        }
         if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request failed (${response.status})`, 503, true);
       } catch (error) {
         if (error instanceof ServiceError) throw error;
         if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request timed out or failed', 503, true);
       } finally { clearTimeout(timeout); }
-      await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs));
     }
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request failed', 503, true);
   }

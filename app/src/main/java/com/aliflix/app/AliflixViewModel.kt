@@ -245,6 +245,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         requestSummary = summary,
                         spec = mapped.spec,
                         items = candidates,
+                        totalAvailable = response.totalResults,
                         hasMore = response.hasMore,
                         nextCursor = response.nextCursor,
                     )
@@ -294,6 +295,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     .distinctBy { it.media.key }
                 _askUiState.value = currentResults.copy(
                     items = appended,
+                    totalAvailable = maxOf(
+                        currentResults.totalAvailable,
+                        response.totalResults,
+                        appended.size,
+                    ),
                     loadingMore = false,
                     hasMore = response.hasMore,
                     nextCursor = response.nextCursor,
@@ -323,7 +329,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 _askUiState.value = if (candidates.isEmpty()) {
                     com.aliflix.app.ui.discover.AskAliflixUiState.Empty(summary, "No titles found.")
                 } else {
-                    com.aliflix.app.ui.discover.AskAliflixUiState.Results(summary, spec, candidates, hasMore = response.hasMore, nextCursor = response.nextCursor)
+                    com.aliflix.app.ui.discover.AskAliflixUiState.Results(
+                        requestSummary = summary,
+                        spec = spec,
+                        items = candidates,
+                        totalAvailable = response.totalResults,
+                        hasMore = response.hasMore,
+                        nextCursor = response.nextCursor,
+                    )
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (error: Exception) {

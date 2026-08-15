@@ -151,14 +151,27 @@ data class V3RecommendationRequest(
     }
 }
 
-data class V3RecommendationResponse(val requestId: String, val results: List<V3RecommendationResult>, val nextCursor: String?, val hasMore: Boolean) {
+data class V3RecommendationResponse(
+    val requestId: String,
+    val results: List<V3RecommendationResult>,
+    val totalResults: Int,
+    val nextCursor: String?,
+    val hasMore: Boolean,
+) {
     companion object {
-        fun fromJson(json: JSONObject) = V3RecommendationResponse(
-            requestId = json.optString("requestId"),
-            results = json.optJSONArray("results").toStringList { V3RecommendationResult.fromJson(it) },
-            nextCursor = json.optString("nextCursor").takeIf { it.isNotBlank() && it != "null" },
-            hasMore = json.optBoolean("hasMore"),
-        )
+        fun fromJson(json: JSONObject): V3RecommendationResponse {
+            val results = json.optJSONArray("results")
+                .toStringList { V3RecommendationResult.fromJson(it) }
+            return V3RecommendationResponse(
+                requestId = json.optString("requestId"),
+                results = results,
+                totalResults = json.optInt("totalResults", results.size)
+                    .coerceAtLeast(results.size),
+                nextCursor = json.optString("nextCursor")
+                    .takeIf { it.isNotBlank() && it != "null" },
+                hasMore = json.optBoolean("hasMore"),
+            )
+        }
     }
 }
 

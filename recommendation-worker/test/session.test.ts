@@ -18,6 +18,8 @@ describe('recommendation sessions', () => {
     const first = await stub.getPage('fingerprint', 0, 20);
     const second = await stub.getPage('fingerprint', first.nextOffset!, 20);
     const last = await stub.getPage('fingerprint', second.nextOffset!, 20);
+    expect(first.totalCount).toBe(45);
+    expect(second.totalCount).toBe(45);
     expect(first.results.map(item => item.tmdbId)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
     expect(second.results[0].tmdbId).toBe(21);
     expect(last.results).toHaveLength(5);

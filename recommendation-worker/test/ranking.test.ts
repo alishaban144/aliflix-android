@@ -11,7 +11,8 @@ const intent = (groups: string[][], hard = filters(), genreHints: string[] = [])
 });
 const candidate = (id: number, title: string, overview: string, overrides: Partial<Candidate> = {}): Candidate => ({
   key: `tv:${id}`, tmdbId: id, mediaType: 'tv', title, overview, originCountries: [], genreIds: [], genres: [],
-  keywords: [], matchedKeywordIds: new Set(), retrievalSources: new Set(['discover:test']), hardFiltersVerified: true,
+  keywords: [], matchedKeywordIds: new Set(), matchedConceptGroupIndexes: new Set(),
+  retrievalSources: new Set(['discover:test']), hardFiltersVerified: true,
   directRelationshipScore: 0, anchorOverlapScore: 0, matchReasons: [], tmdbRating: 7, tmdbVoteCount: 1000, ...overrides,
 });
 
@@ -57,11 +58,49 @@ describe('deterministic recommendation logic', () => {
     expect(romance[0]?.title).toBe('Across Time');
   });
 
+  it('accepts genuine TMDB keyword-group evidence when synopsis wording is different', () => {
+    const ranked = rankCandidates([
+      candidate(9, 'The Signal', 'A family faces an impossible night', {
+        matchedKeywordIds: new Set([101, 202]),
+        matchedConceptGroupIndexes: new Set([0, 1]),
+        retrievalSources: new Set(['discover:concept-intersection:page-1']),
+      }),
+    ], intent([['teenagers'], ['supernatural powers']]), filters(), false, false);
+
+    expect(ranked.map(item => item.tmdbId)).toEqual([9]);
+    expect(ranked[0].matchReasons).toContain('Grounded in TMDB keyword data');
+  });
+
   it('renormalizes deterministic signals when embeddings fail and pages broad relevant pools', () => {
     const funny = Array.from({ length: 45 }, (_, index) => candidate(index + 1, `Comedy ${index}`, 'A funny comedy adventure', { mediaType: 'movie', key: `movie:${index + 1}`, genres: ['Comedy'] }));
     const ranked = rankCandidates(funny, intent([['funny', 'comedy']], filters(), ['Comedy']), filters(), false, false);
     expect(ranked).toHaveLength(45);
     expect(ranked.slice(20, 40)).toHaveLength(20);
     expect(ranked.every(item => item.finalScore > 0 && item.genres.includes('Comedy'))).toBe(true);
+  });
+
+  it('keeps deterministic relevance intact beyond the semantic reranking window', () => {
+    const candidates = Array.from({ length: 2_500 }, (_, index) => candidate(
+      index + 1,
+      `Catalogue Comedy ${index + 1}`,
+      'A funny comedy adventure grounded in the TMDB catalogue',
+      {
+        mediaType: 'movie',
+        key: `movie:${index + 1}`,
+        genres: ['Comedy'],
+        semanticScore: index < 1_000 ? .72 : undefined,
+      },
+    ));
+    const ranked = rankCandidates(
+      candidates,
+      intent([['funny', 'comedy']], filters(), ['Comedy']),
+      filters(),
+      false,
+      true,
+    );
+
+    expect(ranked).toHaveLength(2_500);
+    expect(new Set(ranked.map(item => `${item.mediaType}:${item.tmdbId}`)).size).toBe(2_500);
+    expect(ranked.some(item => item.tmdbId > 1_000)).toBe(true);
   });
 });

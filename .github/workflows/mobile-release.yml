@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - "release/v2.9.27"
   workflow_dispatch:
     inputs:
       tag:
@@ -19,11 +21,42 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "77"
-  RELEASE_VERSION_NAME: "2.9.26"
+  RELEASE_VERSION_CODE: "78"
+  RELEASE_VERSION_NAME: "2.9.27"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
+  deploy-recommendations:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: recommendation-worker/package-lock.json
+
+      - name: Validate and deploy recommendation Worker
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        working-directory: recommendation-worker
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm test
+          npm run deploy
+
+      - name: Record unavailable Worker credentials
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: echo "Cloudflare deployment skipped because repository deployment secrets are not configured."
+
   release:
     runs-on: ubuntu-latest
     steps:
@@ -49,11 +82,14 @@ jobs:
 
           test "$GRADLE_VERSION_CODE" = "$RELEASE_VERSION_CODE"
           test "$GRADLE_VERSION_NAME" = "$RELEASE_VERSION_NAME"
-          test "$REQUESTED_TAG" = "$EXPECTED_TAG"
-
-          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            test "$REQUESTED_TAG" = "$EXPECTED_TAG"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             test "${GITHUB_REF_TYPE}" = "tag"
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
+          else
+            test "${GITHUB_REF_TYPE}" = "branch"
+            test "${GITHUB_REF_NAME}" = "release/v2.9.27"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then
@@ -135,7 +171,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Makes Moviepire the first and default mobile streaming source without a beta label, adds the animated Ask Aliflix orb throughout Discover and matching, and synchronizes TMDB, IMDb, and Tomatometer ratings on details."
+            "releaseNotes": "Refines Ask Aliflix with a crisp code-native cyan and violet intelligence core, removes card-level match explanations, and expands genuine TMDB discovery and ranking to a 2,500-title candidate pool."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -144,8 +180,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile-only release that makes Moviepire the first and default streaming source without a beta label, adds the animated Ask Aliflix orb throughout Discover and matching, and presents synchronized TMDB, IMDb, and Tomatometer ratings on details."
+          body: "Mobile-only release that refines Ask Aliflix with a crisp code-native cyan and violet intelligence core, removes card-level match explanations, and expands genuine TMDB discovery and ranking to a 2,500-title candidate pool."
           files: |
             aliflix-mobile.apk
             update-mobile.json

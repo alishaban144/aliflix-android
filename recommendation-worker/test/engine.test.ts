@@ -93,4 +93,55 @@ describe('TMDB-only recommendation engine', () => {
     });
     expect(results).toEqual([]);
   });
+
+  it('builds and preserves a genuine 2,500-title TMDB candidate pool', async () => {
+    let remaining = 220;
+    const largePoolTmdb = {
+      get callsRemaining() { return remaining; },
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      details: async (_type: string, id: number) => {
+        remaining--;
+        return { id, title: `TMDB Movie ${id}`, overview: 'A genuine TMDB catalogue title' };
+      },
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        remaining--;
+        const page = Number(params.page || 1);
+        const sort = String(params.sort_by || 'vote_count.desc');
+        const offset = sort === 'popularity.desc' ? 100_000
+          : sort === 'primary_release_date.desc' ? 200_000
+            : sort === 'vote_average.desc' ? 300_000
+              : 0;
+        const results = Array.from({ length: 20 }, (_, index) => {
+          const id = offset + (page - 1) * 20 + index + 1;
+          return {
+            id,
+            title: `TMDB Movie ${id}`,
+            overview: 'A genuine TMDB catalogue title',
+            genre_ids: [],
+            vote_average: 7.4,
+            vote_count: 2_500,
+          };
+        });
+        return { page, total_pages: 500, total_results: 10_000, results };
+      },
+    };
+    const broadIntent: InterpretedIntent = {
+      hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [] },
+      requiredConceptGroups: [], softConcepts: [], excludedConcepts: [], genreHints: [], toneAndMood: [], broadSearchPhrases: [],
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'surprise me' }, {
+      tmdb: largePoolTmdb,
+      interpret: async () => broadIntent,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(results).toHaveLength(2_500);
+    expect(new Set(results.map(item => `${item.mediaType}:${item.tmdbId}`)).size).toBe(2_500);
+    expect(results.every(item => item.retrievalSources.some(source => source.startsWith('discover:')))).toBe(true);
+  });
 });

@@ -90,6 +90,7 @@ export interface Candidate {
   popularity?: number;
   keywords: TmdbKeyword[];
   matchedKeywordIds: Set<number>;
+  matchedConceptGroupIndexes: Set<number>;
   retrievalSources: Set<string>;
   hardFiltersVerified: boolean;
   semanticScore?: number;
@@ -126,6 +127,7 @@ export interface RecommendationResult {
 export interface RecommendationResponse {
   requestId: string;
   results: RecommendationResult[];
+  totalResults: number;
   nextCursor: string | null;
   hasMore: boolean;
 }

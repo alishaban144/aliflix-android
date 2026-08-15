@@ -38,6 +38,7 @@ sealed interface AskAliflixUiState {
         val requestSummary: String,
         val spec: CatalogDiscoverySpec,
         val items: List<RecommendationCandidate>,
+        val totalAvailable: Int = items.size,
         val loadingMore: Boolean = false,
         val hasMore: Boolean = true,
         val nextCursor: String? = null,

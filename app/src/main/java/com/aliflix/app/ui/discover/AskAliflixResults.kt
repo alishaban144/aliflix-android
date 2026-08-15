@@ -228,7 +228,11 @@ private fun ResultsList(
                 }
                 Surface(color = AliflixAccentPrimary.copy(alpha = 0.18f), shape = RoundedCornerShape(12.dp)) {
                     Text(
-                        text = "${state.items.size} found",
+                        text = if (state.totalAvailable > state.items.size) {
+                            "${state.items.size} of ${state.totalAvailable}"
+                        } else {
+                            "${state.items.size} found"
+                        },
                         color = AliflixAccentSecondary,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
@@ -485,7 +489,6 @@ private fun AskLoadingState(title: String) {
         ) {
             AskAliflixOrbAnimation(
                 modifier = Modifier.size(132.dp),
-                zoom = 2.05f,
                 contentDescription = "$title in progress",
             )
         }

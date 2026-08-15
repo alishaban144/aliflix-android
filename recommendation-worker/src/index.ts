@@ -46,7 +46,7 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
     offset = cursor.offset;
   }
 
-  const stub = env.RECOMMENDATION_SESSIONS.get(env.RECOMMENDATION_SESSIONS.idFromName(sessionId)) as DurableObjectStub<RecommendationSession>;
+  const stub = env.RECOMMENDATION_SESSIONS.getByName(sessionId);
   if (!parsed.cursor) {
     const status = await stub.getStatus(fingerprint);
     if (!status.exists) await stub.store(fingerprint, await processRecommendation(env, parsed));
@@ -55,7 +55,13 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
   const nextCursor = page.nextOffset === null ? null : await createCursor(env.CURSOR_SIGNING_SECRET, {
     v: 1, sessionId, requestId: parsed.requestId, fingerprint, offset: page.nextOffset,
   });
-  const response: RecommendationResponse = { requestId: parsed.requestId, results: page.results, nextCursor, hasMore: nextCursor !== null };
+  const response: RecommendationResponse = {
+    requestId: parsed.requestId,
+    results: page.results,
+    totalResults: page.totalCount,
+    nextCursor,
+    hasMore: nextCursor !== null,
+  };
   return json(response);
 }
 
