@@ -106,11 +106,16 @@ jobs:
           set -euo pipefail
           APK_PATH="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
           test -f "$APK_PATH"
-          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          test -x "$APKSIGNER"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDK_ROOT"
+          APKSIGNER="$(find "$SDK_ROOT/build-tools" -name apksigner | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          CERT_OUTPUT="$("$APKSIGNER" verify --verbose --print-certs "$APK_PATH")"
+          printf '%s\n' "$CERT_OUTPUT"
           ACTUAL_SHA256="$(
-            "$APKSIGNER" verify --print-certs "$APK_PATH" \
-              | sed -nE 's/^Signer #1 certificate SHA-256 digest:[[:space:]]*([0-9A-Fa-f]+)[[:space:]]*$/\1/p' \
+            printf '%s\n' "$CERT_OUTPUT" \
+              | awk -F ': ' 'tolower($0) ~ /certificate sha-256 digest/ { print $2; exit }' \
+              | tr -d ':[:space:]' \
               | tr '[:upper:]' '[:lower:]' \
               | head -n 1
           )"
