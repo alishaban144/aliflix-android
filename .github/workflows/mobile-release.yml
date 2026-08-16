@@ -178,12 +178,17 @@ jobs:
           unzip -tq "$APK_PATH"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
+          APK_CERT_OUTPUT="$("$APKSIGNER" verify --print-certs "$APK_PATH" 2>&1)"
           APK_CERT_SHA256="$(
-            "$APKSIGNER" verify --print-certs "$APK_PATH" \
-              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
-              | head -n 1 \
+            printf '%s\n' "$APK_CERT_OUTPUT" \
+              | awk 'BEGIN { IGNORECASE = 1 } /Signer #1 certificate SHA-256 digest:/ && !found { line = $0; sub(/^.*digest:[[:space:]]*/, "", line); print line; found = 1 }' \
+              | tr -d '[:space:]:' \
               | tr '[:upper:]' '[:lower:]'
           )"
+          if [ -z "$APK_CERT_SHA256" ]; then
+            printf '%s\n' "$APK_CERT_OUTPUT"
+            exit 1
+          fi
           echo "APK signer certificate SHA256: $APK_CERT_SHA256"
           test "$APK_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
