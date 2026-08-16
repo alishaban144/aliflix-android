@@ -7,7 +7,7 @@
 
 Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by Gemini interpretation and authoritative TMDB metadata.
 
-The current mobile release is **Aliflix 3.0** (`versionCode 80`) for Android 10 and newer.
+The current mobile release is **Aliflix 3.0.1** (`versionCode 81`) for Android 10 and newer.
 
 [Download the latest mobile APK](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk) | [View release notes](https://github.com/alishaban144/aliflix-android/releases/latest)
 
@@ -21,7 +21,7 @@ The current mobile release is **Aliflix 3.0** (`versionCode 80`) for Android 10 
 - **Grounded recommendations**: Gemini interprets intent while TMDB remains the authority for titles, types, posters, genres, years, runtime, countries, languages, and ratings.
 - **Deterministic filtering** after metadata enrichment, including genre inclusion/exclusion, year, runtime, language, country, rating, title exclusions, and TMDB ID exclusions.
 - **Canonical Similar mode** that uses the selected TMDB identity directly, excludes the anchor, and preserves the requested output type.
-- **Useful result cards** with poster, title, year, genres, rating, match tier, and a concise reason.
+- **Useful result cards** with poster, title, year, genres, rating, and match tier.
 - **Real pagination** backed by signed recommendation-session cursors.
 - **Personal library** with favorites, My List, recently played titles, and playback settings.
 - **Native details and navigation**; a WebView is created only after Play is selected.
@@ -76,7 +76,7 @@ Recommendation sessions are stored in a Cloudflare Durable Object. Subsequent pa
 - **Describe**: enter the kind of story, theme, tone, or viewing mood you want.
 - **Similar**: select a canonical TMDB title and request movie or series recommendations.
 - **Filters**: combine supported TMDB genres, year, runtime, language, country, and rating constraints.
-- Edit an existing request without losing its values, or start a New search while preserving the current mode and Movies/Series selection.
+- Edit filter and Similar context directly from the result bar, or start a New search while preserving the current mode and Movies/Series selection.
 
 ### Details and playback
 
@@ -175,7 +175,7 @@ The TV flavor uses application ID `com.aliflix.app.tv`, requires Android TV 11 /
 adb install -r .\app\build\outputs\apk\tv\debug\app-tv-debug.apk
 ```
 
-The current v3.0 GitHub release workflow publishes the **mobile APK only**. The TV flavor remains buildable from source.
+The current GitHub release workflow publishes the **mobile APK only**. The TV flavor remains buildable from source.
 
 ## Recommendation worker development
 
@@ -268,7 +268,7 @@ For a new release:
 2. Update the matching release version values and release branch in `.github/workflows/mobile-release.yml`.
 3. Run the Android and worker checks locally.
 4. Commit and push the release source.
-5. Create and push the matching version tag, such as `v3.0`.
+5. Create and push the matching version tag, such as `v3.0.1`.
 6. Wait for every workflow job to pass before treating the release as published.
 
 Published assets:
@@ -294,8 +294,8 @@ https://github.com/alishaban144/aliflix-android/releases/latest/download/update-
 
 ## Current release
 
-- Version: **3.0**
-- Version code: **80**
+- Version: **3.0.1**
+- Version code: **81**
 - Minimum Android version: **Android 10 / API 29**
-- Release page: [Aliflix 3.0](https://github.com/alishaban144/aliflix-android/releases/tag/v3.0)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.0/aliflix-mobile.apk)
+- Release page: [Aliflix 3.0.1](https://github.com/alishaban144/aliflix-android/releases/tag/v3.0.1)
+- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.0.1/aliflix-mobile.apk)
