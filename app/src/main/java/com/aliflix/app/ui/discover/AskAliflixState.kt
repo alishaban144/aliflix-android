@@ -69,3 +69,10 @@ data class AskAliflixEditorState(
     val selectedAnchor: Media? = null,
     val spec: CatalogDiscoverySpec = CatalogDiscoverySpec(mediaKind = com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)
 )
+
+internal fun AskAliflixEditorState.resultsHeading(): String =
+    if (mode == 1 && selectedAnchor != null) {
+        "Similar to \"${selectedAnchor.title}\""
+    } else {
+        "Matches"
+    }

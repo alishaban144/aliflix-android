@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,7 +38,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.AddCircle
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Warning
@@ -56,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,6 +78,7 @@ import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 @Composable
 fun AskAliflixResults(
     uiState: AskAliflixUiState,
+    editorState: AskAliflixEditorState,
     onOpenMedia: (Media) -> Unit,
     onEdit: () -> Unit,
     onReset: () -> Unit,
@@ -84,6 +88,25 @@ fun AskAliflixResults(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
+        val results = uiState as? AskAliflixUiState.Results
+        if (results != null) {
+            when (editorState.mode) {
+                1 -> ResultContextBar(
+                    title = editorState.resultsHeading(),
+                    supportingText = resultCountLabel(results),
+                    editContentDescription = "Edit similar title",
+                    onEdit = onEdit,
+                )
+
+                2 -> ResultContextBar(
+                    title = "Filters",
+                    supportingText = results.spec.askFilterSummary(),
+                    editContentDescription = "Edit filters",
+                    onEdit = onEdit,
+                )
+            }
+        }
+
         AnimatedContent(
             targetState = uiState,
             transitionSpec = {
@@ -103,6 +126,7 @@ fun AskAliflixResults(
                     listState = listState,
                     onOpenMedia = onOpenMedia,
                     onLoadMore = onLoadMore,
+                    showMatchesHeader = editorState.mode != 1,
                 )
 
                 is AskAliflixUiState.Empty -> AskStateMessage(
@@ -147,6 +171,7 @@ private fun ResultsList(
     listState: LazyListState,
     onOpenMedia: (Media) -> Unit,
     onLoadMore: () -> Unit,
+    showMatchesHeader: Boolean,
 ) {
     LazyColumn(
         state = listState,
@@ -154,34 +179,23 @@ private fun ResultsList(
         verticalArrangement = Arrangement.spacedBy(11.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 3.dp, bottom = 5.dp),
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
+        if (showMatchesHeader) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 3.dp, bottom = 5.dp),
+                    verticalAlignment = Alignment.Bottom,
+                ) {
                     Text(
                         "Matches",
                         color = AliflixContentPrimary,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = (-0.25).sp,
+                        modifier = Modifier.weight(1f),
                     )
-                }
-                Surface(color = AliflixAccentPrimary.copy(alpha = 0.18f), shape = RoundedCornerShape(12.dp)) {
-                    Text(
-                        text = if (state.totalAvailable > state.items.size) {
-                            "${state.items.size} of ${state.totalAvailable}"
-                        } else {
-                            "${state.items.size} found"
-                        },
-                        color = AliflixAccentSecondary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                    )
+                    ResultCountPill(resultCountLabel(state))
                 }
             }
         }
@@ -378,21 +392,89 @@ private fun ResultCard(
                     }
                     MatchLevelPill(item.explanation)
                 }
-                if (item.evidence.isNotBlank()) {
-                    Spacer(Modifier.height(9.dp))
-                    Text(
-                        text = "Why it matches: ${item.evidence}",
-                        color = AliflixContentSecondary,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
         }
     }
 }
+
+@Composable
+private fun ResultContextBar(
+    title: String,
+    supportingText: String,
+    editContentDescription: String,
+    onEdit: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        color = AliflixSurfaceElevated.copy(alpha = 0.9f),
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            AliflixAccentPrimary.copy(alpha = 0.45f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 64.dp)
+                .clickable(role = Role.Button, onClick = onEdit)
+                .padding(start = 14.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = AliflixContentPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = supportingText,
+                    color = AliflixContentSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Icon(
+                imageVector = Icons.Rounded.Edit,
+                contentDescription = editContentDescription,
+                tint = AliflixAccentSecondary,
+                modifier = Modifier.size(23.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ResultCountPill(label: String) {
+    Surface(
+        color = AliflixAccentPrimary.copy(alpha = 0.18f),
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Text(
+            text = label,
+            color = AliflixAccentSecondary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+        )
+    }
+}
+
+private fun resultCountLabel(state: AskAliflixUiState.Results): String =
+    if (state.totalAvailable > state.items.size) {
+        "${state.items.size} of ${state.totalAvailable}"
+    } else {
+        "${state.items.size} found"
+    }
 
 @Composable
 private fun MatchLevelPill(level: String) {
@@ -502,7 +584,15 @@ private fun AskStateMessage(
             Text(primaryLabel, fontWeight = FontWeight.Bold)
         }
         OutlinedButton(onClick = onSecondary, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+            Icon(
+                imageVector = if (secondaryLabel == "New search") {
+                    Icons.Rounded.AddCircle
+                } else {
+                    Icons.Rounded.Edit
+                },
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
             Spacer(Modifier.width(6.dp))
             Text(secondaryLabel, color = AliflixContentPrimary, fontWeight = FontWeight.Bold)
         }

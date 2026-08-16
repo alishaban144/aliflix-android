@@ -133,6 +133,7 @@ fun AskAliflixScreen(
                 } else {
                     AskAliflixResults(
                         uiState = uiState,
+                        editorState = editorState,
                         onOpenMedia = onOpenMedia,
                         onEdit = onEdit,
                         onReset = onReset,

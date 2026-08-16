@@ -314,6 +314,13 @@ internal fun popMobileDestinationStack(
 ): List<MobileDestination> =
     if (destinations.size <= 1) destinations else destinations.dropLast(1)
 
+internal fun shouldReturnHomeOnSystemBack(
+    destinations: List<MobileDestination>,
+): Boolean {
+    val root = destinations.firstOrNull() as? MobileDestination.Root
+    return destinations.size > 1 || root?.tab != AppTab.HOME
+}
+
 internal fun mobileDestinationSaveKey(
     destinations: List<MobileDestination>,
 ): String {
@@ -798,13 +805,10 @@ fun AliflixApp(
         }
     }
 
-    BackHandler(enabled = destinationStack.size > 1 && !playerVisible) {
-        when (currentDestination) {
-            is MobileDestination.Genre -> captureGenreScrollPosition()
-            is MobileDestination.Person -> capturePersonScrollPosition()
-            else -> Unit
-        }
-        popDestination()
+    BackHandler(
+        enabled = shouldReturnHomeOnSystemBack(destinationStack) && !playerVisible,
+    ) {
+        showRoot(AppTab.HOME)
     }
 
     Box(
@@ -1087,6 +1091,7 @@ fun AliflixApp(
                         onSetAskEditorState = viewModel::setAskEditorState,
                         onLoadMoreAskAliflix = viewModel::loadMoreAskAliflix,
                         onRetryAskAliflix = viewModel::retryAskAliflix,
+                        onSystemBack = { showRoot(AppTab.HOME) },
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
 

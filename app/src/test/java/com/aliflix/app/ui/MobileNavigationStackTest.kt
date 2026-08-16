@@ -5,9 +5,26 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaCreator
 import com.aliflix.app.model.MediaType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MobileNavigationStackTest {
+    @Test
+    fun systemBackReturnsEveryNonHomeDestinationToHome() {
+        val home = listOf<MobileDestination>(MobileDestination.Root(AppTab.HOME))
+        val discover = listOf<MobileDestination>(MobileDestination.Root(AppTab.SEARCH))
+        val mySpace = listOf<MobileDestination>(MobileDestination.Root(AppTab.MY_SPACE))
+        val detail = discover + MobileDestination.Detail(
+            Media(id = 1396, type = MediaType.TV, title = "Breaking Bad"),
+        )
+
+        assertFalse(shouldReturnHomeOnSystemBack(home))
+        assertTrue(shouldReturnHomeOnSystemBack(discover))
+        assertTrue(shouldReturnHomeOnSystemBack(mySpace))
+        assertTrue(shouldReturnHomeOnSystemBack(detail))
+    }
+
     @Test
     fun stackDepthAlwaysControlsPushAndPopMotion() {
         assertEquals(

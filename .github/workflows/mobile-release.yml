@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.0"
+      - "release/v3.0.1"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.0"
+        description: "Release tag, for example v3.0.1"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "80"
-  RELEASE_VERSION_NAME: "3.0"
+  RELEASE_VERSION_CODE: "81"
+  RELEASE_VERSION_NAME: "3.0.1"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -110,7 +110,7 @@ jobs:
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
           else
             test "${GITHUB_REF_TYPE}" = "branch"
-            test "${GITHUB_REF_NAME}" = "release/v3.0"
+            test "${GITHUB_REF_NAME}" = "release/v3.0.1"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then
@@ -206,7 +206,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Completes Ask Aliflix v3 with canonical TMDB recommendations, deterministic filters, useful match explanations, reliable pagination, and focused mobile polish."
+            "releaseNotes": "Refines Ask Aliflix results with editable filter and Similar context bars, a clearer New search action, cleaner cards, and predictable Home-first Back navigation."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -217,7 +217,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile-only release completing Ask Aliflix v3 with canonical TMDB recommendations, deterministic filters, useful match explanations, reliable pagination, and focused mobile polish."
+          body: "Mobile-only patch refining Ask Aliflix results with editable filter and Similar context bars, a clearer New search action, cleaner cards, and predictable Home-first Back navigation."
           files: |
             aliflix-mobile.apk
             update-mobile.json

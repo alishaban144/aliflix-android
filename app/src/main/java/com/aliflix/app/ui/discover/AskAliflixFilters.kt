@@ -381,6 +381,34 @@ private fun FilterSubheading(text: String) {
 
 private data class FilterOption(val label: String, val code: String?)
 
+internal fun CatalogDiscoverySpec.askFilterSummary(): String {
+    val values = buildList {
+        if (includedGenres.isNotEmpty()) add(includedGenres.joinToString(", "))
+        if (excludedGenres.isNotEmpty()) add("Avoid ${excludedGenres.joinToString(", ")}")
+        when {
+            yearMinimum != null && yearMaximum != null -> add("Years $yearMinimum-$yearMaximum")
+            yearMinimum != null -> add("Years $yearMinimum+")
+            yearMaximum != null -> add("Through $yearMaximum")
+        }
+        when {
+            runtimeMinimumMinutes != null && runtimeMaximumMinutes != null ->
+                add("Runtime $runtimeMinimumMinutes-$runtimeMaximumMinutes min")
+            runtimeMinimumMinutes != null -> add("Runtime $runtimeMinimumMinutes+ min")
+            runtimeMaximumMinutes != null -> add("Runtime up to $runtimeMaximumMinutes min")
+        }
+        minimumTmdb?.let { add("TMDB ${it.toString().removeSuffix(".0")}+") }
+        originalLanguage?.let { code ->
+            add(ASK_LANGUAGES.firstOrNull { it.code == code }?.label ?: code.uppercase())
+        }
+        if (countries.isNotEmpty()) {
+            add(countries.joinToString(", ") { code ->
+                ASK_COUNTRIES.firstOrNull { it.code == code }?.label ?: code
+            })
+        }
+    }
+    return values.joinToString(" / ").ifBlank { "No filters selected" }
+}
+
 private fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
     spec.includedGenres.size + spec.excludedGenres.size +
         listOf(

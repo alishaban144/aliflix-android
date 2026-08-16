@@ -10,11 +10,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.AddCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,8 +22,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aliflix.app.ui.theme.AliflixAccentPrimary
+import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
-import com.aliflix.app.ui.theme.AliflixContentSecondary
 
 @Composable
 fun AskAliflixHeader(
@@ -65,24 +66,23 @@ fun AskAliflixHeader(
         }
 
         if (showNewSearch) {
-            TextButton(
-                onClick = onReset,
-                modifier = Modifier.heightIn(min = 48.dp),
+            Surface(
+                modifier = Modifier.size(52.dp),
+                shape = androidx.compose.foundation.shape.CircleShape,
+                color = AliflixAccentPrimary.copy(alpha = 0.2f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    AliflixBorderSubtle,
+                ),
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Refresh,
-                    contentDescription = null,
-                    tint = AliflixContentSecondary,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = "New search",
-                    color = AliflixContentSecondary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                )
+                IconButton(onClick = onReset) {
+                    Icon(
+                        imageVector = Icons.Rounded.AddCircle,
+                        contentDescription = "New search",
+                        tint = AliflixContentPrimary,
+                        modifier = Modifier.size(27.dp),
+                    )
+                }
             }
         }
     }
