@@ -32,7 +32,7 @@ export const RecommendationRequestSchema = z.object({
   query: z.string().trim().max(2000).default(''),
   mediaType,
   anchor: z.object({
-    tmdbId: z.number().int().positive().optional(),
+    tmdbId: z.number().int().positive(),
     title: trimmed.min(1).max(300),
     mediaType,
   }).optional(),

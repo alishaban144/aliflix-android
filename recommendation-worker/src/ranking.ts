@@ -4,22 +4,26 @@ export const normalize = (value: string): string => value.trim().toLocaleLowerCa
 const unique = <T>(values: T[]): T[] => [...new Set(values)];
 
 export function mergeFilters(structured: RecommendationFilters, interpreted: RecommendationFilters): RecommendationFilters {
-  const mergeScalar = <T>(name: string, left: T | undefined, right: T | undefined): T | undefined => {
-    if (left !== undefined && right !== undefined && left !== right) throw new ServiceError('CONTRADICTORY_FILTERS', `Conflicting ${name}`, 400, false);
-    return left ?? right;
-  };
+  const structuredYear = structured.minimumYear !== undefined || structured.maximumYear !== undefined;
+  const structuredRuntime = structured.minimumRuntimeMinutes !== undefined || structured.maximumRuntimeMinutes !== undefined;
+  const structuredIncluded = new Set(structured.includedGenres.map(normalize));
+  const structuredExcluded = new Set(structured.excludedGenres.map(normalize));
   const result: RecommendationFilters = {
-    minimumYear: Math.max(structured.minimumYear ?? 0, interpreted.minimumYear ?? 0) || undefined,
-    maximumYear: Math.min(structured.maximumYear ?? 9999, interpreted.maximumYear ?? 9999) === 9999 ? undefined : Math.min(structured.maximumYear ?? 9999, interpreted.maximumYear ?? 9999),
-    originalLanguage: mergeScalar('original language', structured.originalLanguage, interpreted.originalLanguage),
-    originCountries: unique([...structured.originCountries, ...interpreted.originCountries].map(v => v.toUpperCase())),
-    minimumRuntimeMinutes: Math.max(structured.minimumRuntimeMinutes ?? 0, interpreted.minimumRuntimeMinutes ?? 0) || undefined,
-    maximumRuntimeMinutes: Math.min(structured.maximumRuntimeMinutes ?? 9999, interpreted.maximumRuntimeMinutes ?? 9999) === 9999 ? undefined : Math.min(structured.maximumRuntimeMinutes ?? 9999, interpreted.maximumRuntimeMinutes ?? 9999),
-    includedGenres: unique([...structured.includedGenres, ...interpreted.includedGenres]),
-    excludedGenres: unique([...structured.excludedGenres, ...interpreted.excludedGenres]),
-    minimumTmdbRating: Math.max(structured.minimumTmdbRating ?? 0, interpreted.minimumTmdbRating ?? 0) || undefined,
-    excludedTmdbIds: unique([...structured.excludedTmdbIds, ...interpreted.excludedTmdbIds]),
-    excludedTitles: unique([...structured.excludedTitles, ...interpreted.excludedTitles]),
+    minimumYear: structuredYear ? structured.minimumYear : interpreted.minimumYear,
+    maximumYear: structuredYear ? structured.maximumYear : interpreted.maximumYear,
+    originalLanguage: structured.originalLanguage ?? interpreted.originalLanguage,
+    originCountries: unique((structured.originCountries.length ? structured.originCountries : interpreted.originCountries).map(v => v.toUpperCase())),
+    minimumRuntimeMinutes: structuredRuntime ? structured.minimumRuntimeMinutes : interpreted.minimumRuntimeMinutes,
+    maximumRuntimeMinutes: structuredRuntime ? structured.maximumRuntimeMinutes : interpreted.maximumRuntimeMinutes,
+    includedGenres: unique(structured.includedGenres.length
+      ? structured.includedGenres
+      : interpreted.includedGenres.filter(genre => !structuredExcluded.has(normalize(genre)))),
+    excludedGenres: unique(structured.excludedGenres.length
+      ? structured.excludedGenres
+      : interpreted.excludedGenres.filter(genre => !structuredIncluded.has(normalize(genre)))),
+    minimumTmdbRating: structured.minimumTmdbRating ?? interpreted.minimumTmdbRating,
+    excludedTmdbIds: unique(structured.excludedTmdbIds.length ? structured.excludedTmdbIds : interpreted.excludedTmdbIds),
+    excludedTitles: unique(structured.excludedTitles.length ? structured.excludedTitles : interpreted.excludedTitles),
   };
   if (result.minimumYear && result.maximumYear && result.minimumYear > result.maximumYear) throw new ServiceError('CONTRADICTORY_FILTERS', 'Year filters do not overlap', 400, false);
   if (result.minimumRuntimeMinutes && result.maximumRuntimeMinutes && result.minimumRuntimeMinutes > result.maximumRuntimeMinutes) throw new ServiceError('CONTRADICTORY_FILTERS', 'Runtime filters do not overlap', 400, false);
@@ -46,16 +50,18 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 export function passesHardFilters(candidate: Candidate, filters: RecommendationFilters): boolean {
-  const year = candidate.releaseDate ? Number(candidate.releaseDate.slice(0, 4)) : undefined;
+  const parsedYear = candidate.releaseDate ? Number(candidate.releaseDate.slice(0, 4)) : undefined;
+  const year = Number.isInteger(parsedYear) ? parsedYear : undefined;
   if ((filters.minimumYear || filters.maximumYear) && !year) return false;
   if (filters.minimumYear && year! < filters.minimumYear) return false;
   if (filters.maximumYear && year! > filters.maximumYear) return false;
   if (filters.originalLanguage && candidate.originalLanguage !== filters.originalLanguage) return false;
   if (filters.originCountries.length && !filters.originCountries.some(country => candidate.originCountries.includes(country))) return false;
-  if ((filters.minimumRuntimeMinutes || filters.maximumRuntimeMinutes) && candidate.runtimeMinutes === undefined && !candidate.hardFiltersVerified) return false;
+  if ((filters.minimumRuntimeMinutes !== undefined || filters.maximumRuntimeMinutes !== undefined) && candidate.runtimeMinutes === undefined) return false;
   if (filters.minimumRuntimeMinutes && candidate.runtimeMinutes! < filters.minimumRuntimeMinutes) return false;
   if (filters.maximumRuntimeMinutes && candidate.runtimeMinutes! > filters.maximumRuntimeMinutes) return false;
   const genres = new Set(candidate.genres.map(normalize));
+  if ((filters.includedGenres.length || filters.excludedGenres.length) && !genres.size) return false;
   if (filters.includedGenres.length && !filters.includedGenres.every(genre => genres.has(normalize(genre)))) return false;
   if (filters.excludedGenres.some(genre => genres.has(normalize(genre)))) return false;
   if (filters.minimumTmdbRating !== undefined && (candidate.tmdbRating === undefined || candidate.tmdbRating < filters.minimumTmdbRating)) return false;
@@ -132,6 +138,18 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
       e.genreRequested && e.genre > .4 ? 'Strong genre fit' : '',
       e.path >= .67 ? 'Confirmed by multiple TMDB discovery paths' : '',
     ].filter(Boolean);
+    if (!candidate.matchReasons.length) {
+      const hasHardFilters = filters.minimumYear !== undefined || filters.maximumYear !== undefined ||
+        filters.originalLanguage !== undefined || filters.originCountries.length > 0 ||
+        filters.minimumRuntimeMinutes !== undefined || filters.maximumRuntimeMinutes !== undefined ||
+        filters.includedGenres.length > 0 || filters.excludedGenres.length > 0 ||
+        filters.minimumTmdbRating !== undefined;
+      candidate.matchReasons.push(
+        similar ? 'Related through TMDB similarity data'
+          : hasHardFilters ? 'Matches your selected filters'
+            : 'Relevant based on TMDB metadata',
+      );
+    }
   }
   const sorted = candidates
     .filter(candidate => candidate.matchLevel !== 'Reject')

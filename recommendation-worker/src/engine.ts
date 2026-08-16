@@ -7,13 +7,14 @@ import { Candidate, InterpretedIntent, MediaType, RecommendationEnv, Recommendat
 export interface EngineDependencies {
   interpret?: typeof interpretQuery;
   embed?: typeof embedForSearch;
-  tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchTitle' | 'discover' | 'recommendations' | 'similar' | 'details'>;
+  tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'discover' | 'recommendations' | 'similar' | 'details'>;
 }
 
-const MAX_CANDIDATES = 2_500;
-const MAX_SEMANTIC_CANDIDATES = 1_000;
-const TMDB_DETAIL_RESERVE = 10;
+const MAX_CANDIDATES = 360;
+const MAX_SEMANTIC_CANDIDATES = 160;
+const TMDB_DETAIL_RESERVE = 36;
 const DISCOVERY_CONCURRENCY = 4;
+const DETAIL_CONCURRENCY = 4;
 const MAX_KEYWORD_SEARCHES = 18;
 
 async function optionalTmdbCall<T>(operation: string, call: () => Promise<T>): Promise<T | undefined> {
@@ -80,9 +81,27 @@ function discoverParams(type: MediaType, filters: RecommendationFilters, genreId
   return params;
 }
 
-function exactAnchor(results: TmdbListItem[], title: string): TmdbListItem | undefined {
-  const wanted = normalize(title);
-  return results.find(result => normalize(result.title || result.name || '') === wanted || normalize(result.original_title || result.original_name || '') === wanted) || results[0];
+function passesKnownFilters(candidate: Candidate, filters: RecommendationFilters): boolean {
+  if (filters.excludedTmdbIds.includes(candidate.tmdbId)) return false;
+  if (filters.excludedTitles.some(title => normalize(title) === normalize(candidate.title) || normalize(title) === normalize(candidate.originalTitle || ''))) return false;
+  const year = candidate.releaseDate ? Number(candidate.releaseDate.slice(0, 4)) : undefined;
+  if (Number.isInteger(year)) {
+    if (filters.minimumYear !== undefined && year! < filters.minimumYear) return false;
+    if (filters.maximumYear !== undefined && year! > filters.maximumYear) return false;
+  }
+  if (candidate.originalLanguage && filters.originalLanguage && candidate.originalLanguage !== filters.originalLanguage) return false;
+  if (candidate.originCountries.length && filters.originCountries.length && !filters.originCountries.some(country => candidate.originCountries.includes(country))) return false;
+  if (candidate.runtimeMinutes !== undefined) {
+    if (filters.minimumRuntimeMinutes !== undefined && candidate.runtimeMinutes < filters.minimumRuntimeMinutes) return false;
+    if (filters.maximumRuntimeMinutes !== undefined && candidate.runtimeMinutes > filters.maximumRuntimeMinutes) return false;
+  }
+  if (candidate.genres.length) {
+    const genres = new Set(candidate.genres.map(normalize));
+    if (filters.includedGenres.some(genre => !genres.has(normalize(genre)))) return false;
+    if (filters.excludedGenres.some(genre => genres.has(normalize(genre)))) return false;
+  }
+  if (filters.minimumTmdbRating !== undefined && candidate.tmdbRating !== undefined && candidate.tmdbRating < filters.minimumTmdbRating) return false;
+  return true;
 }
 
 export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
@@ -109,14 +128,15 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     matchedConceptGroups: number[] = [],
     direct = 0,
   ) => {
-    for (const item of page.results || []) {
+    for (const [position, item] of (page.results || []).entries()) {
       const fresh = toCandidate(item, request.mediaType, genresById);
       if (!fresh) continue;
       const candidate = candidates.get(fresh.key) || fresh;
       candidate.retrievalSources.add(source);
       matchedIds.forEach(id => candidate.matchedKeywordIds.add(id));
       matchedConceptGroups.forEach(index => candidate.matchedConceptGroupIndexes.add(index));
-      candidate.directRelationshipScore = Math.max(candidate.directRelationshipScore, direct);
+      const orderedRelationship = direct > 0 ? Math.max(0, direct - position * .01) : 0;
+      candidate.directRelationshipScore = Math.max(candidate.directRelationshipScore, orderedRelationship);
       candidate.hardFiltersVerified ||= source.startsWith('discover:');
       candidates.set(candidate.key, candidate);
     }
@@ -170,12 +190,6 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
   if (request.mode === 'similar') {
     const anchor = request.anchor!;
     anchorId = anchor.tmdbId;
-    if (!anchorId) {
-      const searched = await tmdb.searchTitle(anchor.mediaType, anchor.title);
-      const resolved = exactAnchor(searched.results, anchor.title);
-      if (!resolved) throw new ServiceError('TMDB_NOT_FOUND', 'The anchor title was not found on TMDB', 404, false);
-      anchorId = resolved.id;
-    }
     anchorDetails = await tmdb.details(anchor.mediaType, anchorId);
     if (anchor.mediaType === request.mediaType) {
       for (let page = 1; page <= 3 && tmdb.callsRemaining > 12; page++) {
@@ -285,18 +299,24 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
   }
 
   // Details are authoritative enrichment. Keep it bounded so discovery can use most of the request budget.
-  const preliminary = [...candidates.values()].sort((a, b) => b.retrievalSources.size - a.retrievalSources.size || (b.tmdbVoteCount || 0) - (a.tmdbVoteCount || 0));
-  const detailsCount = Math.min(preliminary.length, Math.max(0, Math.min(10, tmdb.callsRemaining)));
-  for (let index = 0; index < detailsCount; index++) {
-    try {
-      const details = await optionalTmdbCall(
-        `details:${request.mediaType}:${preliminary[index].tmdbId}`,
-        () => tmdb.details(request.mediaType, preliminary[index].tmdbId),
-      );
-      if (details) mergeDetails(preliminary[index], details);
-    } catch (error) {
-      if (!(error instanceof ServiceError && error.code === 'TMDB_NOT_FOUND')) throw error;
-    }
+  const preliminary = [...candidates.values()]
+    .filter(candidate => passesKnownFilters(candidate, filters))
+    .sort((a, b) => b.directRelationshipScore - a.directRelationshipScore ||
+      b.retrievalSources.size - a.retrievalSources.size ||
+      (b.tmdbVoteCount || 0) - (a.tmdbVoteCount || 0));
+  const detailsCount = Math.min(preliminary.length, Math.max(0, Math.min(48, request.pageSize + 12, tmdb.callsRemaining)));
+  for (let start = 0; start < detailsCount; start += DETAIL_CONCURRENCY) {
+    await Promise.all(preliminary.slice(start, start + DETAIL_CONCURRENCY).map(async candidate => {
+      try {
+        const details = await optionalTmdbCall(
+          `details:${request.mediaType}:${candidate.tmdbId}`,
+          () => tmdb.details(request.mediaType, candidate.tmdbId),
+        );
+        if (details) mergeDetails(candidate, details);
+      } catch (error) {
+        if (!(error instanceof ServiceError && error.code === 'TMDB_NOT_FOUND')) throw error;
+      }
+    }));
   }
 
   let embeddingsAvailable = false;

@@ -3,8 +3,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 79
-val mobileVersionName = "2.9.28"
+val mobileVersionCode = 80
+val mobileVersionName = "3.0"
+val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
+val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("ALIFLIX_KEY_PASSWORD")
+val releaseSigningConfigured = listOf(
+    releaseKeystoreFile,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
 val githubReleaseBaseUrl =
     "https://github.com/alishaban144/aliflix-android/releases/latest/download"
 val legacyUpdateManifestOverride = providers.gradleProperty("ALIFLIX_UPDATE_MANIFEST_URL")
@@ -75,21 +85,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
-    val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
-    val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
-    val releaseKeyPassword = System.getenv("ALIFLIX_KEY_PASSWORD")
-    val releaseSigning = if (
-        !releaseKeystoreFile.isNullOrBlank() &&
-        !releaseKeystorePassword.isNullOrBlank() &&
-        !releaseKeyAlias.isNullOrBlank() &&
-        !releaseKeyPassword.isNullOrBlank()
-    ) {
+    val releaseSigning = if (releaseSigningConfigured) {
         signingConfigs.create("aliflixRelease") {
-            storeFile = file(releaseKeystoreFile)
-            storePassword = releaseKeystorePassword
-            keyAlias = releaseKeyAlias
-            keyPassword = releaseKeyPassword
+            storeFile = file(requireNotNull(releaseKeystoreFile))
+            storePassword = requireNotNull(releaseKeystorePassword)
+            keyAlias = requireNotNull(releaseKeyAlias)
+            keyPassword = requireNotNull(releaseKeyPassword)
         }
     } else {
         null
@@ -98,11 +99,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            if (releaseSigning != null) {
-                signingConfig = releaseSigning
-            } else {
-                signingConfig = signingConfigs.getByName("debug")
-            }
+            signingConfig = releaseSigning
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -122,6 +119,25 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+}
+
+val validateReleaseSigning by tasks.registering {
+    group = "verification"
+    description = "Fails production release packaging when release signing credentials are unavailable."
+    doLast {
+        check(releaseSigningConfigured) {
+            "Production release builds require ALIFLIX_KEYSTORE_FILE, ALIFLIX_KEYSTORE_PASSWORD, ALIFLIX_KEY_ALIAS, and ALIFLIX_KEY_PASSWORD."
+        }
+        check(file(requireNotNull(releaseKeystoreFile)).isFile) {
+            "Production release keystore does not exist: $releaseKeystoreFile"
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name.matches(Regex("^(assemble|bundle|package)(Mobile|Tv)?Release$"))) {
+        dependsOn(validateReleaseSigning)
     }
 }
 

@@ -21,12 +21,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -81,8 +80,7 @@ fun AskAliflixFilters(
     var regionOpen by rememberSaveable { mutableStateOf(false) }
 
     val genres = if (spec.mediaKind == RecommendationMediaKind.SERIES) ASK_TMDB_TV_GENRES else ASK_TMDB_MOVIE_GENRES
-    val activePills = activeFilterPills(spec, onSpecChanged)
-    val activeCount = activePills.size
+    val activeCount = selectedFilterCount(spec)
     val hasFilters = activeCount > 0
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -107,37 +105,6 @@ fun AskAliflixFilters(
             AnimatedVisibility(visible = hasFilters, enter = fadeIn(), exit = fadeOut()) {
                 TextButton(onClick = { onSpecChanged(spec.clearAskFilters()) }) {
                     Text("Clear all", color = AliflixAccentSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        AnimatedVisibility(
-            visible = activePills.isNotEmpty(),
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-        ) {
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                items(activePills, key = { it.label }) { pill ->
-                    Row(
-                        modifier = Modifier
-                            .animateItem()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(AliflixAccentPrimary.copy(alpha = 0.18f))
-                            .border(1.dp, AliflixAccentPrimary.copy(alpha = 0.48f), RoundedCornerShape(14.dp))
-                            .clickable(onClick = pill.onRemove)
-                            .padding(horizontal = 10.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(pill.label, color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.width(5.dp))
-                        Icon(Icons.Rounded.Close, contentDescription = "Remove ${pill.label}", tint = AliflixAccentSecondary, modifier = Modifier.size(13.dp))
-                    }
                 }
             }
         }
@@ -324,6 +291,7 @@ private fun FilterSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 48.dp)
                     .clickable(onClick = onToggle),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -411,38 +379,16 @@ private fun FilterSubheading(text: String) {
     )
 }
 
-private data class FilterPill(val label: String, val onRemove: () -> Unit)
 private data class FilterOption(val label: String, val code: String?)
 
-private fun activeFilterPills(spec: CatalogDiscoverySpec, onChange: (CatalogDiscoverySpec) -> Unit): List<FilterPill> = buildList {
-    spec.includedGenres.forEach { genre -> add(FilterPill(genre) { onChange(spec.copy(includedGenres = spec.includedGenres - genre)) }) }
-    spec.excludedGenres.forEach { genre -> add(FilterPill("No $genre") { onChange(spec.copy(excludedGenres = spec.excludedGenres - genre)) }) }
-    if (spec.yearMinimum != null || spec.yearMaximum != null) {
-        val label = when {
-            spec.yearMinimum != null && spec.yearMaximum != null -> "${spec.yearMinimum}–${spec.yearMaximum}"
-            spec.yearMinimum != null -> "${spec.yearMinimum}+"
-            else -> "Before ${spec.yearMaximum!! + 1}"
-        }
-        add(FilterPill(label) { onChange(spec.copy(yearMinimum = null, yearMaximum = null)) })
-    }
-    if (spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null) {
-        val label = when {
-            spec.runtimeMinimumMinutes != null && spec.runtimeMaximumMinutes != null -> "${spec.runtimeMinimumMinutes}–${spec.runtimeMaximumMinutes} min"
-            spec.runtimeMinimumMinutes != null -> "${spec.runtimeMinimumMinutes}+ min"
-            else -> "Under ${spec.runtimeMaximumMinutes!! + 1} min"
-        }
-        add(FilterPill(label) { onChange(spec.copy(runtimeMinimumMinutes = null, runtimeMaximumMinutes = null)) })
-    }
-    spec.minimumTmdb?.let { rating -> add(FilterPill("TMDB $rating+") { onChange(spec.copy(minimumTmdb = null)) }) }
-    spec.originalLanguage?.let { code ->
-        val label = ASK_LANGUAGES.firstOrNull { it.code == code }?.label ?: code.uppercase()
-        add(FilterPill(label) { onChange(spec.copy(originalLanguage = null)) })
-    }
-    spec.countries.forEach { code ->
-        val label = ASK_COUNTRIES.firstOrNull { it.code == code }?.label ?: code
-        add(FilterPill(label) { onChange(spec.copy(countries = spec.countries - code)) })
-    }
-}
+private fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
+    spec.includedGenres.size + spec.excludedGenres.size +
+        listOf(
+            spec.yearMinimum != null || spec.yearMaximum != null,
+            spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null,
+            spec.minimumTmdb != null,
+            spec.originalLanguage != null,
+        ).count { it } + spec.countries.size
 
 private fun CatalogDiscoverySpec.clearAskFilters() = copy(
     includedGenres = emptyList(),

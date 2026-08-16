@@ -109,8 +109,12 @@ class RecommendationAiClient(
     }
 }
 
-data class V3RecommendationAnchor(val tmdbId: Int?, val title: String, val mediaType: String) {
-    fun toJson() = JSONObject().apply { tmdbId?.let { put("tmdbId", it) }; put("title", title); put("mediaType", mediaType) }
+data class V3RecommendationAnchor(val tmdbId: Int, val title: String, val mediaType: String) {
+    init {
+        require(tmdbId > 0) { "A canonical TMDB anchor ID is required." }
+    }
+
+    fun toJson() = JSONObject().apply { put("tmdbId", tmdbId); put("title", title); put("mediaType", mediaType) }
 }
 
 data class V3RecommendationFilters(

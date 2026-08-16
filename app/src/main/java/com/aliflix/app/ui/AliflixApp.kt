@@ -153,6 +153,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -195,7 +196,6 @@ import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
 import com.aliflix.app.update.UpdateInfo
 import com.aliflix.app.ui.discover.DiscoverScreen
-import com.aliflix.app.ui.discover.AskAliflixBetaBadge
 import com.aliflix.app.ui.discover.currentSessionSuggestionOrder
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
@@ -3126,8 +3126,6 @@ private fun MobileSettingsDialog(
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                     )
-                                    Spacer(Modifier.width(7.dp))
-                                    AskAliflixBetaBadge()
                                 }
                                 Text(
                                     text = "Show Aliflix in Discover",
@@ -3603,17 +3601,18 @@ private fun HistoryCollection(
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.78f))
+                            .size(48.dp)
                             .clickable { onRemove(item) },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Filled.Close,
                             contentDescription = "Remove from viewing history",
-                            modifier = Modifier.size(11.dp),
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.78f))
+                                .padding(8.dp),
                         )
                     }
                 }
@@ -4236,6 +4235,8 @@ private fun DetailScreen(
     onOpenCreator: (MediaCreator) -> Unit = {},
 ) {
     val item = state.item ?: return
+    val configuration = LocalConfiguration.current
+    val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else 500.dp
     val detailListState = rememberLazyListState()
     var overviewExpanded by rememberSaveable(item.key) { mutableStateOf(false) }
     var castExpanded by rememberSaveable(item.key) { mutableStateOf(false) }
@@ -4253,7 +4254,7 @@ private fun DetailScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(500.dp),
+                    .height(detailHeroHeight),
             ) {
                 ArtworkPlaceholder(title = item.title)
                 AsyncImage(

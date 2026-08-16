@@ -7,6 +7,7 @@ import com.aliflix.app.ui.discover.AskAliflixRequestMapper
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,6 +37,13 @@ class AskAliflixWiringIntegrationTest {
         assertEquals(1396, json.getJSONObject("anchor").getInt("tmdbId"))
         assertEquals("tv", json.getJSONObject("anchor").getString("mediaType"))
         assertTrue(json.getString("query").contains("Breaking Bad"))
+    }
+
+    @Test
+    fun similarAnchorRequiresCanonicalTmdbIdentity() {
+        assertThrows(IllegalArgumentException::class.java) {
+            V3RecommendationAnchor(tmdbId = 0, title = "Breaking Bad", mediaType = "tv")
+        }
     }
 
     @Test
@@ -72,6 +80,7 @@ class AskAliflixWiringIntegrationTest {
         assertEquals(listOf("Crime", "Drama"), item.genres)
         assertEquals(47, item.runtimeMinutes)
         assertEquals(8.7, item.tmdbRating!!, 0.0)
+        assertEquals(listOf("Recommended by TMDB"), item.matchReasons)
         assertEquals(
             "https://image.tmdb.org/t/p/w500/better-call-saul.jpg",
             Media(id = item.tmdbId, type = MediaType.TV, title = item.title, posterPath = item.posterPath).posterUrl,

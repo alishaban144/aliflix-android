@@ -254,7 +254,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 throw cancelled
             } catch (e: Exception) {
                 if (token != askSessionToken) return@launch
-                _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, e.message ?: "Failed to find titles")
+                _askUiState.value = if (
+                    e is com.aliflix.app.recommendation.RecommendationAiClientException &&
+                    e.code in setOf("TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED")
+                ) {
+                    com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(summary, e.message ?: "TMDB is unavailable")
+                } else {
+                    com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, e.message ?: "Failed to find titles")
+                }
             }
         }
     }
@@ -270,7 +277,19 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskRequest = null
         activeAskSummary = null
         activeAskSpec = null
-        _askEditorState.value = com.aliflix.app.ui.discover.AskAliflixEditorState()
+        val previous = _askEditorState.value
+        _askEditorState.value = previous.copy(
+            describeText = "",
+            similarQuery = "",
+            selectedAnchor = null,
+            spec = com.aliflix.app.recommendation.CatalogDiscoverySpec(
+                mediaKind = if (previous.mediaType == com.aliflix.app.model.MediaType.TV) {
+                    com.aliflix.app.recommendation.RecommendationMediaKind.SERIES
+                } else {
+                    com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE
+                },
+            ),
+        )
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Editing
     }
 
@@ -340,7 +359,16 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (error: Exception) {
-                if (token == askSessionToken) _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, error.message ?: "Failed to find titles")
+                if (token == askSessionToken) {
+                    _askUiState.value = if (
+                        error is com.aliflix.app.recommendation.RecommendationAiClientException &&
+                        error.code in setOf("TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED")
+                    ) {
+                        com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(summary, error.message ?: "TMDB is unavailable")
+                    } else {
+                        com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, error.message ?: "Failed to find titles")
+                    }
+                }
             }
         }
     }
@@ -367,7 +395,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 tmdbVoteCount = result.tmdbVoteCount,
                 verifiedAtMillis = System.currentTimeMillis(),
             ),
-            evidence = result.overview.orEmpty(),
+            evidence = result.matchReasons.firstOrNull().orEmpty(),
             sources = result.retrievalSources.toSet(),
             sourceCount = result.retrievalSources.size,
             sourcePosition = index,

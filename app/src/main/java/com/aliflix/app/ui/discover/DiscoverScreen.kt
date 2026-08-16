@@ -304,6 +304,8 @@ internal fun DiscoverScreen(
                         similarSuggestionsLoading = true
                         similarSuggestions = try {
                             onSearchTitles(askEditorState.similarQuery.trim())
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
                         } catch (_: Throwable) {
                             emptyList()
                         }
@@ -490,7 +492,7 @@ internal fun DiscoverScreen(
                                     .padding(horizontal = 16.dp, vertical = 15.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                AskAliflixOrbAnimation(
+                                BreathingThinkingOrb(
                                     modifier = Modifier.size(46.dp),
                                 )
                                 Spacer(modifier = Modifier.width(13.dp))
@@ -504,8 +506,6 @@ internal fun DiscoverScreen(
                                         fontSize = 17.sp,
                                         color = AliflixContentPrimary,
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    AskAliflixBetaBadge()
                                 }
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Rounded.ArrowForward,

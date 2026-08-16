@@ -3,7 +3,6 @@
 package com.aliflix.app.ui.discover
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -11,10 +10,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -40,7 +37,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.Star
@@ -58,7 +54,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
@@ -88,17 +83,7 @@ fun AskAliflixResults(
     listState: LazyListState,
     modifier: Modifier = Modifier,
 ) {
-    val requestSummary = uiState.requestSummary()
-
     Column(modifier = modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = requestSummary.isNotBlank(),
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-        ) {
-            QuerySummaryCard(summary = requestSummary, onEdit = onEdit)
-        }
-
         AnimatedContent(
             targetState = uiState,
             transitionSpec = {
@@ -109,13 +94,9 @@ fun AskAliflixResults(
             modifier = Modifier.weight(1f),
         ) { state ->
             when (state) {
-                is AskAliflixUiState.Interpreting -> AskLoadingState(
-                    title = "Understanding your request",
-                )
+                is AskAliflixUiState.Interpreting -> AskLoadingState()
 
-                is AskAliflixUiState.Searching -> AskLoadingState(
-                    title = "Finding matches",
-                )
+                is AskAliflixUiState.Searching -> AskLoadingState()
 
                 is AskAliflixUiState.Results -> ResultsList(
                     state = state,
@@ -128,9 +109,9 @@ fun AskAliflixResults(
                     icon = Icons.Rounded.SearchOff,
                     title = "No matches",
                     message = state.message,
-                    primaryLabel = "Adjust request",
+                    primaryLabel = "Edit request",
                     onPrimary = onEdit,
-                    secondaryLabel = "Start over",
+                    secondaryLabel = "New search",
                     onSecondary = onReset,
                 )
 
@@ -157,43 +138,6 @@ fun AskAliflixResults(
                 AskAliflixUiState.Editing -> Unit
             }
         }
-    }
-}
-
-@Composable
-private fun QuerySummaryCard(summary: String, onEdit: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(AliflixSurfaceElevated.copy(alpha = 0.82f))
-            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
-            .clickable(onClick = onEdit)
-            .padding(horizontal = 13.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(AliflixAccentPrimary.copy(alpha = 0.22f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            AskAliflixSparkMark(modifier = Modifier.size(18.dp))
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = summary,
-            color = AliflixContentPrimary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(8.dp))
-        Icon(Icons.Rounded.Edit, contentDescription = "Edit request", tint = AliflixAccentSecondary, modifier = Modifier.size(17.dp))
     }
 }
 
@@ -434,6 +378,17 @@ private fun ResultCard(
                     }
                     MatchLevelPill(item.explanation)
                 }
+                if (item.evidence.isNotBlank()) {
+                    Spacer(Modifier.height(9.dp))
+                    Text(
+                        text = "Why it matches: ${item.evidence}",
+                        color = AliflixContentSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
@@ -457,7 +412,7 @@ private fun MatchLevelPill(level: String) {
 }
 
 @Composable
-private fun AskLoadingState(title: String) {
+private fun AskLoadingState() {
     val infinite = rememberInfiniteTransition(label = "ask-loading")
     val pulse by infinite.animateFloat(
         initialValue = 0.35f,
@@ -472,28 +427,9 @@ private fun AskLoadingState(title: String) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(24.dp))
-        Box(
-            modifier = Modifier
-                .size(148.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        listOf(
-                            AliflixAccentSecondary.copy(alpha = pulse * 0.34f),
-                            AliflixAccentPrimary.copy(alpha = pulse * 0.24f),
-                            Color.Transparent,
-                        )
-                    )
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            AskAliflixOrbAnimation(
-                modifier = Modifier.size(132.dp),
-                contentDescription = "$title in progress",
-            )
-        }
+        ComposingThinkingOrb(modifier = Modifier.size(148.dp))
         Spacer(Modifier.height(13.dp))
-        Text(title, color = AliflixContentPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+        Text("Finding matches", color = AliflixContentPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
         Spacer(Modifier.height(20.dp))
         repeat(2) { index ->
             LoadingResultCard(alpha = (pulse - index * 0.08f).coerceIn(0.28f, 0.8f))
@@ -571,14 +507,4 @@ private fun AskStateMessage(
             Text(secondaryLabel, color = AliflixContentPrimary, fontWeight = FontWeight.Bold)
         }
     }
-}
-
-private fun AskAliflixUiState.requestSummary(): String = when (this) {
-    is AskAliflixUiState.Interpreting -> requestSummary
-    is AskAliflixUiState.Searching -> requestSummary
-    is AskAliflixUiState.Results -> requestSummary
-    is AskAliflixUiState.Empty -> requestSummary
-    is AskAliflixUiState.SourceUnavailable -> requestSummary
-    is AskAliflixUiState.Error -> requestSummary
-    AskAliflixUiState.Editing -> ""
 }

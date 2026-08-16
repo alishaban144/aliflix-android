@@ -31,17 +31,41 @@ describe('deterministic recommendation logic', () => {
       candidate(2, 'Old Killer', 'A serial killer investigation', { releaseDate: '2019-01-01', originalLanguage: 'ko', originCountries: ['KR'], genres: ['Crime'] }),
     ], intent([['serial killer']], hard), hard, false, false);
     expect(ranked.map(item => item.tmdbId)).toEqual([1]);
-    expect(() => mergeFilters(filters({ includedGenres: ['Crime'] }), filters({ excludedGenres: ['crime'] }))).toThrow('both included and excluded');
+    expect(() => mergeFilters(filters({ includedGenres: ['Crime'], excludedGenres: ['crime'] }), filters())).toThrow('both included and excluded');
   });
 
-  it('ranks Better Call Saul in the top three for Breaking Bad similarity without embeddings and excludes the anchor fixture', () => {
+  it('lets explicit UI filters override conflicting Gemini interpretation', () => {
+    const merged = mergeFilters(
+      filters({ minimumYear: 2010, maximumYear: 2020, originalLanguage: 'ko', includedGenres: ['Crime'] }),
+      filters({ minimumYear: 2022, originalLanguage: 'en', includedGenres: ['Comedy'], excludedGenres: ['Crime'] }),
+    );
+    expect(merged).toMatchObject({
+      minimumYear: 2010,
+      maximumYear: 2020,
+      originalLanguage: 'ko',
+      includedGenres: ['Crime'],
+      excludedGenres: [],
+    });
+  });
+
+  it('rejects missing metadata when a hard filter requires verification', () => {
+    const hard = filters({ minimumRuntimeMinutes: 45, excludedGenres: ['Animation'] });
+    const ranked = rankCandidates([
+      candidate(1, 'Unknown Runtime', 'A crime story', { genres: ['Crime'], runtimeMinutes: undefined, hardFiltersVerified: true }),
+      candidate(2, 'Unknown Genres', 'A crime story', { genres: [], runtimeMinutes: 50, hardFiltersVerified: true }),
+      candidate(3, 'Verified Match', 'A crime story', { genres: ['Crime'], runtimeMinutes: 50 }),
+    ], intent([], hard), hard, false, false);
+    expect(ranked.map(item => item.tmdbId)).toEqual([3]);
+  });
+
+  it('ranks Better Call Saul first for Breaking Bad similarity without embeddings and excludes the anchor fixture', () => {
     const items = [
       candidate(60059, 'Better Call Saul', 'A crime lawyer in Albuquerque', { directRelationshipScore: 1, anchorOverlapScore: .9, genres: ['Crime', 'Drama'], retrievalSources: new Set(['recommendations:page-1', 'similar:page-1']) }),
       candidate(1, 'Other Crime Drama', 'Crime drama', { directRelationshipScore: .7, anchorOverlapScore: .5 }),
       candidate(2, 'Another Drama', 'Drama', { directRelationshipScore: .5, anchorOverlapScore: .4 }),
     ];
     const ranked = rankCandidates(items, intent([]), filters(), true, false);
-    expect(ranked.slice(0, 3).map(item => item.title)).toContain('Better Call Saul');
+    expect(ranked[0].title).toBe('Better Call Saul');
     expect(ranked.some(item => item.tmdbId === 1396)).toBe(false);
     expect(ranked.every(item => item.mediaType === 'tv')).toBe(true);
   });

@@ -37,7 +37,11 @@ fun AskAliflixScreen(
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            AskAliflixHeader(onReset = onReset, onBack = onBack)
+            AskAliflixHeader(
+                onReset = onReset,
+                onBack = onBack,
+                showNewSearch = uiState !is AskAliflixUiState.Editing,
+            )
 
             AnimatedContent(
                 targetState = uiState is AskAliflixUiState.Editing,

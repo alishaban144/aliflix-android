@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v2.9.28"
+      - "release/v3.0"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v2.1"
+        description: "Release tag, for example v3.0"
         required: true
         type: string
       notes:
@@ -21,12 +21,34 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "79"
-  RELEASE_VERSION_NAME: "2.9.28"
+  RELEASE_VERSION_CODE: "80"
+  RELEASE_VERSION_NAME: "3.0"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
+  worker-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: recommendation-worker/package-lock.json
+
+      - name: Typecheck and test recommendation Worker
+        working-directory: recommendation-worker
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm test
+
   deploy-recommendations:
+    needs: worker-checks
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -43,14 +65,12 @@ jobs:
           cache: npm
           cache-dependency-path: recommendation-worker/package-lock.json
 
-      - name: Validate and deploy recommendation Worker
+      - name: Deploy recommendation Worker
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         working-directory: recommendation-worker
         run: |
           set -euo pipefail
           npm ci
-          npm run typecheck
-          npm test
           npm run deploy
 
       - name: Record unavailable Worker credentials
@@ -58,6 +78,7 @@ jobs:
         run: echo "Cloudflare deployment skipped because repository deployment secrets are not configured."
 
   release:
+    needs: worker-checks
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -89,7 +110,7 @@ jobs:
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
           else
             test "${GITHUB_REF_TYPE}" = "branch"
-            test "${GITHUB_REF_NAME}" = "release/v2.9.28"
+            test "${GITHUB_REF_NAME}" = "release/v3.0"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then
@@ -155,6 +176,16 @@ jobs:
           APK_PATH="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
           test -s "$APK_PATH"
           unzip -tq "$APK_PATH"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          APK_CERT_SHA256="$(
+            "$APKSIGNER" verify --print-certs "$APK_PATH" \
+              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+              | head -n 1 \
+              | tr '[:upper:]' '[:lower:]'
+          )"
+          echo "APK signer certificate SHA256: $APK_CERT_SHA256"
+          test "$APK_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
       - name: Build mobile update manifest
         run: |
@@ -171,7 +202,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Refines Ask Aliflix with a crisp code-native cyan and violet intelligence core, removes card-level match explanations, and expands genuine TMDB discovery and ranking to a 2,500-title candidate pool."
+            "releaseNotes": "Completes Ask Aliflix v3 with canonical TMDB recommendations, deterministic filters, useful match explanations, reliable pagination, and focused mobile polish."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -182,7 +213,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile-only release that refines Ask Aliflix with a crisp code-native cyan and violet intelligence core, removes card-level match explanations, and expands genuine TMDB discovery and ranking to a 2,500-title candidate pool."
+          body: "Mobile-only release completing Ask Aliflix v3 with canonical TMDB recommendations, deterministic filters, useful match explanations, reliable pagination, and focused mobile polish."
           files: |
             aliflix-mobile.apk
             update-mobile.json

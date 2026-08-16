@@ -16,7 +16,7 @@ export interface RecommendationFilters {
 }
 
 export interface RecommendationAnchor {
-  tmdbId?: number;
+  tmdbId: number;
   title: string;
   mediaType: MediaType;
 }

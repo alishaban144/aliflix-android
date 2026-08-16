@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { processRecommendation } from '../src/engine';
-import { ParsedRecommendationRequest } from '../src/schemas';
+import { ParsedRecommendationRequest, RecommendationRequestSchema } from '../src/schemas';
 import { InterpretedIntent, ServiceError } from '../src/types';
 import { applyTmdbAuthentication } from '../src/tmdb';
 
@@ -42,6 +42,14 @@ function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean
 }
 
 describe('TMDB-only recommendation engine', () => {
+  it('requires a canonical TMDB ID for similar requests', () => {
+    expect(() => RecommendationRequestSchema.parse({
+      ...request,
+      mode: 'similar',
+      anchor: { title: 'Breaking Bad', mediaType: 'tv' },
+    })).toThrow();
+  });
+
   it('uses a v3 API key as api_key and only a separately named read token as Bearer', () => {
     const keyUrl = new URL('https://api.themoviedb.org/3/discover/movie');
     const keyHeaders: Record<string, string> = {};
@@ -103,7 +111,51 @@ describe('TMDB-only recommendation engine', () => {
     expect(results).toEqual([]);
   });
 
-  it('builds and preserves a genuine 2,500-title TMDB candidate pool', async () => {
+  it('uses the canonical Breaking Bad anchor directly, excludes it, and ranks Better Call Saul first', async () => {
+    let remaining = 80;
+    const similarTmdb = {
+      get callsRemaining() { return remaining; },
+      genres: async () => ({ genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 16, name: 'Animation' }] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async (_type: string, _id: number, page: number) => ({
+        page, total_pages: 1, total_results: page === 1 ? 2 : 0,
+        results: page === 1 ? [
+          { id: 60059, name: 'Better Call Saul', overview: 'A crime lawyer in Albuquerque', genre_ids: [80, 18], vote_average: 8.7, vote_count: 6000 },
+          { id: 1396, name: 'Breaking Bad', overview: 'The anchor', genre_ids: [80, 18], vote_average: 8.9, vote_count: 15000 },
+        ] : [],
+      }),
+      similar: async (_type: string, _id: number, page: number) => ({
+        page, total_pages: 1, total_results: page === 1 ? 1 : 0,
+        results: page === 1 ? [{ id: 999, name: 'Unrelated Anime', overview: 'Animated fantasy', genre_ids: [16], vote_average: 9, vote_count: 9000 }] : [],
+      }),
+      discover: async () => { remaining--; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      details: async (_type: string, id: number) => {
+        remaining--;
+        if (id === 1396) return { id, name: 'Breaking Bad', genres: [{ id: 80, name: 'Crime' }, { id: 18, name: 'Drama' }], keywords: { results: [] } };
+        if (id === 60059) return { id, name: 'Better Call Saul', overview: 'A crime lawyer in Albuquerque', genres: [{ id: 80, name: 'Crime' }, { id: 18, name: 'Drama' }], vote_average: 8.7, vote_count: 6000 };
+        return { id, name: 'Unrelated Anime', overview: 'Animated fantasy', genres: [{ id: 16, name: 'Animation' }], vote_average: 9, vote_count: 9000 };
+      },
+    };
+    const similarRequest = RecommendationRequestSchema.parse({
+      ...request,
+      requestId: '00000000-0000-4000-8000-000000000099',
+      mode: 'similar',
+      query: 'series similar to Breaking Bad',
+      mediaType: 'tv',
+      anchor: { tmdbId: 1396, title: 'Breaking Bad', mediaType: 'tv' },
+    });
+    const results = await processRecommendation({} as any, similarRequest, {
+      tmdb: similarTmdb,
+      interpret: async () => ({ ...interpreted, requiredConceptGroups: [], genreHints: [], toneAndMood: [] }),
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+    expect(results[0]?.title).toBe('Better Call Saul');
+    expect(results.some(item => item.tmdbId === 1396)).toBe(false);
+    expect(results.every(item => item.mediaType === 'tv')).toBe(true);
+    expect(results.slice(0, 1).some(item => item.title === 'Unrelated Anime')).toBe(false);
+  });
+
+  it('bounds a broad TMDB candidate pool before enrichment', async () => {
     let remaining = 220;
     const largePoolTmdb = {
       get callsRemaining() { return remaining; },
@@ -149,8 +201,8 @@ describe('TMDB-only recommendation engine', () => {
       embed: async () => { throw new Error('embedding outage'); },
     });
 
-    expect(results).toHaveLength(2_500);
-    expect(new Set(results.map(item => `${item.mediaType}:${item.tmdbId}`)).size).toBe(2_500);
+    expect(results).toHaveLength(360);
+    expect(new Set(results.map(item => `${item.mediaType}:${item.tmdbId}`)).size).toBe(360);
     expect(results.every(item => item.retrievalSources.some(source => source.startsWith('discover:')))).toBe(true);
   });
 });

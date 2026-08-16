@@ -464,17 +464,18 @@ class RecommendationOrchestrator(
         val outputType = if (wantedKind == MediaType.MOVIE) "movie" else "tv"
         val similarityAnchor = draft.similarityAnchor
         val similarityTitle = draft.similarityTitle ?: similarityAnchor?.title
+        val hasCanonicalAnchor = similarityAnchor?.id?.let { it > 0 } == true
         
         val request = V3RecommendationRequest(
             requestId = java.util.UUID.randomUUID().toString(),
-            mode = if (isSimilarTo) "similar" else "describe",
+            mode = if (isSimilarTo && hasCanonicalAnchor) "similar" else "describe",
             query = queryText,
             mediaType = outputType,
-            anchor = similarityTitle?.let {
+            anchor = similarityAnchor?.takeIf { hasCanonicalAnchor }?.let {
                 V3RecommendationAnchor(
-                    tmdbId = similarityAnchor?.id,
-                    title = it,
-                    mediaType = similarityAnchor?.type?.routeName ?: outputType,
+                    tmdbId = it.id,
+                    title = it.title,
+                    mediaType = it.type.routeName,
                 )
             },
             filters = V3RecommendationFilters(

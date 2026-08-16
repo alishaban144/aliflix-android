@@ -31,7 +31,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
@@ -310,7 +309,7 @@ internal fun RecommendationComposer(
             .fillMaxSize()
             .background(AliflixBackgroundBase)
     ) {
-        // MANDATORY HEADER: ← Ask Aliflix     BETA       Reset
+        // MANDATORY HEADER: ← Ask Aliflix     Reset
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = AliflixSurfaceElevated,
@@ -338,20 +337,6 @@ internal fun RecommendationComposer(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(AliflixAccentPrimary.copy(alpha = 0.2f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = "BETA",
-                            color = AliflixAccentPrimary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
                 }
 
                 // MANDATORY Visible Reset Button in Header
@@ -570,12 +555,6 @@ internal fun RecommendationComposer(
                                     colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
                                     enabled = describeText.isNotBlank()
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.AutoAwesome,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text("Find matches", fontWeight = FontWeight.Bold)
                                 }
                             }
@@ -723,13 +702,7 @@ internal fun RecommendationComposer(
                                     colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
                                     enabled = selectedAnchor != null || similarQuery.isNotBlank()
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.AutoAwesome,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Find similar titles ✨", fontWeight = FontWeight.Bold)
+                                    Text("Find similar titles", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -1020,12 +993,6 @@ internal fun RecommendationComposer(
                                         modifier = Modifier.fillMaxWidth(),
                                         colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.AutoAwesome,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
                                         Text("Find matches", fontWeight = FontWeight.Bold)
                                     }
                                 }
