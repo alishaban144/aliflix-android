@@ -495,7 +495,7 @@ internal fun DiscoverScreen(
                                     .padding(horizontal = 16.dp, vertical = 15.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                BreathingThinkingOrb(
+                                ComposingThinkingOrb(
                                     modifier = Modifier.size(46.dp),
                                 )
                                 Spacer(modifier = Modifier.width(13.dp))
