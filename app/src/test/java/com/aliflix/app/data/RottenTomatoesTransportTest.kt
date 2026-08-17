@@ -58,6 +58,17 @@ class RottenTomatoesTransportTest {
         assertEquals(97, result.rating)
     }
 
+    @Test fun `iso dateCreated and string ratingValue are verified`() = runBlocking {
+        val obsession = Media(2, MediaType.MOVIE, "Obsession", year = "2026")
+        val html = validPage(
+            "Obsession (2025)",
+            "https://www.rottentomatoes.com/m/obsession_2025",
+            """<script type="application/ld+json">{"dateCreated":"2026-05-15","aggregateRating":{"ratingValue":"94","ratingCount":319}}</script>""",
+        )
+        val result = clientReturning(200, html).loadFetchResult(obsession) as RottenTomatoesFetchResult.Verified
+        assertEquals(94, result.rating)
+    }
+
     @Test fun `caller cancellation is never swallowed`() = runBlocking {
         val client = RottenTomatoesClient(RottenTomatoesTransport { awaitCancellation() }, {})
         var cancellationObserved = false

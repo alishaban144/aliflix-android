@@ -40,6 +40,7 @@ describe('TMDB-backed mobile catalogue routes', () => {
         genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }],
         created_by: [{ id: 66633, name: 'Vince Gilligan', profile_path: '/vince.jpg' }],
         aggregate_credits: { cast: [{ id: 17419, name: 'Bryan Cranston' }] },
+        external_ids: { imdb_id: 'tt0903747' },
       });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -50,6 +51,7 @@ describe('TMDB-backed mobile catalogue routes', () => {
       tmdbId: 1396,
       mediaType: 'tv',
       title: 'Breaking Bad',
+      imdbId: 'tt0903747',
       status: 'Ended',
       genres: ['Drama', 'Crime'],
       originalLanguage: 'en',

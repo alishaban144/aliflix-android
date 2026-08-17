@@ -190,10 +190,20 @@ class DefaultImdbRatingRepository(
     }
 
     internal suspend fun resolveIdentity(media: Media): ImdbTitleIdentity? {
-        val encoded = URLEncoder.encode(media.title, StandardCharsets.UTF_8.toString())
-        val root = JSONObject(pageLoader("$IMDB_SUGGESTION_URL/$encoded.json"))
-        val entries = root.optJSONArray("d") ?: return null
         val wantedTitle = normalize(media.title)
+        val initial = wantedTitle.firstOrNull { it.isLetterOrDigit() } ?: 'a'
+        val encoded = URLEncoder.encode(media.title, StandardCharsets.UTF_8.toString())
+        val root = try {
+            JSONObject(pageLoader("https://v3.sg.media-imdb.com/suggestion/$initial/$encoded.json"))
+        } catch (_: Throwable) {
+            try {
+                JSONObject(pageLoader("$IMDB_SUGGESTION_URL/$encoded.json"))
+            } catch (_: Throwable) {
+                null
+            }
+        } ?: return null
+
+        val entries = root.optJSONArray("d") ?: return null
         val wantedYear = media.year.take(4).toIntOrNull()
         return (0 until entries.length())
             .mapNotNull(entries::optJSONObject)
@@ -203,30 +213,47 @@ class DefaultImdbRatingRepository(
                 val title = candidate.optString("l").trim()
                 if (title.isBlank()) return@mapNotNull null
                 val qualifier = candidate.optString("q").lowercase()
+                val qid = candidate.optString("qid").lowercase()
+                val isFeatureMovie = "feature" in qualifier || "movie" in qualifier || "film" in qualifier || qid == "movie"
+                val isShort = "short" in qualifier || qid == "short"
+                val isTv = "tv" in qualifier || "series" in qualifier || "mini" in qualifier || "tv" in qid
                 val candidateType = when {
-                    "tv" in qualifier || "series" in qualifier || "mini" in qualifier ->
-                        MediaType.TV
-                    "feature" in qualifier || "movie" in qualifier || "film" in qualifier ->
-                        MediaType.MOVIE
+                    isTv -> MediaType.TV
+                    isFeatureMovie || isShort -> MediaType.MOVIE
                     else -> media.type
                 }
-                if (candidateType != media.type) return@mapNotNull null
+                if (media.type == MediaType.MOVIE && isTv) return@mapNotNull null
+                if (media.type == MediaType.TV && isFeatureMovie && !isTv) return@mapNotNull null
+
                 val year = candidate.optInt("y").takeIf { it > 0 }
                 val titleScore = titleIdentityScore(wantedTitle, normalize(title))
+                val typeBonus = when {
+                    media.type == MediaType.MOVIE && isFeatureMovie -> 30
+                    media.type == MediaType.MOVIE && isShort -> -50
+                    media.type == MediaType.TV && isTv -> 30
+                    else -> 0
+                }
                 val yearScore = when {
                     wantedYear == null || year == null -> 0
-                    wantedYear == year -> 24
-                    kotlin.math.abs(wantedYear - year) == 1 -> 8
-                    else -> -45
+                    wantedYear == year -> 25
+                    kotlin.math.abs(wantedYear - year) == 1 -> 20
+                    kotlin.math.abs(wantedYear - year) == 2 -> 10
+                    else -> -40
                 }
-                val total = titleScore + yearScore
+                val rank = candidate.optInt("rank", 999_999)
+                val rankBonus = when {
+                    rank in 1..1_000 -> 20
+                    rank in 1_001..20_000 -> 10
+                    else -> 0
+                }
+                val total = titleScore + yearScore + typeBonus + rankBonus
                 Triple(
                     ImdbTitleIdentity(id, title, year, candidateType),
                     total,
                     titleScore,
                 )
             }
-            .filter { (_, total, titleScore) -> total >= 82 && titleScore >= 70 }
+            .filter { (_, total, titleScore) -> total >= 65 && titleScore >= 65 }
             .maxByOrNull { (_, total) -> total }
             ?.first
     }
@@ -378,7 +405,7 @@ class DefaultImdbRatingRepository(
         val returnedTitle = payload.optJSONObject("titleText")
             ?.optString("text")
             .orEmpty()
-        if (titleIdentityScore(normalize(expected.title), normalize(returnedTitle)) < 70) {
+        if (titleIdentityScore(normalize(expected.title), normalize(returnedTitle)) < 65) {
             return false
         }
         val returnedYear = payload.optJSONObject("releaseYear")
@@ -387,7 +414,7 @@ class DefaultImdbRatingRepository(
         if (
             expected.year != null &&
             returnedYear != null &&
-            kotlin.math.abs(expected.year - returnedYear) > 1
+            kotlin.math.abs(expected.year - returnedYear) > 2
         ) {
             return false
         }

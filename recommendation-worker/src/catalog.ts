@@ -25,6 +25,7 @@ export interface CatalogMediaSummary {
 }
 
 export interface CatalogTitleDetails extends CatalogMediaSummary {
+  imdbId?: string;
   status?: string;
   creators: CatalogPerson[];
   cast: CatalogPerson[];
@@ -128,6 +129,7 @@ function detailsSummary(details: TmdbDetails, mediaType: MediaType): CatalogTitl
   const cast = mediaType === 'tv' ? details.aggregate_credits?.cast || [] : details.credits?.cast || [];
   return {
     ...summary(details, mediaType, new Map(), details.genres || []),
+    imdbId: present(details.external_ids?.imdb_id || details.imdb_id),
     runtimeMinutes: mediaType === 'movie'
       ? details.runtime || undefined
       : details.episode_run_time?.find(value => value > 0),

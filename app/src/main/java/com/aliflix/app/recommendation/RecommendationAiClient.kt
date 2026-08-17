@@ -278,6 +278,7 @@ data class V3HomeFeed(
 
 data class V3TitleDetails(
     val media: V3CatalogMedia,
+    val imdbId: String? = null,
     val status: String?,
     val creators: List<V3CatalogPerson>,
     val cast: List<V3CatalogPerson>,
@@ -285,6 +286,7 @@ data class V3TitleDetails(
     companion object {
         fun fromJson(json: JSONObject) = V3TitleDetails(
             media = V3CatalogMedia.fromJson(json),
+            imdbId = json.nullableString("imdbId"),
             status = json.nullableString("status"),
             creators = json.optJSONArray("creators").toStringList { V3CatalogPerson.fromJson(it) },
             cast = json.optJSONArray("cast").toStringList { V3CatalogPerson.fromJson(it) },

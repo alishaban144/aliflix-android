@@ -143,10 +143,15 @@ class RottenTomatoesClient internal constructor(
         val slug = rottenTomatoesSlug(item.title)
         val prefix = if (item.type == MediaType.MOVIE) "/m/" else "/tv/"
         val year = item.year.take(4).takeIf { it.matches(Regex("\\d{4}")) }
+        val yearInt = year?.toIntOrNull()
         val directPaths = buildList {
             add("$prefix$slug")
             year?.let { add("$prefix${slug}_$it") }
-        }.distinct().take(2)
+            yearInt?.let {
+                add("$prefix${slug}_${it - 1}")
+                add("$prefix${slug}_${it + 1}")
+            }
+        }.distinct().take(4)
 
         val direct = raceDirect(directPaths, item, started)
         if (direct is RottenTomatoesFetchResult.Verified || direct == RottenTomatoesFetchResult.ConfirmedNotRated) return direct
@@ -159,8 +164,15 @@ class RottenTomatoesClient internal constructor(
         if (searchResponse is FetchOutcome.Failure) return searchResponse.result.copyReason(FailureReason.SEARCH_FAILED)
         val response = (searchResponse as FetchOutcome.Success).response
         if (isBlockedPage(response.body)) return unavailable(response, FailureReason.BLOCKED_PAGE, item, started)
-        val bestPath = parseCandidatePaths(response.body, item).firstOrNull()
+        val candidatePaths = parseCandidatePaths(response.body, item)
+        val bestPath = candidatePaths.firstOrNull()
             ?: return unavailable(response, FailureReason.SEARCH_FAILED, item, started)
+        
+        val searchCandidatesToTry = candidatePaths.take(2)
+        val searchDirect = raceDirect(searchCandidatesToTry, item, started)
+        if (searchDirect is RottenTomatoesFetchResult.Verified || searchDirect == RottenTomatoesFetchResult.ConfirmedNotRated) {
+            return searchDirect
+        }
         return evaluatePage(fetchOrUnavailable("$ROTTEN_TOMATOES_URL$bestPath"), item, started)
     }
 
@@ -181,7 +193,8 @@ class RottenTomatoesClient internal constructor(
                 }
                 RottenTomatoesFetchResult.ConfirmedNotRated -> confirmedNotRated = true
                 is RottenTomatoesFetchResult.Unavailable -> {
-                    if (bestFailure == null || failurePriority(result.reason) > failurePriority(bestFailure!!.reason)) bestFailure = result
+                    val currentFailure = bestFailure
+                    if (currentFailure == null || failurePriority(result.reason) > failurePriority(currentFailure.reason)) bestFailure = result
                 }
             }
         }
@@ -256,15 +269,26 @@ class RottenTomatoesClient internal constructor(
         val expectedPrefix = if (item.type == MediaType.MOVIE) "/m/" else "/tv/"
         val doc = Jsoup.parse(html, ROTTEN_TOMATOES_URL)
         val canonical = doc.selectFirst("link[rel=canonical]")?.attr("href").orEmpty()
-        if (canonical.isBlank() || !canonical.contains(expectedPrefix)) return false
-        val pageTitle = normalizeText(doc.title().substringBefore(" - Rotten Tomatoes"))
+        if (canonical.isNotBlank() && !canonical.contains(expectedPrefix)) return false
+        val rawTitle = doc.title()
+            .substringBefore(" | Rotten Tomatoes")
+            .substringBefore(" - Rotten Tomatoes")
+            .substringBefore(" - Movie Reviews")
+            .replace(Regex("\\(\\d{4}\\)"), "")
+            .trim()
+        val pageTitle = normalizeText(rawTitle)
         val wanted = normalizeText(item.title)
         val titleMatches = pageTitle.isNotBlank() && wanted.isNotBlank() &&
-            (pageTitle == wanted || pageTitle.startsWith("$wanted ") || wanted.startsWith("$pageTitle "))
+            (pageTitle == wanted || pageTitle.startsWith("$wanted ") || wanted.startsWith("$pageTitle ") ||
+             titleIdentityScore(wanted, pageTitle) >= 65)
         if (!titleMatches) return false
-        val expectedYear = item.year.take(4).takeIf { it.matches(Regex("\\d{4}")) }
-        val pageYear = dateCreatedPattern.find(html)?.groupValues?.getOrNull(1)
-        return expectedYear == null || pageYear == null || expectedYear == pageYear
+        val expectedYear = item.year.take(4).toIntOrNull()
+        val pageYear = dateCreatedPattern.find(html)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: yearInTitlePattern.find(doc.title())?.groupValues?.getOrNull(1)?.toIntOrNull()
+        if (expectedYear != null && pageYear != null) {
+            if (kotlin.math.abs(expectedYear - pageYear) > 2) return false
+        }
+        return true
     }
 
     internal fun parseRating(html: String): Int? {
@@ -273,7 +297,14 @@ class RottenTomatoesClient internal constructor(
         document.select("script[type=application/ld+json]").forEach { script ->
             val rating = runCatching {
                 val json = JSONObject(script.data())
-                json.optJSONObject("aggregateRating")?.optInt("ratingValue", -1)?.takeIf { it in 0..100 }
+                val agg = json.optJSONObject("aggregateRating")
+                val ratingVal = agg?.opt("ratingValue")
+                val aggScore = when (ratingVal) {
+                    is Number -> ratingVal.toInt()
+                    is String -> ratingVal.toIntOrNull()
+                    else -> null
+                }
+                aggScore?.takeIf { it in 0..100 }
                     ?: json.optInt("tomatometerScore", -1).takeIf { it in 0..100 }
             }.getOrNull()
             if (rating != null) return rating
@@ -330,6 +361,16 @@ class RottenTomatoesClient internal constructor(
             .replace(Regex("[^a-z0-9]+"), "_")
             .trim('_')
     private fun normalizeText(value: String) = Normalizer.normalize(value, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+    private fun titleIdentityScore(wanted: String, candidate: String): Int {
+        if (wanted == candidate) return 100
+        if (wanted.isBlank() || candidate.isBlank()) return 0
+        val wantedTokens = wanted.split(' ').filter(String::isNotBlank).toSet()
+        val candidateTokens = candidate.split(' ').filter(String::isNotBlank).toSet()
+        val union = wantedTokens union candidateTokens
+        val overlap = if (union.isEmpty()) 0.0 else (wantedTokens intersect candidateTokens).size.toDouble() / union.size
+        val containment = wanted.contains(candidate) || candidate.contains(wanted)
+        return (overlap * 82.0).toInt() + if (containment) 16 else 0
+    }
     private fun failurePriority(reason: FailureReason) = when (reason) { FailureReason.HTTP_403, FailureReason.HTTP_429, FailureReason.BLOCKED_PAGE -> 3; FailureReason.NETWORK, FailureReason.TIMEOUT -> 2; else -> 1 }
     private fun RottenTomatoesFetchResult.Unavailable.copyReason(reason: FailureReason) = copy(reason = reason)
 
@@ -344,7 +385,8 @@ class RottenTomatoesClient internal constructor(
         val scoreText = Regex("\\d{1,3}")
         val visibleTomatometerPattern = Regex("""(\d{1,3})%\s*(?:Avg\.\s*)?Tomatometer""", RegexOption.IGNORE_CASE)
         val rottenTomatoesPathPattern = Regex("""/(?:m|tv)/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*""")
-        val dateCreatedPattern = Regex(""""dateCreated"\s*:\s*"(\d{4})"""", RegexOption.IGNORE_CASE)
+        val dateCreatedPattern = Regex(""""dateCreated"\s*:\s*"(\d{4})[^"]*"""", RegexOption.IGNORE_CASE)
+        val yearInTitlePattern = Regex("""\((\d{4})\)""")
         val rottenTomatoesPatterns = listOf(
             Regex("""tomatometerscore\s*=\s*["']?(\d{1,3})""", RegexOption.IGNORE_CASE),
             Regex(""""criticsScore"\s*:\s*"?(\d{1,3})""", RegexOption.IGNORE_CASE),

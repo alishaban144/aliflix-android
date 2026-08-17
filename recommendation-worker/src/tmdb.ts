@@ -8,6 +8,8 @@ export interface TmdbDetails extends TmdbListItem {
   credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }>; crew?: Array<{ id: number; name: string; job?: string; profile_path?: string | null }> };
   aggregate_credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }> };
   status?: string; created_by?: Array<{ id: number; name: string; profile_path?: string | null }>;
+  imdb_id?: string | null;
+  external_ids?: { imdb_id?: string | null; tvdb_id?: number | null };
 }
 
 export interface TmdbCombinedCredits {
@@ -77,7 +79,7 @@ export class TmdbClient {
   recommendations(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/recommendations`, { page }); }
   similar(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/similar`, { page }); }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
-    return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits' : 'keywords,credits' });
+    return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits,external_ids' : 'keywords,credits,external_ids' });
   }
   personCombinedCredits(id: number): Promise<TmdbCombinedCredits> {
     return this.request(`/person/${id}/combined_credits`, { language: 'en-US' });

@@ -3901,9 +3901,11 @@ class CatalogClient(
                 "$TMDB_SITE_URL/${item.type.routeName}/${item.id}?language=en-US",
             )
         }
-        val metadata = pageHtml?.let {
+        val metadata = (pageHtml?.let {
             runCatching { parseTitleDetails(it, current) }.getOrDefault(current)
-        } ?: current
+        } ?: current).let { parsed ->
+            parsed.copy(imdbId = parsed.imdbId ?: current.imdbId ?: item.imdbId)
+        }
         val metadataWithPendingRatings = metadata.copy(
             imdbRatingState = when {
                 metadata.imdbRating != null -> metadata.imdbRatingState ?: RatingSourceState.VERIFIED
@@ -3960,7 +3962,7 @@ class CatalogClient(
                 }
                 val imdbSnapshot = imdbRatingRepository.ratingFor(current)
                 val enriched = catalogue.firstOrNull { it.key == current.key }?.copy(
-                    imdbId = imdbSnapshot.identity.imdbId,
+                    imdbId = imdbSnapshot.identity.imdbId.takeIf { it.isNotBlank() } ?: current.imdbId,
                     imdbRating = imdbSnapshot.rating,
                     imdbVoteCount = imdbSnapshot.voteCount,
                     imdbRatingState = imdbSnapshot.state,
@@ -4366,7 +4368,7 @@ class CatalogClient(
             .take(10)
             .ifEmpty { fallback.cast }
         val imdbId = document
-            .select("a[href*=\"imdb.com/title/tt\"], a[href^=\"https://www.imdb.com/title/tt\"]")
+            .select("a[href*=\"imdb.com/title/tt\"], a[href^=\"https://www.imdb.com/title/tt\"], a[href*=\"/title/tt\"], a.social_link[href*=\"imdb.com\"]")
             .firstNotNullOfOrNull { link ->
                 imdbTitleIdPattern.find(link.attr("href"))
                     ?.groupValues

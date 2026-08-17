@@ -152,6 +152,63 @@ class ImdbRatingRepositoryTest {
         repository.ratingFor(media("tt1375666", "Inception", "2010"))
     }
 
+    @Test
+    fun featureFilmPreferredOverShortFilmInResolveIdentity() = runTest {
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = null,
+            pageLoader = { url ->
+                if (url.contains("suggestion")) {
+                    """
+                    {"d":[
+                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"tl":"2025","y":2025},
+                      {"id":"tt39365308","l":"Obsession","q":"short","qid":"short","rank":35788,"tl":"2026 Short","y":2026}
+                    ]}
+                    """.trimIndent()
+                } else {
+                    error("Unexpected URL $url")
+                }
+            },
+            graphQlTransport = ImdbGraphQlTransport { _, _, _ ->
+                ratedPayload("tt37287335", "Obsession", 2025, "movie", 7.8, 325_953)
+            },
+        )
+
+        val result = repository.ratingFor(
+            media(
+                imdbId = "",
+                title = "Obsession",
+                year = "2026",
+            ),
+        )
+
+        assertEquals("tt37287335", result.identity.imdbId)
+        assertEquals(RatingSourceState.VERIFIED, result.state)
+        assertEquals(7.8, result.rating ?: 0.0, 0.001)
+        assertEquals(325_953, result.voteCount)
+    }
+
+    @Test
+    fun releaseYearDriftWithinTwoYearsIsAcceptedInGraphQL() = runTest {
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = null,
+            pageLoader = { error("HTML fallback must not run") },
+            graphQlTransport = ImdbGraphQlTransport { _, _, _ ->
+                ratedPayload("tt37287335", "Obsession", 2025, "movie", 7.8, 325_953)
+            },
+        )
+
+        val result = repository.ratingFor(
+            media(
+                imdbId = "tt37287335",
+                title = "Obsession",
+                year = "2026",
+            ),
+        )
+
+        assertEquals(RatingSourceState.VERIFIED, result.state)
+        assertEquals(7.8, result.rating ?: 0.0, 0.001)
+    }
+
     private fun media(
         imdbId: String,
         title: String,
