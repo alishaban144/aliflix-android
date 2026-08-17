@@ -1,99 +1,98 @@
-import { Env } from './gemini';
-import { rateLimiter } from './rateLimit';
+import { ZodError } from 'zod';
 import { processRecommendation } from './engine';
+import { RecommendationRequestSchema } from './schemas';
+import { createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
+import { RecommendationEnv, RecommendationResponse, ServiceError } from './types';
+import { editorialPicks, homeFeed, personCredits, titleDetails } from './catalog';
+
+export { RecommendationSession };
+
+const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+const catalogJson = (body: unknown): Response => new Response(JSON.stringify(body), {
+  status: 200,
+  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' },
+});
+
+async function enforceRateLimit(request: Request, env: RecommendationEnv): Promise<void> {
+  const key = request.headers.get('cf-connecting-ip') || 'unknown';
+  const limit = await env.RECOMMENDATION_RATE_LIMITER.limit({ key });
+  if (!limit.success) throw new ServiceError('RATE_LIMITED', 'Too many requests', 429, true);
+}
+
+function errorResponse(error: unknown): Response {
+  if (error instanceof ServiceError) return json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, error.status);
+  if (error instanceof ZodError) return json({ error: { code: 'INVALID_REQUEST', message: 'The recommendation request is invalid', retryable: false, issues: error.issues } }, 400);
+  if (error instanceof SyntaxError) return json({ error: { code: 'INVALID_JSON', message: 'The request body is not valid JSON', retryable: false } }, 400);
+  console.error('Unhandled recommendation error', error);
+  return json({ error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred', retryable: true } }, 500);
+}
+
+async function routeRecommendation(request: Request, env: RecommendationEnv): Promise<Response> {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 131_072) return json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Payload exceeds 128 KiB', retryable: false } }, 413);
+  const raw = await request.text();
+  if (raw.length > 131_072) return json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Payload exceeds 128 KiB', retryable: false } }, 413);
+  const parsed = RecommendationRequestSchema.parse(JSON.parse(raw));
+  const fingerprintInput = { requestId: parsed.requestId, mode: parsed.mode, query: parsed.query, mediaType: parsed.mediaType, anchor: parsed.anchor, filters: parsed.filters };
+  const fingerprint = await requestFingerprint(fingerprintInput);
+  const sessionId = parsed.requestId;
+  let offset = 0;
+  if (parsed.cursor) {
+    const cursor = await parseCursor(env.CURSOR_SIGNING_SECRET, parsed.cursor);
+    if (cursor.sessionId !== sessionId || cursor.requestId !== parsed.requestId || cursor.fingerprint !== fingerprint) {
+      throw new ServiceError('INVALID_CURSOR', 'The cursor does not match this request', 400, false);
+    }
+    offset = cursor.offset;
+  }
+
+  const stub = env.RECOMMENDATION_SESSIONS.getByName(sessionId);
+  if (!parsed.cursor) {
+    const status = await stub.getStatus(fingerprint);
+    if (!status.exists) await stub.store(fingerprint, await processRecommendation(env, parsed));
+  }
+  const page = await stub.getPage(fingerprint, offset, parsed.pageSize);
+  const nextCursor = page.nextOffset === null ? null : await createCursor(env.CURSOR_SIGNING_SECRET, {
+    v: 1, sessionId, requestId: parsed.requestId, fingerprint, offset: page.nextOffset,
+  });
+  const response: RecommendationResponse = {
+    requestId: parsed.requestId,
+    results: page.results,
+    totalResults: page.totalCount,
+    nextCursor,
+    hasMore: nextCursor !== null,
+  };
+  return json(response);
+}
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: RecommendationEnv): Promise<Response> {
     const url = new URL(request.url);
-
     if (url.pathname === '/health' && request.method === 'GET') {
-      return new Response(
-        JSON.stringify({
-          status: 'ok',
-          service: 'aliflix-recommendations',
-          geminiConfigured: !!env.GEMINI_API_KEY,
-          tmdbConfigured: !!env.TMDB_API_KEY,
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
+      return json({ status: 'ok', service: 'aliflix-recommendations', geminiConfigured: Boolean(env.GEMINI_API_KEY), tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN) });
+    }
+    const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);
+    const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);
+    const isEditorialPicks = url.pathname === '/v3/editorial-picks';
+    const isHomeFeed = url.pathname === '/v3/home';
+    if (titleMatch || personMatch || isEditorialPicks || isHomeFeed) {
+      if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
+      try {
+        await enforceRateLimit(request, env);
+        if (titleMatch) return catalogJson(await titleDetails(env, titleMatch[1] as 'movie' | 'tv', Number(titleMatch[2])));
+        if (personMatch) {
+          return catalogJson(await personCredits(env, Number(personMatch[1])));
         }
-      );
+        if (isHomeFeed) return catalogJson(await homeFeed(env));
+        return catalogJson(await editorialPicks(env));
+      } catch (error) { return errorResponse(error); }
     }
-
-    if (url.pathname !== '/v3/recommendations') {
-      return new Response('Not Found', { status: 404 });
-    }
-
-    if (request.method !== 'POST') {
-      return new Response('Method Not Allowed', { status: 405 });
-    }
-
-    const contentType = request.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      return new Response('Unsupported Media Type', { status: 415 });
-    }
-
-    const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-    if (!rateLimiter.check(ip, false)) {
-      return new Response(JSON.stringify({ error: 'Too Many Requests' }), {
-        status: 429,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
+    if (url.pathname !== '/v3/recommendations') return json({ error: { code: 'NOT_FOUND', message: 'Not found', retryable: false } }, 404);
+    if (request.method !== 'POST') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
+    if (!request.headers.get('content-type')?.toLowerCase().includes('application/json')) return json({ error: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Expected application/json', retryable: false } }, 415);
     try {
-      const clonedReq = request.clone();
-      const text = await clonedReq.text();
-
-      if (text.length > 131072) {
-        return new Response(JSON.stringify({ error: 'Payload Too Large' }), {
-          status: 413,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      const body = JSON.parse(text);
-
-      const responseBody = await processRecommendation(env, body);
-
-      return new Response(JSON.stringify(responseBody), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-    } catch (error: any) {
-      if (error.name === 'TmdbError') {
-        return new Response(JSON.stringify({ error: 'TMDB Service Error', details: error.message }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      
-      if (error.message === 'GEMINI_RATE_LIMIT') {
-        return new Response(JSON.stringify({ error: 'Upstream Rate Limit' }), {
-          status: 429,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      if (error.message === 'GEMINI_TIMEOUT' || error.message === 'GEMINI_EMBEDDING_TIMEOUT') {
-        return new Response(JSON.stringify({ error: 'Gateway Timeout' }), {
-          status: 504,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      if (error.message === 'GEMINI_SERVER_ERROR' || error.message?.includes('GEMINI_EMBEDDING_ERROR')) {
-        return new Response(JSON.stringify({ error: 'Bad Gateway' }), {
-          status: 502,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      console.error(error);
-      return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
+      await enforceRateLimit(request, env);
+      return await routeRecommendation(request, env);
+    } catch (error) { return errorResponse(error); }
   },
-};
+} satisfies ExportedHandler<RecommendationEnv>;

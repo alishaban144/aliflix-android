@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package com.aliflix.app.ui.discover
 
@@ -10,31 +10,35 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,21 +47,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aliflix.app.model.MediaType
-import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.CatalogDiscoverySpec
+import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
+import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
+import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
+import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AskAliflixFilters(
     spec: CatalogDiscoverySpec,
@@ -66,328 +73,275 @@ fun AskAliflixFilters(
     loading: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    // Accordion expand states
-    var expGenres by rememberSaveable { mutableStateOf(true) }
-    var expExcludedGenres by rememberSaveable { mutableStateOf(false) }
-    var expYearRuntime by rememberSaveable { mutableStateOf(false) }
-    var expRatings by rememberSaveable { mutableStateOf(false) }
+    var genresOpen by rememberSaveable { mutableStateOf(true) }
+    var exclusionsOpen by rememberSaveable { mutableStateOf(false) }
+    var yearRuntimeOpen by rememberSaveable { mutableStateOf(false) }
+    var ratingOpen by rememberSaveable { mutableStateOf(false) }
+    var regionOpen by rememberSaveable { mutableStateOf(false) }
 
-    // Active pill builder
-    val activePills = rememberActivePills(spec, onSpecChanged)
-
-    val isFilterActive = spec.includedGenres.isNotEmpty() ||
-        spec.excludedGenres.isNotEmpty() ||
-        spec.yearMinimum != null ||
-        spec.yearMaximum != null ||
-        spec.runtimeMinimumMinutes != null ||
-        spec.runtimeMaximumMinutes != null ||
-        spec.minimumImdb != null ||
-        spec.minimumRottenTomatoes != null ||
-        spec.originalLanguage != null
+    val genres = if (spec.mediaKind == RecommendationMediaKind.SERIES) ASK_TMDB_TV_GENRES else ASK_TMDB_MOVIE_GENRES
+    val activeCount = selectedFilterCount(spec)
+    val hasFilters = activeCount > 0
 
     Column(modifier = modifier.fillMaxSize()) {
-        // Selected Filter Pills Horizontal Strip
-        AnimatedVisibility(
-            visible = activePills.isNotEmpty(),
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(activePills, key = { it.first }) { (label, onRemove) ->
-                    Box(
-                        modifier = Modifier
-                            .animateItem()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(AliflixAccentPrimary.copy(alpha = 0.2f))
-                            .clickable { onRemove() }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = label,
-                                color = AliflixAccentPrimary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = "Remove filter",
-                                tint = AliflixAccentPrimary,
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
-                    }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Filters",
+                    color = AliflixContentPrimary,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.4).sp,
+                )
+                if (hasFilters) {
+                    Text("$activeCount selected", color = AliflixContentTertiary, fontSize = 11.sp)
+                }
+            }
+            AnimatedVisibility(visible = hasFilters, enter = fadeIn(), exit = fadeOut()) {
+                TextButton(onClick = { onSpecChanged(spec.clearAskFilters()) }) {
+                    Text("Clear all", color = AliflixAccentSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        // Filter Categories Accordion List
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
-            // 1. Genres
             item {
-                FilterCategoryHeader(
+                FilterSection(
                     title = "Genres",
+                    icon = Icons.Rounded.Movie,
                     badgeCount = spec.includedGenres.size,
-                    isExpanded = expGenres,
-                    onToggle = { expGenres = !expGenres }
+                    expanded = genresOpen,
+                    onToggle = { genresOpen = !genresOpen },
                 ) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        CANONICAL_OMDB_GENRES.forEach { genre ->
-                            val isSel = spec.includedGenres.contains(genre)
-                            AskAliflixChip(
-                                label = genre,
-                                isSelected = isSel,
-                                onClick = {
-                                    val next = if (isSel) spec.includedGenres - genre else spec.includedGenres + genre
-                                    onSpecChanged(spec.copy(includedGenres = next))
-                                }
-                            )
-                        }
-                    }
+                    FilterChipGrid(
+                        values = genres,
+                        selected = spec.includedGenres,
+                        onToggle = { genre ->
+                            val next = spec.includedGenres.toggle(genre)
+                            onSpecChanged(spec.copy(includedGenres = next, excludedGenres = spec.excludedGenres - genre))
+                        },
+                    )
                 }
             }
 
-            // 2. Exclude Genres
             item {
-                FilterCategoryHeader(
-                    title = "Exclude genres",
+                FilterSection(
+                    title = "Avoid genres",
+                    icon = Icons.Rounded.Close,
                     badgeCount = spec.excludedGenres.size,
-                    isExpanded = expExcludedGenres,
-                    onToggle = { expExcludedGenres = !expExcludedGenres }
+                    expanded = exclusionsOpen,
+                    onToggle = { exclusionsOpen = !exclusionsOpen },
                 ) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        CANONICAL_OMDB_GENRES.forEach { genre ->
-                            val isSel = spec.excludedGenres.contains(genre)
-                            AskAliflixChip(
-                                label = genre,
-                                isSelected = isSel,
-                                onClick = {
-                                    val next = if (isSel) spec.excludedGenres - genre else spec.excludedGenres + genre
-                                    onSpecChanged(spec.copy(excludedGenres = next))
-                                }
-                            )
-                        }
-                    }
+                    FilterChipGrid(
+                        values = genres,
+                        selected = spec.excludedGenres,
+                        onToggle = { genre ->
+                            val next = spec.excludedGenres.toggle(genre)
+                            onSpecChanged(spec.copy(excludedGenres = next, includedGenres = spec.includedGenres - genre))
+                        },
+                    )
                 }
             }
 
-            // 3. Year & Runtime
             item {
-                FilterCategoryHeader(
+                FilterSection(
                     title = "Year & runtime",
-                    badgeCount = (if (spec.yearMinimum != null || spec.yearMaximum != null) 1 else 0) +
-                        (if (spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null) 1 else 0),
-                    isExpanded = expYearRuntime,
-                    onToggle = { expYearRuntime = !expYearRuntime }
+                    icon = Icons.Rounded.CalendarMonth,
+                    badgeCount = listOf(
+                        spec.yearMinimum != null || spec.yearMaximum != null,
+                        spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null,
+                    ).count { it },
+                    expanded = yearRuntimeOpen,
+                    onToggle = { yearRuntimeOpen = !yearRuntimeOpen },
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Release year", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            val yearPresets = listOf(
-                                "Any" to (null to null),
-                                "2020+" to (2020 to null),
-                                "2015+" to (2015 to null),
-                                "2010+" to (2010 to null),
-                                "2000+" to (2000 to null),
-                                "Before 2000" to (null to 1999)
-                            )
-                            yearPresets.forEach { (label, bounds) ->
-                                val isSel = spec.yearMinimum == bounds.first && spec.yearMaximum == bounds.second
-                                AskAliflixChip(
-                                    label = label,
-                                    isSelected = isSel,
-                                    onClick = {
-                                        onSpecChanged(spec.copy(yearMinimum = bounds.first, yearMaximum = bounds.second))
-                                    }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Runtime", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        val runtimePresets = if (spec.mediaKind == RecommendationMediaKind.SERIES) {
-                            listOf(
-                                "Any" to (null to null),
-                                "< 30 min" to (null to 29),
-                                "30–45 min" to (30 to 45),
-                                "45–60 min" to (45 to 60),
-                                "60+ min" to (60 to null)
-                            )
-                        } else {
-                            listOf(
-                                "Any" to (null to null),
-                                "< 90 min" to (null to 89),
-                                "< 120 min" to (null to 119),
-                                "90–120 min" to (90 to 120),
-                                "120–150 min" to (120 to 150),
-                                "150+ min" to (150 to null)
-                            )
-                        }
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            runtimePresets.forEach { (label, bounds) ->
-                                val isSel = spec.runtimeMinimumMinutes == bounds.first && spec.runtimeMaximumMinutes == bounds.second
-                                AskAliflixChip(
-                                    label = label,
-                                    isSelected = isSel,
-                                    onClick = {
-                                        onSpecChanged(spec.copy(runtimeMinimumMinutes = bounds.first, runtimeMaximumMinutes = bounds.second))
-                                    }
-                                )
-                            }
-                        }
+                    FilterSubheading("RELEASE YEAR")
+                    FilterPresetGrid(
+                        presets = listOf(
+                            "Any" to (null to null),
+                            "2020+" to (2020 to null),
+                            "2015+" to (2015 to null),
+                            "2010+" to (2010 to null),
+                            "2000+" to (2000 to null),
+                            "Before 2000" to (null to 1999),
+                        ),
+                        selected = spec.yearMinimum to spec.yearMaximum,
+                        onSelect = { (min, max) -> onSpecChanged(spec.copy(yearMinimum = min, yearMaximum = max)) },
+                    )
+                    Spacer(Modifier.height(13.dp))
+                    FilterSubheading(if (spec.mediaKind == RecommendationMediaKind.SERIES) "EPISODE RUNTIME" else "RUNTIME")
+                    val runtimePresets = if (spec.mediaKind == RecommendationMediaKind.SERIES) {
+                        listOf(
+                            "Any" to (null to null), "Under 30 min" to (null to 29), "30–45 min" to (30 to 45),
+                            "45–60 min" to (45 to 60), "60+ min" to (60 to null),
+                        )
+                    } else {
+                        listOf(
+                            "Any" to (null to null), "Under 90 min" to (null to 89), "90–120 min" to (90 to 120),
+                            "120–150 min" to (120 to 150), "150+ min" to (150 to null),
+                        )
                     }
+                    FilterPresetGrid(
+                        presets = runtimePresets,
+                        selected = spec.runtimeMinimumMinutes to spec.runtimeMaximumMinutes,
+                        onSelect = { (min, max) -> onSpecChanged(spec.copy(runtimeMinimumMinutes = min, runtimeMaximumMinutes = max)) },
+                    )
                 }
             }
 
-            // 4. Ratings
             item {
-                FilterCategoryHeader(
-                    title = "Ratings",
-                    badgeCount = (if (spec.minimumImdb != null) 1 else 0) +
-                        (if (spec.minimumRottenTomatoes != null) 1 else 0),
-                    isExpanded = expRatings,
-                    onToggle = { expRatings = !expRatings }
+                FilterSection(
+                    title = "TMDB rating",
+                    icon = Icons.Rounded.Star,
+                    badgeCount = if (spec.minimumTmdb != null) 1 else 0,
+                    expanded = ratingOpen,
+                    onToggle = { ratingOpen = !ratingOpen },
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("IMDb rating", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(
-                                "Any" to null,
-                                "6+" to 6.0,
-                                "6.5+" to 6.5,
-                                "7+" to 7.0,
-                                "7.5+" to 7.5,
-                                "8+" to 8.0,
-                                "8.5+" to 8.5,
-                                "9+" to 9.0
-                            ).forEach { (label, rating) ->
-                                val isSel = spec.minimumImdb == rating
-                                AskAliflixChip(
-                                    label = label,
-                                    isSelected = isSel,
-                                    onClick = { onSpecChanged(spec.copy(minimumImdb = rating)) }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Rotten Tomatoes", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(
-                                "Any" to null,
-                                "60%+" to 60,
-                                "70%+" to 70,
-                                "80%+" to 80,
-                                "90%+" to 90
-                            ).forEach { (label, rt) ->
-                                val isSel = spec.minimumRottenTomatoes == rt
-                                AskAliflixChip(
-                                    label = label,
-                                    isSelected = isSel,
-                                    onClick = { onSpecChanged(spec.copy(minimumRottenTomatoes = rt)) }
-                                )
-                            }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        listOf("Any" to null, "6+" to 6.0, "6.5+" to 6.5, "7+" to 7.0, "7.5+" to 7.5, "8+" to 8.0, "8.5+" to 8.5).forEach { (label, value) ->
+                            AskAliflixChip(label, spec.minimumTmdb == value, { onSpecChanged(spec.copy(minimumTmdb = value)) })
                         }
                     }
                 }
             }
+
+            item {
+                FilterSection(
+                    title = "Language & country",
+                    icon = Icons.Rounded.Language,
+                    badgeCount = (if (spec.originalLanguage != null) 1 else 0) + spec.countries.size,
+                    expanded = regionOpen,
+                    onToggle = { regionOpen = !regionOpen },
+                ) {
+                    FilterSubheading("ORIGINAL LANGUAGE")
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        ASK_LANGUAGES.forEach { option ->
+                            AskAliflixChip(
+                                label = option.label,
+                                isSelected = spec.originalLanguage == option.code,
+                                onClick = { onSpecChanged(spec.copy(originalLanguage = option.code)) },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(13.dp))
+                    FilterSubheading("ORIGIN COUNTRY")
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        ASK_COUNTRIES.forEach { option ->
+                            val selected = if (option.code == null) spec.countries.isEmpty() else option.code in spec.countries
+                            AskAliflixChip(
+                                label = option.label,
+                                isSelected = selected,
+                                onClick = {
+                                    val next = if (option.code == null) emptyList() else spec.countries.toggle(option.code)
+                                    onSpecChanged(spec.copy(countries = next))
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            item { Spacer(Modifier.height(6.dp)) }
         }
 
-        // Sticky Primary CTA
         AskAliflixStickyCta(
-            label = if (loading) "Finding matches…" else "Find matches",
-            enabled = isFilterActive,
+            label = if (loading) "Loading…" else "Show matches",
+            enabled = hasFilters,
             loading = loading,
-            onClick = onSubmit
+            onClick = onSubmit,
         )
     }
 }
 
 @Composable
-private fun FilterCategoryHeader(
+private fun FilterSection(
     title: String,
+    icon: ImageVector,
     badgeCount: Int,
-    isExpanded: Boolean,
+    expanded: Boolean,
     onToggle: () -> Unit,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     val rotation by animateFloatAsState(
-        targetValue = if (isExpanded) 180f else 0f,
-        animationSpec = AskAliflixMotion.chipSpec(),
-        label = "chevron-rotate"
+        if (expanded) 180f else 0f,
+        AskAliflixMotion.chipSpec(),
+        label = "ask-filter-chevron",
     )
-
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize(animationSpec = AskAliflixMotion.smallContentSpec()),
-        color = AliflixSurfaceElevated,
-        shape = RoundedCornerShape(10.dp)
+            .animateContentSize(AskAliflixMotion.smallContentSpec()),
+        color = AliflixSurfaceElevated.copy(alpha = 0.78f),
+        shape = RoundedCornerShape(18.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (expanded) AliflixAccentPrimary.copy(alpha = 0.36f) else AliflixBorderSubtle,
+        ),
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(13.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onToggle() },
+                    .heightIn(min = 48.dp)
+                    .clickable(onClick = onToggle),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = title,
-                        color = AliflixContentPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (badgeCount > 0) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(AliflixAccentPrimary)
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = "$badgeCount",
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(AliflixAccentPrimary.copy(alpha = 0.28f), AliflixSurfaceSecondary)
                             )
-                        }
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(icon, contentDescription = null, tint = AliflixAccentSecondary, modifier = Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    title,
+                    color = AliflixContentPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.weight(1f),
+                )
+                if (badgeCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(AliflixAccentPrimary)
+                            .padding(horizontal = 7.dp, vertical = 3.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("$badgeCount", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black)
                     }
+                    Spacer(Modifier.width(8.dp))
                 }
                 Icon(
-                    imageVector = Icons.Rounded.KeyboardArrowDown,
-                    contentDescription = null,
+                    Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = if (expanded) "Collapse $title" else "Expand $title",
                     tint = AliflixContentSecondary,
-                    modifier = Modifier.graphicsLayer { rotationZ = rotation }
+                    modifier = Modifier.graphicsLayer { rotationZ = rotation },
                 )
             }
-
             AnimatedVisibility(
-                visible = isExpanded,
+                visible = expanded,
                 enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
+                exit = fadeOut() + shrinkVertically(),
             ) {
                 Column {
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(Modifier.height(13.dp))
                     content()
                 }
             }
@@ -396,41 +350,106 @@ private fun FilterCategoryHeader(
 }
 
 @Composable
-private fun rememberActivePills(
-    spec: CatalogDiscoverySpec,
-    onSpecChanged: (CatalogDiscoverySpec) -> Unit
-): List<Pair<String, () -> Unit>> {
-    val list = mutableListOf<Pair<String, () -> Unit>>()
-    spec.includedGenres.forEach { g ->
-        list.add(g to { onSpecChanged(spec.copy(includedGenres = spec.includedGenres - g)) })
+private fun FilterChipGrid(values: List<String>, selected: List<String>, onToggle: (String) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        values.forEach { value -> AskAliflixChip(value, value in selected, { onToggle(value) }) }
     }
-    spec.excludedGenres.forEach { g ->
-        list.add("No $g" to { onSpecChanged(spec.copy(excludedGenres = spec.excludedGenres - g)) })
-    }
-    if (spec.yearMinimum != null || spec.yearMaximum != null) {
-        val label = when {
-            spec.yearMinimum != null && spec.yearMaximum != null -> "${spec.yearMinimum}\u2013${spec.yearMaximum}"
-            spec.yearMinimum != null -> "${spec.yearMinimum}+"
-            else -> "Before ${spec.yearMaximum!! + 1}"
-        }
-        list.add(label to { onSpecChanged(spec.copy(yearMinimum = null, yearMaximum = null)) })
-    }
-    if (spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null) {
-        val label = when {
-            spec.runtimeMinimumMinutes != null && spec.runtimeMaximumMinutes != null -> "${spec.runtimeMinimumMinutes}\u2013${spec.runtimeMaximumMinutes} min"
-            spec.runtimeMinimumMinutes != null -> "${spec.runtimeMinimumMinutes}+ min"
-            else -> "< ${spec.runtimeMaximumMinutes!! + 1} min"
-        }
-        list.add(label to { onSpecChanged(spec.copy(runtimeMinimumMinutes = null, runtimeMaximumMinutes = null)) })
-    }
-    if (spec.minimumImdb != null) {
-        list.add("IMDb ${spec.minimumImdb}+" to { onSpecChanged(spec.copy(minimumImdb = null)) })
-    }
-    if (spec.minimumRottenTomatoes != null) {
-        list.add("RT ${spec.minimumRottenTomatoes}%+" to { onSpecChanged(spec.copy(minimumRottenTomatoes = null)) })
-    }
-    if (spec.originalLanguage != null) {
-        list.add(spec.originalLanguage to { onSpecChanged(spec.copy(originalLanguage = null)) })
-    }
-    return list
 }
+
+@Composable
+private fun FilterPresetGrid(
+    presets: List<Pair<String, Pair<Int?, Int?>>>,
+    selected: Pair<Int?, Int?>,
+    onSelect: (Pair<Int?, Int?>) -> Unit,
+) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        presets.forEach { (label, value) -> AskAliflixChip(label, selected == value, { onSelect(value) }) }
+    }
+}
+
+@Composable
+private fun FilterSubheading(text: String) {
+    Text(
+        text = text,
+        color = AliflixContentTertiary,
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Black,
+        letterSpacing = 0.9.sp,
+        modifier = Modifier.padding(bottom = 7.dp),
+    )
+}
+
+private data class FilterOption(val label: String, val code: String?)
+
+internal fun CatalogDiscoverySpec.askFilterSummary(): String {
+    val values = buildList {
+        if (includedGenres.isNotEmpty()) add(includedGenres.joinToString(", "))
+        if (excludedGenres.isNotEmpty()) add("Avoid ${excludedGenres.joinToString(", ")}")
+        when {
+            yearMinimum != null && yearMaximum != null -> add("Years $yearMinimum-$yearMaximum")
+            yearMinimum != null -> add("Years $yearMinimum+")
+            yearMaximum != null -> add("Through $yearMaximum")
+        }
+        when {
+            runtimeMinimumMinutes != null && runtimeMaximumMinutes != null ->
+                add("Runtime $runtimeMinimumMinutes-$runtimeMaximumMinutes min")
+            runtimeMinimumMinutes != null -> add("Runtime $runtimeMinimumMinutes+ min")
+            runtimeMaximumMinutes != null -> add("Runtime up to $runtimeMaximumMinutes min")
+        }
+        minimumTmdb?.let { add("TMDB ${it.toString().removeSuffix(".0")}+") }
+        originalLanguage?.let { code ->
+            add(ASK_LANGUAGES.firstOrNull { it.code == code }?.label ?: code.uppercase())
+        }
+        if (countries.isNotEmpty()) {
+            add(countries.joinToString(", ") { code ->
+                ASK_COUNTRIES.firstOrNull { it.code == code }?.label ?: code
+            })
+        }
+    }
+    return values.joinToString(" / ").ifBlank { "No filters selected" }
+}
+
+private fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
+    spec.includedGenres.size + spec.excludedGenres.size +
+        listOf(
+            spec.yearMinimum != null || spec.yearMaximum != null,
+            spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null,
+            spec.minimumTmdb != null,
+            spec.originalLanguage != null,
+        ).count { it } + spec.countries.size
+
+private fun CatalogDiscoverySpec.clearAskFilters() = copy(
+    includedGenres = emptyList(),
+    excludedGenres = emptyList(),
+    runtimeMinimumMinutes = null,
+    runtimeMaximumMinutes = null,
+    yearMinimum = null,
+    yearMaximum = null,
+    minimumTmdb = null,
+    originalLanguage = null,
+    countries = emptyList(),
+)
+
+private fun <T> List<T>.toggle(value: T): List<T> = if (value in this) this - value else this + value
+
+private val ASK_LANGUAGES = listOf(
+    FilterOption("Any", null), FilterOption("English", "en"), FilterOption("Korean", "ko"),
+    FilterOption("Japanese", "ja"), FilterOption("Hindi", "hi"), FilterOption("Spanish", "es"),
+    FilterOption("French", "fr"), FilterOption("German", "de"), FilterOption("Chinese", "zh"),
+)
+
+private val ASK_COUNTRIES = listOf(
+    FilterOption("Any", null), FilterOption("United States", "US"), FilterOption("South Korea", "KR"),
+    FilterOption("Japan", "JP"), FilterOption("India", "IN"), FilterOption("United Kingdom", "GB"),
+    FilterOption("France", "FR"), FilterOption("Germany", "DE"),
+)
+
+private val ASK_TMDB_MOVIE_GENRES = listOf(
+    "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy",
+    "History", "Horror", "Music", "Mystery", "Romance", "Science Fiction", "TV Movie", "Thriller", "War", "Western",
+)
+
+private val ASK_TMDB_TV_GENRES = listOf(
+    "Action & Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Kids", "Mystery",
+    "News", "Reality", "Sci-Fi & Fantasy", "Soap", "Talk", "War & Politics", "Western",
+)

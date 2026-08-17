@@ -1,90 +1,111 @@
-import { Env } from './gemini';
+import { MediaType, RecommendationEnv, ServiceError, TmdbGenre, TmdbKeyword, TmdbListItem } from './types';
 
-const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+const BASE_URL = 'https://api.themoviedb.org/3';
 
-export class TmdbError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-    this.name = 'TmdbError';
-  }
+export interface TmdbPage<T = TmdbListItem> { page: number; results: T[]; total_pages: number; total_results: number }
+export interface TmdbDetails extends TmdbListItem {
+  genres?: TmdbGenre[]; runtime?: number | null; episode_run_time?: number[]; keywords?: { keywords?: TmdbKeyword[]; results?: TmdbKeyword[] };
+  credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }>; crew?: Array<{ id: number; name: string; job?: string; profile_path?: string | null }> };
+  aggregate_credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }> };
+  status?: string; created_by?: Array<{ id: number; name: string; profile_path?: string | null }>;
 }
 
-async function fetchTmdb<T>(env: Env, endpoint: string, params: Record<string, any> = {}): Promise<T> {
-  if (!env.TMDB_API_KEY) {
-    throw new Error('TMDB_API_KEY is not configured');
-  }
+export interface TmdbCombinedCredits {
+  cast?: Array<TmdbListItem & { media_type?: MediaType; character?: string }>;
+  crew?: Array<TmdbListItem & { media_type?: MediaType; job?: string; department?: string }>;
+}
 
-  const url = new URL(`${TMDB_BASE_URL}${endpoint}`);
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null) {
-      url.searchParams.append(key, String(value));
+export interface TmdbPerson {
+  id: number;
+  name: string;
+  profile_path?: string | null;
+}
+
+export type TmdbTrendingItem = TmdbListItem & { media_type?: MediaType | 'person' };
+
+export class TmdbClient {
+  private used = 0;
+  constructor(private readonly env: RecommendationEnv, private readonly budget = 180) {}
+  get callsUsed(): number { return this.used; }
+  get callsRemaining(): number { return this.budget - this.used; }
+
+  private async request<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
+    if (!this.env.TMDB_API_KEY && !this.env.TMDB_READ_ACCESS_TOKEN) {
+      throw new ServiceError('TMDB_AUTH_FAILED', 'TMDB is not configured', 503, true);
     }
-  });
+    const url = new URL(`${BASE_URL}${path}`);
+    for (const [key, value] of Object.entries(params)) if (value !== undefined) url.searchParams.set(key, String(value));
+    const headers: HeadersInit = { accept: 'application/json' };
+    applyTmdbAuthentication(this.env, url, headers);
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      'Authorization': `Bearer ${env.TMDB_API_KEY}`,
-      'Accept': 'application/json'
-    },
-    // Cloudflare Workers fetch timeout is 100s, but we can't easily configure it per request in standard fetch without AbortController
-    // We'll rely on the worker's overall timeout or implement a manual timeout if strictly needed.
-  });
-
-  if (!response.ok) {
-    throw new TmdbError(response.status, `TMDB API error: ${response.statusText}`);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let retryDelayMs = 100 * (attempt + 1);
+      if (++this.used > this.budget) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request budget exhausted', 503, true);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8_000);
+      try {
+        const response = await fetch(url, { headers, signal: controller.signal });
+        if (response.ok) return await response.json() as T;
+        if (response.status === 401 || response.status === 403) {
+          throw new ServiceError('TMDB_AUTH_FAILED', 'TMDB rejected the configured credential', 503, false);
+        }
+        if (response.status === 404) throw new ServiceError('TMDB_NOT_FOUND', 'TMDB resource was not found', 404, false);
+        if (response.status !== 429 && response.status < 500) {
+          throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request failed (${response.status})`, 502, false);
+        }
+        if (response.status === 429) {
+          const retryAfterSeconds = Number(response.headers.get('retry-after'));
+          if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+            retryDelayMs = Math.min(2_000, retryAfterSeconds * 1_000);
+          }
+        }
+        if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request failed (${response.status}) for ${path}`, 503, true);
+      } catch (error) {
+        if (error instanceof ServiceError) throw error;
+        if (attempt === 2) throw new ServiceError('TMDB_UNAVAILABLE', `TMDB request timed out or failed for ${path}`, 503, true);
+      } finally { clearTimeout(timeout); }
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+    }
+    throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request failed', 503, true);
   }
 
-  return response.json() as Promise<T>;
+  searchTitle(type: MediaType, query: string, page = 1): Promise<TmdbPage> { return this.request(`/search/${type}`, { query, page, include_adult: false }); }
+  searchKeyword(query: string): Promise<TmdbPage<TmdbKeyword>> { return this.request('/search/keyword', { query, page: 1 }); }
+  discover(type: MediaType, params: Record<string, string | number | boolean | undefined>): Promise<TmdbPage> {
+    return this.request(`/discover/${type}`, { include_adult: false, ...params });
+  }
+  recommendations(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/recommendations`, { page }); }
+  similar(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/similar`, { page }); }
+  details(type: MediaType, id: number): Promise<TmdbDetails> {
+    return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits' : 'keywords,credits' });
+  }
+  personCombinedCredits(id: number): Promise<TmdbCombinedCredits> {
+    return this.request(`/person/${id}/combined_credits`, { language: 'en-US' });
+  }
+  person(id: number): Promise<TmdbPerson> {
+    return this.request(`/person/${id}`, { language: 'en-US' });
+  }
+  genres(type: MediaType): Promise<{ genres: TmdbGenre[] }> { return this.request(`/genre/${type}/list`); }
+  trendingAll(page: number): Promise<TmdbPage<TmdbTrendingItem>> {
+    return this.request('/trending/all/week', { page, language: 'en-US' });
+  }
+  nowPlayingMovies(page: number): Promise<TmdbPage> {
+    return this.request('/movie/now_playing', { page, language: 'en-US' });
+  }
+  onTheAirTv(page: number): Promise<TmdbPage> {
+    return this.request('/tv/on_the_air', { page, language: 'en-US' });
+  }
+  popular(type: MediaType, page: number): Promise<TmdbPage> {
+    return this.request(`/${type}/popular`, { page, language: 'en-US' });
+  }
 }
 
-// SEARCH
-export async function searchMovie(env: Env, query: string, page: number = 1) {
-  return fetchTmdb<any>(env, '/search/movie', { query, page, include_adult: false });
-}
-
-export async function searchTv(env: Env, query: string, page: number = 1) {
-  return fetchTmdb<any>(env, '/search/tv', { query, page, include_adult: false });
-}
-
-export async function searchKeyword(env: Env, query: string, page: number = 1) {
-  return fetchTmdb<any>(env, '/search/keyword', { query, page });
-}
-
-// DISCOVERY
-export async function discoverMovie(env: Env, params: Record<string, any>) {
-  return fetchTmdb<any>(env, '/discover/movie', { include_adult: false, ...params });
-}
-
-export async function discoverTv(env: Env, params: Record<string, any>) {
-  return fetchTmdb<any>(env, '/discover/tv', { include_adult: false, ...params });
-}
-
-// SIMILARITY
-export async function getRecommendations(env: Env, mediaType: 'movie' | 'tv', id: number, page: number = 1) {
-  return fetchTmdb<any>(env, `/${mediaType}/${id}/recommendations`, { page });
-}
-
-export async function getSimilar(env: Env, mediaType: 'movie' | 'tv', id: number, page: number = 1) {
-  return fetchTmdb<any>(env, `/${mediaType}/${id}/similar`, { page });
-}
-
-// DETAILS
-export async function getDetails(env: Env, mediaType: 'movie' | 'tv', id: number) {
-  return fetchTmdb<any>(env, `/${mediaType}/${id}`);
-}
-
-// KEYWORDS
-export async function getKeywords(env: Env, mediaType: 'movie' | 'tv', id: number) {
-  return fetchTmdb<any>(env, `/${mediaType}/${id}/keywords`);
-}
-
-// CREDITS
-export async function getCredits(env: Env, mediaType: 'movie' | 'tv', id: number) {
-  const endpoint = mediaType === 'tv' ? `/tv/${id}/aggregate_credits` : `/movie/${id}/credits`;
-  return fetchTmdb<any>(env, endpoint);
-}
-
-// EXTERNAL IDS
-export async function getExternalIds(env: Env, mediaType: 'movie' | 'tv', id: number) {
-  return fetchTmdb<any>(env, `/${mediaType}/${id}/external_ids`);
+export function applyTmdbAuthentication(env: Pick<RecommendationEnv, 'TMDB_API_KEY' | 'TMDB_READ_ACCESS_TOKEN'>, url: URL, headers: HeadersInit): void {
+  const explicitReadToken = env.TMDB_READ_ACCESS_TOKEN?.trim();
+  const configuredApiKey = env.TMDB_API_KEY?.trim();
+  if (configuredApiKey) {
+    url.searchParams.set('api_key', configuredApiKey);
+  } else if (explicitReadToken) {
+    (headers as Record<string, string>).authorization = `Bearer ${explicitReadToken}`;
+  }
 }

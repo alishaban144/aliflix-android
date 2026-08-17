@@ -3904,12 +3904,24 @@ class CatalogClient(
         val metadata = pageHtml?.let {
             runCatching { parseTitleDetails(it, current) }.getOrDefault(current)
         } ?: current
+        val metadataWithPendingRatings = metadata.copy(
+            imdbRatingState = when {
+                metadata.imdbRating != null -> metadata.imdbRatingState ?: RatingSourceState.VERIFIED
+                metadata.imdbRatingState == RatingSourceState.NOT_RATED -> RatingSourceState.NOT_RATED
+                else -> RatingSourceState.LOADING
+            },
+            rottenTomatoesState = when {
+                metadata.rottenTomatoesRating != null -> metadata.rottenTomatoesState ?: RatingSourceState.VERIFIED
+                metadata.rottenTomatoesState == RatingSourceState.NOT_RATED -> RatingSourceState.NOT_RATED
+                else -> RatingSourceState.LOADING
+            },
+        )
         val pageRecommendations = pageHtml?.let {
             runCatching { parseRelatedResults(it) }.getOrDefault(emptyList())
         }.orEmpty()
 
         val locallyRelated = RelatedContentEngine.rank(
-            source = metadata,
+            source = metadataWithPendingRatings,
             candidates = catalogue,
             candidateScoreLimit = RECOMMENDATION_LOCAL_RELATED_SCORE_LIMIT,
             resultLimit = 18,
@@ -3919,10 +3931,10 @@ class CatalogClient(
             .distinctBy(Media::key)
             .take(18)
 
-        catalogue = (listOf(metadata) + catalogue.filterNot { it.key == metadata.key })
-        onProgress(metadata, recommendations)
+        catalogue = (listOf(metadataWithPendingRatings) + catalogue.filterNot { it.key == metadata.key })
+        onProgress(metadataWithPendingRatings, recommendations)
 
-        var omdbEnriched = metadata
+        var omdbEnriched = metadataWithPendingRatings
         try {
             val req = com.aliflix.app.data.omdb.OmdbLookupRequest(
                 imdbId = metadata.imdbId,
@@ -3960,45 +3972,57 @@ class CatalogClient(
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {}
+            } catch (_: Throwable) {
+                val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
+                val unavailable = current.copy(imdbRatingState = RatingSourceState.UNAVAILABLE)
+                catalogue = listOf(unavailable) + catalogue.filterNot { it.key == unavailable.key }
+                onProgress(unavailable, recommendations)
+            }
         }
 
         val rtJob = async {
-            val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
-            if (current.rottenTomatoesRating != null && current.rottenTomatoesState == RatingSourceState.VERIFIED) {
-                return@async
-            }
-
-            suspend fun publish(snapshot: RottenTomatoesSnapshot) {
-                val enriched = catalogue.firstOrNull { it.key == current.key }?.copy(
-                    rottenTomatoesRating = snapshot.rating,
-                    rottenTomatoesState = snapshot.state,
-                ) ?: return
-                catalogue = listOf(enriched) + catalogue.filterNot { it.key == enriched.key }
-                onProgress(enriched, recommendations)
-            }
-
-            val memory = rottenTomatoesRatingsCache[current.key]
-            if (memory != null && memory.state in setOf(RatingSourceState.VERIFIED, RatingSourceState.NOT_RATED)) {
-                publish(memory)
-                return@async
-            }
-            val persisted = cacheStore?.loadRottenTomatoesRating(current.key, 30L * 24 * 60 * 60 * 1000)
-            if (persisted != null) {
-                publish(persisted)
-                if (persisted.state != RatingSourceState.STALE) {
-                    rottenTomatoesRatingsCache[current.key] = persisted
+            try {
+                val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
+                if (current.rottenTomatoesRating != null && current.rottenTomatoesState == RatingSourceState.VERIFIED) {
                     return@async
                 }
-            } else {
-                publish(RottenTomatoesSnapshot(null, RatingSourceState.LOADING))
-            }
 
-            val rt = rottenTomatoesClient.loadRating(current)
-            publish(rt)
-            if (rt.state in setOf(RatingSourceState.VERIFIED, RatingSourceState.STALE, RatingSourceState.NOT_RATED)) {
-                rottenTomatoesRatingsCache[current.key] = rt
-                cacheStore?.saveRottenTomatoesRating(current.key, rt)
+                suspend fun publish(snapshot: RottenTomatoesSnapshot) {
+                    val enriched = catalogue.firstOrNull { it.key == current.key }?.copy(
+                        rottenTomatoesRating = snapshot.rating,
+                        rottenTomatoesState = snapshot.state,
+                    ) ?: return
+                    catalogue = listOf(enriched) + catalogue.filterNot { it.key == enriched.key }
+                    onProgress(enriched, recommendations)
+                }
+
+                val memory = rottenTomatoesRatingsCache[current.key]
+                if (memory != null && memory.state in setOf(RatingSourceState.VERIFIED, RatingSourceState.NOT_RATED)) {
+                    publish(memory)
+                    return@async
+                }
+                val persisted = cacheStore?.loadRottenTomatoesRating(current.key, 30L * 24 * 60 * 60 * 1000)
+                if (persisted != null) {
+                    publish(persisted)
+                    if (persisted.state != RatingSourceState.STALE) {
+                        rottenTomatoesRatingsCache[current.key] = persisted
+                        return@async
+                    }
+                }
+
+                val rt = rottenTomatoesClient.loadRating(current)
+                publish(rt)
+                if (rt.state in setOf(RatingSourceState.VERIFIED, RatingSourceState.STALE, RatingSourceState.NOT_RATED)) {
+                    rottenTomatoesRatingsCache[current.key] = rt
+                    cacheStore?.saveRottenTomatoesRating(current.key, rt)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
+                val unavailable = current.copy(rottenTomatoesState = RatingSourceState.UNAVAILABLE)
+                catalogue = listOf(unavailable) + catalogue.filterNot { it.key == unavailable.key }
+                onProgress(unavailable, recommendations)
             }
         }
 

@@ -1,123 +1,89 @@
-import { INTERPRETATION_PROMPT, EXPANSION_PROMPT, VERIFICATION_PROMPT } from './prompts';
+import { INTERPRET_V3_PROMPT } from './prompts';
+import { GeminiIntentJsonSchema, GeminiIntentResponseSchema } from './schemas';
+import { InterpretedIntent, MediaType, RecommendationEnv, ServiceError } from './types';
 
-export interface Env {
-  GEMINI_API_KEY: string;
-  TMDB_API_KEY?: string;
-  OMDB_API_KEY?: string;
-  OMDB_CACHE?: KVNamespace;
-}
+const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const EMPTY_FILTERS = {
+  originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
+};
 
-export async function callGemini(
-  env: Env,
-  promptTemplate: string,
-  requestJson: any,
-  schema: any
-): Promise<any> {
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + env.GEMINI_API_KEY;
-
-  const payload = {
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { text: JSON.stringify(requestJson) }
-        ]
-      }
-    ],
-    systemInstruction: {
-      parts: [
-        { text: promptTemplate }
-      ]
-    },
-    generationConfig: {
-      temperature: 0.1,
-      responseMimeType: "application/json",
-      // Gemini JSON schema support
-      responseSchema: schema
-    }
-  };
-
+async function geminiFetch(env: RecommendationEnv, model: string, method: string, body: unknown, timeoutMs: number): Promise<any> {
+  if (!env.GEMINI_API_KEY) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini is not configured', 503, true);
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
-
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Aliflix-Recommendation-Worker/1.0'
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal
+    const response = await fetch(`${API_BASE}/${encodeURIComponent(model)}:${method}?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal,
     });
-
-    clearTimeout(timeoutId);
-
     if (!response.ok) {
-      const status = response.status;
-      if (status === 429) {
-        throw new Error('GEMINI_RATE_LIMIT');
-      }
-      if (status >= 500) {
-        throw new Error('GEMINI_SERVER_ERROR');
-      }
-      throw new Error('GEMINI_ERROR');
+      const retryable = response.status === 429 || response.status >= 500;
+      throw new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, retryable ? 503 : 502, retryable);
     }
-
-    const data: any = await response.json();
-    const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    
-    if (!textOutput) {
-      throw new Error('GEMINI_INVALID_RESPONSE');
+    return await response.json();
+  } catch (error) {
+    if (error instanceof ServiceError) throw error;
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request timed out', 504, true);
     }
-
-    return JSON.parse(textOutput);
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      throw new Error('GEMINI_TIMEOUT');
-    }
-    throw error;
+    throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request failed', 503, true);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-export async function callGeminiEmbeddingsBatch(
-  env: Env,
-  texts: string[]
-): Promise<number[][]> {
-  // Using text-embedding-004 as it is the current stable model
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key=' + env.GEMINI_API_KEY;
-  
-  const payload = {
-    requests: texts.map(t => ({
-      model: 'models/text-embedding-004',
-      content: {
-        parts: [{ text: t }]
-      }
-    }))
+export async function interpretQuery(env: RecommendationEnv, query: string, mediaType: MediaType): Promise<InterpretedIntent> {
+  if (!query.trim()) return {
+    hardFilters: { ...EMPTY_FILTERS }, requiredConceptGroups: [], softConcepts: [], excludedConcepts: [],
+    genreHints: [], toneAndMood: [], broadSearchPhrases: [],
   };
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
-
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.6-flash';
+  const data = await geminiFetch(env, model, 'generateContent', {
+    systemInstruction: { parts: [{ text: INTERPRET_V3_PROMPT }] },
+    contents: [{ role: 'user', parts: [{ text: JSON.stringify({ query, authoritativeMediaType: mediaType }) }] }],
+    generationConfig: { responseMimeType: 'application/json', responseJsonSchema: GeminiIntentJsonSchema },
+  }, 12_000);
+  const text = data?.candidates?.[0]?.content?.parts?.find((part: any) => typeof part.text === 'string')?.text;
+  if (!text) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned no interpretation', 502, true);
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    });
-    
-    clearTimeout(timeoutId);
-    if (!response.ok) {
-      throw new Error(`GEMINI_EMBEDDING_ERROR: ${response.status}`);
-    }
-    
-    const data: any = await response.json();
-    return data.embeddings.map((e: any) => e.values);
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') throw new Error('GEMINI_EMBEDDING_TIMEOUT');
-    throw error;
+    return GeminiIntentResponseSchema.parse(JSON.parse(text));
+  } catch {
+    throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned an invalid interpretation', 502, true);
   }
+}
+
+async function embedBatch(env: RecommendationEnv, texts: string[], taskType: 'RETRIEVAL_QUERY' | 'RETRIEVAL_DOCUMENT'): Promise<number[][]> {
+  const model = env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
+  const data = await geminiFetch(env, model, 'batchEmbedContents', {
+    requests: texts.map(text => ({
+      model: `models/${model}`, taskType, outputDimensionality: 768,
+      content: { parts: [{ text }] },
+    })),
+  }, 15_000);
+  if (!Array.isArray(data?.embeddings) || data.embeddings.length !== texts.length) {
+    throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned invalid embeddings', 502, true);
+  }
+  return data.embeddings.map((entry: any) => entry.values as number[]);
+}
+
+export async function embedForSearch(env: RecommendationEnv, query: string, documents: string[]): Promise<{ query: number[]; documents: number[][] }> {
+  const documentBatches: string[][] = [];
+  for (let index = 0; index < documents.length; index += 50) {
+    documentBatches.push(documents.slice(index, index + 50).map(text => `search document: ${text}`));
+  }
+  const embedDocuments = async (): Promise<number[][]> => {
+    const vectors: number[][] = [];
+    for (let index = 0; index < documentBatches.length; index += 3) {
+      const group = await Promise.all(
+        documentBatches.slice(index, index + 3)
+          .map(batch => embedBatch(env, batch, 'RETRIEVAL_DOCUMENT')),
+      );
+      group.forEach(batchVectors => vectors.push(...batchVectors));
+    }
+    return vectors;
+  };
+  const [[queryVector], vectors] = await Promise.all([
+    embedBatch(env, [`search query: ${query}`], 'RETRIEVAL_QUERY'),
+    embedDocuments(),
+  ]);
+  return { query: queryVector, documents: vectors };
 }

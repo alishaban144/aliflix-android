@@ -82,4 +82,93 @@ class PlaybackNavigationPolicyTest {
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("http://345movie.nl/watch"))
         assertFalse(PlaybackNavigationPolicy.isAllowedTopLevel("intent://ad-app"))
     }
+
+    @Test
+    fun blocksKnownAdResourcesWithoutBlockingPlaybackCdnHosts() {
+        listOf(
+            "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js",
+            "https://static.doubleclick.net/instream/ad_status.js",
+            "https://delivery.realsrv.com/banner.js",
+            "https://subdomain.onclickperformance.com/click",
+            "https://cdn.mgid.com/native-ad.js",
+            "https://static.richads.com/banner.js",
+            "https://delivery.admaven.com/popunder",
+            "https://balkersestian.com/grVFgoEI1NXMyA4vz/97239",
+            "https://crowdsynonym.com/1a/ee/cd/invoke.js",
+            "https://push-sdk.com/f/sdk.js?z=2387233",
+            "https://mploejuiashsatea.com?dVydX=1229258",
+            "https://dcbbwymp1bhlf.cloudfront.net/?wbbcd=1216333",
+            "https://tb.blowersdialer.com/rhu6smAV3cCg77jT/129065",
+            "https://profitablebutton.com/cjDW9S6/b.2I5Ml/SQW/Qy9V",
+            "https://acscdn.com/script/aclib.js",
+            "https://ut.hebamicmopeds.com/rWJVcEgMFI5toVCz/141438",
+            "https://s10.histats.com/js15_as.js",
+            "https://sbx-2dl.pages.dev/fake-security-warning",
+        ).forEach { url ->
+            assertTrue(url, PlaybackNavigationPolicy.isBlockedAdResource(url))
+        }
+
+        listOf(
+            "https://moviepire.ru/watch/1396",
+            "https://cloudorchestranova.com/rcp/player-token",
+            "https://player.vidlove.cc/embed/tv/1396/1/1",
+        ).forEach { url ->
+            assertFalse(url, PlaybackNavigationPolicy.isBlockedAdResource(url))
+        }
+    }
+
+    @Test
+    fun blocksMoviepireAdInjectionWithoutBlockingPlayerMedia() {
+        listOf(
+            "https://vidrock.ru/sbx.js",
+            "https://ads.unknown-network.example/banner.js",
+            "https://cdn.unknown-network.example/popunder/index.js",
+            "https://cdn.unknown-network.example/push-sdk/client.js",
+        ).forEach { url ->
+            assertTrue(url, PlaybackNavigationPolicy.isBlockedMoviepireResource(url))
+        }
+
+        listOf(
+            "https://moviepire.ru/assets/index-pU0E7sB1.js",
+            "https://vidrock.ru/assets/index-Bz6x-FJQ.js",
+            "https://vidrock.ru/movie/1275779",
+            "https://s.vdrk.site/csub.html?id=1275779",
+            "https://cdn.example/video/master.m3u8",
+            "https://cdn.example/video/segment-001.ts",
+            "https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1",
+        ).forEach { url ->
+            assertFalse(url, PlaybackNavigationPolicy.isBlockedMoviepireResource(url))
+        }
+    }
+
+    @Test
+    fun blocksUnsafeMoviepireChildFrameDestinations() {
+        listOf(
+            "https://mploejuiashsatea.com?dndqf=1216944",
+            "https://sbx-2dl.pages.dev#https%3A%2F%2Fvidrock.ru",
+            "intent://fake-security-app",
+            "market://details?id=fake.security.app",
+            "javascript:location='https://ads.example'",
+            "data:text/html,fake-warning",
+            "not a url",
+        ).forEach { url ->
+            assertTrue(
+                url,
+                PlaybackNavigationPolicy.isBlockedMoviepireSubframeNavigation(url),
+            )
+        }
+
+        listOf(
+            "about:blank",
+            "blob:https://vidrock.ru/8dc75f85-2576-42c9-a04f-28c985428cd7",
+            "https://vidrock.ru/movie/1275779",
+            "https://player.videasy.net/movie/1275779",
+            "https://video.moviepire.co/embed/movie/1275779",
+        ).forEach { url ->
+            assertFalse(
+                url,
+                PlaybackNavigationPolicy.isBlockedMoviepireSubframeNavigation(url),
+            )
+        }
+    }
 }

@@ -2,20 +2,24 @@
   "name": "recommendation-worker",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "src/index.ts",
   "scripts": {
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types",
+    "dry-run": "wrangler deploy --dry-run --outdir dist",
     "deploy": "wrangler deploy"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260804.1",
+    "@cloudflare/vitest-pool-workers": "^0.20.3",
     "@types/node": "^26.1.2",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.120.0"
   },
   "dependencies": {
     "zod": "^4.4.3"

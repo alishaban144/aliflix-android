@@ -10,7 +10,7 @@ class GoldenAcceptanceTest {
     fun testSupernaturalAbilitiesQuery() = runBlocking {
         // This is a placeholder test that demonstrates the integration.
         val aiClient = RecommendationAiClient(
-            baseUrl = "https://aliflix-recommendations.alishaban144.workers.dev",
+            baseUrl = "https://aliflix-recommendations.equable-equipment.workers.dev",
             ioDispatcher = kotlinx.coroutines.Dispatchers.IO
         )
         val request = V3RecommendationRequest(

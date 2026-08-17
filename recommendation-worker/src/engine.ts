@@ -1,312 +1,349 @@
-import { Env, callGemini, callGeminiEmbeddingsBatch } from './gemini';
-import { V3RecommendationRequestSchema, GeminiIntentSchema, GeminiExpansionSchema } from './schemas';
-import { INTERPRET_V3_PROMPT, EXPAND_V3_PROMPT } from './prompts';
-import * as tmdb from './tmdb';
+import { embedForSearch, interpretQuery } from './gemini';
+import { buildKeywordExpressions, cosineSimilarity, mergeFilters, normalize, rankCandidates } from './ranking';
+import { ParsedRecommendationRequest } from './schemas';
+import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
+import { Candidate, InterpretedIntent, MediaType, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, TmdbGenre, TmdbKeyword, TmdbListItem } from './types';
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  if (normA === 0 || normB === 0) return 0;
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+export interface EngineDependencies {
+  interpret?: typeof interpretQuery;
+  embed?: typeof embedForSearch;
+  tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'discover' | 'recommendations' | 'similar' | 'details'>;
 }
 
-function processHardFilters(cand: any, filters: any, mediaType: string) {
-  if (cand.media_type && cand.media_type !== mediaType) return false;
-  
-  const year = cand.release_date ? parseInt(cand.release_date.split('-')[0]) : 
-               cand.first_air_date ? parseInt(cand.first_air_date.split('-')[0]) : null;
-               
-  if (filters.minimumYear && year && year < filters.minimumYear) return false;
-  if (filters.maximumYear && year && year > filters.maximumYear) return false;
-  
-  if (filters.originalLanguage && cand.original_language !== filters.originalLanguage) return false;
-  if (filters.originCountry && cand.origin_country && !cand.origin_country.includes(filters.originCountry)) return false;
-  
+const MAX_CANDIDATES = 360;
+const MAX_SEMANTIC_CANDIDATES = 160;
+const TMDB_DETAIL_RESERVE = 36;
+const DISCOVERY_CONCURRENCY = 4;
+const DETAIL_CONCURRENCY = 4;
+const MAX_KEYWORD_SEARCHES = 18;
+
+async function optionalTmdbCall<T>(operation: string, call: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof ServiceError && error.code === 'TMDB_UNAVAILABLE' && error.retryable) {
+      console.warn(JSON.stringify({ event: 'tmdb_optional_call_skipped', operation }));
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<number, string>): Candidate | undefined {
+  const title = (mediaType === 'movie' ? item.title : item.name)?.trim();
+  if (!item.id || !title) return undefined;
+  return {
+    key: `${mediaType}:${item.id}`, tmdbId: item.id, mediaType, title,
+    originalTitle: mediaType === 'movie' ? item.original_title : item.original_name,
+    overview: item.overview || undefined, posterPath: item.poster_path || undefined, backdropPath: item.backdrop_path || undefined,
+    releaseDate: (mediaType === 'movie' ? item.release_date : item.first_air_date) || undefined,
+    originalLanguage: item.original_language, originCountries: item.origin_country || [], genreIds: item.genre_ids || [],
+    genres: (item.genre_ids || []).map(id => genreNames.get(id)).filter((name): name is string => Boolean(name)),
+    tmdbRating: item.vote_average, tmdbVoteCount: item.vote_count, popularity: item.popularity, keywords: [],
+    matchedKeywordIds: new Set(), matchedConceptGroupIndexes: new Set(),
+    retrievalSources: new Set(), hardFiltersVerified: false,
+    directRelationshipScore: 0, anchorOverlapScore: 0, matchReasons: [],
+  };
+}
+
+function mergeDetails(candidate: Candidate, details: TmdbDetails): void {
+  candidate.title = (candidate.mediaType === 'movie' ? details.title : details.name) || candidate.title;
+  candidate.originalTitle = (candidate.mediaType === 'movie' ? details.original_title : details.original_name) || candidate.originalTitle;
+  candidate.overview = details.overview || candidate.overview;
+  candidate.posterPath = details.poster_path || candidate.posterPath;
+  candidate.backdropPath = details.backdrop_path || candidate.backdropPath;
+  candidate.releaseDate = (candidate.mediaType === 'movie' ? details.release_date : details.first_air_date) || candidate.releaseDate;
+  candidate.originalLanguage = details.original_language || candidate.originalLanguage;
+  candidate.originCountries = details.origin_country || candidate.originCountries;
+  if (details.genres?.length) { candidate.genreIds = details.genres.map(g => g.id); candidate.genres = details.genres.map(g => g.name); }
+  candidate.runtimeMinutes = details.runtime ?? details.episode_run_time?.find(value => value > 0) ?? candidate.runtimeMinutes;
+  candidate.tmdbRating = details.vote_average ?? candidate.tmdbRating;
+  candidate.tmdbVoteCount = details.vote_count ?? candidate.tmdbVoteCount;
+  candidate.keywords = details.keywords?.keywords || details.keywords?.results || candidate.keywords;
+}
+
+function genreLookup(genres: TmdbGenre[]): Map<string, number> {
+  return new Map(genres.flatMap(genre => [[normalize(genre.name), genre.id], [normalize(genre.name.replace(/&/g, 'and')), genre.id]]));
+}
+
+function discoverParams(type: MediaType, filters: RecommendationFilters, genreIds: Map<string, number>): Record<string, string | number | boolean | undefined> {
+  const included = filters.includedGenres.map(name => genreIds.get(normalize(name))).filter((id): id is number => id !== undefined);
+  const excluded = filters.excludedGenres.map(name => genreIds.get(normalize(name))).filter((id): id is number => id !== undefined);
+  const params: Record<string, string | number | boolean | undefined> = {
+    sort_by: 'vote_count.desc', with_original_language: filters.originalLanguage,
+    with_origin_country: filters.originCountries.length ? filters.originCountries.join('|') : undefined,
+    with_genres: included.length ? included.join(',') : undefined, without_genres: excluded.length ? excluded.join(',') : undefined,
+    'with_runtime.gte': filters.minimumRuntimeMinutes, 'with_runtime.lte': filters.maximumRuntimeMinutes,
+    'vote_average.gte': filters.minimumTmdbRating, 'vote_count.gte': filters.minimumTmdbRating !== undefined ? 10 : undefined,
+  };
+  if (filters.minimumYear) params[type === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte'] = `${filters.minimumYear}-01-01`;
+  if (filters.maximumYear) params[type === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte'] = `${filters.maximumYear}-12-31`;
+  return params;
+}
+
+function passesKnownFilters(candidate: Candidate, filters: RecommendationFilters): boolean {
+  if (filters.excludedTmdbIds.includes(candidate.tmdbId)) return false;
+  if (filters.excludedTitles.some(title => normalize(title) === normalize(candidate.title) || normalize(title) === normalize(candidate.originalTitle || ''))) return false;
+  const year = candidate.releaseDate ? Number(candidate.releaseDate.slice(0, 4)) : undefined;
+  if (Number.isInteger(year)) {
+    if (filters.minimumYear !== undefined && year! < filters.minimumYear) return false;
+    if (filters.maximumYear !== undefined && year! > filters.maximumYear) return false;
+  }
+  if (candidate.originalLanguage && filters.originalLanguage && candidate.originalLanguage !== filters.originalLanguage) return false;
+  if (candidate.originCountries.length && filters.originCountries.length && !filters.originCountries.some(country => candidate.originCountries.includes(country))) return false;
+  if (candidate.runtimeMinutes !== undefined) {
+    if (filters.minimumRuntimeMinutes !== undefined && candidate.runtimeMinutes < filters.minimumRuntimeMinutes) return false;
+    if (filters.maximumRuntimeMinutes !== undefined && candidate.runtimeMinutes > filters.maximumRuntimeMinutes) return false;
+  }
+  if (candidate.genres.length) {
+    const genres = new Set(candidate.genres.map(normalize));
+    if (filters.includedGenres.some(genre => !genres.has(normalize(genre)))) return false;
+    if (filters.excludedGenres.some(genre => genres.has(normalize(genre)))) return false;
+  }
+  if (filters.minimumTmdbRating !== undefined && candidate.tmdbRating !== undefined && candidate.tmdbRating < filters.minimumTmdbRating) return false;
   return true;
 }
 
-export async function processRecommendation(env: Env, requestBody: any) {
-  const req = V3RecommendationRequestSchema.parse(requestBody);
-  const mediaType = req.mediaType || 'movie';
+export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
+  const tmdb = dependencies.tmdb || new TmdbClient(env);
+  const interpret = dependencies.interpret || interpretQuery;
+  const intent = await interpret(env, request.query, request.mediaType);
+  const filters = mergeFilters(request.filters, intent.hardFilters);
+  const effectiveIntent: InterpretedIntent = { ...intent, hardFilters: filters };
 
-  // 1. Interpret Intent
-  const intent = await callGemini(env, INTERPRET_V3_PROMPT, { query: req.query, mediaType }, GeminiIntentSchema);
-
-  // Diagnostics
-  const diagnostics: any = {
-    tmdbApiCalls: 0,
-    tmdbSearchCalls: 0,
-    tmdbKeywordCalls: 0,
-    tmdbDiscoverCalls: 0,
-    tmdbRecommendationCalls: 0,
-    tmdbSimilarCalls: 0,
-    tmdbDetailCalls: 0,
-    expansionRounds: 0,
-    resolvedKeywordIds: []
-  };
-
-  const wrapTmdb = async <T>(apiCall: Promise<T>, counterKey: string) => {
-    diagnostics.tmdbApiCalls++;
-    diagnostics[counterKey]++;
-    return await apiCall;
-  };
-
-  let rawCandidates = new Map<number, any>();
-
-  // Helper to add candidates
-  const addCandidates = (results: any[], source: string, baseScore: number) => {
-    for (const res of results) {
-      if (!res.id) continue;
-      if (!processHardFilters(res, intent.hardFilters, intent.mediaType)) continue;
-
-      if (!rawCandidates.has(res.id)) {
-        rawCandidates.set(res.id, {
-          ...res,
-          retrievalSources: new Set([source]),
-          preliminaryScore: baseScore,
-          popularityScore: res.popularity || 0,
-          voteAverage: res.vote_average || 0
-        });
-      } else {
-        const existing = rawCandidates.get(res.id);
-        existing.retrievalSources.add(source);
-        existing.preliminaryScore += (baseScore * 0.5); // Boost score if found in multiple paths
-      }
+  const genreResponse = await tmdb.genres(request.mediaType);
+  const genresById = new Map(genreResponse.genres.map(genre => [genre.id, genre.name]));
+  const genresByName = genreLookup(genreResponse.genres);
+  for (const hint of intent.genreHints) {
+    const id = genresByName.get(normalize(hint));
+    if (id !== undefined && !filters.includedGenres.some(g => normalize(g) === normalize(hint))) {
+      // Genre hints guide retrieval but remain soft: they are not merged into hard filters.
+    }
+  }
+  const candidates = new Map<string, Candidate>();
+  const addPage = (
+    page: TmdbPage,
+    source: string,
+    matchedIds: number[] = [],
+    matchedConceptGroups: number[] = [],
+    direct = 0,
+  ) => {
+    for (const [position, item] of (page.results || []).entries()) {
+      const fresh = toCandidate(item, request.mediaType, genresById);
+      if (!fresh) continue;
+      const candidate = candidates.get(fresh.key) || fresh;
+      candidate.retrievalSources.add(source);
+      matchedIds.forEach(id => candidate.matchedKeywordIds.add(id));
+      matchedConceptGroups.forEach(index => candidate.matchedConceptGroupIndexes.add(index));
+      const orderedRelationship = direct > 0 ? Math.max(0, direct - position * .01) : 0;
+      candidate.directRelationshipScore = Math.max(candidate.directRelationshipScore, orderedRelationship);
+      candidate.hardFiltersVerified ||= source.startsWith('discover:');
+      candidates.set(candidate.key, candidate);
     }
   };
 
-  if (intent.intentType === 'similar_to' && intent.anchorTitle) {
-    // SIMILAR TO PIPELINE
-    const searchRes = await wrapTmdb(mediaType === 'movie' ? tmdb.searchMovie(env, intent.anchorTitle) : tmdb.searchTv(env, intent.anchorTitle), 'tmdbSearchCalls');
-    if (searchRes.results && searchRes.results.length > 0) {
-      const anchorId = searchRes.results[0].id;
-      
-      const [recs, similar, details] = await Promise.all([
-        wrapTmdb(tmdb.getRecommendations(env, mediaType, anchorId), 'tmdbRecommendationCalls'),
-        wrapTmdb(tmdb.getSimilar(env, mediaType, anchorId), 'tmdbSimilarCalls'),
-        wrapTmdb(tmdb.getDetails(env, mediaType, anchorId), 'tmdbDetailCalls')
-      ]);
+  const baseParams = discoverParams(request.mediaType, filters, genresByName);
+  const runDiscover = async (
+    source: string,
+    extra: Record<string, string | number | boolean | undefined>,
+    pages: number,
+    matched: number[] = [],
+    matchedConceptGroups: number[] = [],
+  ) => {
+    if (tmdb.callsRemaining <= TMDB_DETAIL_RESERVE || candidates.size >= MAX_CANDIDATES) return;
+    const discoverPage = async (page: number): Promise<TmdbPage | undefined> => {
+      // A broad sweep can span well over one hundred TMDB pages. Do not discard
+      // every useful candidate because one page exhausted its transient retries.
+      return optionalTmdbCall(
+        `${source}:page-${page}`,
+        () => tmdb.discover(request.mediaType, { ...baseParams, ...extra, page }),
+      );
+    };
+    const first = await discoverPage(1);
+    if (!first) return;
+    addPage(first, `${source}:page-1`, matched, matchedConceptGroups);
+    const lastPage = Math.min(pages, first.total_pages || 1);
+    if (!first.results?.length || lastPage <= 1) return;
 
-      if (recs.results) addCandidates(recs.results, 'tmdb_recommendations', 10);
-      if (similar.results) addCandidates(similar.results, 'tmdb_similar', 8);
-
-      // We can also fetch keywords of the anchor and do a discover
-      const keywordsRes = await wrapTmdb(tmdb.getKeywords(env, mediaType, anchorId), 'tmdbKeywordCalls');
-      const keywordIds = keywordsRes.keywords?.map((k: any) => k.id) || keywordsRes.results?.map((k: any) => k.id) || [];
-      
-      if (keywordIds.length > 0) {
-        const discRes = await wrapTmdb(mediaType === 'movie' ? 
-          tmdb.discoverMovie(env, { with_keywords: keywordIds.slice(0, 3).join('|') }) : 
-          tmdb.discoverTv(env, { with_keywords: keywordIds.slice(0, 3).join('|') }), 'tmdbDiscoverCalls');
-        if (discRes.results) addCandidates(discRes.results, 'anchor_keywords', 6);
-      }
-      
-      // Exclude anchor itself
-      rawCandidates.delete(anchorId);
+    for (let page = 2; page <= lastPage && candidates.size < MAX_CANDIDATES;) {
+      const usableCalls = Math.max(0, tmdb.callsRemaining - TMDB_DETAIL_RESERVE);
+      const batchSize = Math.min(DISCOVERY_CONCURRENCY, usableCalls, lastPage - page + 1);
+      if (batchSize <= 0) break;
+      const pageNumbers = Array.from({ length: batchSize }, (_, index) => page + index);
+      const results = await Promise.all(pageNumbers.map(discoverPage));
+      results.forEach((result, index) => {
+        if (!result) return;
+        addPage(
+          result,
+          `${source}:page-${pageNumbers[index]}`,
+          matched,
+          matchedConceptGroups,
+        );
+      });
+      if (results.every(result => !result?.results?.length)) break;
+      page += batchSize;
     }
+  };
+
+  let anchorDetails: TmdbDetails | undefined;
+  let anchorId: number | undefined;
+  if (request.mode === 'similar') {
+    const anchor = request.anchor!;
+    anchorId = anchor.tmdbId;
+    anchorDetails = await tmdb.details(anchor.mediaType, anchorId);
+    if (anchor.mediaType === request.mediaType) {
+      for (let page = 1; page <= 3 && tmdb.callsRemaining > 12; page++) {
+        const recommendations = await optionalTmdbCall(
+          `recommendations:page-${page}`,
+          () => tmdb.recommendations(anchor.mediaType, anchorId!, page),
+        );
+        if (recommendations) addPage(recommendations, `recommendations:page-${page}`, [], [], 1);
+        const similar = await optionalTmdbCall(
+          `similar:page-${page}`,
+          () => tmdb.similar(anchor.mediaType, anchorId!, page),
+        );
+        if (similar) addPage(similar, `similar:page-${page}`, [], [], .85);
+      }
+    }
+    const anchorKeywords = anchorDetails.keywords?.keywords || anchorDetails.keywords?.results || [];
+    const keywordIds = anchorKeywords.slice(0, 8).map(keyword => keyword.id);
+    const genreIds = (anchorDetails.genres || []).map(genre => genre.id);
+    if (keywordIds.length) await runDiscover('discover:anchor-keywords', { with_keywords: keywordIds.join('|') }, 5, keywordIds);
+    if (genreIds.length) await runDiscover('discover:anchor-genres', { with_genres: genreIds.join('|') }, 4);
+    for (const candidate of candidates.values()) {
+      const candidateGenres = new Set(candidate.genreIds);
+      const genreOverlap = genreIds.length ? genreIds.filter(id => candidateGenres.has(id)).length / genreIds.length : 0;
+      candidate.anchorOverlapScore = Math.min(1, genreOverlap * .65 + (candidate.matchedKeywordIds.size ? .35 : 0));
+    }
+    if (anchor.mediaType === request.mediaType) candidates.delete(`${request.mediaType}:${anchorId}`);
   } else {
-    // NORMAL DISCOVERY PIPELINE
-    
-    // Resolve keywords
-    let keywordIds: number[] = [];
-    const searchPhrases = [...(intent.broadSearchPhrases || []), ...(intent.requiredConceptGroups?.flatMap((g: any) => g.synonyms) || [])];
-    
-    // Bounded keyword searches
-    for (const phrase of searchPhrases.slice(0, 5)) {
-      const kwRes = await wrapTmdb(tmdb.searchKeyword(env, phrase), 'tmdbKeywordCalls');
-      if (kwRes.results && kwRes.results.length > 0) {
-        keywordIds.push(kwRes.results[0].id);
-        diagnostics.resolvedKeywordIds.push(kwRes.results[0].id);
+    const groupKeywordIds: number[][] = [];
+    let keywordSearches = 0;
+    for (const group of intent.requiredConceptGroups) {
+      const ids: number[] = [];
+      for (const phrase of group.synonyms) {
+        if (keywordSearches++ >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= 18) break;
+        const response = await optionalTmdbCall(
+          `keyword:${phrase}`,
+          () => tmdb.searchKeyword(phrase),
+        );
+        if (!response) continue;
+        const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(phrase));
+        for (const keyword of [...exact, ...response.results].slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
+      }
+      groupKeywordIds.push(ids.slice(0, 4));
+    }
+    const expressions = buildKeywordExpressions(groupKeywordIds, 8);
+    for (const expression of expressions.slice(0, 4)) {
+      const matched = expression.split(/[|,]/).map(Number).filter(Boolean);
+      const matchedGroups = groupKeywordIds.flatMap((ids, index) =>
+        ids.some(id => matched.includes(id)) ? [index] : [],
+      );
+      await runDiscover(
+        'discover:concept-intersection',
+        { with_keywords: expression },
+        expressions.length === 1 ? 24 : 10,
+        matched,
+        matchedGroups,
+      );
+    }
+    for (const [groupIndex, ids] of groupKeywordIds.entries()) {
+      if (groupIndex >= 4 || !ids.length || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE) break;
+      await runDiscover(
+        `discover:concept-${groupIndex + 1}`,
+        { with_keywords: ids.join('|') },
+        6,
+        ids,
+        [groupIndex],
+      );
+    }
+    for (const phrase of intent.broadSearchPhrases.slice(0, 3)) {
+      if (keywordSearches++ >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= 14) break;
+      const response = await optionalTmdbCall(
+        `broad-keyword:${phrase}`,
+        () => tmdb.searchKeyword(phrase),
+      );
+      if (!response) continue;
+      const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(phrase));
+      const ids = [...exact, ...response.results]
+        .map(keyword => keyword.id)
+        .filter((id, index, values) => values.indexOf(id) === index)
+        .slice(0, 3);
+      if (ids.length) {
+        await runDiscover('discover:broad-phrase', { with_keywords: ids.join('|') }, 6, ids);
       }
     }
-
-    // Pass A: STRICT CONCEPT COMBINATIONS (AND)
-    if (keywordIds.length > 1) {
-      const andKws = keywordIds.slice(0, 3).join(',');
-      const discRes = await wrapTmdb(mediaType === 'movie' ? tmdb.discoverMovie(env, { with_keywords: andKws }) : tmdb.discoverTv(env, { with_keywords: andKws }), 'tmdbDiscoverCalls');
-      if (discRes.results) addCandidates(discRes.results, 'keyword_intersection', 10);
+    const hintedGenreIds = intent.genreHints.map(name => genresByName.get(normalize(name))).filter((id): id is number => id !== undefined);
+    if (hintedGenreIds.length && tmdb.callsRemaining > TMDB_DETAIL_RESERVE) {
+      await runDiscover('discover:genre-hints', { with_genres: hintedGenreIds.join('|') }, 30);
+      await runDiscover(
+        'discover:genre-hints-popular',
+        { with_genres: hintedGenreIds.join('|'), sort_by: 'popularity.desc' },
+        18,
+      );
     }
-
-    // Pass B & C: INDIVIDUAL OR COMBINED (OR)
-    if (keywordIds.length > 0) {
-      const orKws = keywordIds.join('|');
-      const discRes = await wrapTmdb(mediaType === 'movie' ? tmdb.discoverMovie(env, { with_keywords: orKws }) : tmdb.discoverTv(env, { with_keywords: orKws }), 'tmdbDiscoverCalls');
-      if (discRes.results) addCandidates(discRes.results, 'keyword_union', 6);
-    }
-
-    // Pass D: STRUCTURED DISCOVER (just hard filters)
-    if (Object.keys(intent.hardFilters).length > 0) {
-      const params: any = {};
-      if (intent.hardFilters.originalLanguage) params.with_original_language = intent.hardFilters.originalLanguage;
-      if (intent.hardFilters.minimumYear) {
-         if (mediaType === 'movie') params['primary_release_date.gte'] = `${intent.hardFilters.minimumYear}-01-01`;
-         else params['first_air_date.gte'] = `${intent.hardFilters.minimumYear}-01-01`;
-      }
-      const discRes = await wrapTmdb(mediaType === 'movie' ? tmdb.discoverMovie(env, params) : tmdb.discoverTv(env, params), 'tmdbDiscoverCalls');
-      if (discRes.results) addCandidates(discRes.results, 'hard_filters_only', 4);
-    }
-
-    // Pass E: GEMINI SEARCH EXPANSION if candidates < 30
-    if (rawCandidates.size < 30) {
-      diagnostics.expansionRounds++;
-      const expansion = await callGemini(env, EXPAND_V3_PROMPT, { originalQuery: req.query, triedPhrases: searchPhrases }, GeminiExpansionSchema);
-      
-      let expKeywordIds: number[] = [];
-      for (const phrase of (expansion.newSearchPhrases || []).slice(0, 3)) {
-        const kwRes = await wrapTmdb(tmdb.searchKeyword(env, phrase), 'tmdbKeywordCalls');
-        if (kwRes.results && kwRes.results.length > 0) expKeywordIds.push(kwRes.results[0].id);
-      }
-      
-      if (expKeywordIds.length > 0) {
-        const orKws = expKeywordIds.join('|');
-        const discRes = await wrapTmdb(mediaType === 'movie' ? tmdb.discoverMovie(env, { with_keywords: orKws }) : tmdb.discoverTv(env, { with_keywords: orKws }), 'tmdbDiscoverCalls');
-        if (discRes.results) addCandidates(discRes.results, 'expansion_union', 5);
-      }
+    if (tmdb.callsRemaining > TMDB_DETAIL_RESERVE && candidates.size < MAX_CANDIDATES) {
+      await runDiscover('discover:hard-filters', {}, 60);
+      await runDiscover('discover:hard-filters-popular', { sort_by: 'popularity.desc' }, 40);
+      await runDiscover(
+        'discover:hard-filters-recent',
+        { sort_by: request.mediaType === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc' },
+        30,
+      );
+      await runDiscover(
+        'discover:hard-filters-rated',
+        { sort_by: 'vote_average.desc', 'vote_count.gte': Math.max(25, Number(baseParams['vote_count.gte']) || 0) },
+        20,
+      );
     }
   }
 
-  diagnostics.rawCandidateCount = rawCandidates.size;
-  diagnostics.deduplicatedCandidateCount = rawCandidates.size;
-
-  // PRELIMINARY RANKING (cheap)
-  let candidateList = Array.from(rawCandidates.values());
-  candidateList.sort((a, b) => b.preliminaryScore - a.preliminaryScore);
-  
-  // Take top 80 for enrichment
-  candidateList = candidateList.slice(0, 80);
-  diagnostics.preliminaryPoolCount = candidateList.length;
-
-  // TMDB ENRICHMENT (Concurrency bounded)
-  const enrichedCandidates: any[] = [];
-  const chunkSize = 5;
-  for (let i = 0; i < candidateList.length; i += chunkSize) {
-    const chunk = candidateList.slice(i, i + chunkSize);
-    const enrichedChunk = await Promise.all(chunk.map(async cand => {
+  // Details are authoritative enrichment. Keep it bounded so discovery can use most of the request budget.
+  const preliminary = [...candidates.values()]
+    .filter(candidate => passesKnownFilters(candidate, filters))
+    .sort((a, b) => b.directRelationshipScore - a.directRelationshipScore ||
+      b.retrievalSources.size - a.retrievalSources.size ||
+      (b.tmdbVoteCount || 0) - (a.tmdbVoteCount || 0));
+  const detailsCount = Math.min(preliminary.length, Math.max(0, Math.min(48, request.pageSize + 12, tmdb.callsRemaining)));
+  for (let start = 0; start < detailsCount; start += DETAIL_CONCURRENCY) {
+    await Promise.all(preliminary.slice(start, start + DETAIL_CONCURRENCY).map(async candidate => {
       try {
-        const [details, keywordsRes] = await Promise.all([
-          wrapTmdb(tmdb.getDetails(env, mediaType, cand.id), 'tmdbDetailCalls'),
-          wrapTmdb(tmdb.getKeywords(env, mediaType, cand.id), 'tmdbKeywordCalls')
-        ]);
-        
-        cand.details = details;
-        cand.keywords = keywordsRes.keywords || keywordsRes.results || [];
-        
-        // Build semantic document
-        const genresStr = details.genres?.map((g: any) => g.name).join(', ') || '';
-        const kwsStr = cand.keywords.map((k: any) => k.name).join(', ');
-        cand.semanticDocument = `Title: ${details.title || details.name}\nOverview: ${details.overview}\nGenres: ${genresStr}\nKeywords: ${kwsStr}\nTagline: ${details.tagline || ''}\nOriginal language: ${details.original_language}`;
-        
-        return cand;
-      } catch (e) {
-        // Fallback to basic if details fail
-        cand.semanticDocument = `Title: ${cand.title || cand.name}\nOverview: ${cand.overview}`;
-        return cand;
+        const details = await optionalTmdbCall(
+          `details:${request.mediaType}:${candidate.tmdbId}`,
+          () => tmdb.details(request.mediaType, candidate.tmdbId),
+        );
+        if (details) mergeDetails(candidate, details);
+      } catch (error) {
+        if (!(error instanceof ServiceError && error.code === 'TMDB_NOT_FOUND')) throw error;
       }
     }));
-    enrichedCandidates.push(...enrichedChunk);
   }
 
-  diagnostics.enrichedCandidateCount = enrichedCandidates.length;
-
-  // GEMINI EMBEDDINGS
-  let embeddingSuccess = false;
-  try {
-    const queryDoc = `Query: ${req.query}\nIntent: ${intent.intentType}\nConcepts: ${JSON.stringify(intent.requiredConceptGroups)}`;
-    const textsToEmbed = [queryDoc, ...enrichedCandidates.map(c => c.semanticDocument)];
-    
-    // Batch embeddings
-    const embeddings = await callGeminiEmbeddingsBatch(env, textsToEmbed);
-    const queryEmbedding = embeddings[0];
-    
-    for (let i = 0; i < enrichedCandidates.length; i++) {
-      enrichedCandidates[i].semanticScore = cosineSimilarity(queryEmbedding, embeddings[i + 1]);
-    }
-    embeddingSuccess = true;
-    diagnostics.semanticCandidateCount = enrichedCandidates.length;
-  } catch (e) {
-    // Embedding failed, fallback to deterministic
-    console.warn("Embeddings failed, using fallback ranking");
-    for (let i = 0; i < enrichedCandidates.length; i++) {
-      enrichedCandidates[i].semanticScore = 0.5; // Neutral
+  let embeddingsAvailable = false;
+  if (preliminary.length) {
+    const queryText = [
+      request.query,
+      ...intent.requiredConceptGroups.map(group => `${group.label}: ${group.synonyms.join(', ')}`),
+      ...intent.softConcepts,
+      ...intent.toneAndMood,
+      ...intent.broadSearchPhrases,
+    ].filter(Boolean).join('\n');
+    const semanticCandidates = preliminary.slice(0, MAX_SEMANTIC_CANDIDATES);
+    const docs = semanticCandidates.map(candidate => [candidate.title, candidate.originalTitle, candidate.overview, candidate.genres.join(', '), candidate.keywords.map(k => k.name).join(', ')].filter(Boolean).join('\n'));
+    try {
+      const vectors = await (dependencies.embed || embedForSearch)(env, queryText || request.anchor?.title || '', docs);
+      semanticCandidates.forEach((candidate, index) => { candidate.semanticScore = cosineSimilarity(vectors.query, vectors.documents[index]); });
+      embeddingsAvailable = true;
+    } catch (error) {
+      console.warn('Gemini embeddings unavailable; using deterministic relevance ranking', error instanceof Error ? error.message : error);
     }
   }
 
-  // FINAL RANKING
-  for (const cand of enrichedCandidates) {
-    // Calculate concept coverage
-    let conceptCoverage = 0;
-    const allKeywords = cand.keywords?.map((k: any) => k.name.toLowerCase()) || [];
-    if (intent.requiredConceptGroups && intent.requiredConceptGroups.length > 0) {
-      let matchedGroups = 0;
-      for (const group of intent.requiredConceptGroups) {
-        if (group.synonyms.some((syn: string) => allKeywords.some((k: string) => k.includes(syn.toLowerCase()) || (cand.details?.overview || '').toLowerCase().includes(syn.toLowerCase())))) {
-          matchedGroups++;
-        }
-      }
-      conceptCoverage = matchedGroups / intent.requiredConceptGroups.length;
-    } else {
-      conceptCoverage = 0.5;
-    }
-
-    let rankingScore = 0;
-    if (intent.intentType === 'similar_to') {
-      const isDirect = cand.retrievalSources.has('tmdb_recommendations') || cand.retrievalSources.has('tmdb_similar');
-      rankingScore = (isDirect ? 0.30 : 0.0) +
-                     (cand.semanticScore * 0.30) +
-                     (conceptCoverage * 0.20) +
-                     ((cand.preliminaryScore / 20) * 0.15) +
-                     (Math.min(cand.popularityScore / 100, 1) * 0.05);
-    } else {
-      rankingScore = (cand.semanticScore * 0.35) +
-                     (conceptCoverage * 0.30) +
-                     ((cand.preliminaryScore / 20) * 0.20) +
-                     (Math.min(cand.popularityScore / 100, 1) * 0.15);
-    }
-    cand.finalScore = rankingScore;
-    cand.matchTier = rankingScore > 0.7 ? 'A' : rankingScore > 0.5 ? 'B' : rankingScore > 0.3 ? 'C' : 'D';
-  }
-
-  enrichedCandidates.sort((a, b) => b.finalScore - a.finalScore);
-  
-  // Format Results
-  const results = enrichedCandidates.map(cand => ({
-    tmdbId: cand.id,
-    mediaType: mediaType,
-    title: cand.title || cand.name,
-    originalTitle: cand.original_title || cand.original_name,
-    overview: cand.details?.overview || cand.overview,
-    posterPath: cand.poster_path,
-    backdropPath: cand.backdrop_path,
-    releaseDate: cand.release_date || cand.first_air_date,
-    genres: cand.details?.genres?.map((g: any) => g.name) || [],
-    voteAverage: cand.vote_average,
-    voteCount: cand.vote_count,
-    matchTier: cand.matchTier,
-    finalScore: cand.finalScore,
-    retrievalSources: Array.from(cand.retrievalSources)
-  }));
-  
-  diagnostics.acceptedCandidateCount = results.length;
-  diagnostics.returnedCount = Math.min(results.length, req.pageSize);
-  
-  // No homeCatalogueCandidates, localFallbackCandidates, omdbCandidates, scrapedTmdbCandidates
-  diagnostics.homeCatalogueCandidates = 0;
-  diagnostics.localFallbackCandidates = 0;
-  diagnostics.omdbCandidates = 0;
-  diagnostics.scrapedTmdbCandidates = 0;
-
-  return {
-    requestId: req.requestId,
-    interpretation: intent,
-    results: results.slice(0, req.pageSize), // Pagination logic: just return first page for simplicity, or handle cursor properly in a real DB setup
-    nextCursor: req.pageSize < results.length ? "cursor_next_page" : null,
-    hasMore: req.pageSize < results.length,
-    diagnostics
-  };
+  return rankCandidates(
+    preliminary,
+    effectiveIntent,
+    filters,
+    request.mode === 'similar',
+    embeddingsAvailable,
+  ).slice(0, MAX_CANDIDATES);
 }

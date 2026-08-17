@@ -321,7 +321,14 @@ class RottenTomatoesClient internal constructor(
         val normalized = html.lowercase()
         return blockedMarkers.any(normalized::contains)
     }
-    private fun rottenTomatoesSlug(value: String) = Normalizer.normalize(value, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").lowercase().replace("&", " and ").replace(Regex("['â€™]"), "").replace(Regex("[^a-z0-9]+"), "_").trim('_')
+    private fun rottenTomatoesSlug(value: String) =
+        Normalizer.normalize(value, Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "")
+            .lowercase()
+            .replace("&", " and ")
+            .replace(Regex("['’‘`]"), "")
+            .replace(Regex("[^a-z0-9]+"), "_")
+            .trim('_')
     private fun normalizeText(value: String) = Normalizer.normalize(value, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
     private fun failurePriority(reason: FailureReason) = when (reason) { FailureReason.HTTP_403, FailureReason.HTTP_429, FailureReason.BLOCKED_PAGE -> 3; FailureReason.NETWORK, FailureReason.TIMEOUT -> 2; else -> 1 }
     private fun RottenTomatoesFetchResult.Unavailable.copyReason(reason: FailureReason) = copy(reason = reason)

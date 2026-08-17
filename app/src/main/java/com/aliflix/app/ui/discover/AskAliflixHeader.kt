@@ -1,104 +1,88 @@
 package com.aliflix.app.ui.discover
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.AddCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
+import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
-import com.aliflix.app.ui.theme.AliflixContentSecondary
-import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 
 @Composable
 fun AskAliflixHeader(
     onReset: () -> Unit,
     onBack: () -> Unit,
+    showNewSearch: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(54.dp),
-        color = AliflixSurfaceElevated,
-        tonalElevation = 1.dp
+            .heightIn(min = 64.dp)
+            .padding(start = 8.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = "Back to Catalogue",
-                        tint = AliflixContentPrimary
-                    )
-                }
-                Spacer(modifier = Modifier.width(2.dp))
-                Text(
-                    text = "Ask Aliflix",
-                    color = AliflixContentPrimary,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(AliflixAccentPrimary.copy(alpha = 0.18f))
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = "BETA",
-                        color = AliflixAccentPrimary,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            TextButton(
-                onClick = onReset,
-                modifier = Modifier.height(36.dp)
-            ) {
+        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
                 Icon(
-                    imageVector = Icons.Rounded.Refresh,
-                    contentDescription = "Reset workspace",
-                    tint = AliflixContentSecondary,
-                    modifier = Modifier.size(15.dp)
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "Back to Search",
+                    tint = AliflixContentPrimary,
                 )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Reset",
-                    color = AliflixContentSecondary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
+            }
+            ComposingThinkingOrb(
+                modifier = Modifier.size(42.dp),
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = "Ask Aliflix",
+                color = AliflixContentPrimary,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = (-0.2).sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        if (showNewSearch) {
+            Surface(
+                modifier = Modifier.size(52.dp),
+                shape = androidx.compose.foundation.shape.CircleShape,
+                color = AliflixAccentPrimary.copy(alpha = 0.2f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    AliflixBorderSubtle,
+                ),
+            ) {
+                IconButton(onClick = onReset) {
+                    Icon(
+                        imageVector = Icons.Rounded.AddCircle,
+                        contentDescription = "New search",
+                        tint = AliflixContentPrimary,
+                        modifier = Modifier.size(27.dp),
+                    )
+                }
             }
         }
     }

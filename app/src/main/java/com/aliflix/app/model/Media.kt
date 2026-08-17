@@ -20,6 +20,21 @@ enum class RatingSourceState {
     UNAVAILABLE,
 }
 
+data class MediaCreator(
+    val tmdbId: Int,
+    val name: String,
+    val profilePath: String? = null,
+) {
+    val profileUrl: String?
+        get() = profilePath?.let { path ->
+            when {
+                path.startsWith("https://") || path.startsWith("http://") -> path
+                path.startsWith("/") -> "https://image.tmdb.org/t/p/w185$path"
+                else -> null
+            }
+        }
+}
+
 data class Media(
     val id: Int,
     val type: MediaType,
@@ -35,8 +50,12 @@ data class Media(
     val imdbRatingState: RatingSourceState? = null,
     val rottenTomatoesRating: Int? = null,
     val rottenTomatoesState: RatingSourceState? = null,
+    val tmdbVoteCount: Int? = null,
     val genres: List<String> = emptyList(),
     val cast: List<String> = emptyList(),
+    val status: String = "",
+    val originalLanguage: String = "",
+    val creators: List<MediaCreator> = emptyList(),
     val runtime: String = "",
     val omdbGenres: List<String> = emptyList(),
     val omdbFullPlot: String? = null,
@@ -106,8 +125,21 @@ data class Media(
         imdbRatingState?.let { put("imdbRatingState", it.name) }
         rottenTomatoesRating?.let { put("rottenTomatoesRating", it) }
         rottenTomatoesState?.let { put("rottenTomatoesState", it.name) }
+        tmdbVoteCount?.let { put("tmdbVoteCount", it) }
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
+        put("status", status)
+        put("originalLanguage", originalLanguage)
+        put("creators", org.json.JSONArray().apply {
+            creators.forEach { creator ->
+                put(
+                    JSONObject()
+                        .put("tmdbId", creator.tmdbId)
+                        .put("name", creator.name)
+                        .put("profilePath", creator.profilePath),
+                )
+            }
+        })
         put("runtime", runtime)
         put("omdbGenres", org.json.JSONArray(omdbGenres))
         omdbFullPlot?.let { put("omdbFullPlot", it) }
@@ -155,6 +187,9 @@ data class Media(
                     ?.let { value ->
                         RatingSourceState.entries.firstOrNull { it.name == value }
                     },
+                tmdbVoteCount = json.optInt("tmdbVoteCount").takeIf {
+                    json.has("tmdbVoteCount") && it >= 0
+                },
                 genres = json.optJSONArray("genres")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         array.optString(index).takeIf(String::isNotBlank)
@@ -163,6 +198,22 @@ data class Media(
                 cast = json.optJSONArray("cast")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         array.optString(index).takeIf(String::isNotBlank)
+                    }
+                }.orEmpty(),
+                status = json.optString("status"),
+                originalLanguage = json.optString("originalLanguage"),
+                creators = json.optJSONArray("creators")?.let { array ->
+                    (0 until array.length()).mapNotNull { index ->
+                        val creator = array.optJSONObject(index) ?: return@mapNotNull null
+                        val id = creator.optInt("tmdbId")
+                        val name = creator.optString("name").trim()
+                        if (id <= 0 || name.isBlank()) return@mapNotNull null
+                        MediaCreator(
+                            tmdbId = id,
+                            name = name,
+                            profilePath = creator.optString("profilePath")
+                                .takeIf { it.isNotBlank() && it != "null" },
+                        )
                     }
                 }.orEmpty(),
                 runtime = json.optString("runtime", ""),

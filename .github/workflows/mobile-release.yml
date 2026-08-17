@@ -4,10 +4,12 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - "release/v3.0.2"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v2.1"
+        description: "Release tag, for example v3.0.2"
         required: true
         type: string
       notes:
@@ -19,12 +21,64 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "69"
-  RELEASE_VERSION_NAME: "2.9.18"
+  RELEASE_VERSION_CODE: "82"
+  RELEASE_VERSION_NAME: "3.0.2"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
+  worker-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: recommendation-worker/package-lock.json
+
+      - name: Typecheck and test recommendation Worker
+        working-directory: recommendation-worker
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm test
+
+  deploy-recommendations:
+    needs: worker-checks
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: "2bd02586ce22e6e64d878d35d25e44c9"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: recommendation-worker/package-lock.json
+
+      - name: Deploy recommendation Worker
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        working-directory: recommendation-worker
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run deploy
+
+      - name: Record unavailable Worker credentials
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: echo "Cloudflare deployment skipped because repository deployment secrets are not configured."
+
   release:
+    needs: worker-checks
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -39,21 +93,24 @@ jobs:
           set -euo pipefail
           EXPECTED_TAG="v${RELEASE_VERSION_NAME}"
           GRADLE_VERSION_CODE="$(
-            sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' \
+            sed -nE 's/^val mobileVersionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' \
               app/build.gradle.kts
           )"
           GRADLE_VERSION_NAME="$(
-            sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' \
+            sed -nE 's/^val mobileVersionName[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' \
               app/build.gradle.kts
           )"
 
           test "$GRADLE_VERSION_CODE" = "$RELEASE_VERSION_CODE"
           test "$GRADLE_VERSION_NAME" = "$RELEASE_VERSION_NAME"
-          test "$REQUESTED_TAG" = "$EXPECTED_TAG"
-
-          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            test "$REQUESTED_TAG" = "$EXPECTED_TAG"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             test "${GITHUB_REF_TYPE}" = "tag"
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
+          else
+            test "${GITHUB_REF_TYPE}" = "branch"
+            test "${GITHUB_REF_NAME}" = "release/v3.0.2"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then
@@ -87,6 +144,18 @@ jobs:
             -keystore "$RUNNER_TEMP/aliflix-release.jks" \
             -storepass "$KEYSTORE_PASSWORD" \
             -alias "$KEY_ALIAS" >/dev/null
+          KEYSTORE_CERT_SHA256="$(
+            keytool \
+              -exportcert \
+              -keystore "$RUNNER_TEMP/aliflix-release.jks" \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -alias "$KEY_ALIAS" \
+              | sha256sum \
+              | awk '{ print tolower($1) }'
+          )"
+          echo "Keystore certificate SHA256: $KEYSTORE_CERT_SHA256"
+          echo "Expected certificate SHA256: $EXPECTED_MOBILE_SIGNER_SHA256"
+          test "$KEYSTORE_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
       - name: Test and build mobile only
         env:
@@ -101,21 +170,26 @@ jobs:
             testMobileDebugUnitTest \
             packageMobileRelease
 
-      - name: Verify release APK signer SHA-256
+      - name: Verify release APK integrity
         run: |
           set -euo pipefail
           APK_PATH="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
-          test -f "$APK_PATH"
-          ACTUAL_SHA256="$(
-            keytool -printcert -jarfile "$APK_PATH" \
-              | sed -nE 's/^[[:space:]]*SHA256:[[:space:]]*([0-9A-Fa-f:]+)[[:space:]]*$/\1/p' \
-              | tr -d ':' \
-              | tr '[:upper:]' '[:lower:]' \
-              | head -n 1
+          test -s "$APK_PATH"
+          unzip -tq "$APK_PATH"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          APK_CERT_OUTPUT="$("$APKSIGNER" verify --print-certs "$APK_PATH" 2>&1)"
+          APK_CERT_SHA256="$(
+            printf '%s\n' "$APK_CERT_OUTPUT" \
+              | awk 'BEGIN { IGNORECASE = 1 } /certificate SHA-256 digest:/ { line = $0; sub(/^.*digest:[[:space:]]*/, "", line); gsub(/[[:space:]:]/, "", line); print tolower(line) }' \
+              | sort -u
           )"
-          echo "Actual SHA256: $ACTUAL_SHA256"
-          echo "Expected SHA256: $EXPECTED_MOBILE_SIGNER_SHA256"
-          # test "$ACTUAL_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
+          if [ -z "$APK_CERT_SHA256" ]; then
+            printf '%s\n' "$APK_CERT_OUTPUT"
+            exit 1
+          fi
+          echo "APK signer certificate SHA256: $APK_CERT_SHA256"
+          test "$APK_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
       - name: Build mobile update manifest
         run: |
@@ -132,7 +206,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Ask Aliflix Rebuild - OMDb Recommendation Engine"
+            "releaseNotes": "Unifies the Ask Aliflix animation across Discover, the feature header, and active recommendation matching while keeping the large loader exclusive to searches in progress."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -141,8 +215,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "Aliflix ${RELEASE_VERSION_NAME}"
-          body: "Aliflix ${RELEASE_VERSION_NAME} release with Ask Aliflix OMDb-verified recommendation engine."
+          target_commitish: ${{ github.sha }}
+          name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
+          body: "Mobile-only patch unifying the Ask Aliflix animation across Discover, the feature header, and active recommendation matching while keeping the large loader exclusive to searches in progress."
           files: |
             aliflix-mobile.apk
             update-mobile.json
