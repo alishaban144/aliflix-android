@@ -135,7 +135,7 @@ class AndroidCatalogCacheStore internal constructor(
     private val recommendationFile = File(cacheDir, "recommendations-v1.json")
     private val recommendationPageFile = File(cacheDir, "recommendation-pages-v3.json")
     private val metadataFile = File(cacheDir, "recommendation-metadata-v1.json")
-    private val imdbRatingFile = File(cacheDir, "imdb-ratings-v1.json")
+    private val imdbRatingFile = File(cacheDir, "imdb-ratings-v2.json")
     private val rottenTomatoesRatingFile = File(cacheDir, "rotten-tomatoes-ratings-v3.json")
     private val mutex = Mutex()
     private val cacheScope = CoroutineScope(SupervisorJob() + ioDispatcher)
@@ -144,7 +144,11 @@ class AndroidCatalogCacheStore internal constructor(
 
     init {
         try {
-            listOf("rotten-tomatoes-ratings-v1.json", "rotten-tomatoes-ratings-v2.json")
+            listOf(
+                "imdb-ratings-v1.json",
+                "rotten-tomatoes-ratings-v1.json",
+                "rotten-tomatoes-ratings-v2.json",
+            )
                 .map { File(cacheDir, it) }
                 .filter(File::exists)
                 .forEach(File::delete)

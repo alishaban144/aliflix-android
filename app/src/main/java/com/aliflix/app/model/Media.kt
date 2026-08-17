@@ -67,7 +67,7 @@ data class Media(
         get() = imageUrl(backdropPath, "w1280")
 
     fun mergeWithOmdb(omdb: com.aliflix.app.data.omdb.OmdbTitleMetadata): Media {
-        if (!omdb.found) return this
+        if (!omdb.found || !matchesOmdbIdentity(omdb)) return this
 
         val mergedImdbId = imdbId.takeIf { it?.matches(Regex("tt\\d+")) == true } ?: omdb.imdbId
         val mergedImdbRating = omdb.imdbRating ?: imdbRating
@@ -106,6 +106,34 @@ data class Media(
             omdbGenres = mergedOmdbGenres,
             omdbFullPlot = mergedFullPlot,
         )
+    }
+
+    private fun matchesOmdbIdentity(
+        omdb: com.aliflix.app.data.omdb.OmdbTitleMetadata,
+    ): Boolean {
+        val currentImdbId = imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
+        val returnedImdbId = omdb.imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
+        if (currentImdbId != null) return returnedImdbId == currentImdbId
+
+        val returnedType = omdb.type?.lowercase().orEmpty()
+        val typeMatches = when (type) {
+            MediaType.MOVIE -> returnedType in setOf("movie", "tv movie")
+            MediaType.TV -> returnedType in setOf("series", "tv series", "miniseries")
+        }
+        if (!typeMatches) return false
+
+        fun normalized(value: String): String = java.text.Normalizer
+            .normalize(value, java.text.Normalizer.Form.NFKD)
+            .replace(Regex("\\p{M}+"), "")
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+
+        val returnedTitle = omdb.title?.let(::normalized).orEmpty()
+        if (returnedTitle.isBlank() || returnedTitle != normalized(title)) return false
+
+        val currentYear = year.take(4).toIntOrNull()
+        return currentYear == null || omdb.year == null || kotlin.math.abs(currentYear - omdb.year) <= 2
     }
 
     private fun String?.isNull_or_blank(): Boolean = this == null || this.isBlank()

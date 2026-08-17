@@ -3937,32 +3937,30 @@ class CatalogClient(
         onProgress(metadataWithPendingRatings, recommendations)
 
         var omdbEnriched = metadataWithPendingRatings
-        try {
-            val req = com.aliflix.app.data.omdb.OmdbLookupRequest(
-                imdbId = metadata.imdbId,
-                title = metadata.title,
-                year = fourDigitYear.find(metadata.year)?.value?.toIntOrNull(),
-                mediaType = metadata.type.routeName
-            )
-            val omdbMeta = omdbClient.lookup(req)
-            if (omdbMeta != null && omdbMeta.found) {
-                omdbEnriched = omdbEnriched.mergeWithOmdb(omdbMeta)
-                catalogue = listOf(omdbEnriched) + catalogue.filterNot { it.key == omdbEnriched.key }
-                onProgress(omdbEnriched, recommendations)
-            }
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {}
+        if (metadata.imdbId?.matches(Regex("tt\\d{5,12}")) == true) {
+            try {
+                val req = com.aliflix.app.data.omdb.OmdbLookupRequest(
+                    imdbId = metadata.imdbId,
+                    title = metadata.title,
+                    year = fourDigitYear.find(metadata.year)?.value?.toIntOrNull(),
+                    mediaType = metadata.type.routeName,
+                )
+                val omdbMeta = omdbClient.lookup(req)
+                if (omdbMeta != null && omdbMeta.found) {
+                    omdbEnriched = omdbEnriched.mergeWithOmdb(omdbMeta)
+                    catalogue = listOf(omdbEnriched) + catalogue.filterNot { it.key == omdbEnriched.key }
+                    onProgress(omdbEnriched, recommendations)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {}
+        }
 
         val imdbJob = async {
             try {
                 val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
-                if (current.imdbRating != null && current.imdbRatingState == RatingSourceState.VERIFIED) {
-                    return@async
-                }
                 val imdbSnapshot = imdbRatingRepository.ratingFor(current)
                 val enriched = catalogue.firstOrNull { it.key == current.key }?.copy(
-                    rating = imdbSnapshot.rating ?: current.rating,
                     imdbId = imdbSnapshot.identity.imdbId.takeIf { it.isNotBlank() } ?: current.imdbId,
                     imdbRating = imdbSnapshot.rating,
                     imdbVoteCount = imdbSnapshot.voteCount,

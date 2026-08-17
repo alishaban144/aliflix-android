@@ -4,6 +4,7 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,6 +25,15 @@ class ExternalRatingsPresentationTest {
         )
 
         assertFalse(externalRatingsReady(imdbFirst))
+        assertEquals(
+            ExternalRatingsPresentation(
+                imdb = "Loading...",
+                rottenTomatoes = "Loading...",
+                tmdb = "Loading...",
+                loading = true,
+            ),
+            externalRatingsPresentation(imdbFirst),
+        )
     }
 
     @Test
@@ -36,6 +46,15 @@ class ExternalRatingsPresentationTest {
         )
 
         assertTrue(externalRatingsReady(resolved))
+        assertEquals(
+            ExternalRatingsPresentation(
+                imdb = "9.2",
+                rottenTomatoes = "97%",
+                tmdb = "9.0",
+                loading = false,
+            ),
+            externalRatingsPresentation(resolved),
+        )
     }
 
     @Test

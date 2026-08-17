@@ -4897,53 +4897,78 @@ private fun displayLanguageName(code: String): String {
 
 @Composable
 private fun RatingsRow(item: Media) {
-    val ratingsReady = externalRatingsReady(item)
+    val presentation = externalRatingsPresentation(item)
 
     AnimatedContent(
-        targetState = ratingsReady,
+        targetState = presentation,
         transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
         label = "external-ratings-together",
-    ) { ready ->
+    ) { ratings ->
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(9.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             RatingPill(
                 source = "IMDb",
-                value = when {
-                    item.imdbRating != null -> String.format(java.util.Locale.US, "%.1f", item.imdbRating)
-                    item.imdbRatingState == RatingSourceState.NOT_RATED -> "Not rated"
-                    !ready -> "Loading..."
-                    else -> "Unavailable"
-                },
+                value = ratings.imdb,
                 accent = Color(0xFFF5C518),
                 darkText = true,
-                loading = !ready && item.imdbRating == null,
+                loading = ratings.loading,
             )
             RatingPill(
                 source = "Tomatometer",
-                value = when (item.rottenTomatoesState) {
-                    RatingSourceState.VERIFIED, RatingSourceState.STALE -> item.rottenTomatoesRating?.let { "$it%" } ?: "Unavailable"
-                    RatingSourceState.NOT_RATED -> "Not rated"
-                    else -> if (!ready) "Loading..." else "Unavailable"
-                },
+                value = ratings.rottenTomatoes,
                 accent = Color(0xFFFA3A45),
                 darkText = false,
-                loading = !ready && item.rottenTomatoesRating == null,
+                loading = ratings.loading,
             )
             RatingPill(
                 source = "TMDB",
-                value = if (item.rating > 0.0) {
-                    String.format(java.util.Locale.US, "%.1f", item.rating)
-                } else {
-                    "Not rated"
-                },
+                value = ratings.tmdb,
                 accent = Color(0xFF01B4E4),
                 darkText = true,
-                loading = false,
+                loading = ratings.loading,
             )
         }
     }
+}
+
+internal data class ExternalRatingsPresentation(
+    val imdb: String,
+    val rottenTomatoes: String,
+    val tmdb: String,
+    val loading: Boolean,
+)
+
+internal fun externalRatingsPresentation(item: Media): ExternalRatingsPresentation {
+    if (!externalRatingsReady(item)) {
+        return ExternalRatingsPresentation(
+            imdb = "Loading...",
+            rottenTomatoes = "Loading...",
+            tmdb = "Loading...",
+            loading = true,
+        )
+    }
+
+    return ExternalRatingsPresentation(
+        imdb = when {
+            item.imdbRating != null -> String.format(java.util.Locale.US, "%.1f", item.imdbRating)
+            item.imdbRatingState == RatingSourceState.NOT_RATED -> "Not rated"
+            else -> "Unavailable"
+        },
+        rottenTomatoes = when (item.rottenTomatoesState) {
+            RatingSourceState.VERIFIED,
+            RatingSourceState.STALE -> item.rottenTomatoesRating?.let { "$it%" } ?: "Unavailable"
+            RatingSourceState.NOT_RATED -> "Not rated"
+            else -> "Unavailable"
+        },
+        tmdb = if (item.rating > 0.0) {
+            String.format(java.util.Locale.US, "%.1f", item.rating)
+        } else {
+            "Not rated"
+        },
+        loading = false,
+    )
 }
 
 internal fun externalRatingsReady(item: Media): Boolean {

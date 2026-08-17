@@ -103,13 +103,26 @@ class DefaultImdbRatingRepository(
 ) : ImdbRatingRepository {
     override suspend fun ratingFor(media: Media): ImdbRatingSnapshot {
         cacheStore?.loadImdbRating(media.key, FRESH_CACHE_AGE_MS)?.takeIf {
-            it.state == RatingSourceState.VERIFIED && it.rating != null && it.rating > 0.0
+            it.state == RatingSourceState.VERIFIED &&
+                it.rating != null &&
+                it.rating > 0.0 &&
+                cachedIdentityMatches(media, it)
         }?.let { return it }
         val stale = cacheStore?.loadImdbRating(media.key, STALE_CACHE_AGE_MS)?.takeIf {
-            it.state == RatingSourceState.VERIFIED && it.rating != null && it.rating > 0.0
+            it.state == RatingSourceState.VERIFIED &&
+                it.rating != null &&
+                it.rating > 0.0 &&
+                cachedIdentityMatches(media, it)
         }
 
-        val identity = media.imdbId
+        val resolvedIdentity = try {
+            resolveIdentity(media)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            null
+        }
+        val identity = resolvedIdentity ?: media.imdbId
             ?.takeIf(IMDB_ID_PATTERN::matches)
             ?.let {
                 ImdbTitleIdentity(
@@ -118,13 +131,6 @@ class DefaultImdbRatingRepository(
                     year = media.year.take(4).toIntOrNull(),
                     type = media.type,
                 )
-            }
-            ?: try {
-                resolveIdentity(media)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                null
             }
 
         if (identity == null) {
@@ -190,6 +196,23 @@ class DefaultImdbRatingRepository(
                 state = RatingSourceState.UNAVAILABLE,
                 fetchedAtMillis = nowMillis(),
             )
+    }
+
+    internal fun cachedIdentityMatches(
+        media: Media,
+        snapshot: ImdbRatingSnapshot,
+    ): Boolean {
+        if (snapshot.identity.type != media.type) return false
+
+        val titleMatches = titleIdentityScore(
+            normalize(media.title.replace(Regex("\\(\\d{4}\\)"), "").trim()),
+            normalize(snapshot.identity.title),
+        ) >= 70
+        if (!titleMatches) return false
+
+        val mediaYear = media.year.take(4).toIntOrNull()
+        val cachedYear = snapshot.identity.year
+        return mediaYear == null || cachedYear == null || kotlin.math.abs(mediaYear - cachedYear) <= 3
     }
 
     internal suspend fun resolveIdentity(media: Media): ImdbTitleIdentity? {

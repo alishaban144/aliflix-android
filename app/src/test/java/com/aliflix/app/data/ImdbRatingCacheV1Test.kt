@@ -13,8 +13,18 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
-class ImdbRatingCacheV1Test {
+class ImdbRatingCacheV2Test {
     @get:Rule val temporaryFolder = TemporaryFolder()
+
+    @Test fun `legacy identity-poisoned cache is removed on upgrade`() {
+        val directory = temporaryFolder.newFolder("imdb-v1-upgrade")
+        val legacy = File(directory, "imdb-ratings-v1.json")
+        legacy.writeText("""{"entries":[]}""")
+
+        store(directory)
+
+        assertFalse(legacy.exists())
+    }
 
     @Test fun `unavailable and loading are never persisted to disk`() = runBlocking {
         val directory = temporaryFolder.newFolder("imdb-no-poison")
@@ -39,7 +49,7 @@ class ImdbRatingCacheV1Test {
         )
         assertNull(store.loadImdbRating("movie:1", Long.MAX_VALUE))
         assertNull(store.loadImdbRating("movie:2", Long.MAX_VALUE))
-        assertFalse(File(directory, "imdb-ratings-v1.json").exists())
+        assertFalse(File(directory, "imdb-ratings-v2.json").exists())
     }
 
     @Test fun `verified imdb rating with valid score is persisted and restored`() = runBlocking {
@@ -72,7 +82,7 @@ class ImdbRatingCacheV1Test {
         val unrated = store.loadImdbRating("movie:222222", Long.MAX_VALUE)
         assertEquals(RatingSourceState.NOT_RATED, unrated?.state)
         assertNull(unrated?.rating)
-        assertTrue(File(directory, "imdb-ratings-v1.json").exists())
+        assertTrue(File(directory, "imdb-ratings-v2.json").exists())
     }
 
     private fun store(directory: File) = AndroidCatalogCacheStore(

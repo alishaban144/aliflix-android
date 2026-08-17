@@ -45,6 +45,8 @@ class MobileMediaConsistencyTest {
             title = "Breaking Bad",
             posterPath = "/tapped-poster.jpg",
             backdropPath = "/tapped-backdrop.jpg",
+            rating = 7.2,
+            imdbRating = 9.5,
         )
         val details = V3TitleDetails(
             media = catalogMedia(),
@@ -58,6 +60,8 @@ class MobileMediaConsistencyTest {
         assertEquals("Ended", details.status)
         assertEquals("Vince Gilligan", details.creators.single().name)
         assertEquals(listOf("Drama", "Crime"), details.genres)
+        assertEquals(8.9, details.rating, 0.001)
+        assertEquals(9.5, details.imdbRating ?: 0.0, 0.001)
     }
 
     @Test
@@ -91,6 +95,7 @@ class MobileMediaConsistencyTest {
         assertEquals("Ended", merged.status)
         assertEquals(9.5, merged.imdbRating)
         assertEquals(96, merged.rottenTomatoesRating)
+        assertEquals(8.9, merged.rating, 0.001)
     }
 
     @Test
