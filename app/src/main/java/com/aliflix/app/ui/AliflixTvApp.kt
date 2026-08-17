@@ -620,7 +620,8 @@ private fun TvHero(
                 if (item.year.isNotBlank()) TvMeta(item.year)
                 TvMeta(if (item.type == MediaType.TV) "Series" else "Movie")
                 if (item.runtime.isNotBlank()) TvMeta(item.runtime)
-                if (item.rating > 0) TvMeta("★ %.1f".format(item.rating))
+                val displayRating = item.imdbRating ?: item.rating.takeIf { it > 0.0 }
+                if (displayRating != null && displayRating > 0) TvMeta("★ %.1f".format(displayRating))
             }
             Text(
                 text = item.overview,
@@ -1663,7 +1664,8 @@ private fun TvDetailScreen(
                         if (item.year.isNotBlank()) TvMeta(item.year)
                         TvMeta(if (item.type == MediaType.TV) "Series" else "Movie")
                         if (item.runtime.isNotBlank()) TvMeta(item.runtime)
-                        if (item.rating > 0) TvMeta("★ %.1f".format(item.rating))
+                        val displayRating = item.imdbRating ?: item.rating.takeIf { it > 0.0 }
+                        if (displayRating != null && displayRating > 0) TvMeta("★ %.1f".format(displayRating))
                         item.genres.take(2).forEach { TvMeta(it) }
                     }
                     if (item.overview.isNotBlank()) {

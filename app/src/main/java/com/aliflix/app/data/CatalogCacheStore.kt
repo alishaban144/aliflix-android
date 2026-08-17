@@ -500,6 +500,20 @@ class AndroidCatalogCacheStore internal constructor(
                 val state = com.aliflix.app.model.RatingSourceState.entries
                     .firstOrNull { it.name == entry.optString("state") }
                     ?: return@decode null
+                val ageMs = System.currentTimeMillis() - fetchedAt
+                if (state == com.aliflix.app.model.RatingSourceState.NOT_RATED) {
+                    if (ageMs > 24 * 60 * 60 * 1000L) {
+                        return@decode null
+                    }
+                } else if (ageMs > maxAgeMs) {
+                    return@decode null
+                }
+                val rating = entry.optDouble("rating").takeIf {
+                    entry.has("rating") && !it.isNaN() && it in 0.1..10.0
+                }
+                if (state == com.aliflix.app.model.RatingSourceState.VERIFIED && rating == null) {
+                    return@decode null
+                }
                 ImdbRatingSnapshot(
                     identity = ImdbTitleIdentity(
                         imdbId = imdbId,
@@ -507,9 +521,7 @@ class AndroidCatalogCacheStore internal constructor(
                         year = entry.optInt("year").takeIf { entry.has("year") },
                         type = type,
                     ),
-                    rating = entry.optDouble("rating").takeIf {
-                        entry.has("rating") && !it.isNaN() && it in 0.1..10.0
-                    },
+                    rating = rating,
                     voteCount = entry.optInt("votes").takeIf {
                         entry.has("votes") && it >= 0
                     },
@@ -521,6 +533,10 @@ class AndroidCatalogCacheStore internal constructor(
     }
 
     override suspend fun saveImdbRating(mediaKey: String, snapshot: ImdbRatingSnapshot) {
+        if (snapshot.state == com.aliflix.app.model.RatingSourceState.UNAVAILABLE ||
+            snapshot.state == com.aliflix.app.model.RatingSourceState.LOADING) {
+            return
+        }
         mutex.withLock {
             val value = withContext(computationDispatcher) {
                 val previous = cacheValueOrNull { fileReader(imdbRatingFile) }?.let { JSONObject(it) }

@@ -102,8 +102,12 @@ class DefaultImdbRatingRepository(
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) : ImdbRatingRepository {
     override suspend fun ratingFor(media: Media): ImdbRatingSnapshot {
-        cacheStore?.loadImdbRating(media.key, FRESH_CACHE_AGE_MS)?.let { return it }
-        val stale = cacheStore?.loadImdbRating(media.key, STALE_CACHE_AGE_MS)
+        cacheStore?.loadImdbRating(media.key, FRESH_CACHE_AGE_MS)?.takeIf {
+            it.state == RatingSourceState.VERIFIED && it.rating != null && it.rating > 0.0
+        }?.let { return it }
+        val stale = cacheStore?.loadImdbRating(media.key, STALE_CACHE_AGE_MS)?.takeIf {
+            it.state == RatingSourceState.VERIFIED && it.rating != null && it.rating > 0.0
+        }
 
         val identity = media.imdbId
             ?.takeIf(IMDB_ID_PATTERN::matches)
@@ -140,7 +144,7 @@ class DefaultImdbRatingRepository(
                     identity,
                 )
                 providerResponded = true
-                if (parsed != null) {
+                if (parsed != null && parsed.rating != null && parsed.rating > 0.0) {
                     cacheStore?.saveImdbRating(media.key, parsed)
                     return parsed
                 }
@@ -158,7 +162,7 @@ class DefaultImdbRatingRepository(
             }
             providerResponded = true
             val parsed = parseImdbPageRating(html, identity, nowMillis())
-            if (parsed != null) {
+            if (parsed != null && parsed.rating != null && parsed.rating > 0.0) {
                 cacheStore?.saveImdbRating(media.key, parsed)
                 return parsed
             }
@@ -176,7 +180,6 @@ class DefaultImdbRatingRepository(
                 state = RatingSourceState.NOT_RATED,
                 fetchedAtMillis = nowMillis(),
             )
-            cacheStore?.saveImdbRating(media.key, notRated)
             return notRated
         }
         return stale?.copy(state = RatingSourceState.STALE)
@@ -190,9 +193,10 @@ class DefaultImdbRatingRepository(
     }
 
     internal suspend fun resolveIdentity(media: Media): ImdbTitleIdentity? {
-        val wantedTitle = normalize(media.title)
+        val cleanTitle = media.title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        val wantedTitle = normalize(cleanTitle)
         val initial = wantedTitle.firstOrNull { it.isLetterOrDigit() } ?: 'a'
-        val encoded = URLEncoder.encode(media.title, StandardCharsets.UTF_8.toString())
+        val encoded = URLEncoder.encode(cleanTitle, StandardCharsets.UTF_8.toString())
         val root = try {
             JSONObject(pageLoader("https://v3.sg.media-imdb.com/suggestion/$initial/$encoded.json"))
         } catch (_: Throwable) {
@@ -405,7 +409,8 @@ class DefaultImdbRatingRepository(
         val returnedTitle = payload.optJSONObject("titleText")
             ?.optString("text")
             .orEmpty()
-        if (titleIdentityScore(normalize(expected.title), normalize(returnedTitle)) < 65) {
+        val score = titleIdentityScore(normalize(expected.title), normalize(returnedTitle))
+        if (score < 45 && !normalize(returnedTitle).contains(normalize(expected.title)) && !normalize(expected.title).contains(normalize(returnedTitle))) {
             return false
         }
         val returnedYear = payload.optJSONObject("releaseYear")
@@ -414,7 +419,7 @@ class DefaultImdbRatingRepository(
         if (
             expected.year != null &&
             returnedYear != null &&
-            kotlin.math.abs(expected.year - returnedYear) > 2
+            kotlin.math.abs(expected.year - returnedYear) > 3
         ) {
             return false
         }
@@ -423,8 +428,8 @@ class DefaultImdbRatingRepository(
             .orEmpty()
             .lowercase()
         return when (expected.type) {
-            MediaType.MOVIE -> type in IMDB_MOVIE_TYPES
-            MediaType.TV -> type in IMDB_TV_TYPES
+            MediaType.MOVIE -> type in IMDB_MOVIE_TYPES || type.contains("movie") || type.contains("film")
+            MediaType.TV -> type in IMDB_TV_TYPES || type.contains("tv") || type.contains("series")
         }
     }
 

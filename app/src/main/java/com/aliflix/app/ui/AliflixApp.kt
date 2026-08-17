@@ -1720,14 +1720,23 @@ private fun HeroBanner(
                         )
                     }
                 }
-                if (item.rating > 0.0) {
+                val displayRating = item.imdbRating ?: item.rating.takeIf { it > 0.0 }
+                if (displayRating != null && displayRating > 0.0) {
                     Text(
-                        text = String.format(
-                            java.util.Locale.US,
-                            "%.1f rated",
-                            item.rating,
-                        ),
-                        color = MaterialTheme.colorScheme.onBackground,
+                        text = if (item.imdbRating != null) {
+                            String.format(
+                                java.util.Locale.US,
+                                "★ %.1f IMDb",
+                                displayRating,
+                            )
+                        } else {
+                            String.format(
+                                java.util.Locale.US,
+                                "★ %.1f",
+                                displayRating,
+                            )
+                        },
+                        color = if (item.imdbRating != null) Color(0xFFF5C518) else MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 12.sp,
                     )
@@ -2003,7 +2012,8 @@ private fun HomePosterCard(
                             ),
                         ),
                 )
-                if (item.rating > 0.0) {
+                val cardRating = item.imdbRating ?: item.rating.takeIf { it > 0.0 }
+                if (cardRating != null && cardRating > 0.0) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
@@ -2016,9 +2026,9 @@ private fun HomePosterCard(
                             text = String.format(
                                 java.util.Locale.US,
                                 "%.1f",
-                                item.rating,
+                                cardRating,
                             ),
-                            color = MaterialTheme.colorScheme.tertiary,
+                            color = if (item.imdbRating != null) Color(0xFFF5C518) else MaterialTheme.colorScheme.tertiary,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                         )
@@ -4899,6 +4909,29 @@ private fun RatingsRow(item: Media) {
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             RatingPill(
+                source = "IMDb",
+                value = when {
+                    item.imdbRating != null -> String.format(java.util.Locale.US, "%.1f", item.imdbRating)
+                    item.imdbRatingState == RatingSourceState.NOT_RATED -> "Not rated"
+                    !ready -> "Loading..."
+                    else -> "Unavailable"
+                },
+                accent = Color(0xFFF5C518),
+                darkText = true,
+                loading = !ready && item.imdbRating == null,
+            )
+            RatingPill(
+                source = "Tomatometer",
+                value = when (item.rottenTomatoesState) {
+                    RatingSourceState.VERIFIED, RatingSourceState.STALE -> item.rottenTomatoesRating?.let { "$it%" } ?: "Unavailable"
+                    RatingSourceState.NOT_RATED -> "Not rated"
+                    else -> if (!ready) "Loading..." else "Unavailable"
+                },
+                accent = Color(0xFFFA3A45),
+                darkText = false,
+                loading = !ready && item.rottenTomatoesRating == null,
+            )
+            RatingPill(
                 source = "TMDB",
                 value = if (item.rating > 0.0) {
                     String.format(java.util.Locale.US, "%.1f", item.rating)
@@ -4907,29 +4940,7 @@ private fun RatingsRow(item: Media) {
                 },
                 accent = Color(0xFF01B4E4),
                 darkText = true,
-                loading = !ready,
-            )
-            RatingPill(
-                source = "IMDb",
-                value = when {
-                    item.imdbRating != null -> String.format(java.util.Locale.US, "%.1f", item.imdbRating)
-                    item.imdbRatingState == RatingSourceState.NOT_RATED -> "Not rated"
-                    else -> "Unavailable"
-                },
-                accent = Color(0xFFF5C518),
-                darkText = true,
-                loading = !ready,
-            )
-            RatingPill(
-                source = "Tomatometer",
-                value = when (item.rottenTomatoesState) {
-                    RatingSourceState.VERIFIED, RatingSourceState.STALE -> item.rottenTomatoesRating?.let { "$it%" } ?: "Unavailable"
-                    RatingSourceState.NOT_RATED -> "Not rated"
-                    else -> "Unavailable"
-                },
-                accent = Color(0xFFFA3A45),
-                darkText = false,
-                loading = !ready,
+                loading = false,
             )
         }
     }

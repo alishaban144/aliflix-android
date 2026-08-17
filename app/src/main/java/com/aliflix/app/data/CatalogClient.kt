@@ -3962,6 +3962,7 @@ class CatalogClient(
                 }
                 val imdbSnapshot = imdbRatingRepository.ratingFor(current)
                 val enriched = catalogue.firstOrNull { it.key == current.key }?.copy(
+                    rating = imdbSnapshot.rating ?: current.rating,
                     imdbId = imdbSnapshot.identity.imdbId.takeIf { it.isNotBlank() } ?: current.imdbId,
                     imdbRating = imdbSnapshot.rating,
                     imdbVoteCount = imdbSnapshot.voteCount,
@@ -4374,6 +4375,7 @@ class CatalogClient(
                     ?.groupValues
                     ?.getOrNull(1)
             }
+            ?: imdbTitleIdPattern.find(html)?.groupValues?.getOrNull(1)
             ?: fallback.imdbId
         val runtime = document.selectFirst(".runtime")?.text()?.trim().orEmpty().ifBlank { fallback.runtime }
         return fallback.copy(

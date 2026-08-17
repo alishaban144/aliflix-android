@@ -41,7 +41,13 @@ internal fun V3CatalogMedia.toMobileMedia(
 internal fun V3TitleDetails.toStableMobileMedia(fallback: Media): Media {
     val mapped = media.toMobileMedia(fallback = fallback, preserveArtwork = true)
     return mapped.copy(
+        rating = fallback.imdbRating ?: mapped.rating,
         imdbId = imdbId ?: fallback.imdbId,
+        imdbRating = fallback.imdbRating,
+        imdbRatingState = fallback.imdbRatingState,
+        imdbVoteCount = fallback.imdbVoteCount,
+        rottenTomatoesRating = fallback.rottenTomatoesRating,
+        rottenTomatoesState = fallback.rottenTomatoesState,
         status = status?.takeIf(String::isNotBlank) ?: fallback.status,
         creators = creators.map { creator ->
             MediaCreator(
@@ -64,7 +70,7 @@ internal fun Media.mergeStableMobileDetailUpdate(update: Media): Media {
         posterPath = posterPath ?: update.posterPath,
         backdropPath = backdropPath ?: update.backdropPath,
         year = year.ifBlank { update.year },
-        rating = rating.takeIf { it > 0.0 } ?: update.rating,
+        rating = update.imdbRating ?: update.rating.takeIf { it > 0.0 } ?: rating.takeIf { it > 0.0 } ?: 0.0,
         imdbId = update.imdbId ?: imdbId,
         imdbRating = update.imdbRating ?: imdbRating,
         imdbRatingState = update.imdbRatingState ?: imdbRatingState,
