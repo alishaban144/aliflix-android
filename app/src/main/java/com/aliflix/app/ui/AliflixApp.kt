@@ -4220,6 +4220,18 @@ private fun GenreExploreStatePanel(
 }
 
 private const val GENRE_EXPLORE_PAGE_SIZE = 20
+private const val DETAIL_OVERVIEW_COLLAPSED_LINES = 5
+
+internal fun shouldShowOverviewExpansion(
+    isExpanded: Boolean,
+    lineCount: Int,
+    hasVisualOverflow: Boolean,
+): Boolean =
+    if (isExpanded) {
+        lineCount > DETAIL_OVERVIEW_COLLAPSED_LINES
+    } else {
+        hasVisualOverflow
+    }
 
 @Composable
 private fun DetailScreen(
@@ -4246,7 +4258,7 @@ private fun DetailScreen(
     var overviewExpanded by rememberSaveable(item.key) { mutableStateOf(false) }
     var castExpanded by rememberSaveable(item.key) { mutableStateOf(false) }
     val overview = item.overview.ifBlank { "No overview is available yet." }
-    val overviewCanExpand = overview.length > 280
+    var overviewCanExpand by remember(item.key) { mutableStateOf(false) }
     val visibleCast = if (castExpanded) item.cast else item.cast.take(8)
     LazyColumn(
         state = detailListState,
@@ -4420,8 +4432,19 @@ private fun DetailScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             lineHeight = 24.sp,
                             color = AliflixContentSecondary,
-                            maxLines = if (overviewExpanded) Int.MAX_VALUE else 5,
+                            maxLines = if (overviewExpanded) {
+                                Int.MAX_VALUE
+                            } else {
+                                DETAIL_OVERVIEW_COLLAPSED_LINES
+                            },
                             overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { layoutResult ->
+                                overviewCanExpand = shouldShowOverviewExpansion(
+                                    isExpanded = overviewExpanded,
+                                    lineCount = layoutResult.lineCount,
+                                    hasVisualOverflow = layoutResult.hasVisualOverflow,
+                                )
+                            },
                         )
                         if (overviewCanExpand) {
                             TextButton(
