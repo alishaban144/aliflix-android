@@ -584,10 +584,19 @@ fun AliflixApp(
 
     fun popDestination() {
         if (destinationStack.size <= 1) return
-        captureDetailStateSnapshot()
+        when (destinationStack.last()) {
+            is MobileDestination.Person -> capturePersonScrollPosition()
+            is MobileDestination.Genre -> captureGenreScrollPosition()
+            is MobileDestination.Detail -> captureDetailStateSnapshot()
+            is MobileDestination.Root -> Unit
+        }
         destinationStack = popMobileDestinationStack(destinationStack)
         when (val destination = destinationStack.last()) {
-            is MobileDestination.Root -> Unit
+            is MobileDestination.Root -> {
+                viewModel.closeDetails()
+                viewModel.closeGenre()
+                viewModel.closePerson()
+            }
             is MobileDestination.Detail -> {
                 viewModel.openDetails(destination.item)
             }
@@ -808,7 +817,11 @@ fun AliflixApp(
     BackHandler(
         enabled = shouldReturnHomeOnSystemBack(destinationStack) && !playerVisible,
     ) {
-        showRoot(AppTab.HOME)
+        if (destinationStack.size > 1) {
+            popDestination()
+        } else {
+            showRoot(AppTab.HOME)
+        }
     }
 
     Box(
@@ -1091,7 +1104,6 @@ fun AliflixApp(
                         onSetAskEditorState = viewModel::setAskEditorState,
                         onLoadMoreAskAliflix = viewModel::loadMoreAskAliflix,
                         onRetryAskAliflix = viewModel::retryAskAliflix,
-                        onSystemBack = { showRoot(AppTab.HOME) },
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
 

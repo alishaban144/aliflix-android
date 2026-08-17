@@ -200,7 +200,6 @@ internal fun DiscoverScreen(
     onSetAskEditorState: (AskAliflixEditorState) -> Unit = {},
     onLoadMoreAskAliflix: () -> Unit = {},
     onRetryAskAliflix: () -> Unit = {},
-    onSystemBack: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -258,7 +257,6 @@ internal fun DiscoverScreen(
     androidx.activity.compose.BackHandler(enabled = recommendModeActive) {
         recommendModeActive = false
         onModeChange(SearchMode.TITLE)
-        onSystemBack()
     }
 
     Box(

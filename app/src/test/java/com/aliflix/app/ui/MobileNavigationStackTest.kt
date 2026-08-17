@@ -212,4 +212,48 @@ class MobileNavigationStackTest {
             mobileDestinationSaveKey(popMobileDestinationStack(detailStack)),
         )
     }
+
+    @Test
+    fun deepNavigationUnwindsStepByStepToOriginalTab() {
+        val rootTab = MobileDestination.Root(AppTab.SEARCH)
+        val movie1 = Media(id = 10, type = MediaType.MOVIE, title = "Interstellar")
+        val movie2 = Media(id = 20, type = MediaType.MOVIE, title = "Inception")
+        val genre = MobileDestination.Genre("Sci-Fi", MediaType.MOVIE, firstVisibleItemIndex = 14, firstVisibleItemScrollOffset = 50)
+        val creator = MobileDestination.Person(MediaCreator(525, "Christopher Nolan", "/nolan.jpg"), firstVisibleItemIndex = 8, firstVisibleItemScrollOffset = 20)
+
+        // Simulate navigation: Discover -> Movie1 -> Genre -> Movie2 -> Creator
+        var stack = listOf<MobileDestination>(
+            rootTab,
+            MobileDestination.Detail(movie1),
+            genre,
+            MobileDestination.Detail(movie2),
+            creator,
+        )
+
+        // 1. Back from Creator -> Movie2
+        stack = popMobileDestinationStack(stack)
+        assertEquals(MobileDestination.Detail(movie2), stack.last())
+        assertEquals(4, stack.size)
+
+        // 2. Back from Movie2 -> Genre (with scroll position preserved)
+        stack = popMobileDestinationStack(stack)
+        val currentGenre = stack.last() as MobileDestination.Genre
+        assertEquals("Sci-Fi", currentGenre.name)
+        assertEquals(14, currentGenre.firstVisibleItemIndex)
+        assertEquals(50, currentGenre.firstVisibleItemScrollOffset)
+        assertEquals(3, stack.size)
+
+        // 3. Back from Genre -> Movie1
+        stack = popMobileDestinationStack(stack)
+        assertEquals(MobileDestination.Detail(movie1), stack.last())
+        assertEquals(2, stack.size)
+
+        // 4. Back from Movie1 -> Discover Root
+        stack = popMobileDestinationStack(stack)
+        assertEquals(rootTab, stack.last())
+        assertEquals(1, stack.size)
+
+        // At root Discover, system back returns to Home
+        assertTrue(shouldReturnHomeOnSystemBack(stack))
+    }
 }
