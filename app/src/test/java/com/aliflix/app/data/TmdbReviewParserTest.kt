@@ -55,4 +55,37 @@ class TmdbReviewParserTest {
         assertEquals(1, parsed.reviews.size)
         assertEquals("Andre Gonzales", parsed.reviews[0].displayName)
     }
+
+    @Test
+    fun parsesSingleFullReviewPage() {
+        val client = CatalogClient(pageLoader = { "" })
+        val singleReviewHtml = """
+            <div class="flex-1 min-w-0">
+                <div class="content">
+                    <p>Paragraph 1: In a television landscape where medical dramas are rare.</p>
+                    <p>Paragraph 2: Noah Wyle draws on his many years of experience.</p>
+                </div>
+            </div>
+        """.trimIndent()
+
+        val fullText = client.parseSingleReview(singleReviewHtml)
+        assertNotNull(fullText)
+        assertTrue(fullText!!.contains("Paragraph 1"))
+        assertTrue(fullText.contains("Paragraph 2"))
+    }
+
+    @Test
+    fun stripsReadTheRestFromTeaser() {
+        val client = CatalogClient(pageLoader = { "" })
+        val teaserHtml = """
+            <div class="card">
+                <div class="info"><h3><a href="/review/12345">A review by Author</a></h3></div>
+                <div class="teaser"><p>Great movie with amazing moments... read the rest.</p></div>
+            </div>
+        """.trimIndent()
+
+        val reviews = client.parseReviews(teaserHtml)
+        assertEquals(1, reviews.size)
+        assertEquals("Great movie with amazing moments", reviews[0].content)
+    }
 }

@@ -2847,15 +2847,15 @@ private fun MobileUpdatePanel(
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
             )
-            Text(
-                text = state.message.ifBlank {
-                    "Check the Aliflix GitHub release for a newer version."
-                },
-                color = AliflixContentSecondary,
-                fontSize = 11.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (state.message.isNotBlank()) {
+                Text(
+                    text = state.message,
+                    color = AliflixContentSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         when {
             state.busy -> CircularProgressIndicator(
@@ -4884,6 +4884,8 @@ private fun DetailReviewCard(
             .replace(Regex("\\*([^*]+)\\*"), "$1")
             .replace(Regex("!\\[[^\\]]*\\]\\([^)]*\\)"), "")
             .replace(Regex("\\[([^\\]]+)\\]\\([^)]*\\)"), "$1")
+            .replace(Regex("(?i)\\.{2,}\\s*read the rest\\.?"), "")
+            .replace(Regex("(?i)read the rest\\.?"), "")
             .replace("&quot;", "\"")
             .replace("&#39;", "'")
             .replace("&apos;", "'")

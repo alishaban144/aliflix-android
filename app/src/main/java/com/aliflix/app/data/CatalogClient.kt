@@ -4033,8 +4033,20 @@ class CatalogClient(
                 val reviewsHtml = pageLoader(
                     "$TMDB_SITE_URL/${item.type.routeName}/${item.id}/reviews?language=en-US",
                 )
-                val fullReviews = parseReviews(reviewsHtml)
-                if (fullReviews.isNotEmpty()) {
+                val baseReviews = parseReviews(reviewsHtml).ifEmpty { metadata.reviews }
+                if (baseReviews.isNotEmpty()) {
+                    val fullReviews = baseReviews.map { review ->
+                        async {
+                            val fullHtml = suspendOrNull { pageLoader("$TMDB_SITE_URL/review/${review.id}") }
+                            val fullText = fullHtml?.let { parseSingleReview(it) }
+                            if (!fullText.isNullOrBlank()) {
+                                review.copy(content = fullText)
+                            } else {
+                                review
+                            }
+                        }
+                    }.awaitAll()
+
                     val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
                     val enriched = current.copy(
                         reviews = (fullReviews + current.reviews).distinctBy { it.id },
@@ -4445,10 +4457,14 @@ class CatalogClient(
                 ratingNumberPattern.find(text)?.groupValues?.getOrNull(1)?.toDoubleOrNull()?.let { it / 10.0 }
             }
 
-            val content = card?.selectFirst(".teaser, .review_container")?.text()?.trim()
+            val rawContent = card?.selectFirst(".teaser, .review_container")?.text()?.trim()
                 ?.ifBlank { null }
                 ?: card?.select("p")?.map { it.text().trim() }?.filter { it.isNotBlank() }?.joinToString("\n\n")
                 ?: ""
+            val content = rawContent
+                .replace(Regex("(?i)\\.{2,}\\s*read the rest\\.?"), "")
+                .replace(Regex("(?i)read the rest\\.?"), "")
+                .trim()
 
             if (content.isNotBlank()) {
                 result.add(
@@ -4465,6 +4481,16 @@ class CatalogClient(
             }
         }
         return result
+    }
+
+    internal fun parseSingleReview(html: String): String? {
+        val document = Jsoup.parse(html, TMDB_SITE_URL)
+        val contentContainer = document.selectFirst("div.flex-1 div.content, main div.content, div.review_container")
+        val paragraphs = contentContainer?.select("p")?.map { it.text().trim() }?.filter { it.isNotBlank() }
+        if (!paragraphs.isNullOrEmpty()) {
+            return paragraphs.joinToString("\n\n")
+        }
+        return contentContainer?.text()?.trim()?.takeIf { it.isNotBlank() }
     }
 
     internal fun parseSeasons(html: String, mediaId: Int): List<Season> {
