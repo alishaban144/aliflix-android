@@ -4,6 +4,7 @@ import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
+import com.aliflix.app.model.MediaReview
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
 import com.aliflix.app.model.Season
@@ -4027,8 +4028,28 @@ class CatalogClient(
             }
         }
 
+        val reviewsJob = async {
+            try {
+                val reviewsHtml = pageLoader(
+                    "$TMDB_SITE_URL/${item.type.routeName}/${item.id}/reviews?language=en-US",
+                )
+                val fullReviews = parseReviews(reviewsHtml)
+                if (fullReviews.isNotEmpty()) {
+                    val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
+                    val enriched = current.copy(
+                        reviews = (fullReviews + current.reviews).distinctBy { it.id },
+                    )
+                    catalogue = listOf(enriched) + catalogue.filterNot { it.key == enriched.key }
+                    onProgress(enriched, recommendations)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {}
+        }
+
         imdbJob.await()
         rtJob.await()
+        reviewsJob.await()
     }
 
     suspend fun seasons(item: Media): List<Season> {
@@ -4376,6 +4397,7 @@ class CatalogClient(
             ?: imdbTitleIdPattern.find(html)?.groupValues?.getOrNull(1)
             ?: fallback.imdbId
         val runtime = document.selectFirst(".runtime")?.text()?.trim().orEmpty().ifBlank { fallback.runtime }
+        val reviews = parseReviews(html).ifEmpty { fallback.reviews }
         return fallback.copy(
             title = title,
             overview = overview,
@@ -4387,7 +4409,62 @@ class CatalogClient(
             genres = genres,
             cast = cast,
             runtime = runtime,
+            reviews = reviews,
         )
+    }
+
+    internal fun parseReviews(html: String): List<MediaReview> {
+        val document = Jsoup.parse(html, TMDB_SITE_URL)
+        val reviewIdPattern = Regex("/review/([a-f0-9]+)")
+        val ratingNumberPattern = Regex("(\\d{1,3})")
+        val reviewLinks = document.select("a[href*=\"/review/\"]")
+        val result = mutableListOf<MediaReview>()
+        val seenIds = mutableSetOf<String>()
+
+        for (link in reviewLinks) {
+            val href = link.attr("href")
+            val id = reviewIdPattern.find(href)?.groupValues?.getOrNull(1) ?: continue
+            if (!seenIds.add(id)) continue
+
+            val card = link.parents().firstOrNull { it.hasClass("card") }
+                ?: link.parents().firstOrNull { it.hasClass("content") }
+                ?: link.parent()
+
+            val author = card?.selectFirst("h3 a")?.text()?.removePrefix("A review by")?.trim()
+                ?.ifBlank { null }
+                ?: card?.selectFirst("h5 a")?.text()?.trim()?.ifBlank { null }
+                ?: "Anonymous"
+
+            val date = card?.selectFirst("h5")?.text()?.let { h5Text ->
+                Regex("on\\s+([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})").find(h5Text)?.groupValues?.getOrNull(1)
+            }
+
+            val avatarPath = card?.selectFirst("div.avatar img, img.avatar, img[src*=gravatar], img[src*=themoviedb]")?.attr("src")?.takeIf { it.isNotBlank() }
+
+            val rating = card?.selectFirst(".rating_border.rating, .rating")?.text()?.let { text ->
+                ratingNumberPattern.find(text)?.groupValues?.getOrNull(1)?.toDoubleOrNull()?.let { it / 10.0 }
+            }
+
+            val content = card?.selectFirst(".teaser, .review_container")?.text()?.trim()
+                ?.ifBlank { null }
+                ?: card?.select("p")?.map { it.text().trim() }?.filter { it.isNotBlank() }?.joinToString("\n\n")
+                ?: ""
+
+            if (content.isNotBlank()) {
+                result.add(
+                    MediaReview(
+                        id = id,
+                        author = author,
+                        avatarPath = avatarPath,
+                        rating = rating,
+                        content = content,
+                        createdAt = date,
+                        url = if (href.startsWith("http")) href else "$TMDB_SITE_URL$href",
+                    )
+                )
+            }
+        }
+        return result
     }
 
     internal fun parseSeasons(html: String, mediaId: Int): List<Season> {

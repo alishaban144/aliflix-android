@@ -4884,6 +4884,13 @@ private fun DetailReviewCard(
             .replace(Regex("\\*([^*]+)\\*"), "$1")
             .replace(Regex("!\\[[^\\]]*\\]\\([^)]*\\)"), "")
             .replace(Regex("\\[([^\\]]+)\\]\\([^)]*\\)"), "$1")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&nbsp;", " ")
             .trim()
     }
 
