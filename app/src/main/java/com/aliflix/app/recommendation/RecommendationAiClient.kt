@@ -276,12 +276,39 @@ data class V3HomeFeed(
     }
 }
 
+data class V3Review(
+    val id: String,
+    val author: String,
+    val authorName: String?,
+    val authorUsername: String?,
+    val avatarPath: String?,
+    val rating: Double?,
+    val content: String,
+    val createdAt: String?,
+    val url: String?,
+) {
+    companion object {
+        fun fromJson(json: JSONObject) = V3Review(
+            id = json.getString("id"),
+            author = json.optString("author", "Anonymous"),
+            authorName = json.nullableString("authorName"),
+            authorUsername = json.nullableString("authorUsername"),
+            avatarPath = json.nullableString("avatarPath"),
+            rating = json.optDouble("rating").takeIf { json.has("rating") && !json.isNull("rating") && !it.isNaN() },
+            content = json.optString("content"),
+            createdAt = json.nullableString("createdAt"),
+            url = json.nullableString("url"),
+        )
+    }
+}
+
 data class V3TitleDetails(
     val media: V3CatalogMedia,
     val imdbId: String? = null,
     val status: String?,
     val creators: List<V3CatalogPerson>,
     val cast: List<V3CatalogPerson>,
+    val reviews: List<V3Review> = emptyList(),
 ) {
     companion object {
         fun fromJson(json: JSONObject) = V3TitleDetails(
@@ -290,6 +317,7 @@ data class V3TitleDetails(
             status = json.nullableString("status"),
             creators = json.optJSONArray("creators").toStringList { V3CatalogPerson.fromJson(it) },
             cast = json.optJSONArray("cast").toStringList { V3CatalogPerson.fromJson(it) },
+            reviews = json.optJSONArray("reviews").toStringList { V3Review.fromJson(it) },
         )
     }
 }

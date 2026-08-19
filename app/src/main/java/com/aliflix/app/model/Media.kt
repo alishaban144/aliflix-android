@@ -59,6 +59,7 @@ data class Media(
     val runtime: String = "",
     val omdbGenres: List<String> = emptyList(),
     val omdbFullPlot: String? = null,
+    val reviews: List<MediaReview> = emptyList(),
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?

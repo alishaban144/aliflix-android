@@ -4,6 +4,7 @@ import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaCreator
+import com.aliflix.app.model.MediaReview
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.V3CatalogMedia
 import com.aliflix.app.recommendation.V3HomeFeed
@@ -57,6 +58,19 @@ internal fun V3TitleDetails.toStableMobileMedia(fallback: Media): Media {
             )
         }.ifEmpty { fallback.creators },
         cast = cast.map { it.name }.ifEmpty { fallback.cast },
+        reviews = reviews.map { review ->
+            MediaReview(
+                id = review.id,
+                author = review.author,
+                authorName = review.authorName,
+                authorUsername = review.authorUsername,
+                avatarPath = review.avatarPath,
+                rating = review.rating,
+                content = review.content,
+                createdAt = review.createdAt,
+                url = review.url,
+            )
+        }.ifEmpty { fallback.reviews },
     )
 }
 
@@ -84,6 +98,7 @@ internal fun Media.mergeStableMobileDetailUpdate(update: Media): Media {
         originalLanguage = originalLanguage.ifBlank { update.originalLanguage },
         creators = creators.ifEmpty { update.creators },
         runtime = runtime.ifBlank { update.runtime },
+        reviews = update.reviews.ifEmpty { reviews },
     )
 }
 

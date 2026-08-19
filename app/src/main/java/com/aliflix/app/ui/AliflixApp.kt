@@ -181,6 +181,7 @@ import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaCreator
+import com.aliflix.app.model.MediaReview
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
 import com.aliflix.app.model.PlaybackProviderId
@@ -4601,6 +4602,36 @@ private fun DetailScreen(
                         }
                     }
                 }
+                if (item.reviews.isNotEmpty()) {
+                    DetailInfoSection(
+                        title = "Reviews",
+                        badge = {
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(AliflixSurfaceRaised)
+                                    .border(1.dp, AliflixBorderStrong, CircleShape)
+                                    .padding(horizontal = 9.dp, vertical = 3.dp),
+                            ) {
+                                Text(
+                                    text = "${item.reviews.size}",
+                                    color = AliflixAccentSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        },
+                    ) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(end = 4.dp),
+                        ) {
+                            items(item.reviews, key = { it.id }) { review ->
+                                DetailReviewCard(review = review)
+                            }
+                        }
+                    }
+                }
                 if (state.error != null) {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
@@ -4841,8 +4872,164 @@ private fun DetailCreatorCard(
 }
 
 @Composable
+private fun DetailReviewCard(
+    review: MediaReview,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by rememberSaveable(review.id) { mutableStateOf(false) }
+    val cleanContent = remember(review.content) {
+        review.content
+            .replace(Regex("(?m)^#+\\s*"), "")
+            .replace(Regex("\\*\\*([^*]+)\\*\\*"), "$1")
+            .replace(Regex("\\*([^*]+)\\*"), "$1")
+            .replace(Regex("!\\[[^\\]]*\\]\\([^)]*\\)"), "")
+            .replace(Regex("\\[([^\\]]+)\\]\\([^)]*\\)"), "$1")
+            .trim()
+    }
+
+    Surface(
+        modifier = modifier
+            .widthIn(min = 280.dp, max = 340.dp)
+            .animateContentSize(),
+        shape = RoundedCornerShape(20.dp),
+        color = AliflixSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    AliflixAccentSecondary.copy(alpha = 0.25f),
+                                    AliflixSurfacePressed,
+                                ),
+                            ),
+                        )
+                        .border(1.dp, AliflixBorderStrong, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (review.avatarUrl != null) {
+                        AsyncImage(
+                            model = review.avatarUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Text(
+                            text = review.displayName.take(1).uppercase(Locale.ROOT),
+                            color = AliflixAccentSecondary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Black,
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = review.displayName,
+                        color = AliflixContentPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    review.displayDate?.let { date ->
+                        Text(
+                            text = date,
+                            color = AliflixContentTertiary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                        )
+                    }
+                }
+
+                if (review.rating != null && review.rating > 0.0) {
+                    val goldColor = Color(0xFFF5C518)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(goldColor.copy(alpha = 0.15f))
+                            .border(1.dp, goldColor.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 7.dp, vertical = 4.dp),
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "★",
+                                color = goldColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                            )
+                            Text(
+                                text = if (review.rating % 1.0 == 0.0) {
+                                    "${review.rating.toInt()}/10"
+                                } else {
+                                    String.format(Locale.US, "%.1f", review.rating)
+                                },
+                                color = goldColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Text(
+                text = cleanContent,
+                color = AliflixContentSecondary,
+                fontSize = 13.sp,
+                lineHeight = 20.sp,
+                maxLines = if (expanded) Int.MAX_VALUE else 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            if (cleanContent.length > 160) {
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 0.dp),
+                ) {
+                    Text(
+                        text = if (expanded) "Show less" else "Read full review",
+                        color = AliflixAccentSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        contentDescription = null,
+                        tint = AliflixAccentSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun DetailInfoSection(
     title: String,
+    badge: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -4867,6 +5054,7 @@ private fun DetailInfoSection(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Black,
             )
+            badge?.invoke()
         }
         Surface(
             modifier = Modifier.fillMaxWidth(),

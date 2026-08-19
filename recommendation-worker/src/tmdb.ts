@@ -3,6 +3,22 @@ import { MediaType, RecommendationEnv, ServiceError, TmdbGenre, TmdbKeyword, Tmd
 const BASE_URL = 'https://api.themoviedb.org/3';
 
 export interface TmdbPage<T = TmdbListItem> { page: number; results: T[]; total_pages: number; total_results: number }
+
+export interface TmdbReviewItem {
+  id: string;
+  author: string;
+  author_details?: {
+    name?: string;
+    username?: string;
+    avatar_path?: string | null;
+    rating?: number | null;
+  };
+  content: string;
+  created_at?: string;
+  updated_at?: string;
+  url?: string;
+}
+
 export interface TmdbDetails extends TmdbListItem {
   genres?: TmdbGenre[]; runtime?: number | null; episode_run_time?: number[]; keywords?: { keywords?: TmdbKeyword[]; results?: TmdbKeyword[] };
   credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }>; crew?: Array<{ id: number; name: string; job?: string; profile_path?: string | null }> };
@@ -10,6 +26,7 @@ export interface TmdbDetails extends TmdbListItem {
   status?: string; created_by?: Array<{ id: number; name: string; profile_path?: string | null }>;
   imdb_id?: string | null;
   external_ids?: { imdb_id?: string | null; tvdb_id?: number | null };
+  reviews?: { results?: TmdbReviewItem[] };
 }
 
 export interface TmdbCombinedCredits {
@@ -79,7 +96,7 @@ export class TmdbClient {
   recommendations(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/recommendations`, { page }); }
   similar(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/similar`, { page }); }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
-    return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits,external_ids' : 'keywords,credits,external_ids' });
+    return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits,external_ids,reviews' : 'keywords,credits,external_ids,reviews' });
   }
   personCombinedCredits(id: number): Promise<TmdbCombinedCredits> {
     return this.request(`/person/${id}/combined_credits`, { language: 'en-US' });

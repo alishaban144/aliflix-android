@@ -24,11 +24,24 @@ export interface CatalogMediaSummary {
   tmdbVoteCount?: number;
 }
 
+export interface CatalogReview {
+  id: string;
+  author: string;
+  authorName?: string;
+  authorUsername?: string;
+  avatarPath?: string;
+  rating?: number;
+  content: string;
+  createdAt?: string;
+  url?: string;
+}
+
 export interface CatalogTitleDetails extends CatalogMediaSummary {
   imdbId?: string;
   status?: string;
   creators: CatalogPerson[];
   cast: CatalogPerson[];
+  reviews: CatalogReview[];
 }
 
 export interface CatalogHomeRail {
@@ -144,6 +157,20 @@ function detailsSummary(details: TmdbDetails, mediaType: MediaType): CatalogTitl
       .filter((person, index, values) => values.findIndex(other => other.id === person.id) === index)
       .slice(0, 12)
       .map(person => ({ tmdbId: person.id, name: person.name })),
+    reviews: (details.reviews?.results || [])
+      .filter(review => Boolean(present(review.id) && present(review.content)))
+      .slice(0, 10)
+      .map(review => ({
+        id: review.id,
+        author: review.author || review.author_details?.name || review.author_details?.username || 'Anonymous',
+        authorName: present(review.author_details?.name),
+        authorUsername: present(review.author_details?.username),
+        avatarPath: present(review.author_details?.avatar_path),
+        rating: typeof review.author_details?.rating === 'number' ? review.author_details.rating : undefined,
+        content: review.content.trim(),
+        createdAt: present(review.created_at),
+        url: present(review.url),
+      })),
   };
 }
 

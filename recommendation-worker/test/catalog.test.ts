@@ -41,6 +41,17 @@ describe('TMDB-backed mobile catalogue routes', () => {
         created_by: [{ id: 66633, name: 'Vince Gilligan', profile_path: '/vince.jpg' }],
         aggregate_credits: { cast: [{ id: 17419, name: 'Bryan Cranston' }] },
         external_ids: { imdb_id: 'tt0903747' },
+        reviews: {
+          results: [
+            {
+              id: 'rev-1',
+              author: 'Walter',
+              author_details: { name: 'Walter White', username: 'heisenberg', avatar_path: '/heisenberg.jpg', rating: 10 },
+              content: 'Masterpiece television.',
+              created_at: '2026-01-15T12:00:00.000Z',
+            },
+          ],
+        },
       });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -57,6 +68,15 @@ describe('TMDB-backed mobile catalogue routes', () => {
       originalLanguage: 'en',
       creators: [{ tmdbId: 66633, name: 'Vince Gilligan', profilePath: '/vince.jpg' }],
       cast: [{ tmdbId: 17419, name: 'Bryan Cranston' }],
+      reviews: [{
+        id: 'rev-1',
+        author: 'Walter',
+        authorName: 'Walter White',
+        authorUsername: 'heisenberg',
+        avatarPath: '/heisenberg.jpg',
+        rating: 10,
+        content: 'Masterpiece television.',
+      }],
     });
   });
 

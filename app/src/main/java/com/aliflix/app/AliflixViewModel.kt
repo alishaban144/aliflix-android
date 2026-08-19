@@ -81,6 +81,19 @@ private fun V3TitleDetails.toMedia(fallback: Media): Media = media.toMedia(fallb
         )
     },
     cast = cast.map { it.name },
+    reviews = reviews.map { review ->
+        com.aliflix.app.model.MediaReview(
+            id = review.id,
+            author = review.author,
+            authorName = review.authorName,
+            authorUsername = review.authorUsername,
+            avatarPath = review.avatarPath,
+            rating = review.rating,
+            content = review.content,
+            createdAt = review.createdAt,
+            url = review.url,
+        )
+    }.ifEmpty { fallback.reviews },
 )
 
 enum class SearchPhase {
