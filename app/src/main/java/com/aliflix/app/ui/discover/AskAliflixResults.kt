@@ -374,23 +374,19 @@ private fun ResultCard(
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (item.media.rating > 0.0) {
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(Color(0xFFFFC857).copy(alpha = 0.12f))
-                                .padding(horizontal = 7.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Rounded.Star, contentDescription = null, tint = Color(0xFFFFC857), modifier = Modifier.size(13.dp))
-                            Spacer(Modifier.width(3.dp))
-                            Text("TMDB ${"%.1f".format(item.media.rating)}", color = AliflixContentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Spacer(Modifier.width(6.dp))
+                if (item.media.rating > 0.0) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(Color(0xFFFFC857).copy(alpha = 0.12f))
+                            .padding(horizontal = 7.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.Star, contentDescription = null, tint = Color(0xFFFFC857), modifier = Modifier.size(13.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text("TMDB ${"%.1f".format(item.media.rating)}", color = AliflixContentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
-                    MatchLevelPill(item.explanation)
                 }
             }
         }
@@ -476,22 +472,6 @@ private fun resultCountLabel(state: AskAliflixUiState.Results): String =
         "${state.items.size} found"
     }
 
-@Composable
-private fun MatchLevelPill(level: String) {
-    val label = level.takeIf { it in setOf("Exceptional", "Strong", "Relevant", "Broader but still relevant") }
-        ?: "Relevant"
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(9.dp))
-            .background(AliflixAccentPrimary.copy(alpha = 0.16f))
-            .padding(horizontal = 7.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(5.dp).clip(CircleShape).background(AliflixAccentSecondary))
-        Spacer(Modifier.width(5.dp))
-        Text(label, color = AliflixAccentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Black, maxLines = 1)
-    }
-}
 
 @Composable
 private fun AskLoadingState() {
