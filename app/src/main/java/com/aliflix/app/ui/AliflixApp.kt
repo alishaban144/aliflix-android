@@ -18,6 +18,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.spring
@@ -4622,14 +4623,7 @@ private fun DetailScreen(
                             }
                         },
                     ) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            contentPadding = PaddingValues(end = 4.dp),
-                        ) {
-                            items(item.reviews, key = { it.id }) { review ->
-                                DetailReviewCard(review = review)
-                            }
-                        }
+                        DetailReviewsCarousel(reviews = item.reviews)
                     }
                 }
                 if (state.error != null) {
@@ -4872,6 +4866,72 @@ private fun DetailCreatorCard(
 }
 
 @Composable
+private fun DetailReviewsCarousel(
+    reviews: List<MediaReview>,
+    modifier: Modifier = Modifier,
+) {
+    if (reviews.isEmpty()) return
+
+    if (reviews.size == 1) {
+        DetailReviewCard(
+            review = reviews.first(),
+            modifier = modifier.fillMaxWidth(),
+        )
+        return
+    }
+
+    val pagerState = rememberPagerState(pageCount = { reviews.size })
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        HorizontalPager(
+            state = pagerState,
+            pageSpacing = 12.dp,
+            contentPadding = PaddingValues(horizontal = 0.dp),
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+        ) { page ->
+            DetailReviewCard(
+                review = reviews[page],
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            reviews.indices.forEach { index ->
+                val isSelected = pagerState.currentPage == index
+                val dotWidth by animateDpAsState(
+                    targetValue = if (isSelected) 18.dp else 6.dp,
+                    animationSpec = tween(200),
+                    label = "review-dot-width",
+                )
+                val dotColor by animateColorAsState(
+                    targetValue = if (isSelected) AliflixAccentSecondary else AliflixBorderStrong,
+                    animationSpec = tween(200),
+                    label = "review-dot-color",
+                )
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 3.dp)
+                        .height(6.dp)
+                        .width(dotWidth)
+                        .clip(CircleShape)
+                        .background(dotColor),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun DetailReviewCard(
     review: MediaReview,
     modifier: Modifier = Modifier,
@@ -4897,9 +4957,7 @@ private fun DetailReviewCard(
     }
 
     Surface(
-        modifier = modifier
-            .widthIn(min = 280.dp, max = 340.dp)
-            .animateContentSize(),
+        modifier = modifier.animateContentSize(),
         shape = RoundedCornerShape(20.dp),
         color = AliflixSurface,
         border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
@@ -5003,9 +5061,9 @@ private fun DetailReviewCard(
 
             Text(
                 text = cleanContent,
+                style = MaterialTheme.typography.bodyLarge,
+                lineHeight = 24.sp,
                 color = AliflixContentSecondary,
-                fontSize = 13.sp,
-                lineHeight = 20.sp,
                 maxLines = if (expanded) Int.MAX_VALUE else 4,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -5019,7 +5077,6 @@ private fun DetailReviewCard(
                     Text(
                         text = if (expanded) "Show less" else "Read full review",
                         color = AliflixAccentSecondary,
-                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                     )
                     Spacer(Modifier.width(4.dp))
@@ -5041,7 +5098,10 @@ private fun DetailInfoSection(
     badge: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(
+        modifier = Modifier.animateContentSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(9.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -5066,7 +5126,9 @@ private fun DetailInfoSection(
             badge?.invoke()
         }
         Surface(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize(),
             shape = RoundedCornerShape(24.dp),
             color = AliflixSurfaceSecondary,
             border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle),
