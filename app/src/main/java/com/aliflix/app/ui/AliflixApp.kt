@@ -4819,7 +4819,7 @@ private fun DetailCreatorCard(
             }
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+                verticalArrangement = Arrangement.Center,
             ) {
                 Text(
                     text = creator.name,
@@ -4828,12 +4828,6 @@ private fun DetailCreatorCard(
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = "View exact filmography",
-                    color = AliflixContentTertiary,
-                    fontSize = 10.sp,
-                    maxLines = 1,
                 )
             }
             Icon(
