@@ -1,4 +1,4 @@
-import { embedForSearch, interpretQuery } from './gemini';
+import { embedForSearch, fallbackIntentFromQuery, interpretQuery } from './gemini';
 import { buildKeywordExpressions, cosineSimilarity, mergeFilters, normalize, rankCandidates } from './ranking';
 import { ParsedRecommendationRequest } from './schemas';
 import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
@@ -111,7 +111,13 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
   const queryToInterpret = (request.previousQuery && request.refinementQuery)
     ? `${request.previousQuery} [Refinement adjustment: ${request.refinementQuery}]`
     : (request.query || request.refinementQuery || '');
-  const intent = await interpret(env, queryToInterpret, request.mediaType);
+  let intent: InterpretedIntent;
+  try {
+    intent = await interpret(env, queryToInterpret, request.mediaType);
+  } catch (error) {
+    console.warn('Gemini interpretation error, applying fallback keyword intent', error instanceof Error ? error.message : error);
+    intent = fallbackIntentFromQuery(queryToInterpret);
+  }
   const filters = mergeFilters(request.filters, intent.hardFilters);
   const effectiveIntent: InterpretedIntent = { ...intent, hardFilters: filters };
 

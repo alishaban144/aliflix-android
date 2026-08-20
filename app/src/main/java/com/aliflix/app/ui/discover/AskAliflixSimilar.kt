@@ -313,19 +313,11 @@ private fun SimilarSuggestion(
 @Composable
 private fun SimilarHint() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                modifier = Modifier.size(50.dp).clip(CircleShape).background(AliflixSurfaceElevated),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Rounded.Search, contentDescription = null, tint = AliflixAccentSecondary)
-            }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "Search a movie or series to start",
-                color = AliflixContentSecondary,
-                fontSize = 13.sp,
-            )
+        Box(
+            modifier = Modifier.size(50.dp).clip(CircleShape).background(AliflixSurfaceElevated),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Rounded.Search, contentDescription = null, tint = AliflixAccentSecondary)
         }
     }
 }

@@ -11,7 +11,7 @@ async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function fallbackIntentFromQuery(query: string): InterpretedIntent {
+export function fallbackIntentFromQuery(query: string): InterpretedIntent {
   const words = query
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -29,7 +29,7 @@ function fallbackIntentFromQuery(query: string): InterpretedIntent {
     certifications: [],
     genreHints: [],
     toneAndMood: [],
-    broadSearchPhrases: [query.slice(0, 60).trim()],
+    broadSearchPhrases: [query.slice(0, 60).trim()].filter(Boolean),
   };
 }
 
@@ -92,31 +92,25 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
     };
   }
 
-  const primaryModel = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
-  const candidateModels = [primaryModel, 'gemini-2.5-flash', 'gemini-2.0-flash']
-    .filter((m, i, arr) => arr.indexOf(m) === i);
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
 
-  let lastError: Error | undefined;
+  try {
+    const data = await geminiFetch(env, model, 'generateContent', {
+      systemInstruction: { parts: [{ text: INTERPRET_V3_PROMPT }] },
+      contents: [{ role: 'user', parts: [{ text: JSON.stringify({ query, authoritativeMediaType: mediaType }) }] }],
+      generationConfig: { responseMimeType: 'application/json', responseJsonSchema: GeminiIntentJsonSchema },
+    }, 15_000);
 
-  for (const model of candidateModels) {
-    try {
-      const data = await geminiFetch(env, model, 'generateContent', {
-        systemInstruction: { parts: [{ text: INTERPRET_V3_PROMPT }] },
-        contents: [{ role: 'user', parts: [{ text: JSON.stringify({ query, authoritativeMediaType: mediaType }) }] }],
-        generationConfig: { responseMimeType: 'application/json', responseJsonSchema: GeminiIntentJsonSchema },
-      }, 12_000);
-
-      const text = data?.candidates?.[0]?.content?.parts?.find((part: any) => typeof part.text === 'string')?.text;
-      if (!text) continue;
+    const text = data?.candidates?.[0]?.content?.parts?.find((part: any) => typeof part.text === 'string')?.text;
+    if (text) {
       return GeminiIntentResponseSchema.parse(JSON.parse(text));
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[Gemini] model ${model} interpretation failed: ${lastError.message}`);
     }
+  } catch (err) {
+    console.warn(`[Gemini] Model ${model} interpretation error:`, err instanceof Error ? err.message : err);
   }
 
-  // Graceful fallback to keyword extraction if all Gemini attempts fail
-  console.warn(`[Gemini] All generation models failed; applying keyword fallback for query: "${query}"`);
+  // Gracefully fallback to keyword extraction so the user search never fails with 503 or timeout
+  console.warn(`[Gemini] Applying robust keyword fallback for query: "${query}"`);
   return fallbackIntentFromQuery(query);
 }
 
