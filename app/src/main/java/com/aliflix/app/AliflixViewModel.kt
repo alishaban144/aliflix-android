@@ -343,6 +343,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             describeText = "",
             similarQuery = "",
             selectedAnchor = null,
+            selectedAnchors = emptyList(),
             spec = com.aliflix.app.recommendation.CatalogDiscoverySpec(
                 mediaKind = if (previous.mediaType == com.aliflix.app.model.MediaType.TV) {
                     com.aliflix.app.recommendation.RecommendationMediaKind.SERIES

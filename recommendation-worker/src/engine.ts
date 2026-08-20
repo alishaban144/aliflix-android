@@ -409,7 +409,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     const docs = semanticCandidates.map(candidate => [candidate.title, candidate.originalTitle, candidate.overview, candidate.genres.join(', '), candidate.keywords.map(k => k.name).join(', ')].filter(Boolean).join('\n'));
     try {
       const vectors = await (dependencies.embed || embedForSearch)(env, queryText || request.anchor?.title || '', docs);
-      semanticCandidates.forEach((candidate, index) => { candidate.semanticScore = cosineSimilarity(vectors.query, vectors.documents[index]); });
+      semanticCandidates.forEach((candidate, index) => { candidate.semanticScore = cosineSimilarity(vectors.queryVector, vectors.candidateVectors[index]); });
       embeddingsAvailable = true;
     } catch (error) {
       console.warn('Gemini embeddings unavailable; using deterministic relevance ranking', error instanceof Error ? error.message : error);

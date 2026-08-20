@@ -7,49 +7,117 @@ const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
 };
 
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function fallbackIntentFromQuery(query: string): InterpretedIntent {
+  const words = query
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 3 && !['the', 'and', 'with', 'for', 'about', 'like', 'show', 'movie', 'series'].includes(w));
+  return {
+    hardFilters: { ...EMPTY_FILTERS },
+    requiredConceptGroups: words.length ? [{ label: 'query_terms', synonyms: words.slice(0, 5), weight: 1 }] : [],
+    softConcepts: [],
+    excludedConcepts: [],
+    excludedKeywords: [],
+    crewNames: [],
+    castNames: [],
+    studioNames: [],
+    certifications: [],
+    genreHints: [],
+    toneAndMood: [],
+    broadSearchPhrases: [query.slice(0, 60).trim()],
+  };
+}
+
 async function geminiFetch(env: RecommendationEnv, model: string, method: string, body: unknown, timeoutMs: number): Promise<any> {
   if (!env.GEMINI_API_KEY) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini is not configured', 503, true);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${API_BASE}/${encodeURIComponent(model)}:${method}?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal,
-    });
-    if (!response.ok) {
-      const retryable = response.status === 429 || response.status >= 500;
-      throw new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, retryable ? 503 : 502, retryable);
+
+  const maxRetries = 2;
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      await sleep(300 * Math.pow(2, attempt - 1) + Math.random() * 100);
     }
-    return await response.json();
-  } catch (error) {
-    if (error instanceof ServiceError) throw error;
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request timed out', 504, true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${API_BASE}/${encodeURIComponent(model)}:${method}?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const retryable = response.status === 429 || response.status >= 500;
+        if (retryable && attempt < maxRetries) {
+          lastError = new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, 503, true);
+          continue;
+        }
+        throw new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, retryable ? 503 : 502, retryable);
+      }
+      return await response.json();
+    } catch (error) {
+      if (error instanceof ServiceError && !error.retryable) throw error;
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        lastError = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request timed out', 504, true);
+      } else if (error instanceof Error) {
+        lastError = error;
+      } else {
+        lastError = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request failed', 503, true);
+      }
+      if (attempt >= maxRetries) {
+        if (lastError instanceof ServiceError) throw lastError;
+        throw new ServiceError('GEMINI_UNAVAILABLE', lastError.message || 'Gemini request failed', 503, true);
+      }
+    } finally {
+      clearTimeout(timeout);
     }
-    throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request failed', 503, true);
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw lastError || new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request failed', 503, true);
 }
 
 export async function interpretQuery(env: RecommendationEnv, query: string, mediaType: MediaType): Promise<InterpretedIntent> {
-  if (!query.trim()) return {
-    hardFilters: { ...EMPTY_FILTERS }, requiredConceptGroups: [], softConcepts: [], excludedConcepts: [],
-    excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
-    genreHints: [], toneAndMood: [], broadSearchPhrases: [],
-  };
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
-  const data = await geminiFetch(env, model, 'generateContent', {
-    systemInstruction: { parts: [{ text: INTERPRET_V3_PROMPT }] },
-    contents: [{ role: 'user', parts: [{ text: JSON.stringify({ query, authoritativeMediaType: mediaType }) }] }],
-    generationConfig: { responseMimeType: 'application/json', responseJsonSchema: GeminiIntentJsonSchema },
-  }, 12_000);
-  const text = data?.candidates?.[0]?.content?.parts?.find((part: any) => typeof part.text === 'string')?.text;
-  if (!text) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned no interpretation', 502, true);
-  try {
-    return GeminiIntentResponseSchema.parse(JSON.parse(text));
-  } catch {
-    throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned an invalid interpretation', 502, true);
+  if (!query.trim()) {
+    return {
+      hardFilters: { ...EMPTY_FILTERS }, requiredConceptGroups: [], softConcepts: [], excludedConcepts: [],
+      excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
+      genreHints: [], toneAndMood: [], broadSearchPhrases: [],
+    };
   }
+
+  const primaryModel = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
+  const candidateModels = [primaryModel, 'gemini-2.5-flash', 'gemini-2.0-flash']
+    .filter((m, i, arr) => arr.indexOf(m) === i);
+
+  let lastError: Error | undefined;
+
+  for (const model of candidateModels) {
+    try {
+      const data = await geminiFetch(env, model, 'generateContent', {
+        systemInstruction: { parts: [{ text: INTERPRET_V3_PROMPT }] },
+        contents: [{ role: 'user', parts: [{ text: JSON.stringify({ query, authoritativeMediaType: mediaType }) }] }],
+        generationConfig: { responseMimeType: 'application/json', responseJsonSchema: GeminiIntentJsonSchema },
+      }, 12_000);
+
+      const text = data?.candidates?.[0]?.content?.parts?.find((part: any) => typeof part.text === 'string')?.text;
+      if (!text) continue;
+      return GeminiIntentResponseSchema.parse(JSON.parse(text));
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.warn(`[Gemini] model ${model} interpretation failed: ${lastError.message}`);
+    }
+  }
+
+  // Graceful fallback to keyword extraction if all Gemini attempts fail
+  console.warn(`[Gemini] All generation models failed; applying keyword fallback for query: "${query}"`);
+  return fallbackIntentFromQuery(query);
 }
 
 async function embedBatch(env: RecommendationEnv, texts: string[], taskType: 'RETRIEVAL_QUERY' | 'RETRIEVAL_DOCUMENT'): Promise<number[][]> {
@@ -59,32 +127,30 @@ async function embedBatch(env: RecommendationEnv, texts: string[], taskType: 'RE
       model: `models/${model}`, taskType, outputDimensionality: 768,
       content: { parts: [{ text }] },
     })),
-  }, 15_000);
-  if (!Array.isArray(data?.embeddings) || data.embeddings.length !== texts.length) {
-    throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned invalid embeddings', 502, true);
+  }, 10_000);
+  const embeddings = data?.embeddings;
+  if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
+    throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned an incomplete embedding batch', 502, true);
   }
-  return data.embeddings.map((entry: any) => entry.values as number[]);
+  return embeddings.map((entry: any) => {
+    const values = entry?.values;
+    if (!Array.isArray(values) || !values.length) {
+      throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned an invalid embedding vector', 502, true);
+    }
+    return values.map(Number);
+  });
 }
 
-export async function embedForSearch(env: RecommendationEnv, query: string, documents: string[]): Promise<{ query: number[]; documents: number[][] }> {
-  const documentBatches: string[][] = [];
-  for (let index = 0; index < documents.length; index += 50) {
-    documentBatches.push(documents.slice(index, index + 50).map(text => `search document: ${text}`));
-  }
-  const embedDocuments = async (): Promise<number[][]> => {
-    const vectors: number[][] = [];
-    for (let index = 0; index < documentBatches.length; index += 3) {
-      const group = await Promise.all(
-        documentBatches.slice(index, index + 3)
-          .map(batch => embedBatch(env, batch, 'RETRIEVAL_DOCUMENT')),
-      );
-      group.forEach(batchVectors => vectors.push(...batchVectors));
-    }
-    return vectors;
-  };
-  const [[queryVector], vectors] = await Promise.all([
-    embedBatch(env, [`search query: ${query}`], 'RETRIEVAL_QUERY'),
-    embedDocuments(),
+export async function embedForSearch(
+  env: RecommendationEnv,
+  query: string,
+  candidateTexts: string[],
+): Promise<{ queryVector: number[]; candidateVectors: number[][] }> {
+  const [queryVectors, candidateVectors] = await Promise.all([
+    embedBatch(env, [query], 'RETRIEVAL_QUERY'),
+    embedBatch(env, candidateTexts, 'RETRIEVAL_DOCUMENT'),
   ]);
-  return { query: queryVector, documents: vectors };
+  const queryVector = queryVectors[0];
+  if (!queryVector) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini query embedding was empty', 502, true);
+  return { queryVector, candidateVectors };
 }

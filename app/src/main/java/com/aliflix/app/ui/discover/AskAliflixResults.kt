@@ -13,6 +13,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.rounded.AddCircle
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -630,60 +632,86 @@ private fun RefineBottomBar(
 ) {
     var refineText by remember { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
+    val canSubmit = refineText.isNotBlank() && !refining
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = AliflixSurfaceSecondary.copy(alpha = 0.95f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle),
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(26.dp),
+            color = AliflixSurfaceElevated.copy(alpha = 0.95f),
+            border = BorderStroke(1.dp, AliflixBorderSubtle),
+            shadowElevation = 4.dp,
         ) {
-            OutlinedTextField(
-                value = refineText,
-                onValueChange = { refineText = it },
-                placeholder = {
-                    Text("Refine results (e.g. post-2020, less violent)", color = AliflixContentTertiary, fontSize = 13.sp)
-                },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(16.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AliflixAccentPrimary,
-                    unfocusedBorderColor = AliflixBorderSubtle,
-                    focusedContainerColor = AliflixSurfaceElevated,
-                    unfocusedContainerColor = AliflixSurfaceElevated.copy(alpha = 0.8f),
-                    focusedTextColor = AliflixContentPrimary,
-                    unfocusedTextColor = AliflixContentPrimary,
-                    cursorColor = AliflixAccentSecondary,
-                ),
-            )
-            Spacer(Modifier.width(8.dp))
-            if (refining) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(28.dp),
-                    strokeWidth = 2.dp,
-                    color = AliflixAccentSecondary,
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 14.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Tune,
+                    contentDescription = null,
+                    tint = AliflixAccentSecondary,
+                    modifier = Modifier.size(18.dp),
                 )
-            } else {
-                IconButton(
-                    onClick = {
-                        if (refineText.isNotBlank()) {
-                            keyboard?.hide()
-                            onRefine(refineText.trim())
-                            refineText = ""
-                        }
+                Spacer(Modifier.width(10.dp))
+                OutlinedTextField(
+                    value = refineText,
+                    onValueChange = { refineText = it },
+                    placeholder = {
+                        Text(
+                            "Refine matches (e.g. post-2020, darker tone)...",
+                            color = AliflixContentTertiary,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     },
-                    enabled = refineText.isNotBlank(),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedTextColor = AliflixContentPrimary,
+                        unfocusedTextColor = AliflixContentPrimary,
+                        cursorColor = AliflixAccentSecondary,
+                    ),
+                )
+                Spacer(Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(if (canSubmit) AliflixAccentPrimary else AliflixSurfaceSecondary.copy(alpha = 0.6f))
+                        .clickable(enabled = canSubmit) {
+                            if (canSubmit) {
+                                keyboard?.hide()
+                                onRefine(refineText.trim())
+                                refineText = ""
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.ArrowForward,
-                        contentDescription = "Send refinement",
-                        tint = if (refineText.isNotBlank()) AliflixAccentPrimary else AliflixContentTertiary,
-                    )
+                    if (refining) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = AliflixAccentSecondary,
+                        )
+                    } else {
+                        Icon(
+                            Icons.AutoMirrored.Rounded.ArrowForward,
+                            contentDescription = "Send refinement",
+                            tint = if (canSubmit) Color.White else AliflixContentTertiary,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
                 }
             }
         }

@@ -170,7 +170,6 @@ fun AskAliflixSimilar(
                                 onClick = {
                                     if (!alreadySelected) {
                                         onAddAnchor(item)
-                                        onQueryChanged("")
                                         keyboard?.hide()
                                     }
                                 },
