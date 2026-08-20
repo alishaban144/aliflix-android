@@ -77,15 +77,13 @@ function evidence(candidate: Candidate, intent: InterpretedIntent) {
     return normalizedValue.length > 1 && ` ${haystack} `.includes(` ${normalizedValue} `);
   };
   const groupMatches = intent.requiredConceptGroups.map((group, index) =>
-    candidate.matchedConceptGroupIndexes.has(index) ||
-      group.synonyms.some(containsConcept),
+    group.synonyms.some(containsConcept) || candidate.matchedConceptGroupIndexes.has(index),
   );
-  const concept = groupMatches.length ? groupMatches.filter(Boolean).length / groupMatches.length : 0;
-  const groundedGroupCoverage = groupMatches.length
-    ? Math.min(1, candidate.matchedConceptGroupIndexes.size / groupMatches.length)
-    : 0;
+  const matchingGroupCount = groupMatches.filter(Boolean).length;
+  const concept = groupMatches.length ? matchingGroupCount / groupMatches.length : 0;
+  const groundedGroupCoverage = groupMatches.length ? matchingGroupCount / groupMatches.length : 0;
   const keyword = groupMatches.length
-    ? groundedGroupCoverage || concept * .4
+    ? (concept >= 0.5 ? concept : concept * 0.5)
     : candidate.matchedKeywordIds.size ? Math.min(1, candidate.matchedKeywordIds.size / 3) : 0;
   const genreHints = unique([...intent.genreHints, ...intent.hardFilters.includedGenres]);
   const genre = genreHints.length ? genreHints.filter(hint => candidate.genres.some(g => normalize(g) === normalize(hint))).length / genreHints.length : 0;
@@ -122,7 +120,11 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
     }
     if (!similar && !e.genreRequested) delete weights.genre;
     const denominator = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
-    candidate.finalScore = Object.entries(weights).reduce((sum, [name, weight]) => sum + (signals[name] ?? 0) * weight, 0) / denominator;
+    let rawScore = Object.entries(weights).reduce((sum, [name, weight]) => sum + (signals[name] ?? 0) * weight, 0) / denominator;
+    if (!similar && e.genreRequested && e.genre === 0) {
+      rawScore *= 0.65;
+    }
+    candidate.finalScore = rawScore;
     const requiredEvidence = intent.requiredConceptGroups.length
       ? Math.max(e.concept, e.keyword, (candidate.semanticScore ?? 0) * .85)
       : Math.max(e.genre, e.path, (candidate.semanticScore ?? 0) * .85);

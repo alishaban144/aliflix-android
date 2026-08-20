@@ -115,7 +115,7 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
 }
 
 async function embedBatch(env: RecommendationEnv, texts: string[], taskType: 'RETRIEVAL_QUERY' | 'RETRIEVAL_DOCUMENT'): Promise<number[][]> {
-  const model = env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
+  const model = env.GEMINI_EMBEDDING_MODEL || 'text-embedding-004';
   const data = await geminiFetch(env, model, 'batchEmbedContents', {
     requests: texts.map(text => ({
       model: `models/${model}`, taskType, outputDimensionality: 768,

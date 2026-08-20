@@ -105,6 +105,34 @@ function passesKnownFilters(candidate: Candidate, filters: RecommendationFilters
   return true;
 }
 
+function applyQueryDateConstraints(query: string, filters: RecommendationFilters): void {
+  const q = query.toLowerCase();
+  const afterMatch = /\b(?:after|post-?)\s*(19\d\d|20\d\d)\b/.exec(q);
+  if (afterMatch && filters.minimumYear === undefined) {
+    filters.minimumYear = Number(afterMatch[1]) + 1;
+  }
+  const fromMatch = /\b(?:since|from)\s*(19\d\d|20\d\d)\b/.exec(q);
+  if (fromMatch && filters.minimumYear === undefined) {
+    filters.minimumYear = Number(fromMatch[1]);
+  }
+  const beforeMatch = /\b(?:before|prior to|up to)\s*(19\d\d|20\d\d)\b/.exec(q);
+  if (beforeMatch && filters.maximumYear === undefined) {
+    filters.maximumYear = Number(beforeMatch[1]) - 1;
+  }
+  if (/\b(?:90s|1990s)\b/.test(q)) {
+    if (filters.minimumYear === undefined) filters.minimumYear = 1990;
+    if (filters.maximumYear === undefined) filters.maximumYear = 1999;
+  }
+  if (/\b(?:80s|1980s)\b/.test(q)) {
+    if (filters.minimumYear === undefined) filters.minimumYear = 1980;
+    if (filters.maximumYear === undefined) filters.maximumYear = 1989;
+  }
+  if (/\b(?:2000s)\b/.test(q)) {
+    if (filters.minimumYear === undefined) filters.minimumYear = 2000;
+    if (filters.maximumYear === undefined) filters.maximumYear = 2009;
+  }
+}
+
 export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
   const tmdb = dependencies.tmdb || new TmdbClient(env);
   const interpret = dependencies.interpret || interpretQuery;
@@ -118,6 +146,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     console.warn('Gemini interpretation error, applying fallback keyword intent', error instanceof Error ? error.message : error);
     intent = fallbackIntentFromQuery(queryToInterpret);
   }
+  applyQueryDateConstraints(queryToInterpret, intent.hardFilters);
   const filters = mergeFilters(request.filters, intent.hardFilters);
   const effectiveIntent: InterpretedIntent = { ...intent, hardFilters: filters };
 
@@ -258,13 +287,17 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       const ids: number[] = [];
       for (const phrase of group.synonyms) {
         if (keywordSearches++ >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= 18) break;
-        const response = await optionalTmdbCall(
-          `keyword:${phrase}`,
-          () => tmdb.searchKeyword(phrase),
-        );
-        if (!response) continue;
-        const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(phrase));
-        for (const keyword of [...exact, ...response.results].slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
+        const searchTerms = [phrase, phrase.replace(/-/g, ' '), phrase.replace(/\s+/g, '-')].filter((v, i, a) => a.indexOf(v) === i);
+        for (const term of searchTerms) {
+          if (ids.length >= 4) break;
+          const response = await optionalTmdbCall(
+            `keyword:${term}`,
+            () => tmdb.searchKeyword(term),
+          );
+          if (!response?.results?.length) continue;
+          const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(term));
+          for (const keyword of [...exact, ...response.results].slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
+        }
       }
       groupKeywordIds.push(ids.slice(0, 4));
     }
@@ -288,15 +321,12 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     const expressions = buildKeywordExpressions(groupKeywordIds, 8);
     for (const expression of expressions.slice(0, 4)) {
       const matched = expression.split(/[|,]/).map(Number).filter(Boolean);
-      const matchedGroups = groupKeywordIds.flatMap((ids, index) =>
-        ids.some(id => matched.includes(id)) ? [index] : [],
-      );
       await runDiscover(
         'discover:concept-intersection',
         { with_keywords: expression, ...negativeKeywordParam },
         expressions.length === 1 ? 24 : 10,
         matched,
-        matchedGroups,
+        [],
       );
     }
     for (const [groupIndex, ids] of groupKeywordIds.entries()) {

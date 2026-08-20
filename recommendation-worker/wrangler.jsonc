@@ -15,7 +15,7 @@
   },
   "vars": {
     "GEMINI_GENERATION_MODEL": "gemini-3.7-flash",
-    "GEMINI_EMBEDDING_MODEL": "gemini-embedding-2"
+    "GEMINI_EMBEDDING_MODEL": "text-embedding-004"
   },
   "durable_objects": {
     "bindings": [
