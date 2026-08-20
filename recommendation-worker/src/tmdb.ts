@@ -27,6 +27,9 @@ export interface TmdbDetails extends TmdbListItem {
   imdb_id?: string | null;
   external_ids?: { imdb_id?: string | null; tvdb_id?: number | null };
   reviews?: { results?: TmdbReviewItem[] };
+  belongs_to_collection?: { id: number; name: string; poster_path?: string | null; backdrop_path?: string | null } | null;
+  release_dates?: { results?: Array<{ iso_3166_1: string; release_dates?: Array<{ certification?: string }> }> };
+  content_ratings?: { results?: Array<{ iso_3166_1: string; rating?: string }> };
 }
 
 export interface TmdbCombinedCredits {
@@ -38,6 +41,7 @@ export interface TmdbPerson {
   id: number;
   name: string;
   profile_path?: string | null;
+  known_for_department?: string;
 }
 
 export type TmdbTrendingItem = TmdbListItem & { media_type?: MediaType | 'person' };
@@ -90,13 +94,15 @@ export class TmdbClient {
 
   searchTitle(type: MediaType, query: string, page = 1): Promise<TmdbPage> { return this.request(`/search/${type}`, { query, page, include_adult: false }); }
   searchKeyword(query: string): Promise<TmdbPage<TmdbKeyword>> { return this.request('/search/keyword', { query, page: 1 }); }
+  searchPerson(query: string): Promise<TmdbPage<TmdbPerson>> { return this.request('/search/person', { query, page: 1, include_adult: false }); }
+  searchCompany(query: string): Promise<TmdbPage<{ id: number; name: string }>> { return this.request('/search/company', { query, page: 1 }); }
   discover(type: MediaType, params: Record<string, string | number | boolean | undefined>): Promise<TmdbPage> {
     return this.request(`/discover/${type}`, { include_adult: false, ...params });
   }
   recommendations(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/recommendations`, { page }); }
   similar(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/similar`, { page }); }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
-    return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits,external_ids,reviews' : 'keywords,credits,external_ids,reviews' });
+    return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits,external_ids,reviews,content_ratings' : 'keywords,credits,external_ids,reviews,release_dates' });
   }
   personCombinedCredits(id: number): Promise<TmdbCombinedCredits> {
     return this.request(`/person/${id}/combined_credits`, { language: 'en-US' });

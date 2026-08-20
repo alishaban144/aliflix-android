@@ -145,13 +145,27 @@ data class V3RecommendationRequest(
     val query: String,
     val mediaType: String,
     val anchor: V3RecommendationAnchor? = null,
+    val anchors: List<V3RecommendationAnchor> = emptyList(),
+    val previousQuery: String? = null,
+    val refinementQuery: String? = null,
     val filters: V3RecommendationFilters = V3RecommendationFilters(),
     val pageSize: Int = 20,
     val cursor: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
-        put("requestId", requestId); put("mode", mode); put("query", query); put("mediaType", mediaType)
-        anchor?.let { put("anchor", it.toJson()) }; put("filters", filters.toJson()); put("pageSize", pageSize); cursor?.let { put("cursor", it) }
+        put("requestId", requestId)
+        put("mode", mode)
+        put("query", query)
+        put("mediaType", mediaType)
+        anchor?.let { put("anchor", it.toJson()) }
+        if (anchors.isNotEmpty()) {
+            put("anchors", JSONArray().apply { anchors.forEach { put(it.toJson()) } })
+        }
+        previousQuery?.let { put("previousQuery", it) }
+        refinementQuery?.let { put("refinementQuery", it) }
+        put("filters", filters.toJson())
+        put("pageSize", pageSize)
+        cursor?.let { put("cursor", it) }
     }
 }
 

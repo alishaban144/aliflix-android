@@ -1106,6 +1106,8 @@ fun AliflixApp(
                         onSetAskEditorState = viewModel::setAskEditorState,
                         onLoadMoreAskAliflix = viewModel::loadMoreAskAliflix,
                         onRetryAskAliflix = viewModel::retryAskAliflix,
+                        onRefineAskAliflix = viewModel::refineAskAliflix,
+                        onToggleHideWatchedAskAliflix = viewModel::toggleAskHideWatched,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
 

@@ -40,6 +40,23 @@ class AskAliflixWiringIntegrationTest {
     }
 
     @Test
+    fun multiAnchorBlendsTitlesAndSendsAnchorsArray() {
+        val anchor1 = Media(id = 157336, type = MediaType.MOVIE, title = "Interstellar")
+        val anchor2 = Media(id = 335984, type = MediaType.MOVIE, title = "Blade Runner 2049")
+        val json = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Similar(outputMediaType = MediaType.MOVIE, anchors = listOf(anchor1, anchor2)),
+            "00000000-0000-4000-8000-000000000005",
+        ).workerRequest.toJson()
+        assertEquals("similar", json.getString("mode"))
+        assertEquals("movie", json.getString("mediaType"))
+        val anchorsArray = json.getJSONArray("anchors")
+        assertEquals(2, anchorsArray.length())
+        assertEquals(157336, anchorsArray.getJSONObject(0).getInt("tmdbId"))
+        assertEquals(335984, anchorsArray.getJSONObject(1).getInt("tmdbId"))
+        assertTrue(json.getString("query").contains("blending Interstellar, Blade Runner 2049"))
+    }
+
+    @Test
     fun similarAnchorRequiresCanonicalTmdbIdentity() {
         assertThrows(IllegalArgumentException::class.java) {
             V3RecommendationAnchor(tmdbId = 0, title = "Breaking Bad", mediaType = "tv")

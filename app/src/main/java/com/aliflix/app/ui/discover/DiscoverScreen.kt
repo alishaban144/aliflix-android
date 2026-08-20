@@ -200,6 +200,8 @@ internal fun DiscoverScreen(
     onSetAskEditorState: (AskAliflixEditorState) -> Unit = {},
     onLoadMoreAskAliflix: () -> Unit = {},
     onRetryAskAliflix: () -> Unit = {},
+    onRefineAskAliflix: (String) -> Unit = {},
+    onToggleHideWatchedAskAliflix: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -299,8 +301,9 @@ internal fun DiscoverScreen(
                 var similarSuggestions by remember { mutableStateOf<List<Media>>(emptyList()) }
                 var similarSuggestionsLoading by remember { mutableStateOf(false) }
 
-                LaunchedEffect(askEditorState.similarQuery, askEditorState.mode) {
-                    if (askEditorState.mode == 1 && askEditorState.similarQuery.trim().length >= 2 && askEditorState.selectedAnchor == null) {
+                LaunchedEffect(askEditorState.similarQuery, askEditorState.mode, askEditorState.selectedAnchors.size) {
+                    val anchors = if (askEditorState.selectedAnchors.isNotEmpty()) askEditorState.selectedAnchors else listOfNotNull(askEditorState.selectedAnchor)
+                    if (askEditorState.mode == 1 && askEditorState.similarQuery.trim().length >= 2 && anchors.size < 4) {
                         delay(280)
                         similarSuggestionsLoading = true
                         similarSuggestions = try {
@@ -332,6 +335,8 @@ internal fun DiscoverScreen(
                     suggestionsLoading = similarSuggestionsLoading,
                     onLoadMore = onLoadMoreAskAliflix,
                     onRetry = onRetryAskAliflix,
+                    onRefineRequest = onRefineAskAliflix,
+                    onToggleHideWatched = onToggleHideWatchedAskAliflix,
                     onBack = {
                         recommendModeActive = false
                         onModeChange(SearchMode.TITLE)

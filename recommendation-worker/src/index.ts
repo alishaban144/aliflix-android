@@ -34,7 +34,17 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
   const raw = await request.text();
   if (raw.length > 131_072) return json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Payload exceeds 128 KiB', retryable: false } }, 413);
   const parsed = RecommendationRequestSchema.parse(JSON.parse(raw));
-  const fingerprintInput = { requestId: parsed.requestId, mode: parsed.mode, query: parsed.query, mediaType: parsed.mediaType, anchor: parsed.anchor, filters: parsed.filters };
+  const fingerprintInput = {
+    requestId: parsed.requestId,
+    mode: parsed.mode,
+    query: parsed.query,
+    mediaType: parsed.mediaType,
+    anchor: parsed.anchor,
+    anchors: parsed.anchors,
+    previousQuery: parsed.previousQuery,
+    refinementQuery: parsed.refinementQuery,
+    filters: parsed.filters,
+  };
   const fingerprint = await requestFingerprint(fingerprintInput);
   const sessionId = parsed.requestId;
   let offset = 0;

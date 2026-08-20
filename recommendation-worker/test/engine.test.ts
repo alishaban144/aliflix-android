@@ -205,4 +205,41 @@ describe('TMDB-only recommendation engine', () => {
     expect(new Set(results.map(item => `${item.mediaType}:${item.tmdbId}`)).size).toBe(360);
     expect(results.every(item => item.retrievalSources.some(source => source.startsWith('discover:')))).toBe(true);
   });
+
+  it('supports multi-anchor movie fusion in similar mode', async () => {
+    const multiAnchorTmdb = {
+      callsRemaining: 50,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      details: async (_type: string, id: number) => ({
+        id,
+        title: id === 101 ? 'Interstellar' : (id === 102 ? 'Blade Runner 2049' : 'Arrival'),
+        genres: [{ id: 878, name: 'Science Fiction' }],
+        keywords: { keywords: id === 101 ? [{ id: 9715, name: 'space' }] : [{ id: 4048, name: 'cyberpunk' }] },
+      }),
+      recommendations: async (_type: string, id: number) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 500, title: 'Arrival', overview: 'A philosophical sci-fi film', genre_ids: [878], vote_average: 8.0, vote_count: 5000 }],
+      }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+    };
+
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'similar',
+      anchors: [
+        { tmdbId: 101, title: 'Interstellar', mediaType: 'movie' },
+        { tmdbId: 102, title: 'Blade Runner 2049', mediaType: 'movie' },
+      ],
+    }, {
+      tmdb: multiAnchorTmdb as any,
+      interpret: async () => interpreted,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].tmdbId).toBe(500);
+    expect(results[0].title).toBe('Arrival');
+  });
 });

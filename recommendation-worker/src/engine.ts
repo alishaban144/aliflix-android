@@ -59,6 +59,7 @@ function mergeDetails(candidate: Candidate, details: TmdbDetails): void {
   candidate.runtimeMinutes = details.runtime ?? details.episode_run_time?.find(value => value > 0) ?? candidate.runtimeMinutes;
   candidate.tmdbRating = details.vote_average ?? candidate.tmdbRating;
   candidate.tmdbVoteCount = details.vote_count ?? candidate.tmdbVoteCount;
+  candidate.collectionId = details.belongs_to_collection?.id;
   candidate.keywords = details.keywords?.keywords || details.keywords?.results || candidate.keywords;
 }
 
@@ -107,7 +108,10 @@ function passesKnownFilters(candidate: Candidate, filters: RecommendationFilters
 export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
   const tmdb = dependencies.tmdb || new TmdbClient(env);
   const interpret = dependencies.interpret || interpretQuery;
-  const intent = await interpret(env, request.query, request.mediaType);
+  const queryToInterpret = (request.previousQuery && request.refinementQuery)
+    ? `${request.previousQuery} [Refinement adjustment: ${request.refinementQuery}]`
+    : (request.query || request.refinementQuery || '');
+  const intent = await interpret(env, queryToInterpret, request.mediaType);
   const filters = mergeFilters(request.filters, intent.hardFilters);
   const effectiveIntent: InterpretedIntent = { ...intent, hardFilters: filters };
 
@@ -185,37 +189,62 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
   };
 
-  let anchorDetails: TmdbDetails | undefined;
-  let anchorId: number | undefined;
-  if (request.mode === 'similar') {
-    const anchor = request.anchor!;
-    anchorId = anchor.tmdbId;
-    anchorDetails = await tmdb.details(anchor.mediaType, anchorId);
-    if (anchor.mediaType === request.mediaType) {
-      for (let page = 1; page <= 3 && tmdb.callsRemaining > 12; page++) {
-        const recommendations = await optionalTmdbCall(
-          `recommendations:page-${page}`,
-          () => tmdb.recommendations(anchor.mediaType, anchorId!, page),
-        );
-        if (recommendations) addPage(recommendations, `recommendations:page-${page}`, [], [], 1);
-        const similar = await optionalTmdbCall(
-          `similar:page-${page}`,
-          () => tmdb.similar(anchor.mediaType, anchorId!, page),
-        );
-        if (similar) addPage(similar, `similar:page-${page}`, [], [], .85);
+  const anchors = request.anchors?.length ? request.anchors : (request.anchor ? [request.anchor] : []);
+  if (request.mode === 'similar' && anchors.length) {
+    const allAnchorKeywordIds: number[][] = [];
+    const allAnchorGenreIds: number[] = [];
+    for (const anchor of anchors) {
+      const anchorId = anchor.tmdbId;
+      const anchorDetails = await optionalTmdbCall(
+        `details:${anchor.mediaType}:${anchorId}`,
+        () => tmdb.details(anchor.mediaType, anchorId),
+      );
+      if (anchor.mediaType === request.mediaType) {
+        const pagesToFetch = anchors.length > 1 ? 2 : 3;
+        for (let page = 1; page <= pagesToFetch && tmdb.callsRemaining > 12; page++) {
+          const recommendations = await optionalTmdbCall(
+            `recommendations:${anchorId}:page-${page}`,
+            () => tmdb.recommendations(anchor.mediaType, anchorId, page),
+          );
+          if (recommendations) addPage(recommendations, `recommendations:${anchorId}:page-${page}`, [], [], 1);
+          const similar = await optionalTmdbCall(
+            `similar:${anchorId}:page-${page}`,
+            () => tmdb.similar(anchor.mediaType, anchorId, page),
+          );
+          if (similar) addPage(similar, `similar:${anchorId}:page-${page}`, [], [], .85);
+        }
       }
+      if (anchorDetails) {
+        const anchorKeywords = anchorDetails.keywords?.keywords || anchorDetails.keywords?.results || [];
+        const kwIds = anchorKeywords.slice(0, 8).map(keyword => keyword.id);
+        if (kwIds.length) allAnchorKeywordIds.push(kwIds);
+        (anchorDetails.genres || []).forEach(g => { if (!allAnchorGenreIds.includes(g.id)) allAnchorGenreIds.push(g.id); });
+      }
+      if (anchor.mediaType === request.mediaType) candidates.delete(`${request.mediaType}:${anchorId}`);
     }
-    const anchorKeywords = anchorDetails.keywords?.keywords || anchorDetails.keywords?.results || [];
-    const keywordIds = anchorKeywords.slice(0, 8).map(keyword => keyword.id);
-    const genreIds = (anchorDetails.genres || []).map(genre => genre.id);
-    if (keywordIds.length) await runDiscover('discover:anchor-keywords', { with_keywords: keywordIds.join('|') }, 5, keywordIds);
-    if (genreIds.length) await runDiscover('discover:anchor-genres', { with_genres: genreIds.join('|') }, 4);
+
+    if (allAnchorKeywordIds.length) {
+      const expressions = buildKeywordExpressions(allAnchorKeywordIds, 8);
+      for (const expression of expressions.slice(0, 4)) {
+        await runDiscover('discover:anchor-fusion', { with_keywords: expression }, 6);
+      }
+      const flatKeywords = [...new Set(allAnchorKeywordIds.flat())];
+      if (flatKeywords.length) await runDiscover('discover:anchor-keywords', { with_keywords: flatKeywords.slice(0, 12).join('|') }, 5, flatKeywords);
+    }
+    if (allAnchorGenreIds.length) await runDiscover('discover:anchor-genres', { with_genres: allAnchorGenreIds.join('|') }, 4);
+
+    for (const anchor of anchors) {
+      if (anchor.mediaType === request.mediaType) candidates.delete(`${request.mediaType}:${anchor.tmdbId}`);
+    }
+
     for (const candidate of candidates.values()) {
       const candidateGenres = new Set(candidate.genreIds);
-      const genreOverlap = genreIds.length ? genreIds.filter(id => candidateGenres.has(id)).length / genreIds.length : 0;
+      const genreOverlap = allAnchorGenreIds.length ? allAnchorGenreIds.filter(id => candidateGenres.has(id)).length / allAnchorGenreIds.length : 0;
       candidate.anchorOverlapScore = Math.min(1, genreOverlap * .65 + (candidate.matchedKeywordIds.size ? .35 : 0));
     }
-    if (anchor.mediaType === request.mediaType) candidates.delete(`${request.mediaType}:${anchorId}`);
+    for (const anchor of anchors) {
+      if (anchor.mediaType === request.mediaType) candidates.delete(`${request.mediaType}:${anchor.tmdbId}`);
+    }
   } else {
     const groupKeywordIds: number[][] = [];
     let keywordSearches = 0;
@@ -233,6 +262,23 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       }
       groupKeywordIds.push(ids.slice(0, 4));
     }
+
+    const excludedKeywordIds: number[] = [];
+    for (const phrase of (intent.excludedKeywords || []).slice(0, 6)) {
+      if (keywordSearches++ >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= 18) break;
+      const response = await optionalTmdbCall(
+        `excluded-keyword:${phrase}`,
+        () => tmdb.searchKeyword(phrase),
+      );
+      if (response?.results?.length) {
+        const exact = response.results.filter(k => normalize(k.name) === normalize(phrase));
+        for (const kw of [...exact, ...response.results].slice(0, 2)) {
+          if (!excludedKeywordIds.includes(kw.id)) excludedKeywordIds.push(kw.id);
+        }
+      }
+    }
+    const negativeKeywordParam = excludedKeywordIds.length ? { without_keywords: excludedKeywordIds.join(',') } : {};
+
     const expressions = buildKeywordExpressions(groupKeywordIds, 8);
     for (const expression of expressions.slice(0, 4)) {
       const matched = expression.split(/[|,]/).map(Number).filter(Boolean);
@@ -241,7 +287,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       );
       await runDiscover(
         'discover:concept-intersection',
-        { with_keywords: expression },
+        { with_keywords: expression, ...negativeKeywordParam },
         expressions.length === 1 ? 24 : 10,
         matched,
         matchedGroups,
@@ -251,7 +297,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       if (groupIndex >= 4 || !ids.length || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE) break;
       await runDiscover(
         `discover:concept-${groupIndex + 1}`,
-        { with_keywords: ids.join('|') },
+        { with_keywords: ids.join('|'), ...negativeKeywordParam },
         6,
         ids,
         [groupIndex],
@@ -270,29 +316,60 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
         .filter((id, index, values) => values.indexOf(id) === index)
         .slice(0, 3);
       if (ids.length) {
-        await runDiscover('discover:broad-phrase', { with_keywords: ids.join('|') }, 6, ids);
+        await runDiscover('discover:broad-phrase', { with_keywords: ids.join('|'), ...negativeKeywordParam }, 6, ids);
       }
     }
+
+    const personIds: number[] = [];
+    for (const name of [...(intent.crewNames || []), ...(intent.castNames || [])].slice(0, 4)) {
+      const res = await optionalTmdbCall(`person:${name}`, () => tmdb.searchPerson(name));
+      const pid = res?.results?.[0]?.id;
+      if (pid && !personIds.includes(pid)) personIds.push(pid);
+    }
+    if (personIds.length && tmdb.callsRemaining > TMDB_DETAIL_RESERVE) {
+      await runDiscover('discover:people', { with_people: personIds.join('|'), ...negativeKeywordParam }, 12);
+    }
+
+    const studioIds: number[] = [];
+    for (const studio of (intent.studioNames || []).slice(0, 3)) {
+      const res = await optionalTmdbCall(`studio:${studio}`, () => tmdb.searchCompany(studio));
+      const sid = res?.results?.[0]?.id;
+      if (sid && !studioIds.includes(sid)) studioIds.push(sid);
+    }
+    if (studioIds.length && tmdb.callsRemaining > TMDB_DETAIL_RESERVE) {
+      await runDiscover('discover:studios', { with_companies: studioIds.join('|'), ...negativeKeywordParam }, 12);
+    }
+
+    if (intent.discoveryProfile === 'hidden_gems' && tmdb.callsRemaining > TMDB_DETAIL_RESERVE) {
+      await runDiscover('discover:hidden-gems', {
+        sort_by: 'vote_average.desc',
+        'vote_count.gte': 80,
+        'vote_count.lte': 3500,
+        'vote_average.gte': 7.0,
+        ...negativeKeywordParam,
+      }, 20);
+    }
+
     const hintedGenreIds = intent.genreHints.map(name => genresByName.get(normalize(name))).filter((id): id is number => id !== undefined);
     if (hintedGenreIds.length && tmdb.callsRemaining > TMDB_DETAIL_RESERVE) {
-      await runDiscover('discover:genre-hints', { with_genres: hintedGenreIds.join('|') }, 30);
+      await runDiscover('discover:genre-hints', { with_genres: hintedGenreIds.join('|'), ...negativeKeywordParam }, 30);
       await runDiscover(
         'discover:genre-hints-popular',
-        { with_genres: hintedGenreIds.join('|'), sort_by: 'popularity.desc' },
+        { with_genres: hintedGenreIds.join('|'), sort_by: 'popularity.desc', ...negativeKeywordParam },
         18,
       );
     }
     if (tmdb.callsRemaining > TMDB_DETAIL_RESERVE && candidates.size < MAX_CANDIDATES) {
-      await runDiscover('discover:hard-filters', {}, 60);
-      await runDiscover('discover:hard-filters-popular', { sort_by: 'popularity.desc' }, 40);
+      await runDiscover('discover:hard-filters', { ...negativeKeywordParam }, 60);
+      await runDiscover('discover:hard-filters-popular', { sort_by: 'popularity.desc', ...negativeKeywordParam }, 40);
       await runDiscover(
         'discover:hard-filters-recent',
-        { sort_by: request.mediaType === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc' },
+        { sort_by: request.mediaType === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc', ...negativeKeywordParam },
         30,
       );
       await runDiscover(
         'discover:hard-filters-rated',
-        { sort_by: 'vote_average.desc', 'vote_count.gte': Math.max(25, Number(baseParams['vote_count.gte']) || 0) },
+        { sort_by: 'vote_average.desc', 'vote_count.gte': Math.max(25, Number(baseParams['vote_count.gte']) || 0), ...negativeKeywordParam },
         20,
       );
     }

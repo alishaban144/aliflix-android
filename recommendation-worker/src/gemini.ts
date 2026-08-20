@@ -36,7 +36,7 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
     hardFilters: { ...EMPTY_FILTERS }, requiredConceptGroups: [], softConcepts: [], excludedConcepts: [],
     genreHints: [], toneAndMood: [], broadSearchPhrases: [],
   };
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.6-flash';
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
   const data = await geminiFetch(env, model, 'generateContent', {
     systemInstruction: { parts: [{ text: INTERPRET_V3_PROMPT }] },
     contents: [{ role: 'user', parts: [{ text: JSON.stringify({ query, authoritativeMediaType: mediaType }) }] }],

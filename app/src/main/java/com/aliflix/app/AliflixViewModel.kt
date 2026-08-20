@@ -236,7 +236,23 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         
         val mapped = com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(request)
         val summary = mapped.summary
-        activeAskRequest = mapped.workerRequest
+        val hideWatched = _askEditorState.value.hideWatched
+        val excludedLibraryIds = if (hideWatched) {
+            (library.recent.value.map { it.id } + library.myList.value.map { it.id }).distinct()
+        } else {
+            emptyList<Int>()
+        }
+        val requestWithLibraryFilters = if (excludedLibraryIds.isNotEmpty()) {
+            val baseFilters = mapped.workerRequest.filters
+            val updatedFilters = baseFilters.copy(
+                excludedTmdbIds = (baseFilters.excludedTmdbIds + excludedLibraryIds).distinct()
+            )
+            mapped.workerRequest.copy(filters = updatedFilters)
+        } else {
+            mapped.workerRequest
+        }
+
+        activeAskRequest = requestWithLibraryFilters
         activeAskSummary = summary
         activeAskSpec = mapped.spec
 
@@ -245,12 +261,18 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val clientAi = aiClient
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    clientAi.getRecommendations(mapped.workerRequest)
+                    clientAi.getRecommendations(requestWithLibraryFilters)
                 }
                 
                 if (token != askSessionToken) return@launch
 
-                val candidates = response.results.mapIndexed(::mapAskResult)
+                val candidates = response.results
+                    .mapIndexed(::mapAskResult)
+                    .filter { candidate ->
+                        if (!hideWatched) true
+                        else !library.recent.value.any { it.key == candidate.media.key } &&
+                             !library.myList.value.any { it.key == candidate.media.key }
+                    }
 
                 if (candidates.isEmpty()) {
                     _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Empty(summary, "No titles found.")
@@ -262,6 +284,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         totalAvailable = response.totalResults,
                         hasMore = response.hasMore,
                         nextCursor = response.nextCursor,
+                        activeRequest = request,
                     )
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -277,6 +300,30 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, e.message ?: "Failed to find titles")
                 }
             }
+        }
+    }
+
+    fun refineAskAliflix(refinement: String) {
+        val currentQuery = activeAskRequest?.query ?: _askEditorState.value.describeText
+        val previousText = if (_askEditorState.value.describeText.isNotBlank()) _askEditorState.value.describeText else currentQuery
+        val newDescribeText = "$previousText, $refinement"
+        _askEditorState.value = _askEditorState.value.copy(describeText = newDescribeText)
+        
+        submitAskAliflix(
+            com.aliflix.app.ui.discover.AskAliflixRequest.Describe(
+                mediaType = _askEditorState.value.mediaType,
+                text = newDescribeText,
+                previousText = previousText,
+                refinementText = refinement,
+            )
+        )
+    }
+
+    fun toggleAskHideWatched(hide: Boolean) {
+        _askEditorState.value = _askEditorState.value.copy(hideWatched = hide)
+        val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results
+        if (currentResults != null) {
+            retryAskAliflix()
         }
     }
 

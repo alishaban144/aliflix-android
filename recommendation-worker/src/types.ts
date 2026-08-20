@@ -27,6 +27,9 @@ export interface RecommendationRequest {
   query: string;
   mediaType: MediaType;
   anchor?: RecommendationAnchor;
+  anchors?: RecommendationAnchor[];
+  previousQuery?: string;
+  refinementQuery?: string;
   filters: RecommendationFilters;
   pageSize: number;
   cursor?: string;
@@ -43,6 +46,12 @@ export interface InterpretedIntent {
   requiredConceptGroups: ConceptGroup[];
   softConcepts: string[];
   excludedConcepts: string[];
+  excludedKeywords: string[];
+  crewNames: string[];
+  castNames: string[];
+  studioNames: string[];
+  certifications: string[];
+  discoveryProfile?: 'hidden_gems' | 'blockbusters' | 'standard';
   genreHints: string[];
   toneAndMood: string[];
   broadSearchPhrases: string[];
@@ -88,6 +97,8 @@ export interface Candidate {
   tmdbRating?: number;
   tmdbVoteCount?: number;
   popularity?: number;
+  collectionId?: number;
+  certifications?: string[];
   keywords: TmdbKeyword[];
   matchedKeywordIds: Set<number>;
   matchedConceptGroupIndexes: Set<number>;

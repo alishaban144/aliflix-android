@@ -28,6 +28,8 @@ fun AskAliflixScreen(
     onRetry: () -> Unit,
     onBack: () -> Unit,
     listState: LazyListState,
+    onRefineRequest: (String) -> Unit = {},
+    onToggleHideWatched: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -93,33 +95,53 @@ fun AskAliflixScreen(
                                     loading = false,
                                 )
 
-                                1 -> AskAliflixSimilar(
-                                    query = editorState.similarQuery,
-                                    onQueryChanged = { onEditorStateChanged(editorState.copy(similarQuery = it)) },
-                                    selectedAnchor = editorState.selectedAnchor,
-                                    onAnchorSelected = { anchor ->
-                                        onEditorStateChanged(
-                                            editorState.copy(
-                                                selectedAnchor = anchor,
-                                                similarQuery = anchor?.title ?: editorState.similarQuery,
-                                            )
-                                        )
-                                    },
-                                    suggestions = suggestions,
-                                    suggestionsLoading = suggestionsLoading,
-                                    outputMediaType = editorState.mediaType,
-                                    onSubmit = {
-                                        editorState.selectedAnchor?.let { anchor ->
-                                            onSubmitRequest(
-                                                AskAliflixRequest.Similar(
-                                                    outputMediaType = editorState.mediaType,
-                                                    anchor = anchor,
+                                1 -> {
+                                    val anchors = if (editorState.selectedAnchors.isNotEmpty()) {
+                                        editorState.selectedAnchors
+                                    } else {
+                                        listOfNotNull(editorState.selectedAnchor)
+                                    }
+                                    AskAliflixSimilar(
+                                        query = editorState.similarQuery,
+                                        onQueryChanged = { onEditorStateChanged(editorState.copy(similarQuery = it)) },
+                                        selectedAnchors = anchors,
+                                        onAddAnchor = { item ->
+                                            if (anchors.none { it.key == item.key } && anchors.size < 4) {
+                                                val updated = anchors + item
+                                                onEditorStateChanged(
+                                                    editorState.copy(
+                                                        selectedAnchors = updated,
+                                                        selectedAnchor = updated.firstOrNull(),
+                                                        similarQuery = "",
+                                                    )
+                                                )
+                                            }
+                                        },
+                                        onRemoveAnchor = { item ->
+                                            val updated = anchors.filterNot { it.key == item.key }
+                                            onEditorStateChanged(
+                                                editorState.copy(
+                                                    selectedAnchors = updated,
+                                                    selectedAnchor = updated.firstOrNull(),
                                                 )
                                             )
-                                        }
-                                    },
-                                    loading = false,
-                                )
+                                        },
+                                        suggestions = suggestions,
+                                        suggestionsLoading = suggestionsLoading,
+                                        outputMediaType = editorState.mediaType,
+                                        onSubmit = {
+                                            if (anchors.isNotEmpty()) {
+                                                onSubmitRequest(
+                                                    AskAliflixRequest.Similar(
+                                                        outputMediaType = editorState.mediaType,
+                                                        anchors = anchors,
+                                                    )
+                                                )
+                                            }
+                                        },
+                                        loading = false,
+                                    )
+                                }
 
                                 else -> AskAliflixFilters(
                                     spec = editorState.spec,
@@ -139,6 +161,9 @@ fun AskAliflixScreen(
                         onReset = onReset,
                         onLoadMore = onLoadMore,
                         onRetry = onRetry,
+                        onRefine = onRefineRequest,
+                        hideWatched = editorState.hideWatched,
+                        onToggleHideWatched = onToggleHideWatched,
                         listState = listState,
                     )
                 }

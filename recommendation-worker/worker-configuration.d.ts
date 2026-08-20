@@ -3,7 +3,7 @@
 // Runtime types generated with workerd@1.20260801.1 2026-08-08 nodejs_compat
 interface __BaseEnv_Env {
 	RECOMMENDATION_RATE_LIMITER: RateLimit;
-	GEMINI_GENERATION_MODEL: "gemini-3.6-flash";
+	GEMINI_GENERATION_MODEL: "gemini-3.7-flash";
 	GEMINI_EMBEDDING_MODEL: "gemini-embedding-2";
 	RECOMMENDATION_SESSIONS: DurableObjectNamespace<import("./src/index").RecommendationSession>;
 }

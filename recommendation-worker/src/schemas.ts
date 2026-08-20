@@ -26,16 +26,21 @@ export const RecommendationFiltersSchema = RecommendationFiltersObjectSchema.sup
   }
 });
 
+const AnchorSchema = z.object({
+  tmdbId: z.number().int().positive(),
+  title: trimmed.min(1).max(300),
+  mediaType,
+});
+
 export const RecommendationRequestSchema = z.object({
   requestId: z.string().uuid(),
   mode: z.enum(['describe', 'similar', 'filters']).default('describe'),
   query: z.string().trim().max(2000).default(''),
   mediaType,
-  anchor: z.object({
-    tmdbId: z.number().int().positive(),
-    title: trimmed.min(1).max(300),
-    mediaType,
-  }).optional(),
+  anchor: AnchorSchema.optional(),
+  anchors: z.array(AnchorSchema).max(4).optional(),
+  previousQuery: z.string().trim().max(2000).optional(),
+  refinementQuery: z.string().trim().max(2000).optional(),
   filters: RecommendationFiltersObjectSchema.default({
     minimumYear: undefined, maximumYear: undefined, originalLanguage: undefined, originCountries: [],
     minimumRuntimeMinutes: undefined, maximumRuntimeMinutes: undefined, includedGenres: [], excludedGenres: [],
@@ -44,10 +49,10 @@ export const RecommendationRequestSchema = z.object({
   pageSize: z.number().int().min(1).max(40).default(20),
   cursor: z.string().min(1).max(2048).optional(),
 }).superRefine((value, ctx) => {
-  if (value.mode === 'similar' && !value.anchor) {
-    ctx.addIssue({ code: 'custom', path: ['anchor'], message: 'Similar requests require an anchor' });
+  if (value.mode === 'similar' && !value.anchor && (!value.anchors || value.anchors.length === 0)) {
+    ctx.addIssue({ code: 'custom', path: ['anchors'], message: 'Similar requests require at least one anchor' });
   }
-  if (value.mode === 'describe' && !value.query) {
+  if (value.mode === 'describe' && !value.query && !value.refinementQuery) {
     ctx.addIssue({ code: 'custom', path: ['query'], message: 'Describe requests require a query' });
   }
 });
@@ -67,6 +72,12 @@ export const GeminiIntentResponseSchema = z.object({
   requiredConceptGroups: z.array(ConceptGroupSchema).max(8).default([]),
   softConcepts: z.array(trimmed.min(1).max(120)).max(20).default([]),
   excludedConcepts: z.array(trimmed.min(1).max(120)).max(20).default([]),
+  excludedKeywords: z.array(trimmed.min(1).max(120)).max(20).default([]),
+  crewNames: z.array(trimmed.min(1).max(120)).max(10).default([]),
+  castNames: z.array(trimmed.min(1).max(120)).max(10).default([]),
+  studioNames: z.array(trimmed.min(1).max(120)).max(10).default([]),
+  certifications: z.array(trimmed.min(1).max(20)).max(10).default([]),
+  discoveryProfile: z.enum(['hidden_gems', 'blockbusters', 'standard']).optional(),
   genreHints: z.array(trimmed.min(1).max(80)).max(12).default([]),
   toneAndMood: z.array(trimmed.min(1).max(80)).max(12).default([]),
   broadSearchPhrases: z.array(trimmed.min(1).max(120)).max(20).default([]),
@@ -99,11 +110,17 @@ export const GeminiIntentJsonSchema = {
     },
     softConcepts: { type: 'ARRAY', items: { type: 'STRING' } },
     excludedConcepts: { type: 'ARRAY', items: { type: 'STRING' } },
+    excludedKeywords: { type: 'ARRAY', items: { type: 'STRING' } },
+    crewNames: { type: 'ARRAY', items: { type: 'STRING' } },
+    castNames: { type: 'ARRAY', items: { type: 'STRING' } },
+    studioNames: { type: 'ARRAY', items: { type: 'STRING' } },
+    certifications: { type: 'ARRAY', items: { type: 'STRING' } },
+    discoveryProfile: { type: 'STRING', nullable: true },
     genreHints: { type: 'ARRAY', items: { type: 'STRING' } },
     toneAndMood: { type: 'ARRAY', items: { type: 'STRING' } },
     broadSearchPhrases: { type: 'ARRAY', items: { type: 'STRING' } },
   },
-  required: ['hardFilters', 'requiredConceptGroups', 'softConcepts', 'excludedConcepts', 'genreHints', 'toneAndMood', 'broadSearchPhrases'],
+  required: ['hardFilters', 'requiredConceptGroups', 'softConcepts', 'excludedConcepts', 'excludedKeywords', 'crewNames', 'castNames', 'studioNames', 'certifications', 'genreHints', 'toneAndMood', 'broadSearchPhrases'],
 } as const;
 
 export type ParsedRecommendationRequest = z.infer<typeof RecommendationRequestSchema>;

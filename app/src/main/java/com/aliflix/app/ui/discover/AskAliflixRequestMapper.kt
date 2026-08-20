@@ -26,21 +26,45 @@ object AskAliflixRequestMapper {
             else -> CatalogDiscoverySpec(if (outputType == MediaType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE)
         }
         val summary = when (request) {
-            is AskAliflixRequest.Describe -> "${outputType.label()} — “${request.text.trim()}”"
-            is AskAliflixRequest.Similar -> "${outputType.label()} — similar to ${request.anchor.title}"
+            is AskAliflixRequest.Describe -> {
+                if (request.refinementText != null) {
+                    "${outputType.label()} — “${request.refinementText.trim()}”"
+                } else {
+                    "${outputType.label()} — “${request.text.trim()}”"
+                }
+            }
+            is AskAliflixRequest.Similar -> {
+                val titles = request.anchors.map { it.title }
+                when (titles.size) {
+                    0 -> "${outputType.label()} — similar titles"
+                    1 -> "${outputType.label()} — similar to ${titles[0]}"
+                    2 -> "${outputType.label()} — blending ${titles[0]} & ${titles[1]}"
+                    else -> "${outputType.label()} — blending ${titles.size} titles"
+                }
+            }
             is AskAliflixRequest.Filters -> "${outputType.label()} — your selected filters"
         }
         val rawQuery = when (request) {
             is AskAliflixRequest.Describe -> request.text.trim()
-            is AskAliflixRequest.Similar -> "${outputType.label().lowercase()} similar to ${request.anchor.title}"
+            is AskAliflixRequest.Similar -> {
+                val titles = request.anchors.joinToString(", ") { it.title }
+                "${outputType.label().lowercase()} blending $titles"
+            }
             is AskAliflixRequest.Filters -> request.spec.discoveryText.trim()
         }
+        val anchorList = (request as? AskAliflixRequest.Similar)?.anchors?.map {
+            V3RecommendationAnchor(it.id, it.title, it.type.routeName)
+        } ?: emptyList()
+
         return MappedAskAliflixRequest(summary, spec, V3RecommendationRequest(
             requestId = requestId,
             mode = when (request) { is AskAliflixRequest.Describe -> "describe"; is AskAliflixRequest.Similar -> "similar"; is AskAliflixRequest.Filters -> "filters" },
             query = rawQuery,
             mediaType = outputType.routeName,
-            anchor = (request as? AskAliflixRequest.Similar)?.anchor?.let { V3RecommendationAnchor(it.id, it.title, it.type.routeName) },
+            anchor = anchorList.firstOrNull(),
+            anchors = anchorList,
+            previousQuery = (request as? AskAliflixRequest.Describe)?.previousText,
+            refinementQuery = (request as? AskAliflixRequest.Describe)?.refinementText,
             filters = spec.toWorkerFilters(),
             pageSize = 24,
         ))

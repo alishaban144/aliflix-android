@@ -154,7 +154,18 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
   const sorted = candidates
     .filter(candidate => candidate.matchLevel !== 'Reject')
     .sort((a, b) => (b.finalScore! - a.finalScore!) || a.key.localeCompare(b.key));
-  return diversify(sorted).map(candidate => ({
+
+  const seenCollections = new Set<number>();
+  const franchiseDeduplicated: Candidate[] = [];
+  for (const candidate of sorted) {
+    if (candidate.collectionId) {
+      if (seenCollections.has(candidate.collectionId)) continue;
+      seenCollections.add(candidate.collectionId);
+    }
+    franchiseDeduplicated.push(candidate);
+  }
+
+  return diversify(franchiseDeduplicated).map(candidate => ({
     tmdbId: candidate.tmdbId, mediaType: candidate.mediaType, title: candidate.title, originalTitle: candidate.originalTitle,
     overview: candidate.overview, posterPath: candidate.posterPath, backdropPath: candidate.backdropPath, releaseDate: candidate.releaseDate,
     genres: candidate.genres, runtimeMinutes: candidate.runtimeMinutes, originalLanguage: candidate.originalLanguage,

@@ -14,7 +14,7 @@
     "mode": "smart"
   },
   "vars": {
-    "GEMINI_GENERATION_MODEL": "gemini-3.6-flash",
+    "GEMINI_GENERATION_MODEL": "gemini-3.7-flash",
     "GEMINI_EMBEDDING_MODEL": "gemini-embedding-2"
   },
   "durable_objects": {

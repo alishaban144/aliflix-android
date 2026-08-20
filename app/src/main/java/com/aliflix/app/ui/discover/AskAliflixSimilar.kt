@@ -1,9 +1,8 @@
 package com.aliflix.app.ui.discover
 
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,7 +33,6 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,8 +58,9 @@ import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 fun AskAliflixSimilar(
     query: String,
     onQueryChanged: (String) -> Unit,
-    selectedAnchor: Media?,
-    onAnchorSelected: (Media?) -> Unit,
+    selectedAnchors: List<Media>,
+    onAddAnchor: (Media) -> Unit,
+    onRemoveAnchor: (Media) -> Unit,
     suggestions: List<Media>,
     suggestionsLoading: Boolean,
     outputMediaType: MediaType,
@@ -71,13 +71,6 @@ fun AskAliflixSimilar(
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
-    LaunchedEffect(selectedAnchor) {
-        if (selectedAnchor == null) {
-            focusRequester.requestFocus()
-            keyboard?.show()
-        }
-    }
-
     Column(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -85,7 +78,7 @@ fun AskAliflixSimilar(
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
             Text(
-                text = "Similar to",
+                text = if (selectedAnchors.size > 1) "Movie Fusion" else "Similar to",
                 color = AliflixContentPrimary,
                 fontSize = 24.sp,
                 lineHeight = 29.sp,
@@ -93,133 +86,123 @@ fun AskAliflixSimilar(
                 letterSpacing = (-0.4).sp,
             )
 
-            Spacer(Modifier.height(14.dp))
-            AnimatedContent(
-                targetState = selectedAnchor,
-                transitionSpec = {
-                    (fadeIn(AskAliflixMotion.smallContentSpec())) togetherWith
-                        fadeOut(AskAliflixMotion.smallContentSpec())
-                },
-                label = "ask-similar-anchor",
-                modifier = Modifier.weight(1f),
-            ) { anchor ->
-                if (anchor == null) {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = onQueryChanged,
-                            placeholder = {
-                                Text("Search movies or series", color = AliflixContentTertiary, fontSize = 14.sp)
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Rounded.Search, contentDescription = null, tint = AliflixAccentSecondary)
-                            },
-                            trailingIcon = {
-                                when {
-                                    suggestionsLoading -> CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp,
-                                        color = AliflixAccentSecondary,
-                                    )
-                                    query.isNotEmpty() -> IconButton(onClick = { onQueryChanged("") }) {
-                                        Icon(Icons.Rounded.Close, contentDescription = "Clear title search", tint = AliflixContentTertiary)
-                                    }
-                                }
-                            },
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(focusRequester),
-                            shape = RoundedCornerShape(17.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AliflixAccentPrimary,
-                                unfocusedBorderColor = AliflixBorderSubtle,
-                                focusedContainerColor = AliflixSurfaceElevated,
-                                unfocusedContainerColor = AliflixSurfaceElevated.copy(alpha = 0.82f),
-                                focusedTextColor = AliflixContentPrimary,
-                                unfocusedTextColor = AliflixContentPrimary,
-                                cursorColor = AliflixAccentSecondary,
-                            ),
-                        )
+            Spacer(Modifier.height(10.dp))
 
-                        Spacer(Modifier.height(10.dp))
+            if (selectedAnchors.isNotEmpty()) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    items(selectedAnchors, key = { it.key }) { anchor ->
+                        SelectedAnchorChip(
+                            anchor = anchor,
+                            onRemove = { onRemoveAnchor(anchor) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
+            if (selectedAnchors.size < 4) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChanged,
+                    placeholder = {
+                        Text(
+                            if (selectedAnchors.isEmpty()) "Search movies or series" else "Add another title to blend (up to 4)",
+                            color = AliflixContentTertiary,
+                            fontSize = 14.sp,
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Rounded.Search, contentDescription = null, tint = AliflixAccentSecondary)
+                    },
+                    trailingIcon = {
                         when {
-                            query.trim().length < 2 -> SimilarHint()
-                            !suggestionsLoading && suggestions.isEmpty() -> SimilarEmptySearch()
-                            else -> LazyColumn(
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxSize(),
-                            ) {
-                                items(suggestions, key = { it.key }) { item ->
-                                    SimilarSuggestion(
-                                        item = item,
-                                        onClick = {
-                                            keyboard?.hide()
-                                            onAnchorSelected(item)
-                                        },
-                                    )
-                                }
-                                item { Spacer(Modifier.height(8.dp)) }
+                            suggestionsLoading -> CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = AliflixAccentSecondary,
+                            )
+                            query.isNotEmpty() -> IconButton(onClick = { onQueryChanged("") }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Clear search", tint = AliflixContentTertiary)
                             }
                         }
-                    }
-                } else {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        Surface(
-                            color = AliflixSurfaceElevated.copy(alpha = 0.9f),
-                            shape = RoundedCornerShape(20.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.35f)),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                AskAliflixPoster(
-                                    media = anchor,
-                                    modifier = Modifier.size(width = 78.dp, height = 116.dp),
-                                    cornerRadius = 12.dp,
-                                )
-                                Spacer(Modifier.width(14.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        anchor.title,
-                                        color = AliflixContentPrimary,
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Spacer(Modifier.height(5.dp))
-                                    Text(
-                                        listOfNotNull(
-                                            if (anchor.type == MediaType.MOVIE) "Movie" else "Series",
-                                            anchor.year.takeIf(String::isNotBlank),
-                                        ).joinToString(" · "),
-                                        color = AliflixContentSecondary,
-                                        fontSize = 12.sp,
-                                    )
-                                }
-                                IconButton(onClick = { onAnchorSelected(null) }) {
-                                    Icon(Icons.Rounded.Close, contentDescription = "Choose another title", tint = AliflixContentTertiary)
-                                }
-                            }
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester),
+                    shape = RoundedCornerShape(17.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AliflixAccentPrimary,
+                        unfocusedBorderColor = AliflixBorderSubtle,
+                        focusedContainerColor = AliflixSurfaceElevated,
+                        unfocusedContainerColor = AliflixSurfaceElevated.copy(alpha = 0.82f),
+                        focusedTextColor = AliflixContentPrimary,
+                        unfocusedTextColor = AliflixContentPrimary,
+                        cursorColor = AliflixAccentSecondary,
+                    ),
+                )
+
+                Spacer(Modifier.height(10.dp))
+                when {
+                    query.trim().length < 2 && selectedAnchors.isEmpty() -> SimilarHint()
+                    query.trim().length < 2 && selectedAnchors.isNotEmpty() -> {
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Add up to ${4 - selectedAnchors.size} more titles to find their blended intersection.",
+                                color = AliflixContentSecondary,
+                                fontSize = 13.sp,
+                            )
                         }
                     }
+                    !suggestionsLoading && suggestions.isEmpty() -> SimilarEmptySearch()
+                    else -> LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        items(suggestions, key = { it.key }) { item ->
+                            val alreadySelected = selectedAnchors.any { it.key == item.key }
+                            SimilarSuggestion(
+                                item = item,
+                                isSelected = alreadySelected,
+                                onClick = {
+                                    if (!alreadySelected) {
+                                        onAddAnchor(item)
+                                        onQueryChanged("")
+                                        keyboard?.hide()
+                                    }
+                                },
+                            )
+                        }
+                        item { Spacer(Modifier.height(8.dp)) }
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Maximum of 4 titles selected for blending.",
+                        color = AliflixContentSecondary,
+                        fontSize = 13.sp,
+                    )
                 }
             }
         }
 
         AskAliflixStickyCta(
-            label = if (loading) {
-                "Finding matches…"
-            } else if (outputMediaType == MediaType.MOVIE) {
-                "Find similar movies"
-            } else {
-                "Find similar series"
+            label = when {
+                loading -> "Finding matches…"
+                selectedAnchors.isEmpty() -> "Select a title to start"
+                selectedAnchors.size == 1 -> if (outputMediaType == MediaType.MOVIE) "Find similar movies" else "Find similar series"
+                else -> if (outputMediaType == MediaType.MOVIE) "Blend ${selectedAnchors.size} titles for movies" else "Blend ${selectedAnchors.size} titles for series"
             },
-            enabled = selectedAnchor != null,
+            enabled = selectedAnchors.isNotEmpty(),
             loading = loading,
             onClick = onSubmit,
         )
@@ -227,14 +210,73 @@ fun AskAliflixSimilar(
 }
 
 @Composable
-private fun SimilarSuggestion(item: Media, onClick: () -> Unit) {
+private fun SelectedAnchorChip(
+    anchor: Media,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = AliflixSurfaceElevated.copy(alpha = 0.9f),
+        shape = RoundedCornerShape(14.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.4f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AskAliflixPoster(
+                media = anchor,
+                modifier = Modifier.size(width = 28.dp, height = 40.dp),
+                cornerRadius = 6.dp,
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.width(130.dp)) {
+                Text(
+                    text = anchor.title,
+                    color = AliflixContentPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = listOfNotNull(
+                        if (anchor.type == MediaType.MOVIE) "Movie" else "Series",
+                        anchor.year.takeIf(String::isNotBlank),
+                    ).joinToString(" · "),
+                    color = AliflixContentSecondary,
+                    fontSize = 10.sp,
+                )
+            }
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier.size(24.dp),
+            ) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = "Remove title",
+                    tint = AliflixContentTertiary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SimilarSuggestion(
+    item: Media,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(15.dp))
-            .background(AliflixSurfaceElevated.copy(alpha = 0.74f))
-            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(15.dp))
-            .clickable(onClick = onClick)
+            .background(if (isSelected) AliflixSurfaceElevated.copy(alpha = 0.4f) else AliflixSurfaceElevated.copy(alpha = 0.74f))
+            .border(1.dp, if (isSelected) AliflixAccentPrimary.copy(alpha = 0.3f) else AliflixBorderSubtle, RoundedCornerShape(15.dp))
+            .clickable(enabled = !isSelected, onClick = onClick)
             .padding(9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -243,7 +285,7 @@ private fun SimilarSuggestion(item: Media, onClick: () -> Unit) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 item.title,
-                color = AliflixContentPrimary,
+                color = if (isSelected) AliflixContentSecondary else AliflixContentPrimary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
@@ -259,7 +301,12 @@ private fun SimilarSuggestion(item: Media, onClick: () -> Unit) {
                 fontSize = 11.sp,
             )
         }
-        Text("Select", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(
+            if (isSelected) "Added" else "Add +",
+            color = if (isSelected) AliflixContentTertiary else AliflixAccentSecondary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+        )
         Spacer(Modifier.width(4.dp))
     }
 }
@@ -275,6 +322,11 @@ private fun SimilarHint() {
                 Icon(Icons.Rounded.Search, contentDescription = null, tint = AliflixAccentSecondary)
             }
             Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Search a movie or series to start",
+                color = AliflixContentSecondary,
+                fontSize = 13.sp,
+            )
         }
     }
 }

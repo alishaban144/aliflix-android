@@ -74,6 +74,14 @@ import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixError
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 
 @Composable
 fun AskAliflixResults(
@@ -85,6 +93,9 @@ fun AskAliflixResults(
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     listState: LazyListState,
+    onRefine: (String) -> Unit = {},
+    hideWatched: Boolean = false,
+    onToggleHideWatched: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -103,6 +114,31 @@ fun AskAliflixResults(
                     supportingText = results.spec.askFilterSummary(),
                     editContentDescription = "Edit filters",
                     onEdit = onEdit,
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "Hide titles in My Space",
+                    color = AliflixContentSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Switch(
+                    checked = hideWatched,
+                    onCheckedChange = onToggleHideWatched,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = AliflixAccentPrimary,
+                        checkedTrackColor = AliflixAccentSecondary.copy(alpha = 0.35f),
+                        uncheckedThumbColor = AliflixContentTertiary,
+                        uncheckedTrackColor = AliflixSurfaceElevated,
+                    ),
                 )
             }
         }
@@ -161,6 +197,13 @@ fun AskAliflixResults(
 
                 AskAliflixUiState.Editing -> Unit
             }
+        }
+
+        if (results != null) {
+            RefineBottomBar(
+                onRefine = onRefine,
+                refining = results.refining,
+            )
         }
     }
 }
@@ -575,6 +618,74 @@ private fun AskStateMessage(
             )
             Spacer(Modifier.width(6.dp))
             Text(secondaryLabel, color = AliflixContentPrimary, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun RefineBottomBar(
+    onRefine: (String) -> Unit,
+    refining: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    var refineText by remember { mutableStateOf("") }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = AliflixSurfaceSecondary.copy(alpha = 0.95f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = refineText,
+                onValueChange = { refineText = it },
+                placeholder = {
+                    Text("Refine results (e.g. post-2020, less violent)", color = AliflixContentTertiary, fontSize = 13.sp)
+                },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AliflixAccentPrimary,
+                    unfocusedBorderColor = AliflixBorderSubtle,
+                    focusedContainerColor = AliflixSurfaceElevated,
+                    unfocusedContainerColor = AliflixSurfaceElevated.copy(alpha = 0.8f),
+                    focusedTextColor = AliflixContentPrimary,
+                    unfocusedTextColor = AliflixContentPrimary,
+                    cursorColor = AliflixAccentSecondary,
+                ),
+            )
+            Spacer(Modifier.width(8.dp))
+            if (refining) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    strokeWidth = 2.dp,
+                    color = AliflixAccentSecondary,
+                )
+            } else {
+                IconButton(
+                    onClick = {
+                        if (refineText.isNotBlank()) {
+                            keyboard?.hide()
+                            onRefine(refineText.trim())
+                            refineText = ""
+                        }
+                    },
+                    enabled = refineText.isNotBlank(),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.ArrowForward,
+                        contentDescription = "Send refinement",
+                        tint = if (refineText.isNotBlank()) AliflixAccentPrimary else AliflixContentTertiary,
+                    )
+                }
+            }
         }
     }
 }

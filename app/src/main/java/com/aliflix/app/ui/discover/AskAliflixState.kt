@@ -8,13 +8,22 @@ import com.aliflix.app.recommendation.RecommendationCandidate
 sealed interface AskAliflixRequest {
     data class Describe(
         val mediaType: MediaType,
-        val text: String
+        val text: String,
+        val previousText: String? = null,
+        val refinementText: String? = null,
     ) : AskAliflixRequest
 
     data class Similar(
         val outputMediaType: MediaType,
-        val anchor: Media
-    ) : AskAliflixRequest
+        val anchors: List<Media> = emptyList(),
+        val anchor: Media? = anchors.firstOrNull(),
+    ) : AskAliflixRequest {
+        constructor(outputMediaType: MediaType, anchor: Media) : this(
+            outputMediaType = outputMediaType,
+            anchors = listOf(anchor),
+            anchor = anchor,
+        )
+    }
 
     data class Filters(
         val spec: CatalogDiscoverySpec
@@ -43,6 +52,8 @@ sealed interface AskAliflixUiState {
         val hasMore: Boolean = true,
         val nextCursor: String? = null,
         val loadMoreError: String? = null,
+        val refining: Boolean = false,
+        val activeRequest: AskAliflixRequest? = null,
     ) : AskAliflixUiState
 
     data class Empty(
@@ -67,12 +78,20 @@ data class AskAliflixEditorState(
     val describeText: String = "",
     val similarQuery: String = "",
     val selectedAnchor: Media? = null,
+    val selectedAnchors: List<Media> = emptyList(),
+    val hideWatched: Boolean = false,
     val spec: CatalogDiscoverySpec = CatalogDiscoverySpec(mediaKind = com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)
 )
 
 internal fun AskAliflixEditorState.resultsHeading(): String =
-    if (mode == 1 && selectedAnchor != null) {
-        "Similar to \"${selectedAnchor.title}\""
+    if (mode == 1) {
+        val anchors = if (selectedAnchors.isNotEmpty()) selectedAnchors else listOfNotNull(selectedAnchor)
+        when (anchors.size) {
+            0 -> "Matches"
+            1 -> "Similar to \"${anchors[0].title}\""
+            2 -> "Blending \"${anchors[0].title}\" & \"${anchors[1].title}\""
+            else -> "Blending ${anchors.size} titles"
+        }
     } else {
         "Matches"
     }
