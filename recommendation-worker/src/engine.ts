@@ -7,7 +7,7 @@ import { Candidate, InterpretedIntent, MediaType, RecommendationEnv, Recommendat
 export interface EngineDependencies {
   interpret?: typeof interpretQuery;
   embed?: typeof embedForSearch;
-  tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'discover' | 'recommendations' | 'similar' | 'details'>;
+  tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchPerson' | 'searchCompany' | 'discover' | 'recommendations' | 'similar' | 'details'>;
 }
 
 const MAX_CANDIDATES = 360;

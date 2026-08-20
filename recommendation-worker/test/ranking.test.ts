@@ -7,7 +7,8 @@ const filters = (overrides: Partial<RecommendationFilters> = {}): Recommendation
 });
 const intent = (groups: string[][], hard = filters(), genreHints: string[] = []): InterpretedIntent => ({
   hardFilters: hard, requiredConceptGroups: groups.map((synonyms, index) => ({ label: `g${index}`, synonyms, weight: 1 })),
-  softConcepts: [], excludedConcepts: [], genreHints, toneAndMood: [], broadSearchPhrases: [],
+  softConcepts: [], excludedConcepts: [], excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
+  genreHints, toneAndMood: [], broadSearchPhrases: [],
 });
 const candidate = (id: number, title: string, overview: string, overrides: Partial<Candidate> = {}): Candidate => ({
   key: `tv:${id}`, tmdbId: id, mediaType: 'tv', title, overview, originCountries: [], genreIds: [], genres: [],

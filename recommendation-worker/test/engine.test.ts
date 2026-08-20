@@ -15,6 +15,7 @@ const request: ParsedRecommendationRequest = {
 const interpreted: InterpretedIntent = {
   hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [] },
   requiredConceptGroups: [{ label: 'comedy', synonyms: ['funny', 'comedy'], weight: 1 }], softConcepts: [], excludedConcepts: [],
+  excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
   genreHints: ['Comedy'], toneAndMood: ['funny'], broadSearchPhrases: [],
 };
 
@@ -24,6 +25,8 @@ function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean
     get callsRemaining() { return remaining; },
     genres: async () => ({ genres: [{ id: 35, name: 'Comedy' }] }),
     searchKeyword: async () => ({ page: 1, total_pages: 1, total_results: 1, results: [{ id: 99, name: 'comedy' }] }),
+    searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+    searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
     searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
     recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
     similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
@@ -117,6 +120,8 @@ describe('TMDB-only recommendation engine', () => {
       get callsRemaining() { return remaining; },
       genres: async () => ({ genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 16, name: 'Animation' }] }),
       searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       recommendations: async (_type: string, _id: number, page: number) => ({
         page, total_pages: 1, total_results: page === 1 ? 2 : 0,
         results: page === 1 ? [
@@ -161,6 +166,8 @@ describe('TMDB-only recommendation engine', () => {
       get callsRemaining() { return remaining; },
       genres: async () => ({ genres: [] }),
       searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
@@ -192,7 +199,9 @@ describe('TMDB-only recommendation engine', () => {
     };
     const broadIntent: InterpretedIntent = {
       hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [] },
-      requiredConceptGroups: [], softConcepts: [], excludedConcepts: [], genreHints: [], toneAndMood: [], broadSearchPhrases: [],
+      requiredConceptGroups: [], softConcepts: [], excludedConcepts: [],
+      excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
+      genreHints: [], toneAndMood: [], broadSearchPhrases: [],
     };
 
     const results = await processRecommendation({} as any, { ...request, query: 'surprise me' }, {
@@ -211,6 +220,8 @@ describe('TMDB-only recommendation engine', () => {
       callsRemaining: 50,
       genres: async () => ({ genres: [] }),
       searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       details: async (_type: string, id: number) => ({
         id,
         title: id === 101 ? 'Interstellar' : (id === 102 ? 'Blade Runner 2049' : 'Arrival'),

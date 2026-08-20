@@ -34,6 +34,7 @@ async function geminiFetch(env: RecommendationEnv, model: string, method: string
 export async function interpretQuery(env: RecommendationEnv, query: string, mediaType: MediaType): Promise<InterpretedIntent> {
   if (!query.trim()) return {
     hardFilters: { ...EMPTY_FILTERS }, requiredConceptGroups: [], softConcepts: [], excludedConcepts: [],
+    excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
     genreHints: [], toneAndMood: [], broadSearchPhrases: [],
   };
   const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
