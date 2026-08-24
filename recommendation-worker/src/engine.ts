@@ -163,7 +163,11 @@ function discoverParams(type: MediaType, filters: RecommendationFilters, genreId
     'vote_average.gte': filters.minimumTmdbRating, 'vote_count.gte': filters.minimumTmdbRating !== undefined ? 10 : undefined,
   };
   if (filters.minimumYear) params[type === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte'] = `${filters.minimumYear}-01-01`;
-  if (filters.maximumYear) params[type === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte'] = `${filters.maximumYear}-12-31`;
+  const releaseDateMaximumKey = type === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
+  const today = new Date().toISOString().slice(0, 10);
+  params[releaseDateMaximumKey] = filters.maximumYear
+    ? [`${filters.maximumYear}-12-31`, today].sort()[0]
+    : today;
   return params;
 }
 
@@ -171,6 +175,7 @@ function passesKnownFilters(candidate: Candidate, filters: RecommendationFilters
   if (filters.excludedTmdbIds.includes(candidate.tmdbId)) return false;
   if (filters.excludedTitles.some(title => normalize(title) === normalize(candidate.title) || normalize(title) === normalize(candidate.originalTitle || ''))) return false;
   const year = candidate.releaseDate ? Number(candidate.releaseDate.slice(0, 4)) : undefined;
+  if (candidate.releaseDate && candidate.releaseDate > new Date().toISOString().slice(0, 10)) return false;
   if (Number.isInteger(year)) {
     if (filters.minimumYear !== undefined && year! < filters.minimumYear) return false;
     if (filters.maximumYear !== undefined && year! > filters.maximumYear) return false;
@@ -393,7 +398,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
           );
           if (!response?.results?.length) continue;
           const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(term));
-          for (const keyword of [...exact, ...response.results].slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
+          for (const keyword of exact.slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
         }
       }
       groupKeywordIds.push(ids.slice(0, 4));
@@ -409,7 +414,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       );
       if (response?.results?.length) {
         const exact = response.results.filter(k => normalize(k.name) === normalize(phrase));
-        for (const kw of [...exact, ...response.results].slice(0, 2)) {
+        for (const kw of exact.slice(0, 2)) {
           if (!excludedKeywordIds.includes(kw.id)) excludedKeywordIds.push(kw.id);
         }
       }
@@ -445,7 +450,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       );
       if (!response) continue;
       const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(phrase));
-      const ids = [...exact, ...response.results]
+      const ids = exact
         .map(keyword => keyword.id)
         .filter((id, index, values) => values.indexOf(id) === index)
         .slice(0, 3);
@@ -457,7 +462,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     const personIds: number[] = [];
     for (const name of [...(intent.crewNames || []), ...(intent.castNames || [])].slice(0, 4)) {
       const res = await optionalTmdbCall(`person:${name}`, () => tmdb.searchPerson(name));
-      const pid = res?.results?.[0]?.id;
+      const pid = res?.results?.find(person => normalize(person.name) === normalize(name))?.id;
       if (pid && !personIds.includes(pid)) personIds.push(pid);
     }
     if (personIds.length && tmdb.callsRemaining > TMDB_DETAIL_RESERVE) {
@@ -467,7 +472,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     const studioIds: number[] = [];
     for (const studio of (intent.studioNames || []).slice(0, 3)) {
       const res = await optionalTmdbCall(`studio:${studio}`, () => tmdb.searchCompany(studio));
-      const sid = res?.results?.[0]?.id;
+      const sid = res?.results?.find(company => normalize(company.name) === normalize(studio))?.id;
       if (sid && !studioIds.includes(sid)) studioIds.push(sid);
     }
     if (studioIds.length && tmdb.callsRemaining > TMDB_DETAIL_RESERVE) {

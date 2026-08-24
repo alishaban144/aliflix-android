@@ -345,6 +345,51 @@ describe('TMDB-only recommendation engine', () => {
     expect(keywordCalls).toBeLessThanOrEqual(18);
   });
 
+  it('does not ground concepts with fuzzy TMDB keyword search results', async () => {
+    const keywordDiscoveries: string[] = [];
+    const fuzzyTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 1, total_results: 1, results: [{ id: 999, name: 'unrelated keyword' }] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        if (params.with_keywords) keywordDiscoveries.push(String(params.with_keywords));
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+      details: async () => ({ id: 1, title: 'Unused' }),
+    };
+
+    await processRecommendation({} as any, { ...request, query: 'precise obscure concept' }, {
+      tmdb: fuzzyTmdb as any,
+      interpret: async () => ({ ...interpreted, requiredConceptGroups: [{ label: 'precise', synonyms: ['precise'], weight: 1 }], genreHints: [] }),
+    });
+
+    expect(keywordDiscoveries).toEqual([]);
+  });
+
+  it('caps TMDB discovery at the current date', async () => {
+    const maximumDates: string[] = [];
+    const datedTmdb = {
+      ...fakeTmdb(),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        const maximum = params['primary_release_date.lte'];
+        if (maximum) maximumDates.push(String(maximum));
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+    };
+
+    await processRecommendation({} as any, { ...request, mode: 'filters', query: '' }, {
+      tmdb: datedTmdb,
+      interpret: async () => ({ ...interpreted, requiredConceptGroups: [], genreHints: [], toneAndMood: [] }),
+    });
+
+    expect(maximumDates.length).toBeGreaterThan(0);
+    expect(maximumDates.every(date => date <= new Date().toISOString().slice(0, 10))).toBe(true);
+  });
+
   it('supports multi-anchor movie fusion in similar mode', async () => {
     const multiAnchorTmdb = {
       callsRemaining: 50,

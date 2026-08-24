@@ -52,6 +52,7 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 export function passesHardFilters(candidate: Candidate, filters: RecommendationFilters): boolean {
   const parsedYear = candidate.releaseDate ? Number(candidate.releaseDate.slice(0, 4)) : undefined;
   const year = Number.isInteger(parsedYear) ? parsedYear : undefined;
+  if (candidate.releaseDate && candidate.releaseDate > new Date().toISOString().slice(0, 10)) return false;
   if ((filters.minimumYear || filters.maximumYear) && !year) return false;
   if (filters.minimumYear && year! < filters.minimumYear) return false;
   if (filters.maximumYear && year! > filters.maximumYear) return false;

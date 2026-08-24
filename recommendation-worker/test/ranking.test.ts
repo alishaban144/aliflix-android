@@ -162,6 +162,16 @@ describe('deterministic recommendation logic', () => {
     expect(ranked[0].matchReasons).toContain('Matches the requested age rating');
   });
 
+  it('never admits an unreleased title even without an explicit year filter', () => {
+    const nextYear = new Date().getUTCFullYear() + 1;
+    const ranked = rankCandidates([
+      candidate(1, 'Future Title', 'A funny comedy', { releaseDate: `${nextYear}-01-01`, genres: ['Comedy'] }),
+      candidate(2, 'Released Title', 'A funny comedy', { releaseDate: '2020-01-01', genres: ['Comedy'] }),
+    ], intent([['funny', 'comedy']], filters(), ['Comedy']), filters(), false, false);
+
+    expect(ranked.map(item => item.tmdbId)).toEqual([2]);
+  });
+
   it('renormalizes deterministic signals when embeddings fail and pages broad relevant pools', () => {
     const funny = Array.from({ length: 45 }, (_, index) => candidate(index + 1, `Comedy ${index}`, 'A funny comedy adventure', { mediaType: 'movie', key: `movie:${index + 1}`, genres: ['Comedy'] }));
     const ranked = rankCandidates(funny, intent([['funny', 'comedy']], filters(), ['Comedy']), filters(), false, false);
