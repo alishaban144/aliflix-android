@@ -17,6 +17,7 @@ const TMDB_DETAIL_RESERVE = 28;
 const DISCOVERY_CONCURRENCY = 4;
 const DETAIL_CONCURRENCY = 4;
 const MAX_KEYWORD_SEARCHES = 18;
+const MAX_KEYWORD_SEARCHES_PER_GROUP = 2;
 
 interface AnchorProfile {
   keywords: TmdbKeyword[];
@@ -121,6 +122,30 @@ function buildAnchorKeywordExpressions(keywordIds: number[], limit = 6): string[
 
 function exactKeywordIds(expression: string): number[] {
   return expression.split(',').filter(segment => !segment.includes('|')).map(Number).filter(Number.isFinite);
+}
+
+function conceptKeywordQueries(groupKeywordIds: number[][], limit = 8): Array<{ expression: string; groupIndexes: number[] }> {
+  const activeGroups = groupKeywordIds
+    .map((ids, index) => ({ ids: [...new Set(ids)].slice(0, 4), index }))
+    .filter(group => group.ids.length);
+  if (!activeGroups.length) return [];
+  const minimumGroups = activeGroups.length <= 2 ? activeGroups.length : Math.ceil(activeGroups.length * .66);
+  const queries: Array<{ expression: string; groupIndexes: number[] }> = [];
+  const addCombinations = (size: number, start = 0, selected: typeof activeGroups = []): void => {
+    if (queries.length >= limit) return;
+    if (selected.length === size) {
+      queries.push({
+        expression: selected.map(group => group.ids.join('|')).join(','),
+        groupIndexes: selected.map(group => group.index),
+      });
+      return;
+    }
+    for (let index = start; index <= activeGroups.length - (size - selected.length) && queries.length < limit; index++) {
+      addCombinations(size, index + 1, [...selected, activeGroups[index]]);
+    }
+  };
+  for (let size = activeGroups.length; size >= minimumGroups && queries.length < limit; size--) addCombinations(size);
+  return queries;
 }
 
 function genreLookup(genres: TmdbGenre[]): Map<string, number> {
@@ -354,12 +379,14 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     let keywordSearches = 0;
     for (const group of intent.requiredConceptGroups) {
       const ids: number[] = [];
+      let groupSearches = 0;
       for (const phrase of group.synonyms) {
-        if (keywordSearches >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8) break;
+        if (keywordSearches >= MAX_KEYWORD_SEARCHES || groupSearches >= MAX_KEYWORD_SEARCHES_PER_GROUP || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8) break;
         const searchTerms = [phrase, phrase.replace(/-/g, ' '), phrase.replace(/\s+/g, '-')].filter((v, i, a) => a.indexOf(v) === i);
         for (const term of searchTerms) {
-          if (ids.length >= 4 || keywordSearches >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8) break;
+          if (ids.length >= 4 || keywordSearches >= MAX_KEYWORD_SEARCHES || groupSearches >= MAX_KEYWORD_SEARCHES_PER_GROUP || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8) break;
           keywordSearches++;
+          groupSearches++;
           const response = await optionalTmdbCall(
             `keyword:${term}`,
             () => tmdb.searchKeyword(term),
@@ -389,17 +416,14 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
     const negativeKeywordParam = excludedKeywordIds.length ? { without_keywords: excludedKeywordIds.join(',') } : {};
 
-    const expressions = buildKeywordExpressions(groupKeywordIds, 8);
-    const groundedConceptGroupIndexes = groupKeywordIds
-      .map((ids, index) => ids.length ? index : -1)
-      .filter(index => index >= 0);
-    for (const expression of expressions.slice(0, 4)) {
+    const groundedQueries = conceptKeywordQueries(groupKeywordIds, 8);
+    for (const [queryIndex, query] of groundedQueries.entries()) {
       await runDiscover(
         'discover:concept-intersection',
-        { with_keywords: expression, ...negativeKeywordParam },
-        expressions.length === 1 ? 5 : 3,
-        exactKeywordIds(expression),
-        groundedConceptGroupIndexes,
+        { with_keywords: query.expression, ...negativeKeywordParam },
+        queryIndex === 0 ? 4 : 2,
+        exactKeywordIds(query.expression),
+        query.groupIndexes,
       );
     }
     for (const [groupIndex, ids] of groupKeywordIds.entries()) {

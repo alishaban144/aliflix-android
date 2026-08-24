@@ -253,6 +253,7 @@ describe('TMDB-only recommendation engine', () => {
     expect(results.map(item => item.tmdbId)).toEqual([77]);
     expect(results[0].matchReasons).toContain('Grounded in multiple TMDB keyword concepts');
     expect(discoverCalls.every(params => params.with_keywords !== undefined)).toBe(true);
+    expect(discoverCalls.some(params => String(params.with_keywords).split(',').length === 2)).toBe(true);
   });
 
   it('translates cross-media anchors through keywords and target genre names without calling incompatible endpoints', async () => {
