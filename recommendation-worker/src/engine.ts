@@ -124,6 +124,23 @@ function exactKeywordIds(expression: string): number[] {
   return expression.split(',').filter(segment => !segment.includes('|')).map(Number).filter(Number.isFinite);
 }
 
+function canonicalKeywordPhrase(value: string): string {
+  const singularize = (word: string): string => {
+    if (word.length > 4 && word.endsWith('ies')) return `${word.slice(0, -3)}y`;
+    if (word.length > 5 && /(ches|shes|xes|zes)$/.test(word)) return word.slice(0, -2);
+    if (word.length > 4 && word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1);
+    return word;
+  };
+  return normalize(value).split(' ').map(singularize).join(' ');
+}
+
+function keywordMatchesSearchTerm(keywordName: string, searchTerm: string): boolean {
+  // TMDB commonly stores a singular tag while natural-language queries use a
+  // plural ("teenagers" -> "teenager"). Treat only that grammatical variant
+  // as exact grounding; never accept a merely nearby/fuzzy search result.
+  return canonicalKeywordPhrase(keywordName) === canonicalKeywordPhrase(searchTerm);
+}
+
 function conceptKeywordQueries(groupKeywordIds: number[][], limit = 8): Array<{ expression: string; groupIndexes: number[] }> {
   const activeGroups = groupKeywordIds
     .map((ids, index) => ({ ids: [...new Set(ids)].slice(0, 4), index }))
@@ -397,7 +414,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
             () => tmdb.searchKeyword(term),
           );
           if (!response?.results?.length) continue;
-          const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(term));
+          const exact = response.results.filter(keyword => keywordMatchesSearchTerm(keyword.name, term));
           for (const keyword of exact.slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
         }
       }
@@ -413,7 +430,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
         () => tmdb.searchKeyword(phrase),
       );
       if (response?.results?.length) {
-        const exact = response.results.filter(k => normalize(k.name) === normalize(phrase));
+        const exact = response.results.filter(k => keywordMatchesSearchTerm(k.name, phrase));
         for (const kw of exact.slice(0, 2)) {
           if (!excludedKeywordIds.includes(kw.id)) excludedKeywordIds.push(kw.id);
         }
@@ -449,7 +466,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
         () => tmdb.searchKeyword(phrase),
       );
       if (!response) continue;
-      const exact = response.results.filter(keyword => normalize(keyword.name) === normalize(phrase));
+      const exact = response.results.filter(keyword => keywordMatchesSearchTerm(keyword.name, phrase));
       const ids = exact
         .map(keyword => keyword.id)
         .filter((id, index, values) => values.indexOf(id) === index)

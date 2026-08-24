@@ -370,6 +370,47 @@ describe('TMDB-only recommendation engine', () => {
     expect(keywordDiscoveries).toEqual([]);
   });
 
+  it('grounds safe singular and plural variants without enabling fuzzy matches', async () => {
+    const keywordDiscoveries: string[] = [];
+    const morphologyTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => ({
+        page: 1, total_pages: 1, total_results: 2,
+        results: [{ id: 101, name: 'teenager' }, { id: 999, name: 'teenage comedy' }],
+      }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        if (params.with_keywords) keywordDiscoveries.push(String(params.with_keywords));
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{ id: 101, title: 'Grounded Teen Story', overview: 'Metadata wording differs', vote_average: 7.2, vote_count: 500 }],
+        };
+      },
+      details: async () => ({
+        id: 101, title: 'Grounded Teen Story', overview: 'Metadata wording differs',
+        keywords: { keywords: [{ id: 101, name: 'teenager' }] }, genres: [], vote_average: 7.2, vote_count: 500,
+      }),
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'teenagers' }, {
+      tmdb: morphologyTmdb as any,
+      interpret: async () => ({
+        ...interpreted,
+        requiredConceptGroups: [{ label: 'teenagers', synonyms: ['teenagers'], weight: 1 }],
+        genreHints: [],
+      }),
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(keywordDiscoveries.length).toBeGreaterThan(0);
+    expect(keywordDiscoveries.every(expression => expression === '101')).toBe(true);
+    expect(results.map(item => item.tmdbId)).toEqual([101]);
+  });
+
   it('caps TMDB discovery at the current date', async () => {
     const maximumDates: string[] = [];
     const datedTmdb = {
