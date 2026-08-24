@@ -19,6 +19,30 @@ const DETAIL_CONCURRENCY = 4;
 const MAX_KEYWORD_SEARCHES = 18;
 const MAX_KEYWORD_SEARCHES_PER_GROUP = 2;
 
+const NARRATIVE_CONNECTOR_CONCEPTS = new Set([
+  'deal', 'dealing', 'deals', 'discover', 'discovering', 'discovers', 'face', 'faces', 'facing',
+  'find', 'finding', 'finds', 'hunt', 'hunting', 'hunts', 'investigate', 'investigates', 'investigating',
+  'pursue', 'pursues', 'pursuing', 'search', 'searches', 'searching', 'solve', 'solves', 'solving',
+  'track', 'tracking', 'tracks', 'tries', 'trying', 'uncover', 'uncovering', 'uncovers',
+]);
+
+const GENRE_CONCEPT_ALIASES = new Map<string, Set<string>>([
+  ['Animation', new Set(['animated', 'animation', 'anime'])],
+  ['Comedy', new Set(['comedic', 'comedy', 'comic', 'funny', 'humor', 'humorous', 'humour'])],
+  ['Crime', new Set(['crime', 'criminal'])],
+  ['Documentary', new Set(['documentary', 'nonfiction'])],
+  ['Fantasy', new Set(['fantasy'])],
+  ['History', new Set(['historical', 'history'])],
+  ['Horror', new Set(['horror', 'scary'])],
+  ['Music', new Set(['music', 'musical'])],
+  ['Mystery', new Set(['mystery', 'whodunit'])],
+  ['Romance', new Set(['romance', 'romantic'])],
+  ['Science Fiction', new Set(['sci fi', 'science fiction'])],
+  ['Thriller', new Set(['suspense', 'thriller'])],
+  ['War', new Set(['war', 'wartime'])],
+  ['Western', new Set(['cowboy', 'western'])],
+]);
+
 interface AnchorProfile {
   keywords: TmdbKeyword[];
   genreNames: string[];
@@ -141,6 +165,49 @@ function keywordMatchesSearchTerm(keywordName: string, searchTerm: string): bool
   return canonicalKeywordPhrase(keywordName) === canonicalKeywordPhrase(searchTerm);
 }
 
+function groupTerms(group: InterpretedIntent['requiredConceptGroups'][number]): Set<string> {
+  return new Set([group.label, ...group.synonyms].map(canonicalKeywordPhrase).filter(Boolean));
+}
+
+function genreEquivalentForGroup(
+  group: InterpretedIntent['requiredConceptGroups'][number],
+  genreHints: string[],
+): string | undefined {
+  const terms = groupTerms(group);
+  return genreHints.find(genre => {
+    const aliases = GENRE_CONCEPT_ALIASES.get(genre);
+    return aliases && terms.size > 0 && [...terms].every(term => aliases.has(term));
+  });
+}
+
+function cleanInterpretedIntent(intent: InterpretedIntent): InterpretedIntent {
+  const merged: Array<{ group: InterpretedIntent['requiredConceptGroups'][number]; genre?: string }> = [];
+  for (const group of intent.requiredConceptGroups) {
+    const terms = groupTerms(group);
+    if (terms.size && [...terms].every(term => NARRATIVE_CONNECTOR_CONCEPTS.has(term))) continue;
+    const genre = genreEquivalentForGroup(group, intent.genreHints);
+    const existing = merged.find(entry => {
+      const existingTerms = groupTerms(entry.group);
+      return (genre !== undefined && entry.genre === genre) || [...terms].some(term => existingTerms.has(term));
+    });
+    if (!existing) {
+      merged.push({
+        group: genre
+          ? { ...group, label: genre.toLocaleLowerCase(), synonyms: [...new Set([...group.synonyms, genre.toLocaleLowerCase()])] }
+          : { ...group, synonyms: [...new Set(group.synonyms)] },
+        genre,
+      });
+      continue;
+    }
+    existing.group = {
+      label: existing.genre ? existing.genre.toLocaleLowerCase() : existing.group.label,
+      synonyms: [...new Set([...existing.group.synonyms, ...group.synonyms, ...(genre ? [genre.toLocaleLowerCase()] : [])])],
+      weight: Math.max(existing.group.weight, group.weight),
+    };
+  }
+  return { ...intent, requiredConceptGroups: merged.map(entry => entry.group) };
+}
+
 function conceptKeywordQueries(groupKeywordIds: number[][], limit = 8): Array<{ expression: string; groupIndexes: number[] }> {
   const activeGroups = groupKeywordIds
     .map((ids, index) => ({ ids: [...new Set(ids)].slice(0, 4), index }))
@@ -177,7 +244,7 @@ function discoverParams(type: MediaType, filters: RecommendationFilters, genreId
     with_origin_country: filters.originCountries.length ? filters.originCountries.join('|') : undefined,
     with_genres: included.length ? included.join(',') : undefined, without_genres: excluded.length ? excluded.join(',') : undefined,
     'with_runtime.gte': filters.minimumRuntimeMinutes, 'with_runtime.lte': filters.maximumRuntimeMinutes,
-    'vote_average.gte': filters.minimumTmdbRating, 'vote_count.gte': filters.minimumTmdbRating !== undefined ? 10 : undefined,
+    'vote_average.gte': filters.minimumTmdbRating, 'vote_count.gte': type === 'movie' ? 20 : 10,
   };
   if (filters.minimumYear) params[type === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte'] = `${filters.minimumYear}-01-01`;
   const releaseDateMaximumKey = type === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
@@ -255,6 +322,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     console.warn('Gemini interpretation error, applying fallback keyword intent', error instanceof Error ? error.message : error);
     intent = fallbackIntentFromQuery(queryToInterpret);
   }
+  intent = cleanInterpretedIntent(intent);
   applyQueryDateConstraints(queryToInterpret, intent.hardFilters);
   const filters = mergeFilters(request.filters, intent.hardFilters);
   const effectiveIntent: InterpretedIntent = { ...intent, hardFilters: filters };
@@ -401,6 +469,10 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     let keywordSearches = 0;
     for (const group of intent.requiredConceptGroups) {
       const ids: number[] = [];
+      if (genreEquivalentForGroup(group, intent.genreHints)) {
+        groupKeywordIds.push(ids);
+        continue;
+      }
       let groupSearches = 0;
       for (const phrase of group.synonyms) {
         if (keywordSearches >= MAX_KEYWORD_SEARCHES || groupSearches >= MAX_KEYWORD_SEARCHES_PER_GROUP || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8) break;
@@ -459,6 +531,8 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       );
     }
     for (const phrase of intent.broadSearchPhrases.slice(0, 3)) {
+      const phraseGroup = { label: phrase, synonyms: [phrase], weight: 1 };
+      if (genreEquivalentForGroup(phraseGroup, intent.genreHints)) continue;
       if (keywordSearches >= MAX_KEYWORD_SEARCHES || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8) break;
       keywordSearches++;
       const response = await optionalTmdbCall(
@@ -513,7 +587,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
     const targetedEntities = personIds.length > 0 || studioIds.length > 0;
     const needsGeneralDiscovery = request.mode === 'filters' ||
-      (!intent.requiredConceptGroups.length && !targetedEntities && intent.discoveryProfile !== 'hidden_gems');
+      (!intent.requiredConceptGroups.length && !targetedEntities && !hintedGenreIds.length && intent.discoveryProfile !== 'hidden_gems');
     if (needsGeneralDiscovery && tmdb.callsRemaining > TMDB_DETAIL_RESERVE && candidates.size < MAX_CANDIDATES) {
       const generalSort = intent.discoveryProfile === 'blockbusters' ? 'popularity.desc' : 'vote_count.desc';
       await runDiscover('discover:filtered-catalogue', { sort_by: generalSort, ...negativeKeywordParam }, 6);

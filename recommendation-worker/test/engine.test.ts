@@ -411,6 +411,51 @@ describe('TMDB-only recommendation engine', () => {
     expect(results.map(item => item.tmdbId)).toEqual([101]);
   });
 
+  it('merges duplicate genre concepts and omits narrative connector verbs', async () => {
+    let keywordCalls = 0;
+    const discoverCalls: Array<Record<string, string | number | boolean | undefined>> = [];
+    const cleanedTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [{ id: 35, name: 'Comedy' }] }),
+      searchKeyword: async () => { keywordCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        discoverCalls.push(params);
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{ id: 35, title: 'Real Comedy', overview: 'A joyful night out', genre_ids: [35], vote_average: 7.4, vote_count: 800 }],
+        };
+      },
+      details: async () => ({
+        id: 35, title: 'Real Comedy', overview: 'A joyful night out', genres: [{ id: 35, name: 'Comedy' }],
+        keywords: { keywords: [] }, vote_average: 7.4, vote_count: 800,
+      }),
+    };
+    const noisyIntent: InterpretedIntent = {
+      ...interpreted,
+      requiredConceptGroups: [
+        { label: 'funny', synonyms: ['funny'], weight: 1 },
+        { label: 'comedy', synonyms: ['comedy'], weight: 1 },
+        { label: 'solving', synonyms: ['solving'], weight: 1 },
+      ],
+      genreHints: ['Comedy'],
+      broadSearchPhrases: ['funny', 'comedy'],
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'funny comedy solving' }, {
+      tmdb: cleanedTmdb as any,
+      interpret: async () => noisyIntent,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(keywordCalls).toBe(0);
+    expect(discoverCalls.some(params => params.with_genres === '35' && params.with_keywords === undefined)).toBe(true);
+    expect(results.map(item => item.tmdbId)).toEqual([35]);
+  });
+
   it('caps TMDB discovery at the current date', async () => {
     const maximumDates: string[] = [];
     const datedTmdb = {
