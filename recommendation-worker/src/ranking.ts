@@ -32,6 +32,7 @@ export function mergeFilters(structured: RecommendationFilters, interpreted: Rec
       ? structured.excludedGenres
       : interpreted.excludedGenres.filter(genre => !structuredIncluded.has(normalize(genre)))),
     minimumTmdbRating: structured.minimumTmdbRating ?? interpreted.minimumTmdbRating,
+    seriesStatus: structured.seriesStatus ?? interpreted.seriesStatus,
     excludedTmdbIds: unique(structured.excludedTmdbIds.length ? structured.excludedTmdbIds : interpreted.excludedTmdbIds),
     excludedTitles: unique(structured.excludedTitles.length ? structured.excludedTitles : interpreted.excludedTitles),
   };
@@ -76,6 +77,11 @@ export function passesHardFilters(candidate: Candidate, filters: RecommendationF
   if (filters.includedGenres.length && !filters.includedGenres.every(genre => genres.has(normalize(genre)))) return false;
   if (filters.excludedGenres.some(genre => genres.has(normalize(genre)))) return false;
   if (filters.minimumTmdbRating !== undefined && (candidate.tmdbRating === undefined || candidate.tmdbRating < filters.minimumTmdbRating)) return false;
+  if (filters.seriesStatus) {
+    if (!candidate.status) return false;
+    const expected = filters.seriesStatus === 'returning' ? 'returning series' : 'ended';
+    if (normalize(candidate.status) !== expected) return false;
+  }
   if (filters.excludedTmdbIds.includes(candidate.tmdbId)) return false;
   if (filters.excludedTitles.some(title => normalize(title) === normalize(candidate.title) || normalize(title) === normalize(candidate.originalTitle || ''))) return false;
   return true;
@@ -92,7 +98,8 @@ function evidence(candidate: Candidate, intent: InterpretedIntent) {
     return canonicalValue.length > 1 && ` ${canonicalHaystack} `.includes(` ${canonicalValue} `);
   };
   const groupMatches = intent.requiredConceptGroups.map((group, index) => ({
-    matched: group.synonyms.some(value => containsConcept(contentHaystack, value)) || candidate.matchedConceptGroupIndexes.has(index),
+    matched: group.synonyms.some(value => containsConcept(contentHaystack, value)) ||
+      candidate.matchedConceptGroupIndexes.has(index) || candidate.premiseMatchedGroupIndexes?.has(index) === true,
     grounded: group.synonyms.some(value => containsConcept(keywordHaystack, value)) || candidate.matchedConceptGroupIndexes.has(index),
     weight: Math.max(.1, group.weight),
   }));
@@ -142,12 +149,20 @@ function hasRequiredConceptCoverage(total: number, matched: number, weightedCove
   return matched >= minimumMatches && weightedCoverage >= .64;
 }
 
-export function rankCandidates(candidates: Candidate[], intent: InterpretedIntent, filters: RecommendationFilters, similar: boolean, embeddingsAvailable: boolean): RecommendationResult[] {
+export function rankCandidates(
+  candidates: Candidate[],
+  intent: InterpretedIntent,
+  filters: RecommendationFilters,
+  similar: boolean,
+  embeddingsAvailable: boolean,
+  premiseAssessmentsAvailable = false,
+): RecommendationResult[] {
   for (const candidate of candidates) {
     if (!passesHardFilters(candidate, filters)) { candidate.matchLevel = 'Reject'; continue; }
     const e = evidence(candidate, intent);
     const semantic = candidate.semanticScore ?? 0;
     const conceptCoveragePasses = hasRequiredConceptCoverage(e.totalGroupCount, e.matchedGroupCount, e.concept);
+    const premiseEvidencePasses = candidate.premiseScore !== undefined && candidate.premiseScore >= .70 && conceptCoveragePasses;
     const anchorSupport = !candidate.anchorEvidenceAvailable || candidate.sharedAnchorKeywordCount > 0 ||
       candidate.anchorGenreScore >= .25 || semantic >= .50;
     const directSimilarity = candidate.directRelationshipScore >= .50 && anchorSupport;
@@ -159,10 +174,12 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
     const similarityEvidencePasses = directSimilarity || groundedSimilarity || hybridSimilarity;
     const signals: Record<string, number> = similar
       ? { semantic: candidate.semanticScore ?? 0, direct: candidate.directRelationshipScore, overlap: candidate.anchorOverlapScore, concept: e.concept, path: e.path, quality: e.quality }
-      : { semantic: candidate.semanticScore ?? 0, concept: e.concept, keyword: e.keyword, genre: e.genre, path: e.path, quality: e.quality };
+      : { premise: candidate.premiseScore ?? 0, semantic: candidate.semanticScore ?? 0, concept: e.concept, keyword: e.keyword, genre: e.genre, path: e.path, quality: e.quality };
     const weights: Record<string, number> = similar
       ? { semantic: .22, direct: .38, overlap: .28, concept: .02, path: .05, quality: .05 }
-      : { semantic: .25, concept: .38, keyword: .18, genre: .08, path: .06, quality: .05 };
+      : premiseAssessmentsAvailable
+        ? { premise: .52, concept: .24, keyword: .08, genre: .05, path: .05, quality: .06 }
+        : { semantic: .25, concept: .38, keyword: .18, genre: .08, path: .06, quality: .05 };
     if (!embeddingsAvailable || candidate.semanticScore === undefined) delete weights.semantic;
     if (!e.conceptRequested) {
       delete weights.concept;
@@ -177,13 +194,14 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
     candidate.finalScore = rawScore;
     const noConceptEvidence = !e.conceptRequested && !e.genreRequested && e.path === 0 && semantic === 0;
     const reject = e.excluded || (e.certificationRequested && e.certification === 0) ||
-      (similar ? !similarityEvidencePasses : !conceptCoveragePasses) ||
+      (similar ? !similarityEvidencePasses : premiseAssessmentsAvailable ? !premiseEvidencePasses : !conceptCoveragePasses) ||
       (!similar && !e.conceptRequested && e.genreRequested && e.genre === 0) ||
       (!similar && noConceptEvidence) || candidate.finalScore < .28;
     const level: MatchLevel = reject ? 'Reject' : candidate.finalScore >= .78 ? 'Exceptional' : candidate.finalScore >= .62 ? 'Strong' : candidate.finalScore >= .44 ? 'Relevant' : 'Broader but still relevant';
     candidate.matchLevel = level;
     candidate.matchReasons = [
       candidate.directRelationshipScore ? 'Recommended or marked similar by TMDB' : '',
+      !similar && premiseEvidencePasses ? candidate.premiseReason || 'Complete premise supported by TMDB metadata' : '',
       e.conceptRequested && e.concept >= .99 ? 'Matches every requested concept' : e.conceptRequested && conceptCoveragePasses ? 'Matches most requested concepts' : '',
       (candidate.semanticScore ?? 0) >= .72 ? 'Strong meaning and story match' : (candidate.semanticScore ?? 0) >= .56 ? 'Good story and theme match' : '',
       e.groundedGroupCount >= 2 ? 'Grounded in multiple TMDB keyword concepts' : e.keywordGrounded ? 'Grounded in TMDB keyword data' : '',
@@ -197,7 +215,7 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
         filters.originalLanguage !== undefined || filters.originCountries.length > 0 ||
         filters.minimumRuntimeMinutes !== undefined || filters.maximumRuntimeMinutes !== undefined ||
         filters.includedGenres.length > 0 || filters.excludedGenres.length > 0 ||
-        filters.minimumTmdbRating !== undefined;
+        filters.minimumTmdbRating !== undefined || filters.seriesStatus !== undefined;
       candidate.matchReasons.push(
         similar ? 'Related through TMDB similarity data'
           : hasHardFilters ? 'Matches your selected filters'
@@ -225,6 +243,7 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
     overview: candidate.overview, posterPath: candidate.posterPath, backdropPath: candidate.backdropPath, releaseDate: candidate.releaseDate,
     genres: candidate.genres, runtimeMinutes: candidate.runtimeMinutes, originalLanguage: candidate.originalLanguage,
     originCountries: candidate.originCountries, tmdbRating: candidate.tmdbRating, tmdbVoteCount: candidate.tmdbVoteCount,
+    status: candidate.status,
     matchLevel: candidate.matchLevel as Exclude<MatchLevel, 'Reject'>, finalScore: Number(candidate.finalScore!.toFixed(6)),
     matchReasons: candidate.matchReasons, retrievalSources: [...candidate.retrievalSources].sort(),
   }));

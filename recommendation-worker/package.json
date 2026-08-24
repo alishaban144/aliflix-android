@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit",
     "types": "wrangler types",
     "dry-run": "wrangler deploy --dry-run --outdir dist",
+    "gold:live": "node scripts/live-gold-standard.mjs",
     "deploy": "wrangler deploy"
   },
   "keywords": [],

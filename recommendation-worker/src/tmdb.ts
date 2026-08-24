@@ -48,7 +48,9 @@ export type TmdbTrendingItem = TmdbListItem & { media_type?: MediaType | 'person
 
 export class TmdbClient {
   private used = 0;
-  constructor(private readonly env: RecommendationEnv, private readonly budget = 180) {}
+  // Keep room beneath Cloudflare's 50-subrequest ceiling for Gemini, Durable
+  // Object, rate-limit, and retry traffic in the outer request.
+  constructor(private readonly env: RecommendationEnv, private readonly budget = 38) {}
   get callsUsed(): number { return this.used; }
   get callsRemaining(): number { return this.budget - this.used; }
 

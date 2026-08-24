@@ -60,6 +60,23 @@ describe('deterministic recommendation logic', () => {
     expect(ranked.map(item => item.tmdbId)).toEqual([3]);
   });
 
+  it('applies TMDB series status as a hard filter without adding relevance score', () => {
+    const hard = filters({ seriesStatus: 'ended' });
+    const ranked = rankCandidates([
+      candidate(1, 'Ended Match', 'A funny comedy', { status: 'Ended' }),
+      candidate(2, 'Returning Match', 'A funny comedy', { status: 'Returning Series' }),
+      candidate(3, 'Unknown Match', 'A funny comedy'),
+    ], intent([['funny', 'comedy']], hard), hard, false, false);
+
+    expect(ranked.map(item => item.tmdbId)).toEqual([1]);
+    expect(ranked[0].status).toBe('Ended');
+    expect(ranked[0].matchReasons.join(' ')).not.toMatch(/ended|status/i);
+    const unfiltered = rankCandidates([
+      candidate(1, 'Ended Match', 'A funny comedy', { status: 'Ended' }),
+    ], intent([['funny', 'comedy']]), filters(), false, false);
+    expect(ranked[0].finalScore).toBe(unfiltered[0].finalScore);
+  });
+
   it('ranks Better Call Saul first for Breaking Bad similarity without embeddings and excludes the anchor fixture', () => {
     const items = [
       candidate(60059, 'Better Call Saul', 'A crime lawyer in Albuquerque', { directRelationshipScore: 1, anchorOverlapScore: .9, genres: ['Crime', 'Drama'], retrievalSources: new Set(['recommendations:page-1', 'similar:page-1']) }),

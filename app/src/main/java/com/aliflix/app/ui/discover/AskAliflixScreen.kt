@@ -67,11 +67,25 @@ fun AskAliflixScreen(
                                             } else {
                                                 com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE
                                             },
+                                            requiredStatus = if (newType == com.aliflix.app.model.MediaType.TV) {
+                                                editorState.spec.requiredStatus
+                                            } else {
+                                                null
+                                            },
                                         ),
                                     )
                                 )
                             },
                         )
+
+                        if (editorState.mediaType == com.aliflix.app.model.MediaType.TV) {
+                            AskAliflixSeriesStatusSelector(
+                                selectedStatus = editorState.spec.requiredStatus,
+                                onStatusSelected = { status ->
+                                    onEditorStateChanged(editorState.copy(spec = editorState.spec.copy(requiredStatus = status)))
+                                },
+                            )
+                        }
 
                         AnimatedContent(
                             targetState = editorState.mode,
@@ -89,6 +103,7 @@ fun AskAliflixScreen(
                                             AskAliflixRequest.Describe(
                                                 mediaType = editorState.mediaType,
                                                 text = editorState.describeText,
+                                                requiredStatus = editorState.spec.requiredStatus,
                                             )
                                         )
                                     },
@@ -135,6 +150,7 @@ fun AskAliflixScreen(
                                                     AskAliflixRequest.Similar(
                                                         outputMediaType = editorState.mediaType,
                                                         anchors = anchors,
+                                                        requiredStatus = editorState.spec.requiredStatus,
                                                     )
                                                 )
                                             }

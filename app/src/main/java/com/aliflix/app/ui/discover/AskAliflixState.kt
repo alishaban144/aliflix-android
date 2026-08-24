@@ -9,6 +9,7 @@ sealed interface AskAliflixRequest {
     data class Describe(
         val mediaType: MediaType,
         val text: String,
+        val requiredStatus: String? = null,
         val previousText: String? = null,
         val refinementText: String? = null,
     ) : AskAliflixRequest
@@ -17,11 +18,13 @@ sealed interface AskAliflixRequest {
         val outputMediaType: MediaType,
         val anchors: List<Media> = emptyList(),
         val anchor: Media? = anchors.firstOrNull(),
+        val requiredStatus: String? = null,
     ) : AskAliflixRequest {
-        constructor(outputMediaType: MediaType, anchor: Media) : this(
+        constructor(outputMediaType: MediaType, anchor: Media, requiredStatus: String? = null) : this(
             outputMediaType = outputMediaType,
             anchors = listOf(anchor),
             anchor = anchor,
+            requiredStatus = requiredStatus,
         )
     }
 

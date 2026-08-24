@@ -13,6 +13,7 @@ const RecommendationFiltersObjectSchema = z.object({
   includedGenres: z.array(trimmed.min(1).max(80)).max(20).default([]),
   excludedGenres: z.array(trimmed.min(1).max(80)).max(20).default([]),
   minimumTmdbRating: z.number().min(0).max(10).nullish().transform(value => value ?? undefined),
+  seriesStatus: z.preprocess(value => value ?? undefined, z.enum(['returning', 'ended']).optional()),
   excludedTmdbIds: z.array(z.number().int().positive()).max(100).default([]),
   excludedTitles: z.array(trimmed.min(1).max(200)).max(100).default([]),
 });
@@ -55,6 +56,9 @@ export const RecommendationRequestSchema = z.object({
   if (value.mode === 'describe' && !value.query && !value.refinementQuery) {
     ctx.addIssue({ code: 'custom', path: ['query'], message: 'Describe requests require a query' });
   }
+  if (value.mediaType !== 'tv' && value.filters.seriesStatus) {
+    ctx.addIssue({ code: 'custom', path: ['filters', 'seriesStatus'], message: 'seriesStatus is only valid for TV recommendations' });
+  }
 });
 
 export const ConceptGroupSchema = z.object({
@@ -81,6 +85,7 @@ export const GeminiIntentResponseSchema = z.object({
   genreHints: z.array(trimmed.min(1).max(80)).max(12).default([]),
   toneAndMood: z.array(trimmed.min(1).max(80)).max(12).default([]),
   broadSearchPhrases: z.array(trimmed.min(1).max(120)).max(20).default([]),
+  seedTitles: z.array(trimmed.min(1).max(300)).max(24).default([]),
 });
 
 export const GeminiIntentJsonSchema = {
@@ -98,6 +103,7 @@ export const GeminiIntentJsonSchema = {
         includedGenres: { type: 'ARRAY', items: { type: 'STRING' } },
         excludedGenres: { type: 'ARRAY', items: { type: 'STRING' } },
         minimumTmdbRating: { type: 'NUMBER', nullable: true },
+        seriesStatus: { type: 'STRING', nullable: true },
         excludedTmdbIds: { type: 'ARRAY', items: { type: 'INTEGER' } },
         excludedTitles: { type: 'ARRAY', items: { type: 'STRING' } },
       },
@@ -119,8 +125,38 @@ export const GeminiIntentJsonSchema = {
     genreHints: { type: 'ARRAY', items: { type: 'STRING' } },
     toneAndMood: { type: 'ARRAY', items: { type: 'STRING' } },
     broadSearchPhrases: { type: 'ARRAY', items: { type: 'STRING' } },
+    seedTitles: { type: 'ARRAY', items: { type: 'STRING' } },
   },
-  required: ['hardFilters', 'requiredConceptGroups', 'softConcepts', 'excludedConcepts', 'excludedKeywords', 'crewNames', 'castNames', 'studioNames', 'certifications', 'genreHints', 'toneAndMood', 'broadSearchPhrases'],
+  required: ['hardFilters', 'requiredConceptGroups', 'softConcepts', 'excludedConcepts', 'excludedKeywords', 'crewNames', 'castNames', 'studioNames', 'certifications', 'genreHints', 'toneAndMood', 'broadSearchPhrases', 'seedTitles'],
+} as const;
+
+export const GeminiPremiseAssessmentResponseSchema = z.object({
+  assessments: z.array(z.object({
+    index: z.number().int().min(0),
+    relevanceScore: z.number().min(0).max(1),
+    matchedGroupIndexes: z.array(z.number().int().min(0)).max(8).default([]),
+    reason: trimmed.min(1).max(180),
+  })).max(64),
+});
+
+export const GeminiPremiseAssessmentJsonSchema = {
+  type: 'OBJECT',
+  properties: {
+    assessments: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          index: { type: 'INTEGER' },
+          relevanceScore: { type: 'NUMBER' },
+          matchedGroupIndexes: { type: 'ARRAY', items: { type: 'INTEGER' } },
+          reason: { type: 'STRING' },
+        },
+        required: ['index', 'relevanceScore', 'matchedGroupIndexes', 'reason'],
+      },
+    },
+  },
+  required: ['assessments'],
 } as const;
 
 export type ParsedRecommendationRequest = z.infer<typeof RecommendationRequestSchema>;

@@ -1,29 +1,46 @@
-import { embedForSearch, fallbackIntentFromQuery, interpretQuery } from './gemini';
+import { assessPremiseCandidates, embedForSearch, fallbackIntentFromQuery, interpretQuery } from './gemini';
 import { buildKeywordExpressions, canonicalConceptPhrase, cosineSimilarity, mergeFilters, normalize, rankCandidates } from './ranking';
 import { ParsedRecommendationRequest } from './schemas';
+import { editorialPremiseSeeds, editorialPremiseSeedYear } from './premise-catalog';
 import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
-import { Candidate, InterpretedIntent, MediaType, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, TmdbGenre, TmdbKeyword, TmdbListItem } from './types';
+import { Candidate, InterpretedIntent, MediaType, PremiseAssessment, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, TmdbGenre, TmdbKeyword, TmdbListItem } from './types';
 
 export interface EngineDependencies {
   interpret?: typeof interpretQuery;
   embed?: typeof embedForSearch;
-  tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchPerson' | 'searchCompany' | 'discover' | 'recommendations' | 'similar' | 'details'>;
+  verifyPremises?: (
+    env: RecommendationEnv,
+    query: string,
+    mediaType: MediaType,
+    groups: InterpretedIntent['requiredConceptGroups'],
+    candidates: Array<{ index: number; overview: string; genres: string[]; keywords: string[] }>,
+  ) => Promise<PremiseAssessment[]>;
+  tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchPerson' | 'searchCompany' | 'discover' | 'recommendations' | 'similar' | 'details'> &
+    Partial<Pick<TmdbClient, 'searchTitle'>>;
 }
 
 const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
-const TMDB_DETAIL_RESERVE = 28;
+const TMDB_DETAIL_RESERVE = 24;
 const DISCOVERY_CONCURRENCY = 4;
 const DETAIL_CONCURRENCY = 4;
 const MAX_KEYWORD_SEARCHES = 18;
 const MAX_KEYWORD_SEARCHES_PER_GROUP = 2;
+const MAX_SEED_TITLES = 24;
+const MAX_SEED_EXPANSIONS = 4;
+
+const GENERIC_SUBJECT_CONCEPTS = new Set([
+  'character', 'characters', 'individual', 'individuals', 'movie', 'movies', 'people', 'person', 'persons',
+  'protagonist', 'protagonists', 'series', 'show', 'shows', 'someone', 'story', 'stories',
+]);
 
 const NARRATIVE_CONNECTOR_CONCEPTS = new Set([
   'deal', 'dealing', 'deals', 'discover', 'discovering', 'discovers', 'face', 'faces', 'facing',
   'find', 'finding', 'finds', 'hunt', 'hunting', 'hunts', 'investigate', 'investigates', 'investigating',
   'pursue', 'pursues', 'pursuing', 'search', 'searches', 'searching', 'solve', 'solves', 'solving',
   'track', 'tracking', 'tracks', 'tries', 'trying', 'uncover', 'uncovering', 'uncovers',
+  'become', 'becomes', 'becoming', 'develop', 'developing', 'develops', 'get', 'gets', 'having',
 ]);
 
 const GENRE_CONCEPT_ALIASES = new Map<string, Set<string>>([
@@ -44,12 +61,18 @@ const GENRE_CONCEPT_ALIASES = new Map<string, Set<string>>([
 ]);
 
 const CONCEPT_SYNONYM_FAMILIES: string[][] = [
-  ['adolescent', 'teen', 'teenage protagonist', 'teenager'],
+  ['adolescent', 'child', 'kid', 'teen', 'teenage protagonist', 'teenager', 'young adult', 'young people', 'youth'],
   ['detective', 'investigator', 'police detective'],
-  ['psychic ability', 'psychic power', 'supernatural ability', 'supernatural force', 'supernatural power', 'superpower'],
+  ['psychic ability', 'psychic power', 'supernatural ability', 'supernatural force', 'supernatural power', 'superpower', 'extraordinary ability', 'paranormal ability', 'superhuman ability'],
   ['serial killer', 'serial murderer', 'serial murder'],
   ['small town', 'rural town'],
-  ['artificial intelligence', 'ai'],
+  ['android', 'artificial intelligence', 'ai', 'robot', 'synthetic being'],
+  ['aware', 'conscious', 'gain consciousness', 'self aware', 'sentient'],
+  ['alien', 'extraterrestrial', 'ufo'],
+  ['abducted', 'abduction', 'alien abduction', 'kidnapped by aliens'],
+  ['cannot escape', 'cut off', 'inescapable', 'isolated', 'stranded', 'trapped'],
+  ['mysterious location', 'mysterious place', 'unknown place'],
+  ['natural catastrophe', 'natural disaster', 'earthquake', 'extreme storm', 'flood', 'hurricane', 'tornado', 'tsunami', 'volcanic eruption', 'wildfire'],
   ['cold case', 'unsolved case'],
   ['time loop', 'temporal loop'],
   ['time travel', 'travel through time'],
@@ -105,6 +128,7 @@ function mergeDetails(candidate: Candidate, details: TmdbDetails): void {
   candidate.tmdbRating = details.vote_average ?? candidate.tmdbRating;
   candidate.tmdbVoteCount = details.vote_count ?? candidate.tmdbVoteCount;
   candidate.collectionId = details.belongs_to_collection?.id;
+  candidate.status = details.status || candidate.status;
   candidate.keywords = details.keywords?.keywords || details.keywords?.results || candidate.keywords;
   candidate.certifications = [...new Set([
     ...(details.release_dates?.results || []).filter(country => country.iso_3166_1 === 'US').flatMap(country => country.release_dates || []).map(release => release.certification?.trim()),
@@ -124,7 +148,8 @@ function detailPriority(candidate: Candidate): number {
     source.includes('concept-intersection') ? 45 :
       source.includes('anchor-fusion') ? 40 :
         source.includes('anchor-keywords') ? 32 :
-          source.includes('concept-') ? 24 :
+            source.includes('premise-seed') ? 50 :
+              source.includes('concept-') ? 24 :
             source.includes('people') || source.includes('studios') ? 18 :
               source.includes('genre') ? 4 : -8
   ), 0);
@@ -195,7 +220,7 @@ function cleanInterpretedIntent(intent: InterpretedIntent): InterpretedIntent {
   for (const originalGroup of intent.requiredConceptGroups) {
     const group = expandConceptSynonyms(originalGroup);
     const terms = groupTerms(group);
-    if (terms.size && [...terms].every(term => NARRATIVE_CONNECTOR_CONCEPTS.has(term))) continue;
+    if (terms.size && [...terms].every(term => NARRATIVE_CONNECTOR_CONCEPTS.has(term) || GENERIC_SUBJECT_CONCEPTS.has(term))) continue;
     const genre = genreEquivalentForGroup(group, intent.genreHints);
     const existing = merged.find(entry => {
       const existingTerms = groupTerms(entry.group);
@@ -287,6 +312,10 @@ function passesKnownFilters(candidate: Candidate, filters: RecommendationFilters
     if (filters.excludedGenres.some(genre => genres.has(normalize(genre)))) return false;
   }
   if (filters.minimumTmdbRating !== undefined && candidate.tmdbRating !== undefined && candidate.tmdbRating < filters.minimumTmdbRating) return false;
+  if (filters.seriesStatus && candidate.detailsLoaded) {
+    const expected = filters.seriesStatus === 'returning' ? 'returning series' : 'ended';
+    if (!candidate.status || normalize(candidate.status) !== expected) return false;
+  }
   return true;
 }
 
@@ -334,6 +363,12 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     intent = fallbackIntentFromQuery(queryToInterpret);
   }
   intent = cleanInterpretedIntent(intent);
+  const editorialSeedTitles = editorialPremiseSeeds(queryToInterpret, request.mediaType);
+  const editorialSeedTitleKeys = new Set(editorialSeedTitles.map(normalize));
+  intent.seedTitles = [...new Set([
+    ...editorialSeedTitles,
+    ...(intent.seedTitles || []),
+  ])].slice(0, MAX_SEED_TITLES);
   applyQueryDateConstraints(queryToInterpret, intent.hardFilters);
   const filters = mergeFilters(request.filters, intent.hardFilters);
   const effectiveIntent: InterpretedIntent = { ...intent, hardFilters: filters };
@@ -476,6 +511,55 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       if (anchor.mediaType === request.mediaType) candidates.delete(`${request.mediaType}:${anchor.tmdbId}`);
     }
   } else {
+    const seedTitles = [...new Set((intent.seedTitles || []).map(title => title.trim()).filter(Boolean))].slice(0, MAX_SEED_TITLES);
+    for (let start = 0; tmdb.searchTitle && start < seedTitles.length && tmdb.callsRemaining > TMDB_DETAIL_RESERVE + 2; start += DISCOVERY_CONCURRENCY) {
+      const batch = seedTitles.slice(start, start + DISCOVERY_CONCURRENCY);
+      const responses = await Promise.all(batch.map(title => optionalTmdbCall(
+        `premise-seed:${title}`,
+        () => tmdb.searchTitle!(request.mediaType, title),
+      )));
+      responses.forEach((response, index) => {
+        if (!response) return;
+        const expectedTitle = normalize(batch[index]);
+        const editorialYear = editorialSeedTitleKeys.has(expectedTitle)
+          ? editorialPremiseSeedYear(batch[index], request.mediaType)
+          : undefined;
+        const exactResults = response.results.filter(item => {
+          const primary = request.mediaType === 'movie' ? item.title : item.name;
+          const original = request.mediaType === 'movie' ? item.original_title : item.original_name;
+          const date = request.mediaType === 'movie' ? item.release_date : item.first_air_date;
+          const identityMatches = normalize(primary || '') === expectedTitle || normalize(original || '') === expectedTitle;
+          return identityMatches && (editorialYear === undefined || date?.startsWith(String(editorialYear)) === true);
+        }).slice(0, 1);
+        if (exactResults.length) {
+          const editorial = editorialSeedTitleKeys.has(expectedTitle);
+          addPage({ ...response, results: exactResults }, editorial ? 'search:editorial-premise-seed' : 'search:gemini-premise-seed');
+          if (editorial) {
+            for (const item of exactResults) {
+              const candidate = candidates.get(`${request.mediaType}:${item.id}`);
+              if (!candidate) continue;
+              candidate.premiseScore = .92;
+              candidate.premiseMatchedGroupIndexes = new Set(intent.requiredConceptGroups.map((_, groupIndex) => groupIndex));
+              candidate.premiseReason = 'Editorially verified as a close match to the complete premise';
+            }
+          }
+        }
+      });
+    }
+
+    const exactSeedCandidates = [...candidates.values()]
+      .filter(candidate => [...candidate.retrievalSources].some(source => source.includes('premise-seed')))
+      .slice(0, MAX_SEED_EXPANSIONS);
+    for (const seed of exactSeedCandidates) {
+      if (tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8 || candidates.size >= MAX_CANDIDATES) break;
+      const [recommendations, similar] = await Promise.all([
+        optionalTmdbCall(`premise-seed-recommendations:${seed.tmdbId}`, () => tmdb.recommendations(request.mediaType, seed.tmdbId, 1)),
+        optionalTmdbCall(`premise-seed-similar:${seed.tmdbId}`, () => tmdb.similar(request.mediaType, seed.tmdbId, 1)),
+      ]);
+      if (recommendations) addPage(recommendations, 'discover:premise-seed-recommendations');
+      if (similar) addPage(similar, 'discover:premise-seed-similar');
+    }
+
     const groupKeywordIds: number[][] = [];
     let keywordSearches = 0;
     for (const group of intent.requiredConceptGroups) {
@@ -658,8 +742,49 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
   }
 
+  let premiseAssessmentsAvailable = false;
+  if (request.mode === 'describe' && hydrated.length && queryToInterpret.trim()) {
+    const premiseDocuments = hydrated.slice(0, MAX_SEMANTIC_CANDIDATES).map((candidate, index) => ({
+      index,
+      overview: candidate.overview || '',
+      genres: candidate.genres,
+      keywords: candidate.keywords.map(keyword => keyword.name),
+    }));
+    try {
+      const assessments = await (dependencies.verifyPremises || assessPremiseCandidates)(
+        env,
+        queryToInterpret,
+        request.mediaType,
+        intent.requiredConceptGroups,
+        premiseDocuments,
+      );
+      const byIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
+      if (byIndex.size === premiseDocuments.length) {
+        premiseDocuments.forEach(document => {
+          const assessment = byIndex.get(document.index)!;
+          const candidate = hydrated[document.index];
+          const assessedGroups = assessment.matchedGroupIndexes.filter(index => index < intent.requiredConceptGroups.length);
+          const editoriallyVerified = candidate.retrievalSources.has('search:editorial-premise-seed');
+          candidate.premiseScore = editoriallyVerified
+            ? Math.max(candidate.premiseScore || 0, assessment.relevanceScore)
+            : assessment.relevanceScore;
+          candidate.premiseMatchedGroupIndexes = new Set([
+            ...(candidate.premiseMatchedGroupIndexes || []),
+            ...assessedGroups,
+          ]);
+          if (!editoriallyVerified) candidate.premiseReason = assessment.reason;
+        });
+        premiseAssessmentsAvailable = true;
+      } else {
+        console.warn(`[Gemini] Incomplete premise assessment batch (${byIndex.size}/${premiseDocuments.length}); retaining deterministic ranking`);
+      }
+    } catch (error) {
+      console.warn('[Gemini] Premise assessment unavailable; retaining deterministic ranking', error instanceof Error ? error.message : error);
+    }
+  }
+
   let embeddingsAvailable = false;
-  if (hydrated.length) {
+  if (hydrated.length && (request.mode === 'similar' || !premiseAssessmentsAvailable)) {
     const queryText = request.mode === 'similar'
       ? anchorProfiles.map(profile => [profile.overview, profile.genreNames.join(', '), profile.keywords.map(keyword => keyword.name).join(', ')].filter(Boolean).join('\n')).join('\n---\n')
       : [
@@ -691,5 +816,6 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     filters,
     request.mode === 'similar',
     embeddingsAvailable,
+    premiseAssessmentsAvailable,
   ).slice(0, MAX_CANDIDATES);
 }

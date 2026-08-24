@@ -26,6 +26,21 @@ class AskAliflixWiringIntegrationTest {
     }
 
     @Test
+    fun seriesStatusIsForwardedForDescribeAndNeverConvertedIntoQueryText() {
+        val json = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Describe(
+                mediaType = MediaType.TV,
+                text = "people trapped in a mysterious place",
+                requiredStatus = "Returning Series",
+            ),
+            "00000000-0000-4000-8000-000000000006",
+        ).workerRequest.toJson()
+
+        assertEquals("returning", json.getJSONObject("filters").getString("seriesStatus"))
+        assertEquals("people trapped in a mysterious place", json.getString("query"))
+    }
+
+    @Test
     fun similarPreservesAnchorTmdbIdentityAndRequestedOutputType() {
         val anchor = Media(id = 1396, type = MediaType.TV, title = "Breaking Bad")
         val json = AskAliflixRequestMapper.map(
@@ -90,13 +105,14 @@ class AskAliflixWiringIntegrationTest {
               "tmdbId":60059,"mediaType":"tv","title":"Better Call Saul","originalTitle":"Better Call Saul",
               "overview":"A lawyer's transformation","posterPath":"/better-call-saul.jpg","releaseDate":"2015-02-08","genres":["Crime","Drama"],
               "runtimeMinutes":47,"originalLanguage":"en","originCountries":["US"],"tmdbRating":8.7,
-              "tmdbVoteCount":6000,"matchLevel":"Exceptional","finalScore":0.92,
+              "tmdbVoteCount":6000,"status":"Ended","matchLevel":"Exceptional","finalScore":0.92,
               "matchReasons":["Recommended by TMDB"],"retrievalSources":["recommendations:page-1"]}
         ]} """))
         val item = response.results.single()
         assertEquals(listOf("Crime", "Drama"), item.genres)
         assertEquals(47, item.runtimeMinutes)
         assertEquals(8.7, item.tmdbRating!!, 0.0)
+        assertEquals("Ended", item.status)
         assertEquals(listOf("Recommended by TMDB"), item.matchReasons)
         assertEquals(
             "https://image.tmdb.org/t/p/w500/better-call-saul.jpg",

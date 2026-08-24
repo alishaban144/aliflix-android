@@ -127,6 +127,7 @@ data class V3RecommendationFilters(
     val includedGenres: List<String> = emptyList(),
     val excludedGenres: List<String> = emptyList(),
     val minimumTmdbRating: Double? = null,
+    val seriesStatus: String? = null,
     val excludedTmdbIds: List<Int> = emptyList(),
     val excludedTitles: List<String> = emptyList(),
 ) {
@@ -135,7 +136,8 @@ data class V3RecommendationFilters(
         originalLanguage?.let { put("originalLanguage", it) }; put("originCountries", JSONArray(originCountries))
         minimumRuntimeMinutes?.let { put("minimumRuntimeMinutes", it) }; maximumRuntimeMinutes?.let { put("maximumRuntimeMinutes", it) }
         put("includedGenres", JSONArray(includedGenres)); put("excludedGenres", JSONArray(excludedGenres))
-        minimumTmdbRating?.let { put("minimumTmdbRating", it) }; put("excludedTmdbIds", JSONArray(excludedTmdbIds)); put("excludedTitles", JSONArray(excludedTitles))
+        minimumTmdbRating?.let { put("minimumTmdbRating", it) }; seriesStatus?.let { put("seriesStatus", it) }
+        put("excludedTmdbIds", JSONArray(excludedTmdbIds)); put("excludedTitles", JSONArray(excludedTitles))
     }
 }
 
@@ -196,7 +198,7 @@ data class V3RecommendationResponse(
 data class V3RecommendationResult(
     val tmdbId: Int, val mediaType: String, val title: String, val originalTitle: String?, val overview: String?,
     val posterPath: String?, val backdropPath: String?, val releaseDate: String?, val genres: List<String>, val runtimeMinutes: Int?,
-    val originalLanguage: String?, val originCountries: List<String>, val tmdbRating: Double?, val tmdbVoteCount: Int?,
+    val originalLanguage: String?, val originCountries: List<String>, val tmdbRating: Double?, val tmdbVoteCount: Int?, val status: String?,
     val matchLevel: String, val finalScore: Double, val matchReasons: List<String>, val retrievalSources: List<String>,
 ) {
     companion object {
@@ -208,6 +210,7 @@ data class V3RecommendationResult(
             originalLanguage = json.nullableString("originalLanguage"), originCountries = json.optJSONArray("originCountries").stringValues(),
             tmdbRating = json.optDouble("tmdbRating").takeIf { json.has("tmdbRating") && !json.isNull("tmdbRating") },
             tmdbVoteCount = json.optInt("tmdbVoteCount").takeIf { json.has("tmdbVoteCount") && !json.isNull("tmdbVoteCount") },
+            status = json.nullableString("status"),
             matchLevel = json.optString("matchLevel", "Relevant"), finalScore = json.optDouble("finalScore"),
             matchReasons = json.optJSONArray("matchReasons").stringValues(), retrievalSources = json.optJSONArray("retrievalSources").stringValues(),
         )

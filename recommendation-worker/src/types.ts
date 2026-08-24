@@ -11,6 +11,7 @@ export interface RecommendationFilters {
   includedGenres: string[];
   excludedGenres: string[];
   minimumTmdbRating?: number;
+  seriesStatus?: 'returning' | 'ended';
   excludedTmdbIds: number[];
   excludedTitles: string[];
 }
@@ -55,6 +56,8 @@ export interface InterpretedIntent {
   genreHints: string[];
   toneAndMood: string[];
   broadSearchPhrases: string[];
+  /** Real TMDB title identities used only to retrieve a premise-aware pool. */
+  seedTitles?: string[];
 }
 
 export interface TmdbListItem {
@@ -74,6 +77,7 @@ export interface TmdbListItem {
   vote_average?: number;
   vote_count?: number;
   popularity?: number;
+  status?: string;
 }
 
 export interface TmdbGenre { id: number; name: string }
@@ -97,6 +101,7 @@ export interface Candidate {
   tmdbRating?: number;
   tmdbVoteCount?: number;
   popularity?: number;
+  status?: string;
   collectionId?: number;
   certifications: string[];
   keywords: TmdbKeyword[];
@@ -106,6 +111,9 @@ export interface Candidate {
   hardFiltersVerified: boolean;
   detailsLoaded: boolean;
   semanticScore?: number;
+  premiseScore?: number;
+  premiseMatchedGroupIndexes?: Set<number>;
+  premiseReason?: string;
   directRelationshipScore: number;
   anchorOverlapScore: number;
   anchorEvidenceAvailable: boolean;
@@ -133,10 +141,25 @@ export interface RecommendationResult {
   originCountries: string[];
   tmdbRating?: number;
   tmdbVoteCount?: number;
+  status?: string;
   matchLevel: Exclude<MatchLevel, 'Reject'>;
   finalScore: number;
   matchReasons: string[];
   retrievalSources: string[];
+}
+
+export interface PremiseCandidateDocument {
+  index: number;
+  overview: string;
+  genres: string[];
+  keywords: string[];
+}
+
+export interface PremiseAssessment {
+  index: number;
+  relevanceScore: number;
+  matchedGroupIndexes: number[];
+  reason: string;
 }
 
 export interface RecommendationResponse {

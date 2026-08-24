@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.10"
+      - "release/v3.1.11"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.10"
+        description: "Release tag, for example v3.1.11"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "100"
-  RELEASE_VERSION_NAME: "3.1.10"
+  RELEASE_VERSION_CODE: "101"
+  RELEASE_VERSION_NAME: "3.1.11"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -110,7 +110,7 @@ jobs:
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
           else
             test "${GITHUB_REF_TYPE}" = "branch"
-            test "${GITHUB_REF_NAME}" = "release/v3.1.10"
+            test "${GITHUB_REF_NAME}" = "release/v3.1.11"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then
@@ -206,7 +206,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Rebuilds Ask Aliflix grounding with strict independent-concept coverage, exact TMDB evidence, safe synonym expansion, evidence-gated Similar results, priority metadata hydration, cross-media translation, resilient Gemini embeddings, and future-title protection."
+            "releaseNotes": "Rebuilds Describe recommendations around complete-premise retrieval and metadata verification, adds quota-safe editorial recall for sparse TMDB topics, and adds exact Returning or Ended series filtering without changing relevance scores."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -217,7 +217,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Rebuilds Ask Aliflix grounding with strict independent-concept coverage, exact TMDB evidence, safe synonym expansion, evidence-gated Similar results, priority metadata hydration, cross-media translation, resilient Gemini embeddings, and future-title protection."
+          body: "Rebuilds Describe recommendations around complete-premise retrieval and metadata verification, adds quota-safe editorial recall for sparse TMDB topics, and adds exact Returning or Ended series filtering without changing relevance scores."
           files: |
             aliflix-mobile.apk
             update-mobile.json

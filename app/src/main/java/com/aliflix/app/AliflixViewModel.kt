@@ -313,6 +313,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             com.aliflix.app.ui.discover.AskAliflixRequest.Describe(
                 mediaType = _askEditorState.value.mediaType,
                 text = newDescribeText,
+                requiredStatus = _askEditorState.value.spec.requiredStatus,
                 previousText = previousText,
                 refinementText = refinement,
             )
@@ -447,6 +448,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 year = result.releaseDate?.take(4).orEmpty(),
                 rating = result.tmdbRating ?: 0.0,
                 genres = result.genres,
+                status = result.status.orEmpty(),
                 runtime = result.runtimeMinutes?.let { "$it min" }.orEmpty(),
             ),
             metadata = com.aliflix.app.recommendation.VerifiedMediaMetadata(
@@ -455,6 +457,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 originalLanguage = result.originalLanguage,
                 originCountries = result.originCountries,
                 tmdbVoteCount = result.tmdbVoteCount,
+                status = result.status,
                 verifiedAtMillis = System.currentTimeMillis(),
             ),
             evidence = result.matchReasons.firstOrNull().orEmpty(),

@@ -499,7 +499,8 @@ class RecommendationOrchestrator(
                 backdropPath = res.backdropPath,
                 rating = res.tmdbRating ?: 0.0,
                 overview = res.overview ?: "",
-                genres = res.genres
+                genres = res.genres,
+                status = res.status.orEmpty(),
             )
             val breakdown = RecommendationScoreBreakdown(
                 semanticScore = res.finalScore,

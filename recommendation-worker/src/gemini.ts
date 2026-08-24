@@ -1,6 +1,18 @@
-import { INTERPRET_V3_PROMPT } from './prompts';
-import { GeminiIntentJsonSchema, GeminiIntentResponseSchema } from './schemas';
-import { InterpretedIntent, MediaType, RecommendationEnv, ServiceError } from './types';
+import { INTERPRET_V3_PROMPT, VERIFY_PREMISE_PROMPT } from './prompts';
+import {
+  GeminiIntentJsonSchema,
+  GeminiIntentResponseSchema,
+  GeminiPremiseAssessmentJsonSchema,
+  GeminiPremiseAssessmentResponseSchema,
+} from './schemas';
+import {
+  InterpretedIntent,
+  MediaType,
+  PremiseAssessment,
+  PremiseCandidateDocument,
+  RecommendationEnv,
+  ServiceError,
+} from './types';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const EMPTY_FILTERS = {
@@ -11,10 +23,11 @@ const FALLBACK_STOP_WORDS = new Set([
   'about', 'after', 'also', 'and', 'before', 'but', 'can', 'could', 'find', 'for', 'from', 'give', 'has',
   'have', 'into', 'just', 'less', 'like', 'made', 'more', 'movie', 'movies', 'need', 'please', 'really',
   'recommend', 'recommendation', 'series', 'show', 'shows', 'something', 'story', 'stories', 'surprise',
-  'that', 'the', 'their', 'them', 'these', 'this', 'very', 'want', 'where', 'which', 'with', 'would',
+  'that', 'the', 'their', 'them', 'these', 'they', 'this', 'very', 'want', 'where', 'which', 'who', 'with', 'would',
 ]);
 
 const FALLBACK_PHRASES = [
+  'alien abduction', 'natural disasters', 'natural disaster', 'mysterious place', 'cannot escape', 'young people',
   'artificial intelligence', 'coming of age', 'dark comedy', 'enemies to lovers', 'found footage',
   'haunted house', 'mind bending', 'plot twist', 'serial killer', 'small town', 'time loop', 'time travel',
   'true crime', 'unreliable narrator', 'cold case', 'psychological thriller', 'supernatural powers',
@@ -95,6 +108,7 @@ export function fallbackIntentFromQuery(query: string): InterpretedIntent {
     genreHints,
     toneAndMood: [],
     broadSearchPhrases: concepts.slice(0, 4),
+    seedTitles: [],
   };
 }
 
@@ -154,6 +168,7 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
       hardFilters: { ...EMPTY_FILTERS }, requiredConceptGroups: [], softConcepts: [], excludedConcepts: [],
       excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
       genreHints: [], toneAndMood: [], broadSearchPhrases: [],
+      seedTitles: [],
     };
   }
 
@@ -163,7 +178,7 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
     const data = await geminiFetch<GeminiGenerationResponse>(env, model, 'generateContent', {
       systemInstruction: { parts: [{ text: INTERPRET_V3_PROMPT }] },
       contents: [{ role: 'user', parts: [{ text: JSON.stringify({ query, authoritativeMediaType: mediaType }) }] }],
-      generationConfig: { responseMimeType: 'application/json', responseJsonSchema: GeminiIntentJsonSchema },
+      generationConfig: { temperature: .2, responseMimeType: 'application/json', responseJsonSchema: GeminiIntentJsonSchema },
     }, 15_000);
 
     const text = data.candidates?.[0]?.content?.parts?.find(part => typeof part.text === 'string')?.text;
@@ -177,6 +192,42 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
   // Gracefully fallback to keyword extraction so the user search never fails with 503 or timeout
   console.warn(`[Gemini] Applying robust keyword fallback for query: "${query}"`);
   return fallbackIntentFromQuery(query);
+}
+
+export async function assessPremiseCandidates(
+  env: RecommendationEnv,
+  query: string,
+  mediaType: MediaType,
+  requiredConceptGroups: InterpretedIntent['requiredConceptGroups'],
+  candidates: PremiseCandidateDocument[],
+): Promise<PremiseAssessment[]> {
+  if (!candidates.length) return [];
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
+  const data = await geminiFetch<GeminiGenerationResponse>(env, model, 'generateContent', {
+    systemInstruction: { parts: [{ text: VERIFY_PREMISE_PROMPT }] },
+    contents: [{ role: 'user', parts: [{ text: JSON.stringify({
+      query,
+      authoritativeMediaType: mediaType,
+      requiredConceptGroups: requiredConceptGroups.map((group, index) => ({
+        index,
+        label: group.label,
+        synonyms: group.synonyms,
+      })),
+      candidates,
+    }) }] }],
+    generationConfig: {
+      temperature: .1,
+      responseMimeType: 'application/json',
+      responseJsonSchema: GeminiPremiseAssessmentJsonSchema,
+    },
+  }, 20_000);
+  const text = data.candidates?.[0]?.content?.parts?.find(part => typeof part.text === 'string')?.text;
+  if (typeof text !== 'string' || !text) {
+    throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned no premise assessments', 502, true);
+  }
+  const parsed = GeminiPremiseAssessmentResponseSchema.parse(JSON.parse(text));
+  const validIndexes = new Set(candidates.map(candidate => candidate.index));
+  return parsed.assessments.filter(assessment => validIndexes.has(assessment.index));
 }
 
 async function embedBatch(env: RecommendationEnv, texts: string[], taskType: 'RETRIEVAL_QUERY' | 'RETRIEVAL_DOCUMENT'): Promise<number[][]> {

@@ -23,7 +23,14 @@ object AskAliflixRequestMapper {
         }
         val spec = when (request) {
             is AskAliflixRequest.Filters -> request.spec
-            else -> CatalogDiscoverySpec(if (outputType == MediaType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE)
+            is AskAliflixRequest.Describe -> CatalogDiscoverySpec(
+                if (outputType == MediaType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE,
+                requiredStatus = request.requiredStatus,
+            )
+            is AskAliflixRequest.Similar -> CatalogDiscoverySpec(
+                if (outputType == MediaType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE,
+                requiredStatus = request.requiredStatus,
+            )
         }
         val summary = when (request) {
             is AskAliflixRequest.Describe -> {
@@ -73,6 +80,11 @@ object AskAliflixRequestMapper {
         minimumYear = yearMinimum, maximumYear = yearMaximum, originalLanguage = originalLanguage,
         originCountries = countries, minimumRuntimeMinutes = runtimeMinimumMinutes, maximumRuntimeMinutes = runtimeMaximumMinutes,
         includedGenres = includedGenres, excludedGenres = excludedGenres, minimumTmdbRating = minimumTmdb,
+        seriesStatus = when (requiredStatus?.trim()?.lowercase()) {
+            "returning series" -> "returning"
+            "ended" -> "ended"
+            else -> null
+        },
     )
 
     private fun MediaType.label() = if (this == MediaType.TV) "Series" else "Movies"

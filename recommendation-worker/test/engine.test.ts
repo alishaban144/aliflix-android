@@ -312,6 +312,64 @@ describe('TMDB-only recommendation engine', () => {
     expect(results).toEqual([]);
   });
 
+  it('uses premise seeds for recall but admits only metadata-verified complete premise matches', async () => {
+    const seedIntent: InterpretedIntent = {
+      ...interpreted,
+      requiredConceptGroups: [
+        { label: 'alien', synonyms: ['alien', 'extraterrestrial'], weight: 1 },
+        { label: 'abduction', synonyms: ['abduction', 'abducted'], weight: 1 },
+      ],
+      genreHints: ['Science Fiction'],
+      seedTitles: ['Fire in the Sky', 'Alien Abduction'],
+    };
+    const seedTmdb = {
+      callsRemaining: 120,
+      genres: async () => ({ genres: [{ id: 878, name: 'Science Fiction' }] }),
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{
+          id: title === 'Fire in the Sky' ? 1 : 2,
+          title,
+          overview: title === 'Fire in the Sky'
+            ? 'A logger disappears after an encounter with an extraterrestrial craft and returns with memories of abduction.'
+            : 'Friends meet for an ordinary cooking competition.',
+          genre_ids: [878], vote_average: 7, vote_count: 500,
+        }],
+      }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      details: async (_type: string, id: number) => id === 1
+        ? { id, title: 'Fire in the Sky', overview: 'A logger disappears after an encounter with an extraterrestrial craft and returns with memories of abduction.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [{ id: 10, name: 'alien' }, { id: 11, name: 'abduction' }] }, vote_average: 7, vote_count: 500 }
+        : { id, title: 'Alien Abduction', overview: 'Friends meet for an ordinary cooking competition.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [] }, vote_average: 7, vote_count: 500 },
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'visitors from space take a logger' }, {
+      tmdb: seedTmdb,
+      interpret: async () => seedIntent,
+      verifyPremises: async (_env, _query, _type, _groups, documents) => {
+        expect(documents.every(document => !('title' in document))).toBe(true);
+        return documents.map(document => document.overview.includes('extraterrestrial craft')
+          ? { index: document.index, relevanceScore: .96, matchedGroupIndexes: [0, 1], reason: 'Extraterrestrial abduction is central to the synopsis' }
+          : { index: document.index, relevanceScore: .08, matchedGroupIndexes: [], reason: 'No abduction premise is supported' });
+      },
+    });
+
+    expect(results.map(result => result.title)).toEqual(['Fire in the Sky']);
+    expect(results[0].matchReasons[0]).toContain('Extraterrestrial abduction');
+    expect(results[0].retrievalSources).toContain('search:gemini-premise-seed');
+  });
+
+  it('rejects a TV-only seriesStatus filter on movie requests', () => {
+    expect(() => RecommendationRequestSchema.parse({
+      ...request,
+      filters: { seriesStatus: 'ended' },
+    })).toThrow('seriesStatus is only valid for TV recommendations');
+  });
+
   it('counts every TMDB keyword lookup against the discovery-search cap', async () => {
     let keywordCalls = 0;
     const cappedTmdb = {

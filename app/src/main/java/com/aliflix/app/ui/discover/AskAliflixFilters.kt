@@ -397,6 +397,7 @@ internal fun CatalogDiscoverySpec.askFilterSummary(): String {
             runtimeMaximumMinutes != null -> add("Runtime up to $runtimeMaximumMinutes min")
         }
         minimumTmdb?.let { add("TMDB ${it.toString().removeSuffix(".0")}+") }
+        requiredStatus?.let { add(it) }
         originalLanguage?.let { code ->
             add(ASK_LANGUAGES.firstOrNull { it.code == code }?.label ?: code.uppercase())
         }
@@ -416,6 +417,7 @@ private fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
             spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null,
             spec.minimumTmdb != null,
             spec.originalLanguage != null,
+            spec.requiredStatus != null,
         ).count { it } + spec.countries.size
 
 private fun CatalogDiscoverySpec.clearAskFilters() = copy(
@@ -427,6 +429,7 @@ private fun CatalogDiscoverySpec.clearAskFilters() = copy(
     yearMaximum = null,
     minimumTmdb = null,
     originalLanguage = null,
+    requiredStatus = null,
     countries = emptyList(),
 )
 
