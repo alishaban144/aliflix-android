@@ -1,5 +1,5 @@
 import { embedForSearch, fallbackIntentFromQuery, interpretQuery } from './gemini';
-import { buildKeywordExpressions, cosineSimilarity, mergeFilters, normalize, rankCandidates } from './ranking';
+import { buildKeywordExpressions, canonicalConceptPhrase, cosineSimilarity, mergeFilters, normalize, rankCandidates } from './ranking';
 import { ParsedRecommendationRequest } from './schemas';
 import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
 import { Candidate, InterpretedIntent, MediaType, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, TmdbGenre, TmdbKeyword, TmdbListItem } from './types';
@@ -42,6 +42,18 @@ const GENRE_CONCEPT_ALIASES = new Map<string, Set<string>>([
   ['War', new Set(['war', 'wartime'])],
   ['Western', new Set(['cowboy', 'western'])],
 ]);
+
+const CONCEPT_SYNONYM_FAMILIES: string[][] = [
+  ['adolescent', 'teen', 'teenage protagonist', 'teenager'],
+  ['detective', 'investigator', 'police detective'],
+  ['psychic ability', 'psychic power', 'supernatural ability', 'supernatural force', 'supernatural power', 'superpower'],
+  ['serial killer', 'serial murderer', 'serial murder'],
+  ['small town', 'rural town'],
+  ['artificial intelligence', 'ai'],
+  ['cold case', 'unsolved case'],
+  ['time loop', 'temporal loop'],
+  ['time travel', 'travel through time'],
+];
 
 interface AnchorProfile {
   keywords: TmdbKeyword[];
@@ -148,25 +160,23 @@ function exactKeywordIds(expression: string): number[] {
   return expression.split(',').filter(segment => !segment.includes('|')).map(Number).filter(Number.isFinite);
 }
 
-function canonicalKeywordPhrase(value: string): string {
-  const singularize = (word: string): string => {
-    if (word.length > 4 && word.endsWith('ies')) return `${word.slice(0, -3)}y`;
-    if (word.length > 5 && /(ches|shes|xes|zes)$/.test(word)) return word.slice(0, -2);
-    if (word.length > 4 && word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1);
-    return word;
-  };
-  return normalize(value).split(' ').map(singularize).join(' ');
-}
-
 function keywordMatchesSearchTerm(keywordName: string, searchTerm: string): boolean {
   // TMDB commonly stores a singular tag while natural-language queries use a
   // plural ("teenagers" -> "teenager"). Treat only that grammatical variant
   // as exact grounding; never accept a merely nearby/fuzzy search result.
-  return canonicalKeywordPhrase(keywordName) === canonicalKeywordPhrase(searchTerm);
+  return canonicalConceptPhrase(keywordName) === canonicalConceptPhrase(searchTerm);
 }
 
 function groupTerms(group: InterpretedIntent['requiredConceptGroups'][number]): Set<string> {
-  return new Set([group.label, ...group.synonyms].map(canonicalKeywordPhrase).filter(Boolean));
+  return new Set([group.label, ...group.synonyms].map(canonicalConceptPhrase).filter(Boolean));
+}
+
+function expandConceptSynonyms(group: InterpretedIntent['requiredConceptGroups'][number]): InterpretedIntent['requiredConceptGroups'][number] {
+  const terms = groupTerms(group);
+  const expansions = CONCEPT_SYNONYM_FAMILIES
+    .filter(family => family.some(value => terms.has(canonicalConceptPhrase(value))))
+    .flat();
+  return { ...group, synonyms: [...new Set([...group.synonyms, ...expansions])] };
 }
 
 function genreEquivalentForGroup(
@@ -182,7 +192,8 @@ function genreEquivalentForGroup(
 
 function cleanInterpretedIntent(intent: InterpretedIntent): InterpretedIntent {
   const merged: Array<{ group: InterpretedIntent['requiredConceptGroups'][number]; genre?: string }> = [];
-  for (const group of intent.requiredConceptGroups) {
+  for (const originalGroup of intent.requiredConceptGroups) {
+    const group = expandConceptSynonyms(originalGroup);
     const terms = groupTerms(group);
     if (terms.size && [...terms].every(term => NARRATIVE_CONNECTOR_CONCEPTS.has(term))) continue;
     const genre = genreEquivalentForGroup(group, intent.genreHints);
@@ -474,21 +485,22 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
         continue;
       }
       let groupSearches = 0;
+      const searchedTerms = new Set<string>();
       for (const phrase of group.synonyms) {
         if (keywordSearches >= MAX_KEYWORD_SEARCHES || groupSearches >= MAX_KEYWORD_SEARCHES_PER_GROUP || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8) break;
-        const searchTerms = [phrase, phrase.replace(/-/g, ' '), phrase.replace(/\s+/g, '-')].filter((v, i, a) => a.indexOf(v) === i);
-        for (const term of searchTerms) {
-          if (ids.length >= 4 || keywordSearches >= MAX_KEYWORD_SEARCHES || groupSearches >= MAX_KEYWORD_SEARCHES_PER_GROUP || tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8) break;
-          keywordSearches++;
-          groupSearches++;
-          const response = await optionalTmdbCall(
-            `keyword:${term}`,
-            () => tmdb.searchKeyword(term),
-          );
-          if (!response?.results?.length) continue;
-          const exact = response.results.filter(keyword => keywordMatchesSearchTerm(keyword.name, term));
-          for (const keyword of exact.slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
-        }
+        const term = phrase.replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+        const canonicalTerm = canonicalConceptPhrase(term);
+        if (!canonicalTerm || searchedTerms.has(canonicalTerm)) continue;
+        searchedTerms.add(canonicalTerm);
+        keywordSearches++;
+        groupSearches++;
+        const response = await optionalTmdbCall(
+          `keyword:${term}`,
+          () => tmdb.searchKeyword(term),
+        );
+        if (!response?.results?.length) continue;
+        const exact = response.results.filter(keyword => keywordMatchesSearchTerm(keyword.name, term));
+        for (const keyword of exact.slice(0, 2)) if (!ids.includes(keyword.id)) ids.push(keyword.id);
       }
       groupKeywordIds.push(ids.slice(0, 4));
     }

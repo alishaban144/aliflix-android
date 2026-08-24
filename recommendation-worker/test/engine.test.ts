@@ -411,6 +411,49 @@ describe('TMDB-only recommendation engine', () => {
     expect(results.map(item => item.tmdbId)).toEqual([101]);
   });
 
+  it('uses a semantic synonym after ignoring duplicate hyphen and spacing variants', async () => {
+    const searchedTerms: string[] = [];
+    const synonymTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async (term: string) => {
+        searchedTerms.push(term);
+        return term === 'psychic ability'
+          ? { page: 1, total_pages: 1, total_results: 1, results: [{ id: 303, name: 'psychic ability' }] }
+          : { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 303, title: 'Supernatural Fixture', overview: 'Metadata wording differs', vote_average: 7.5, vote_count: 700 }],
+      }),
+      details: async () => ({
+        id: 303, title: 'Supernatural Fixture', overview: 'Metadata wording differs',
+        keywords: { keywords: [{ id: 303, name: 'psychic ability' }] }, genres: [], vote_average: 7.5, vote_count: 700,
+      }),
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'supernatural powers' }, {
+      tmdb: synonymTmdb as any,
+      interpret: async () => ({
+        ...interpreted,
+        requiredConceptGroups: [{
+          label: 'supernatural powers',
+          synonyms: ['supernatural powers', 'supernatural-powers'],
+          weight: 1,
+        }],
+        genreHints: [],
+      }),
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(searchedTerms).toEqual(['supernatural powers', 'psychic ability']);
+    expect(results.map(item => item.tmdbId)).toEqual([303]);
+  });
+
   it('merges duplicate genre concepts and omits narrative connector verbs', async () => {
     let keywordCalls = 0;
     const discoverCalls: Array<Record<string, string | number | boolean | undefined>> = [];

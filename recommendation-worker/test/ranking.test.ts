@@ -97,6 +97,14 @@ describe('deterministic recommendation logic', () => {
     expect(ranked[0].matchReasons).toContain('Grounded in multiple TMDB keyword concepts');
   });
 
+  it('matches safe singular and plural concept morphology in authoritative metadata', () => {
+    const ranked = rankCandidates([
+      candidate(1, 'Metadata Variant', 'A teenager develops a supernatural power in a small town'),
+    ], intent([['teenagers'], ['supernatural powers'], ['small towns']]), filters(), false, false);
+
+    expect(ranked.map(item => item.tmdbId)).toEqual([1]);
+  });
+
   it('never treats words in a candidate title as topical evidence', () => {
     const ranked = rankCandidates([
       candidate(1, 'The Cold Case Detective', 'A cheerful cooking competition in a city restaurant'),

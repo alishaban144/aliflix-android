@@ -3,6 +3,16 @@ import { Candidate, InterpretedIntent, MatchLevel, RecommendationFilters, Recomm
 export const normalize = (value: string): string => value.trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const unique = <T>(values: T[]): T[] => [...new Set(values)];
 
+export function canonicalConceptPhrase(value: string): string {
+  const singularize = (word: string): string => {
+    if (word.length > 4 && word.endsWith('ies')) return `${word.slice(0, -3)}y`;
+    if (word.length > 5 && /(ches|shes|xes|zes)$/.test(word)) return word.slice(0, -2);
+    if (word.length > 4 && word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1);
+    return word;
+  };
+  return normalize(value).split(' ').map(singularize).join(' ');
+}
+
 export function mergeFilters(structured: RecommendationFilters, interpreted: RecommendationFilters): RecommendationFilters {
   const structuredYear = structured.minimumYear !== undefined || structured.maximumYear !== undefined;
   const structuredRuntime = structured.minimumRuntimeMinutes !== undefined || structured.maximumRuntimeMinutes !== undefined;
@@ -77,8 +87,9 @@ function evidence(candidate: Candidate, intent: InterpretedIntent) {
   const contentHaystack = normalize([candidate.overview, ...candidate.genres, ...candidate.keywords.map(k => k.name)].filter(Boolean).join(' '));
   const keywordHaystack = normalize(candidate.keywords.map(keyword => keyword.name).join(' '));
   const containsConcept = (haystack: string, value: string): boolean => {
-    const normalizedValue = normalize(value);
-    return normalizedValue.length > 1 && ` ${haystack} `.includes(` ${normalizedValue} `);
+    const canonicalHaystack = canonicalConceptPhrase(haystack);
+    const canonicalValue = canonicalConceptPhrase(value);
+    return canonicalValue.length > 1 && ` ${canonicalHaystack} `.includes(` ${canonicalValue} `);
   };
   const groupMatches = intent.requiredConceptGroups.map((group, index) => ({
     matched: group.synonyms.some(value => containsConcept(contentHaystack, value)) || candidate.matchedConceptGroupIndexes.has(index),
