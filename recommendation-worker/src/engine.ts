@@ -1,19 +1,22 @@
-import { assessPremiseCandidates, embedForSearch, fallbackIntentFromQuery, interpretQuery } from './gemini';
+import { assessPremiseCandidates, embedForSearch, interpretQuery, recommendDescribeTitles } from './gemini';
 import { buildKeywordExpressions, canonicalConceptPhrase, cosineSimilarity, mergeFilters, normalize, rankCandidates } from './ranking';
 import { ParsedRecommendationRequest } from './schemas';
-import { editorialPremiseSeeds, editorialPremiseSeedYear } from './premise-catalog';
 import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
-import { Candidate, InterpretedIntent, MediaType, PremiseAssessment, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, TmdbGenre, TmdbKeyword, TmdbListItem } from './types';
+import { Candidate, DescribeRecommendation, InterpretedIntent, MediaType, PremiseAssessment, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, TmdbGenre, TmdbKeyword, TmdbListItem } from './types';
 
 export interface EngineDependencies {
   interpret?: typeof interpretQuery;
+  recommendDescribe?: typeof recommendDescribeTitles;
   embed?: typeof embedForSearch;
   verifyPremises?: (
     env: RecommendationEnv,
     query: string,
     mediaType: MediaType,
     groups: InterpretedIntent['requiredConceptGroups'],
-    candidates: Array<{ index: number; overview: string; genres: string[]; keywords: string[] }>,
+    candidates: Array<{
+      index: number; title: string; originalTitle?: string; releaseYear?: number; overview: string;
+      genres: string[]; keywords: string[]; geminiReason: string; geminiConfidence: number;
+    }>,
   ) => Promise<PremiseAssessment[]>;
   tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchPerson' | 'searchCompany' | 'discover' | 'recommendations' | 'similar' | 'details'> &
     Partial<Pick<TmdbClient, 'searchTitle'>>;
@@ -22,13 +25,12 @@ export interface EngineDependencies {
 const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
+const MAX_DESCRIBE_RECOMMENDATIONS = 18;
 const TMDB_DETAIL_RESERVE = 24;
 const DISCOVERY_CONCURRENCY = 4;
 const DETAIL_CONCURRENCY = 4;
 const MAX_KEYWORD_SEARCHES = 18;
 const MAX_KEYWORD_SEARCHES_PER_GROUP = 2;
-const MAX_SEED_TITLES = 24;
-const MAX_SEED_EXPANSIONS = 4;
 
 const GENERIC_SUBJECT_CONCEPTS = new Set([
   'character', 'characters', 'individual', 'individuals', 'movie', 'movies', 'people', 'person', 'persons',
@@ -136,6 +138,163 @@ function mergeDetails(candidate: Candidate, details: TmdbDetails): void {
   ].filter((value): value is string => Boolean(value)))];
   candidate.hardFiltersVerified = true;
   candidate.detailsLoaded = true;
+}
+
+function emptyIntent(): InterpretedIntent {
+  return {
+    hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [] },
+    requiredConceptGroups: [], softConcepts: [], excludedConcepts: [], excludedKeywords: [], crewNames: [],
+    castNames: [], studioNames: [], certifications: [], genreHints: [], toneAndMood: [], broadSearchPhrases: [],
+  };
+}
+
+function tmdbItemYear(item: TmdbListItem, mediaType: MediaType): number | undefined {
+  const value = mediaType === 'movie' ? item.release_date : item.first_air_date;
+  const year = value ? Number(value.slice(0, 4)) : NaN;
+  return Number.isInteger(year) ? year : undefined;
+}
+
+function resolveTmdbIdentity(
+  recommendation: DescribeRecommendation,
+  mediaType: MediaType,
+  results: TmdbListItem[],
+): TmdbListItem | undefined {
+  const expectedTitle = normalize(recommendation.title);
+  const exactTitles = results.filter(item => {
+    const primary = mediaType === 'movie' ? item.title : item.name;
+    const original = mediaType === 'movie' ? item.original_title : item.original_name;
+    return normalize(primary || '') === expectedTitle || normalize(original || '') === expectedTitle;
+  });
+  const exactYear = exactTitles.find(item => tmdbItemYear(item, mediaType) === recommendation.releaseYear);
+  if (exactYear) return exactYear;
+  const adjacentYear = exactTitles.find(item => Math.abs((tmdbItemYear(item, mediaType) || 0) - recommendation.releaseYear) === 1);
+  if (adjacentYear) return adjacentYear;
+  return exactTitles.length === 1 ? exactTitles[0] : undefined;
+}
+
+async function processDescribeRecommendation(
+  env: RecommendationEnv,
+  request: ParsedRecommendationRequest,
+  tmdb: NonNullable<EngineDependencies['tmdb']>,
+  dependencies: EngineDependencies,
+): Promise<RecommendationResult[]> {
+  if (!tmdb.searchTitle) {
+    throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB title verification is unavailable', 503, true);
+  }
+  const query = request.previousQuery && request.refinementQuery
+    ? `${request.previousQuery}. Additional requirement: ${request.refinementQuery}`
+    : (request.query || request.refinementQuery || '').trim();
+  const filters = mergeFilters(request.filters, emptyIntent().hardFilters);
+  applyQueryDateConstraints(query, filters);
+  const generated = await (dependencies.recommendDescribe || recommendDescribeTitles)(
+    env,
+    query,
+    request.mediaType,
+    filters,
+  );
+  const recommendations = generated
+    .filter(item => item.confidence >= .65)
+    .slice(0, MAX_DESCRIBE_RECOMMENDATIONS);
+  if (!recommendations.length) return [];
+
+  const candidates = new Map<string, Candidate>();
+  for (let start = 0; start < recommendations.length; start += DISCOVERY_CONCURRENCY) {
+    const batch = recommendations.slice(start, start + DISCOVERY_CONCURRENCY);
+    const responses = await Promise.all(batch.map(item => tmdb.searchTitle!(request.mediaType, item.title)));
+    responses.forEach((response, index) => {
+      const recommendation = batch[index];
+      const identity = resolveTmdbIdentity(recommendation, request.mediaType, response.results || []);
+      if (!identity) return;
+      const candidate = toCandidate(identity, request.mediaType, new Map());
+      if (!candidate) return;
+      candidate.retrievalSources.add('gemini:recommendation');
+      candidate.retrievalSources.add('tmdb:identity-search');
+      candidate.geminiRecommendationConfidence = recommendation.confidence;
+      candidate.geminiRecommendationReason = recommendation.reason;
+      const existing = candidates.get(candidate.key);
+      if (!existing || (existing.geminiRecommendationConfidence || 0) < recommendation.confidence) {
+        candidates.set(candidate.key, candidate);
+      }
+    });
+  }
+
+  const resolved = [...candidates.values()];
+  for (let start = 0; start < resolved.length; start += DETAIL_CONCURRENCY) {
+    await Promise.all(resolved.slice(start, start + DETAIL_CONCURRENCY).map(async candidate => {
+      const details = await tmdb.details(request.mediaType, candidate.tmdbId);
+      mergeDetails(candidate, details);
+      candidate.retrievalSources.add('tmdb:details');
+    }));
+  }
+
+  // Status and every other hard filter are checked from hydrated TMDB data. They
+  // remove ineligible titles but never contribute to premise relevance.
+  const eligible = resolved.filter(candidate => candidate.detailsLoaded && passesKnownFilters(candidate, filters));
+  if (!eligible.length) return [];
+  const documents = eligible.map((candidate, index) => ({
+    index,
+    title: candidate.title,
+    originalTitle: candidate.originalTitle,
+    releaseYear: tmdbItemYear({
+      id: candidate.tmdbId,
+      release_date: request.mediaType === 'movie' ? candidate.releaseDate : undefined,
+      first_air_date: request.mediaType === 'tv' ? candidate.releaseDate : undefined,
+    }, request.mediaType),
+    overview: candidate.overview || '',
+    genres: candidate.genres,
+    keywords: candidate.keywords.map(keyword => keyword.name),
+    geminiReason: candidate.geminiRecommendationReason || '',
+    geminiConfidence: candidate.geminiRecommendationConfidence || 0,
+  }));
+  const assessments = await (dependencies.verifyPremises || assessPremiseCandidates)(
+    env,
+    query,
+    request.mediaType,
+    [],
+    documents,
+  );
+  const byIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
+  if (byIndex.size !== documents.length) {
+    throw new ServiceError(
+      'GEMINI_UNAVAILABLE',
+      `Gemini returned an incomplete premise assessment (${byIndex.size}/${documents.length})`,
+      502,
+      true,
+    );
+  }
+
+  return eligible.flatMap((candidate, index): RecommendationResult[] => {
+    const assessment = byIndex.get(index)!;
+    if (assessment.relevanceScore < .70) return [];
+    const generationConfidence = candidate.geminiRecommendationConfidence || 0;
+    const score = assessment.relevanceScore * .72 + generationConfidence * .28;
+    const matchLevel = score >= .88 ? 'Exceptional' : score >= .76 ? 'Strong' : 'Relevant';
+    const reasons = [assessment.reason, candidate.geminiRecommendationReason]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .filter((value, reasonIndex, values) => values.findIndex(other => normalize(other) === normalize(value)) === reasonIndex)
+      .slice(0, 2);
+    return [{
+      tmdbId: candidate.tmdbId,
+      mediaType: candidate.mediaType,
+      title: candidate.title,
+      originalTitle: candidate.originalTitle,
+      overview: candidate.overview,
+      posterPath: candidate.posterPath,
+      backdropPath: candidate.backdropPath,
+      releaseDate: candidate.releaseDate,
+      genres: candidate.genres,
+      runtimeMinutes: candidate.runtimeMinutes,
+      originalLanguage: candidate.originalLanguage,
+      originCountries: candidate.originCountries,
+      tmdbRating: candidate.tmdbRating,
+      tmdbVoteCount: candidate.tmdbVoteCount,
+      status: candidate.status,
+      matchLevel,
+      finalScore: Number(score.toFixed(6)),
+      matchReasons: reasons,
+      retrievalSources: [...candidate.retrievalSources].sort(),
+    }];
+  }).sort((left, right) => right.finalScore - left.finalScore || left.title.localeCompare(right.title));
 }
 
 function sourceFamilyCount(candidate: Candidate): number {
@@ -349,26 +508,19 @@ function applyQueryDateConstraints(query: string, filters: RecommendationFilters
 
 export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
   const tmdb = dependencies.tmdb || new TmdbClient(env);
+  if (request.mode === 'describe') {
+    return processDescribeRecommendation(env, request, tmdb, dependencies);
+  }
   const interpret = dependencies.interpret || interpretQuery;
   const queryToInterpret = request.mode === 'similar'
     ? (request.refinementQuery || '')
     : (request.previousQuery && request.refinementQuery)
     ? `${request.previousQuery} [Refinement adjustment: ${request.refinementQuery}]`
     : (request.query || request.refinementQuery || '');
-  let intent: InterpretedIntent;
-  try {
-    intent = await interpret(env, queryToInterpret, request.mediaType);
-  } catch (error) {
-    console.warn('Gemini interpretation error, applying fallback keyword intent', error instanceof Error ? error.message : error);
-    intent = fallbackIntentFromQuery(queryToInterpret);
-  }
+  let intent = queryToInterpret.trim()
+    ? await interpret(env, queryToInterpret, request.mediaType)
+    : emptyIntent();
   intent = cleanInterpretedIntent(intent);
-  const editorialSeedTitles = editorialPremiseSeeds(queryToInterpret, request.mediaType);
-  const editorialSeedTitleKeys = new Set(editorialSeedTitles.map(normalize));
-  intent.seedTitles = [...new Set([
-    ...editorialSeedTitles,
-    ...(intent.seedTitles || []),
-  ])].slice(0, MAX_SEED_TITLES);
   applyQueryDateConstraints(queryToInterpret, intent.hardFilters);
   const filters = mergeFilters(request.filters, intent.hardFilters);
   const effectiveIntent: InterpretedIntent = { ...intent, hardFilters: filters };
@@ -511,55 +663,6 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       if (anchor.mediaType === request.mediaType) candidates.delete(`${request.mediaType}:${anchor.tmdbId}`);
     }
   } else {
-    const seedTitles = [...new Set((intent.seedTitles || []).map(title => title.trim()).filter(Boolean))].slice(0, MAX_SEED_TITLES);
-    for (let start = 0; tmdb.searchTitle && start < seedTitles.length && tmdb.callsRemaining > TMDB_DETAIL_RESERVE + 2; start += DISCOVERY_CONCURRENCY) {
-      const batch = seedTitles.slice(start, start + DISCOVERY_CONCURRENCY);
-      const responses = await Promise.all(batch.map(title => optionalTmdbCall(
-        `premise-seed:${title}`,
-        () => tmdb.searchTitle!(request.mediaType, title),
-      )));
-      responses.forEach((response, index) => {
-        if (!response) return;
-        const expectedTitle = normalize(batch[index]);
-        const editorialYear = editorialSeedTitleKeys.has(expectedTitle)
-          ? editorialPremiseSeedYear(batch[index], request.mediaType)
-          : undefined;
-        const exactResults = response.results.filter(item => {
-          const primary = request.mediaType === 'movie' ? item.title : item.name;
-          const original = request.mediaType === 'movie' ? item.original_title : item.original_name;
-          const date = request.mediaType === 'movie' ? item.release_date : item.first_air_date;
-          const identityMatches = normalize(primary || '') === expectedTitle || normalize(original || '') === expectedTitle;
-          return identityMatches && (editorialYear === undefined || date?.startsWith(String(editorialYear)) === true);
-        }).slice(0, 1);
-        if (exactResults.length) {
-          const editorial = editorialSeedTitleKeys.has(expectedTitle);
-          addPage({ ...response, results: exactResults }, editorial ? 'search:editorial-premise-seed' : 'search:gemini-premise-seed');
-          if (editorial) {
-            for (const item of exactResults) {
-              const candidate = candidates.get(`${request.mediaType}:${item.id}`);
-              if (!candidate) continue;
-              candidate.premiseScore = .92;
-              candidate.premiseMatchedGroupIndexes = new Set(intent.requiredConceptGroups.map((_, groupIndex) => groupIndex));
-              candidate.premiseReason = 'Editorially verified as a close match to the complete premise';
-            }
-          }
-        }
-      });
-    }
-
-    const exactSeedCandidates = [...candidates.values()]
-      .filter(candidate => [...candidate.retrievalSources].some(source => source.includes('premise-seed')))
-      .slice(0, MAX_SEED_EXPANSIONS);
-    for (const seed of exactSeedCandidates) {
-      if (tmdb.callsRemaining <= TMDB_DETAIL_RESERVE + 8 || candidates.size >= MAX_CANDIDATES) break;
-      const [recommendations, similar] = await Promise.all([
-        optionalTmdbCall(`premise-seed-recommendations:${seed.tmdbId}`, () => tmdb.recommendations(request.mediaType, seed.tmdbId, 1)),
-        optionalTmdbCall(`premise-seed-similar:${seed.tmdbId}`, () => tmdb.similar(request.mediaType, seed.tmdbId, 1)),
-      ]);
-      if (recommendations) addPage(recommendations, 'discover:premise-seed-recommendations');
-      if (similar) addPage(similar, 'discover:premise-seed-similar');
-    }
-
     const groupKeywordIds: number[][] = [];
     let keywordSearches = 0;
     for (const group of intent.requiredConceptGroups) {
@@ -742,49 +845,8 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
   }
 
-  let premiseAssessmentsAvailable = false;
-  if (request.mode === 'describe' && hydrated.length && queryToInterpret.trim()) {
-    const premiseDocuments = hydrated.slice(0, MAX_SEMANTIC_CANDIDATES).map((candidate, index) => ({
-      index,
-      overview: candidate.overview || '',
-      genres: candidate.genres,
-      keywords: candidate.keywords.map(keyword => keyword.name),
-    }));
-    try {
-      const assessments = await (dependencies.verifyPremises || assessPremiseCandidates)(
-        env,
-        queryToInterpret,
-        request.mediaType,
-        intent.requiredConceptGroups,
-        premiseDocuments,
-      );
-      const byIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
-      if (byIndex.size === premiseDocuments.length) {
-        premiseDocuments.forEach(document => {
-          const assessment = byIndex.get(document.index)!;
-          const candidate = hydrated[document.index];
-          const assessedGroups = assessment.matchedGroupIndexes.filter(index => index < intent.requiredConceptGroups.length);
-          const editoriallyVerified = candidate.retrievalSources.has('search:editorial-premise-seed');
-          candidate.premiseScore = editoriallyVerified
-            ? Math.max(candidate.premiseScore || 0, assessment.relevanceScore)
-            : assessment.relevanceScore;
-          candidate.premiseMatchedGroupIndexes = new Set([
-            ...(candidate.premiseMatchedGroupIndexes || []),
-            ...assessedGroups,
-          ]);
-          if (!editoriallyVerified) candidate.premiseReason = assessment.reason;
-        });
-        premiseAssessmentsAvailable = true;
-      } else {
-        console.warn(`[Gemini] Incomplete premise assessment batch (${byIndex.size}/${premiseDocuments.length}); retaining deterministic ranking`);
-      }
-    } catch (error) {
-      console.warn('[Gemini] Premise assessment unavailable; retaining deterministic ranking', error instanceof Error ? error.message : error);
-    }
-  }
-
   let embeddingsAvailable = false;
-  if (hydrated.length && (request.mode === 'similar' || !premiseAssessmentsAvailable)) {
+  if (hydrated.length) {
     const queryText = request.mode === 'similar'
       ? anchorProfiles.map(profile => [profile.overview, profile.genreNames.join(', '), profile.keywords.map(keyword => keyword.name).join(', ')].filter(Boolean).join('\n')).join('\n---\n')
       : [
@@ -816,6 +878,6 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     filters,
     request.mode === 'similar',
     embeddingsAvailable,
-    premiseAssessmentsAvailable,
+    false,
   ).slice(0, MAX_CANDIDATES);
 }

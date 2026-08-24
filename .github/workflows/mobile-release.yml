@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.11"
+      - "release/v3.1.12"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.11"
+        description: "Release tag, for example v3.1.12"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "101"
-  RELEASE_VERSION_NAME: "3.1.11"
+  RELEASE_VERSION_CODE: "102"
+  RELEASE_VERSION_NAME: "3.1.12"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -58,27 +58,52 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Node.js
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: recommendation-worker/package-lock.json
 
-      - name: Deploy recommendation Worker
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+      - name: Upload and validate recommendation Worker candidate
         working-directory: recommendation-worker
         run: |
           set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
           npm ci
-          npm run deploy
-
-      - name: Record unavailable Worker credentials
-        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
-        run: echo "Cloudflare deployment skipped because repository deployment secrets are not configured."
+          VERSION_TAG="release-${GITHUB_SHA}"
+          npx wrangler versions upload \
+            --tag "$VERSION_TAG" \
+            --message "Aliflix ${RELEASE_VERSION_NAME} live-gold candidate"
+          CANDIDATE_ID="$(
+            npx wrangler versions list --json |
+              jq -r --arg tag "$VERSION_TAG" \
+                '.[] | select(.annotations["workers/tag"] == $tag) | .id' |
+              head -n 1
+          )"
+          CURRENT_ID="$(
+            npx wrangler deployments status --json |
+              jq -r '.versions | max_by(.percentage) | .version_id'
+          )"
+          test -n "$CANDIDATE_ID"
+          test "$CANDIDATE_ID" != "null"
+          test -n "$CURRENT_ID"
+          test "$CURRENT_ID" != "null"
+          npx wrangler versions deploy \
+            "${CURRENT_ID}@100%" \
+            "${CANDIDATE_ID}@0%" \
+            --message "Aliflix ${RELEASE_VERSION_NAME} isolated live-gold validation" \
+            --yes
+          npm run gold:live -- \
+            https://aliflix-recommendations.equable-equipment.workers.dev \
+            "$CANDIDATE_ID"
+          npx wrangler versions deploy \
+            "${CANDIDATE_ID}@100%" \
+            --message "Aliflix ${RELEASE_VERSION_NAME} promoted after six live gold cases" \
+            --yes
 
   release:
-    needs: worker-checks
+    needs: [worker-checks, deploy-recommendations]
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -110,7 +135,7 @@ jobs:
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
           else
             test "${GITHUB_REF_TYPE}" = "branch"
-            test "${GITHUB_REF_NAME}" = "release/v3.1.11"
+            test "${GITHUB_REF_NAME}" = "release/v3.1.12"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then
@@ -206,7 +231,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Rebuilds Describe recommendations around complete-premise retrieval and metadata verification, adds quota-safe editorial recall for sparse TMDB topics, and adds exact Returning or Ended series filtering without changing relevance scores."
+            "releaseNotes": "Generates Describe recommendations with Gemini 3.7 Flash, verifies every identity and metadata field through TMDB, rejects weak premise matches without keyword fallback, preserves exact Returning or Ended eligibility, and removes the retired on-device recommendation stack for a much smaller app."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -217,7 +242,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Rebuilds Describe recommendations around complete-premise retrieval and metadata verification, adds quota-safe editorial recall for sparse TMDB topics, and adds exact Returning or Ended series filtering without changing relevance scores."
+          body: "Generates Describe recommendations with Gemini 3.7 Flash, verifies every identity and metadata field through TMDB, rejects weak premise matches without keyword fallback, preserves exact Returning or Ended eligibility, and removes the retired on-device recommendation stack for a much smaller app."
           files: |
             aliflix-mobile.apk
             update-mobile.json

@@ -56,8 +56,13 @@ export interface InterpretedIntent {
   genreHints: string[];
   toneAndMood: string[];
   broadSearchPhrases: string[];
-  /** Real TMDB title identities used only to retrieve a premise-aware pool. */
-  seedTitles?: string[];
+}
+
+export interface DescribeRecommendation {
+  title: string;
+  releaseYear: number;
+  confidence: number;
+  reason: string;
 }
 
 export interface TmdbListItem {
@@ -114,6 +119,8 @@ export interface Candidate {
   premiseScore?: number;
   premiseMatchedGroupIndexes?: Set<number>;
   premiseReason?: string;
+  geminiRecommendationConfidence?: number;
+  geminiRecommendationReason?: string;
   directRelationshipScore: number;
   anchorOverlapScore: number;
   anchorEvidenceAvailable: boolean;
@@ -150,9 +157,14 @@ export interface RecommendationResult {
 
 export interface PremiseCandidateDocument {
   index: number;
+  title: string;
+  originalTitle?: string;
+  releaseYear?: number;
   overview: string;
   genres: string[];
   keywords: string[];
+  geminiReason: string;
+  geminiConfidence: number;
 }
 
 export interface PremiseAssessment {

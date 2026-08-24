@@ -85,7 +85,6 @@ export const GeminiIntentResponseSchema = z.object({
   genreHints: z.array(trimmed.min(1).max(80)).max(12).default([]),
   toneAndMood: z.array(trimmed.min(1).max(80)).max(12).default([]),
   broadSearchPhrases: z.array(trimmed.min(1).max(120)).max(20).default([]),
-  seedTitles: z.array(trimmed.min(1).max(300)).max(24).default([]),
 });
 
 export const GeminiIntentJsonSchema = {
@@ -125,9 +124,37 @@ export const GeminiIntentJsonSchema = {
     genreHints: { type: 'ARRAY', items: { type: 'STRING' } },
     toneAndMood: { type: 'ARRAY', items: { type: 'STRING' } },
     broadSearchPhrases: { type: 'ARRAY', items: { type: 'STRING' } },
-    seedTitles: { type: 'ARRAY', items: { type: 'STRING' } },
   },
-  required: ['hardFilters', 'requiredConceptGroups', 'softConcepts', 'excludedConcepts', 'excludedKeywords', 'crewNames', 'castNames', 'studioNames', 'certifications', 'genreHints', 'toneAndMood', 'broadSearchPhrases', 'seedTitles'],
+  required: ['hardFilters', 'requiredConceptGroups', 'softConcepts', 'excludedConcepts', 'excludedKeywords', 'crewNames', 'castNames', 'studioNames', 'certifications', 'genreHints', 'toneAndMood', 'broadSearchPhrases'],
+} as const;
+
+export const GeminiDescribeResponseSchema = z.object({
+  recommendations: z.array(z.object({
+    title: trimmed.min(1).max(300),
+    releaseYear: z.number().int().min(1870).max(2200),
+    confidence: z.number().min(0).max(1),
+    reason: trimmed.min(1).max(240),
+  })).min(1).max(24),
+});
+
+export const GeminiDescribeJsonSchema = {
+  type: 'OBJECT',
+  properties: {
+    recommendations: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          title: { type: 'STRING' },
+          releaseYear: { type: 'INTEGER' },
+          confidence: { type: 'NUMBER' },
+          reason: { type: 'STRING' },
+        },
+        required: ['title', 'releaseYear', 'confidence', 'reason'],
+      },
+    },
+  },
+  required: ['recommendations'],
 } as const;
 
 export const GeminiPremiseAssessmentResponseSchema = z.object({

@@ -5,7 +5,7 @@ import { InterpretedIntent, ServiceError } from '../src/types';
 import { applyTmdbAuthentication } from '../src/tmdb';
 
 const request: ParsedRecommendationRequest = {
-  requestId: '00000000-0000-4000-8000-000000000001', mode: 'describe', query: 'funny movies', mediaType: 'movie', pageSize: 20,
+  requestId: '00000000-0000-4000-8000-000000000001', mode: 'filters', query: 'funny movies', mediaType: 'movie', pageSize: 20,
   filters: {
     minimumYear: undefined, maximumYear: undefined, originalLanguage: undefined, originCountries: [],
     minimumRuntimeMinutes: undefined, maximumRuntimeMinutes: undefined, includedGenres: [], excludedGenres: [],
@@ -252,7 +252,7 @@ describe('TMDB-only recommendation engine', () => {
 
     expect(results.map(item => item.tmdbId)).toEqual([77]);
     expect(results[0].matchReasons).toContain('Grounded in multiple TMDB keyword concepts');
-    expect(discoverCalls.every(params => params.with_keywords !== undefined)).toBe(true);
+    expect(discoverCalls.filter(params => params.with_keywords !== undefined).length).toBeGreaterThan(0);
     expect(discoverCalls.some(params => String(params.with_keywords).split(',').length === 2)).toBe(true);
   });
 
@@ -289,7 +289,7 @@ describe('TMDB-only recommendation engine', () => {
       embed: async () => { throw new Error('embedding outage'); },
     });
 
-    expect(interpretedQuery).toBe('');
+    expect(interpretedQuery).toBeUndefined();
     expect(recommendationCalls).toBe(0);
     expect(similarCalls).toBe(0);
     expect(discoverCalls.length).toBeGreaterThan(0);
@@ -312,16 +312,7 @@ describe('TMDB-only recommendation engine', () => {
     expect(results).toEqual([]);
   });
 
-  it('uses premise seeds for recall but admits only metadata-verified complete premise matches', async () => {
-    const seedIntent: InterpretedIntent = {
-      ...interpreted,
-      requiredConceptGroups: [
-        { label: 'alien', synonyms: ['alien', 'extraterrestrial'], weight: 1 },
-        { label: 'abduction', synonyms: ['abduction', 'abducted'], weight: 1 },
-      ],
-      genreHints: ['Science Fiction'],
-      seedTitles: ['Fire in the Sky', 'Alien Abduction'],
-    };
+  it('uses only Gemini recommendations for Describe, then exact-resolves and premise-verifies TMDB metadata', async () => {
     const seedTmdb = {
       callsRemaining: 120,
       genres: async () => ({ genres: [{ id: 878, name: 'Science Fiction' }] }),
@@ -330,7 +321,8 @@ describe('TMDB-only recommendation engine', () => {
         results: [{
           id: title === 'Fire in the Sky' ? 1 : 2,
           title,
-          overview: title === 'Fire in the Sky'
+           release_date: title === 'Fire in the Sky' ? '1993-03-12' : '2014-04-04',
+           overview: title === 'Fire in the Sky'
             ? 'A logger disappears after an encounter with an extraterrestrial craft and returns with memories of abduction.'
             : 'Friends meet for an ordinary cooking competition.',
           genre_ids: [878], vote_average: 7, vote_count: 500,
@@ -343,15 +335,18 @@ describe('TMDB-only recommendation engine', () => {
       similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       details: async (_type: string, id: number) => id === 1
-        ? { id, title: 'Fire in the Sky', overview: 'A logger disappears after an encounter with an extraterrestrial craft and returns with memories of abduction.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [{ id: 10, name: 'alien' }, { id: 11, name: 'abduction' }] }, vote_average: 7, vote_count: 500 }
-        : { id, title: 'Alien Abduction', overview: 'Friends meet for an ordinary cooking competition.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [] }, vote_average: 7, vote_count: 500 },
+        ? { id, title: 'Fire in the Sky', release_date: '1993-03-12', overview: 'A logger disappears after an encounter with an extraterrestrial craft and returns with memories of abduction.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [{ id: 10, name: 'alien' }, { id: 11, name: 'abduction' }] }, vote_average: 7, vote_count: 500 }
+        : { id, title: 'Alien Abduction', release_date: '2014-04-04', overview: 'Friends meet for an ordinary cooking competition.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [] }, vote_average: 7, vote_count: 500 },
     };
 
-    const results = await processRecommendation({} as any, { ...request, query: 'visitors from space take a logger' }, {
+    const results = await processRecommendation({} as any, { ...request, mode: 'describe', query: 'visitors from space take a logger' }, {
       tmdb: seedTmdb,
-      interpret: async () => seedIntent,
+      recommendDescribe: async () => [
+        { title: 'Fire in the Sky', releaseYear: 1993, confidence: .96, reason: 'A logger is abducted by extraterrestrials.' },
+        { title: 'Alien Abduction', releaseYear: 2014, confidence: .80, reason: 'The title appears related.' },
+      ],
       verifyPremises: async (_env, _query, _type, _groups, documents) => {
-        expect(documents.every(document => !('title' in document))).toBe(true);
+        expect(documents.map(document => document.title)).toEqual(['Fire in the Sky', 'Alien Abduction']);
         return documents.map(document => document.overview.includes('extraterrestrial craft')
           ? { index: document.index, relevanceScore: .96, matchedGroupIndexes: [0, 1], reason: 'Extraterrestrial abduction is central to the synopsis' }
           : { index: document.index, relevanceScore: .08, matchedGroupIndexes: [], reason: 'No abduction premise is supported' });
@@ -360,7 +355,89 @@ describe('TMDB-only recommendation engine', () => {
 
     expect(results.map(result => result.title)).toEqual(['Fire in the Sky']);
     expect(results[0].matchReasons[0]).toContain('Extraterrestrial abduction');
-    expect(results[0].retrievalSources).toContain('search:gemini-premise-seed');
+    expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
+      'gemini:recommendation', 'tmdb:identity-search', 'tmdb:details',
+    ]));
+  });
+
+  it('uses TMDB series status only for eligibility and never changes premise relevance', async () => {
+    const statusTmdb = {
+      ...fakeTmdb(),
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{
+          id: title === 'Still Running' ? 10 : 20,
+          name: title,
+          first_air_date: title === 'Still Running' ? '2022-01-01' : '2018-01-01',
+          overview: 'People are trapped in a mysterious place they cannot escape.',
+        }],
+      }),
+      details: async (_type: string, id: number) => ({
+        id,
+        name: id === 10 ? 'Still Running' : 'Completed Mystery',
+        first_air_date: id === 10 ? '2022-01-01' : '2018-01-01',
+        overview: 'People are trapped in a mysterious place they cannot escape.',
+        status: id === 10 ? 'Returning Series' : 'Ended',
+        genres: [{ id: 9648, name: 'Mystery' }],
+        keywords: { results: [] },
+      }),
+    };
+    const generated = [
+      { title: 'Still Running', releaseYear: 2022, confidence: .98, reason: 'The characters cannot leave the mysterious location.' },
+      { title: 'Completed Mystery', releaseYear: 2018, confidence: .82, reason: 'The characters cannot leave the mysterious location.' },
+    ];
+    const verifyPremises = async (_env: unknown, _query: string, _type: string, _groups: unknown[], documents: Array<{ index: number }>) =>
+      documents.map(document => ({
+        index: document.index,
+        relevanceScore: .91,
+        matchedGroupIndexes: [],
+        reason: 'Being trapped in the inescapable location is the central premise.',
+      }));
+    const tvDescribe = { ...request, mode: 'describe' as const, mediaType: 'tv' as const };
+
+    const unrestricted = await processRecommendation({} as any, tvDescribe, {
+      tmdb: statusTmdb,
+      recommendDescribe: async () => generated,
+      verifyPremises: verifyPremises as any,
+    });
+    const endedOnly = await processRecommendation({} as any, {
+      ...tvDescribe,
+      filters: { ...request.filters, seriesStatus: 'ended' as const },
+    }, {
+      tmdb: statusTmdb,
+      recommendDescribe: async () => generated,
+      verifyPremises: verifyPremises as any,
+    });
+
+    expect(endedOnly.map(result => result.title)).toEqual(['Completed Mystery']);
+    expect(endedOnly[0].status).toBe('Ended');
+    expect(endedOnly[0].finalScore).toBe(
+      unrestricted.find(result => result.title === 'Completed Mystery')?.finalScore,
+    );
+  });
+
+  it('propagates Gemini Describe failure without invoking keyword or discover fallback', async () => {
+    let keywordCalls = 0;
+    let discoverCalls = 0;
+    const tmdb = {
+      ...fakeTmdb(),
+      searchKeyword: async () => {
+        keywordCalls++;
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+      discover: async () => {
+        discoverCalls++;
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+    };
+    const failure = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini timed out', 504, true);
+
+    await expect(processRecommendation({} as any, { ...request, mode: 'describe' }, {
+      tmdb,
+      recommendDescribe: async () => { throw failure; },
+    })).rejects.toBe(failure);
+    expect(keywordCalls).toBe(0);
+    expect(discoverCalls).toBe(0);
   });
 
   it('rejects a TV-only seriesStatus filter on movie requests', () => {

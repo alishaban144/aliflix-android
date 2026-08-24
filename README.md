@@ -7,7 +7,7 @@
 
 Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by Gemini interpretation and authoritative TMDB metadata.
 
-The current mobile release is **Aliflix 3.1.11** (`versionCode 101`) for Android 10 and newer.
+This source tree targets **Aliflix 3.1.12** (`versionCode 102`) for Android 10 and newer.
 
 [Download the latest mobile APK](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk) | [View release notes](https://github.com/alishaban144/aliflix-android/releases/latest)
 
@@ -18,7 +18,7 @@ The current mobile release is **Aliflix 3.1.11** (`versionCode 101`) for Android
 - **Native mobile UI** with Home, Discover, title details, genres, and My Space.
 - **No account required** for the published app; personal lists and playback preferences stay on the device.
 - **Ask Aliflix v3** with Describe, Similar, and Filters modes for movies or series.
-- **Grounded recommendations**: Gemini interprets intent while independent concept-majority gates, exact TMDB evidence, and authoritative hydrated metadata prevent title-word and superficial genre matches.
+- **Grounded recommendations**: Describe uses Gemini 3.7 Flash to propose real titles, exact TMDB identity and hydrated metadata to verify them, and a second Gemini premise gate to reject weak matches. It never falls back to keyword discovery.
 - **Deterministic filtering** after metadata enrichment, including genre inclusion/exclusion, year, runtime, language, country, rating, title exclusions, and TMDB ID exclusions.
 - **Canonical Similar mode** that uses the selected TMDB identity directly, excludes the anchor, and preserves the requested output type.
 - **Useful result cards** with poster, title, year, genres, rating, and match tier.
@@ -35,7 +35,7 @@ flowchart LR
     UI[Jetpack Compose editor] --> VM[AliflixViewModel]
     VM --> Client[RecommendationAiClient]
     Client --> Worker[Cloudflare recommendation worker]
-    Worker --> Gemini[Gemini intent and embeddings]
+    Worker --> Gemini[Gemini generation and premise scoring]
     Worker --> TMDB[TMDB titles and metadata]
     Worker --> Session[Durable Object session]
     Session --> Client
@@ -51,7 +51,9 @@ AskAliflixScreen
   -> recommendation-worker
 ```
 
-The worker uses Gemini for semantic interpretation and relevance signals, then retrieves and validates real TMDB titles. Explicit UI filters override interpreted filters. Candidates are deduplicated and pruned before bounded metadata enrichment, then hard filters are applied deterministically. Missing metadata cannot satisfy a filter that requires it.
+In Describe mode, Gemini 3.7 Flash generates premise-specific movie or series identities. The Worker exact-resolves every title through TMDB, hydrates its authoritative metadata, applies hard filters such as Returning or Ended only as eligibility checks, and asks Gemini to reject anything whose central story does not match the complete premise. Relevance never receives a popularity, rating, status, generic genre, or title-word boost, and a Gemini failure is surfaced instead of switching to keyword matching.
+
+Similar and Filters modes retain their specialized TMDB retrieval and deterministic hard-filter paths. Missing metadata cannot satisfy a filter that requires it.
 
 Recommendation sessions are stored in a Cloudflare Durable Object. Subsequent pages use signed cursors tied to the request and session instead of fabricated offsets or client-side slicing.
 
@@ -214,7 +216,8 @@ The worker includes:
 
 - Zod request validation.
 - TMDB request authentication, retry, timeout, and bounded-call handling.
-- Gemini intent interpretation and semantic embeddings.
+- Gemini 3.7 Flash Describe generation and final premise verification.
+- Gemini intent interpretation and semantic embeddings for non-Describe retrieval.
 - Deterministic hard-filter enforcement.
 - Deduplication and relevance ranking.
 - Durable Object recommendation sessions.
@@ -268,7 +271,7 @@ For a new release:
 2. Update the matching release version values and release branch in `.github/workflows/mobile-release.yml`.
 3. Run the Android and worker checks locally.
 4. Commit and push the release source.
-5. Create and push the matching version tag, such as `v3.1.11`.
+5. Create and push the matching version tag, such as `v3.1.12`.
 6. Wait for every workflow job to pass before treating the release as published.
 
 Published assets:
@@ -294,8 +297,8 @@ https://github.com/alishaban144/aliflix-android/releases/latest/download/update-
 
 ## Current release
 
-- Version: **3.1.11**
-- Version code: **100**
+- Version: **3.1.12**
+- Version code: **102**
 - Minimum Android version: **Android 10 / API 29**
-- Release page: [Aliflix 3.1.11](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.11)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.11/aliflix-mobile.apk)
+- Release page: [Aliflix 3.1.12](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.12)
+- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.12/aliflix-mobile.apk)

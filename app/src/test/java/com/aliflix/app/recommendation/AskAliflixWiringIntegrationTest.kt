@@ -41,6 +41,31 @@ class AskAliflixWiringIntegrationTest {
     }
 
     @Test
+    fun seriesStatusIsAvailableAndForwardedInEveryAskMode() {
+        val anchor = Media(id = 1396, type = MediaType.TV, title = "Breaking Bad")
+        val similarFilters = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Similar(
+                outputMediaType = MediaType.TV,
+                anchor = anchor,
+                requiredStatus = "Ended",
+            ),
+            "00000000-0000-4000-8000-000000000007",
+        ).workerRequest.toJson().getJSONObject("filters")
+        val filterModeFilters = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Filters(
+                CatalogDiscoverySpec(
+                    mediaKind = RecommendationMediaKind.SERIES,
+                    requiredStatus = "Returning Series",
+                ),
+            ),
+            "00000000-0000-4000-8000-000000000008",
+        ).workerRequest.toJson().getJSONObject("filters")
+
+        assertEquals("ended", similarFilters.getString("seriesStatus"))
+        assertEquals("returning", filterModeFilters.getString("seriesStatus"))
+    }
+
+    @Test
     fun similarPreservesAnchorTmdbIdentityAndRequestedOutputType() {
         val anchor = Media(id = 1396, type = MediaType.TV, title = "Breaking Bad")
         val json = AskAliflixRequestMapper.map(

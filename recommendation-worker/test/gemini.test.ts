@@ -1,21 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { fallbackIntentFromQuery } from '../src/gemini';
+import { GeminiDescribeResponseSchema } from '../src/schemas';
+import { DESCRIBE_RECOMMENDATIONS_PROMPT } from '../src/prompts';
 
-describe('deterministic Gemini fallback', () => {
-  it('keeps independent ideas as required AND groups and extracts exclusions', () => {
-    const intent = fallbackIntentFromQuery('A detective in a small town investigates a cold case with supernatural powers, but no zombies');
-
-    expect(intent.requiredConceptGroups.map(group => group.label)).toEqual(expect.arrayContaining([
-      'detective', 'small town', 'cold case', 'supernatural powers',
-    ]));
-    expect(intent.requiredConceptGroups.every(group => group.synonyms.length <= 2)).toBe(true);
-    expect(intent.excludedConcepts).toContain('zombies');
-    expect(intent.genreHints).toEqual(expect.arrayContaining(['Crime', 'Mystery']));
+describe('Gemini Describe contract', () => {
+  it('requires real title identity, release year, premise confidence, and rationale', () => {
+    expect(GeminiDescribeResponseSchema.parse({
+      recommendations: [{
+        title: 'Fire in the Sky',
+        releaseYear: 1993,
+        confidence: .97,
+        reason: 'An extraterrestrial abduction is the central event.',
+      }],
+    }).recommendations).toHaveLength(1);
+    expect(GeminiDescribeResponseSchema.safeParse({ recommendations: [] }).success).toBe(false);
+    expect(GeminiDescribeResponseSchema.safeParse({
+      recommendations: [{ title: 'Invented', confidence: .9, reason: 'Missing identity year' }],
+    }).success).toBe(false);
   });
 
-  it('does not turn generic request language into match concepts', () => {
-    const intent = fallbackIntentFromQuery('Please recommend a movie or series, surprise me');
-
-    expect(intent.requiredConceptGroups).toEqual([]);
+  it('forbids popularity padding and treats series status only as eligibility', () => {
+    expect(DESCRIBE_RECOMMENDATIONS_PROMPT).toContain('Return fewer instead of padding');
+    expect(DESCRIBE_RECOMMENDATIONS_PROMPT).toContain('Returning/Ended status is eligibility only');
+    expect(DESCRIBE_RECOMMENDATIONS_PROMPT).toContain('Use your knowledge of the actual story');
   });
 });

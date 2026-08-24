@@ -2,13 +2,7 @@ package com.aliflix.app.data
 
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.recommendation.CanonicalMediaIdentity
-import com.aliflix.app.recommendation.CanonicalTitleAnchor
-import com.aliflix.app.recommendation.CanonicalTitleResolver
-import com.aliflix.app.recommendation.RecommendationContentType
-import com.aliflix.app.recommendation.TitleAnchorResolution
 import java.util.concurrent.ConcurrentLinkedQueue
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -147,56 +141,6 @@ class CatalogClientTest {
         assertEquals(
             "https://image.tmdb.org/t/p/w500/backdrop.jpg",
             results.first().posterUrl,
-        )
-    }
-
-    @Test
-    fun parsedAlternativeTitlesResolveToTheCanonicalCatalogueIdentity() {
-        val html = """
-            <main>
-              <p><strong>Original Name:</strong> La casa de papel</p>
-              <p><strong>Also Known As:</strong> Money Heist / Haus des Geldes; Paper House</p>
-              <p><strong>Status:</strong> Ended</p>
-            </main>
-        """.trimIndent()
-
-        val aliases = client.parseRecommendationAlternativeTitles(
-            html = html,
-            canonicalTitle = "La casa de papel",
-        )
-        val canonical = CanonicalTitleAnchor(
-            identity = CanonicalMediaIdentity(MediaType.TV, 71446),
-            canonicalTitle = "La casa de papel",
-            alternativeTitles = aliases,
-            year = 2017,
-        )
-        val resolution = CanonicalTitleResolver.resolve(
-            query = "Haus des Geldes",
-            requiredType = RecommendationContentType.TV,
-            candidates = listOf(canonical),
-        )
-
-        assertEquals(setOf("Money Heist", "Haus des Geldes", "Paper House"), aliases)
-        assertTrue(resolution is TitleAnchorResolution.Resolved)
-        assertEquals(
-            canonical.identity,
-            (resolution as TitleAnchorResolution.Resolved).anchor.identity,
-        )
-        assertEquals("Haus des Geldes", resolution.matchedTitle)
-    }
-
-    @Test(expected = CancellationException::class)
-    fun alternativeTitleLookupPropagatesCancellation() = runTest {
-        val cancelledClient = CatalogClient {
-            throw CancellationException("new recommendation session")
-        }
-
-        cancelledClient.recommendationAlternativeTitles(
-            Media(
-                id = 27205,
-                type = MediaType.MOVIE,
-                title = "Inception",
-            ),
         )
     }
 

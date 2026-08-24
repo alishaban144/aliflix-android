@@ -64,18 +64,6 @@ val AliflixMuted = Color(0xFFA8ADB9)
 val AliflixGreen = Color(0xFF55D98B)
 val AliflixIce = Color(0xFFB9E6FF)
 
-object AliflixSpacing {
-    val none = 0.dp
-    val xxs = 4.dp
-    val xs = 8.dp
-    val sm = 12.dp
-    val md = 16.dp
-    val lg = 24.dp
-    val xl = 32.dp
-    val xxl = 40.dp
-    val section = 48.dp
-}
-
 object AliflixRadii {
     val none = 0.dp
     val small = 10.dp
@@ -83,13 +71,6 @@ object AliflixRadii {
     val large = 20.dp
     val extraLarge = 30.dp
     val full = 999.dp
-}
-
-object AliflixElevation {
-    val none = 0.dp
-    val low = 2.dp
-    val medium = 6.dp
-    val high = 12.dp
 }
 
 val AliflixShapes = Shapes(

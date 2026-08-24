@@ -1,3 +1,4 @@
+
 @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 
 package com.aliflix.app.ui.discover
@@ -124,18 +125,6 @@ import com.aliflix.app.SearchUiState
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.recommendation.ConstraintRelaxation
-import com.aliflix.app.recommendation.RecommendationCandidate
-import com.aliflix.app.recommendation.RecommendationContentType
-import com.aliflix.app.recommendation.RecommendationMediaKind
-import com.aliflix.app.recommendation.RecommendationPreferences
-import com.aliflix.app.recommendation.RecommendationRequestDraft
-import com.aliflix.app.recommendation.RecommendationQuestion
-import com.aliflix.app.recommendation.RecommendationQuestionType
-import com.aliflix.app.recommendation.RecommendationSourceHealth
-import com.aliflix.app.recommendation.RecommendationSourceStatus
-import com.aliflix.app.recommendation.RecommendationUiState
-import com.aliflix.app.recommendation.SemanticModelState
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBackgroundBase
@@ -155,13 +144,9 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun DiscoverScreen(
     state: SearchUiState,
-    recommendationState: RecommendationUiState,
     aiEnabled: Boolean,
     homeContent: HomeContent?,
     recent: List<Media>,
-    suggestionOrder: List<String>,
-    semanticModelState: SemanticModelState,
-    shouldOfferSemanticModel: Boolean,
     focusRequestId: Int?,
     onFocusRequestConsumed: (Int) -> Unit,
     askOpenRequestId: Int? = null,
@@ -171,23 +156,6 @@ internal fun DiscoverScreen(
     onSearchTitles: suspend (String) -> List<Media>,
     onModeChange: (SearchMode) -> Unit,
     onOpen: (Media) -> Unit,
-    onSelectRecommendationType: (RecommendationMediaKind) -> Unit,
-    onSubmitRecommendation: (RecommendationRequestDraft) -> Unit,
-    onSurpriseRecommendation: () -> Unit,
-    onAnswerRecommendation: (RecommendationQuestion, List<String>) -> Unit,
-    onShowRecommendationMatches: () -> Unit,
-    onPreviousRecommendationStep: () -> Unit,
-    onRestartRecommendations: () -> Unit,
-    onRetryRecommendations: () -> Unit,
-    onLoadMoreRecommendations: () -> Unit,
-    onRetryRecommendationPage: () -> Unit,
-    onRelaxRecommendation: (String) -> Unit,
-    onDownloadSemanticModel: () -> Unit,
-    onDismissSemanticModelOffer: () -> Unit,
-    onMoreLikeRecommendation: (Media) -> Unit,
-    onLessLikeRecommendation: (Media) -> Unit,
-    onRecommendationSeen: (Media) -> Unit,
-    onCorrectRecommendationPreference: (String) -> Unit,
     catalogGridState: LazyGridState,
     recommendationListState: LazyListState,
     mediaFilter: String,
@@ -214,27 +182,7 @@ internal fun DiscoverScreen(
             ),
         )
     }
-    val preferences = recommendationState.preferencesOrNull()
-    val recommendationKind = preferences?.selectedMediaKind()
-    val suggestionKind = if (state.mode == SearchMode.AI) {
-        recommendationKind
-    } else {
-        when (mediaFilter) {
-            "Movies" -> RecommendationMediaKind.MOVIE
-            "Series" -> RecommendationMediaKind.SERIES
-            else -> null
-        }
-    }
-    val suggestions = remember(suggestionOrder, suggestionKind) {
-        suggestionsForSession(suggestionOrder, suggestionKind)
-    }
     var recommendModeActive by rememberSaveable { mutableStateOf(false) }
-
-    LaunchedEffect(recommendationState) {
-        if (recommendationState is com.aliflix.app.recommendation.RecommendationUiState.Idle) {
-            recommendModeActive = false
-        }
-    }
 
     LaunchedEffect(focusRequestId) {
         if (focusRequestId != null) {
@@ -358,6 +306,7 @@ internal fun DiscoverScreen(
                         )
 
                         Row(
+
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -538,6 +487,7 @@ internal fun DiscoverScreen(
                                 .weight(1f)
                                 .fillMaxWidth()
                         ) { (currentState, currentFilter) ->
+
                             CatalogueContent(
                                 state = currentState,
                                 mediaFilter = currentFilter,
@@ -555,96 +505,6 @@ internal fun DiscoverScreen(
         }
     }
 }
-
-@Composable
-private fun DiscoverModeSelector(
-    selected: SearchMode,
-    aiEnabled: Boolean,
-    onSelect: (SearchMode) -> Unit,
-) {
-    Surface(
-        color = AliflixSurfacePrimary.copy(alpha = 0.90f),
-        shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            listOf(
-                SearchMode.TITLE to "Catalogue",
-                SearchMode.AI to "Recommend",
-            ).forEach { (mode, label) ->
-                val enabled = mode != SearchMode.AI || aiEnabled
-                val active = selected == mode
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 48.dp)
-                        .clip(RoundedCornerShape(13.dp))
-                        .background(
-                            if (active) {
-                                Brush.horizontalGradient(
-                                    listOf(
-                                        AliflixAccentPrimary.copy(alpha = 0.35f),
-                                        AliflixAccentSecondary.copy(alpha = 0.15f),
-                                    ),
-                                )
-                            } else {
-                                Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
-                            },
-                        )
-                        .selectable(
-                            selected = active,
-                            enabled = enabled,
-                            role = Role.Tab,
-                            onClick = { onSelect(mode) },
-                        )
-                        .testTag(
-                            if (mode == SearchMode.TITLE) {
-                                "discover-mode-catalogue"
-                            } else {
-                                "discover-mode-recommend"
-                            },
-                        )
-                        .semantics {
-                            stateDescription = if (active) "Selected" else "Not selected"
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = if (mode == SearchMode.TITLE) {
-                                Icons.Filled.Search
-                            } else {
-                                Icons.Rounded.AutoAwesome
-                            },
-                            contentDescription = null,
-                            tint = if (active) AliflixContentPrimary else AliflixContentTertiary,
-                            modifier = Modifier.size(17.dp),
-                        )
-                        Text(
-                            text = label,
-                            color = when {
-                                !enabled -> AliflixContentTertiary.copy(alpha = 0.45f)
-                                active -> AliflixContentPrimary
-                                else -> AliflixContentSecondary
-                            },
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 @Composable
 private fun CatalogueTypeSelector(
     selected: String,
@@ -699,85 +559,6 @@ private fun CatalogueTypeSelector(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun RecommendationTypeSelector(
-    selected: RecommendationMediaKind?,
-    onSelect: (RecommendationMediaKind) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "Recommend",
-            color = AliflixContentTertiary,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        RecommendationMediaKind.entries.forEach { kind ->
-            DiscoverFilterChip(
-                label = if (kind == RecommendationMediaKind.MOVIE) "Movies" else "Series",
-                selected = selected == kind,
-                onClick = { onSelect(kind) },
-                modifier = Modifier.testTag(
-                    if (kind == RecommendationMediaKind.MOVIE) {
-                        "discover-type-movie"
-                    } else {
-                        "discover-type-series"
-                    },
-                ),
-            )
-        }
-        if (selected == null) {
-            Text(
-                text = "Choose one",
-                color = AliflixAccentSecondary,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(start = 2.dp),
-            )
-        }
-    }
-}
-
-@Composable
-internal fun DiscoverFilterChip(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .height(48.dp)
-            .clip(RoundedCornerShape(15.dp))
-            .background(
-                if (selected) AliflixAccentPrimary.copy(alpha = 0.22f)
-                else AliflixSurfaceSecondary,
-            )
-            .border(
-                1.dp,
-                if (selected) AliflixAccentPrimary.copy(alpha = 0.72f)
-                else AliflixBorderSubtle,
-                RoundedCornerShape(15.dp),
-            )
-            .selectable(
-                selected = selected,
-                role = Role.Tab,
-                onClick = onClick,
-            )
-            .padding(horizontal = 15.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = if (selected) AliflixContentPrimary else AliflixContentSecondary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-        )
     }
 }
 
@@ -898,6 +679,7 @@ private fun CatalogueContent(
                     start = 16.dp,
                     end = 16.dp,
                     top = 2.dp,
+
                     bottom = 32.dp,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -979,195 +761,6 @@ private fun DiscoverIdleContent(
                     onAction = null,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
                 )
-            }
-        }
-    }
-}
-
-@Composable
-internal fun TryOneCarousel(
-    suggestions: List<DiscoverSuggestion>,
-    onSuggestion: (DiscoverSuggestion) -> Unit,
-) {
-    val signature = remember(suggestions) { suggestions.joinToString("|") { it.id } }
-    key(signature) {
-        val pagerState = rememberPagerState(pageCount = { suggestions.size })
-        val interactionSource = remember { MutableInteractionSource() }
-        val pressed by interactionSource.collectIsPressedAsState()
-        val isInteractionActive by rememberUpdatedState(
-            pressed || pagerState.isScrollInProgress,
-        )
-        val carouselScope = rememberCoroutineScope()
-
-        LaunchedEffect(signature) {
-            if (suggestions.size < 2) return@LaunchedEffect
-            while (true) {
-                delay(6_000)
-                if (!isInteractionActive) {
-                    pagerState.animateScrollToPage((pagerState.currentPage + 1) % suggestions.size)
-                }
-            }
-        }
-
-        Column(
-            modifier = Modifier
-                .testTag("discover-try-one-carousel")
-                .semantics {
-                    contentDescription = "Try one suggestions"
-                    stateDescription =
-                        "Suggestion ${pagerState.currentPage + 1} of ${suggestions.size}: " +
-                            suggestions[pagerState.currentPage].prompt
-                },
-            verticalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            HorizontalPager(
-                state = pagerState,
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                pageSpacing = 10.dp,
-                modifier = Modifier.fillMaxWidth(),
-            ) { page ->
-                val suggestion = suggestions[page]
-                val typeLabel = if (suggestion.mediaKind == RecommendationMediaKind.MOVIE) {
-                    "MOVIE"
-                } else {
-                    "SERIES"
-                }
-                Surface(
-                    color = AliflixSurfaceElevated,
-                    shape = RoundedCornerShape(20.dp),
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp,
-                        AliflixAccentPrimary.copy(alpha = 0.42f),
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 112.dp)
-                        .aliflixPressScale(interactionSource)
-                        .clickable(
-                            interactionSource = interactionSource,
-                            indication = null,
-                            role = Role.Button,
-                            onClick = { onSuggestion(suggestion) },
-                        )
-                        .testTag("discover-try-one-card")
-                        .semantics {
-                            contentDescription =
-                                "Try $typeLabel recommendation: ${suggestion.prompt}"
-                        },
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(46.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            AliflixAccentPrimary.copy(alpha = 0.55f),
-                                            AliflixAccentSecondary.copy(alpha = 0.30f),
-                                        ),
-                                    ),
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AutoAwesome,
-                                contentDescription = null,
-                                tint = AliflixContentPrimary,
-                            )
-                        }
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(5.dp),
-                        ) {
-                            Text(
-                                text = typeLabel,
-                                color = AliflixAccentSecondary,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 1.1.sp,
-                            )
-                            Text(
-                                text = suggestion.prompt,
-                                color = AliflixContentPrimary,
-                                fontSize = 16.sp,
-                                lineHeight = 21.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                            contentDescription = null,
-                            tint = AliflixContentSecondary,
-                        )
-                    }
-                }
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(
-                    enabled = pagerState.currentPage > 0,
-                    interactionSource = interactionSource,
-                    onClick = {
-                        carouselScope.launch {
-                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
-                        }
-                    },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("discover-try-one-previous"),
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = "Previous suggestion",
-                    )
-                }
-                Row(
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    suggestions.indices.forEach { index ->
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = 3.dp)
-                                .size(if (pagerState.currentPage == index) 7.dp else 5.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (pagerState.currentPage == index) {
-                                        AliflixAccentSecondary
-                                    } else {
-                                        AliflixBorderStrong
-                                    },
-                                ),
-                        )
-                    }
-                }
-                IconButton(
-                    enabled = pagerState.currentPage < suggestions.lastIndex,
-                    interactionSource = interactionSource,
-                    onClick = {
-                        carouselScope.launch {
-                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                        }
-                    },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("discover-try-one-next"),
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                        contentDescription = "Next suggestion",
-                    )
-                }
             }
         }
     }
@@ -1258,6 +851,7 @@ private fun DiscoverPosterCard(
             fontWeight = FontWeight.SemiBold,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+
         )
         if (item.year.isNotBlank()) {
             Text(
@@ -1417,30 +1011,3 @@ internal fun DiscoverStateMessage(
         }
     }
 }
-
-internal fun RecommendationUiState.preferencesOrNull(): RecommendationPreferences? = when (this) {
-    RecommendationUiState.Idle -> null
-    is RecommendationUiState.SelectType -> preferences
-    is RecommendationUiState.Discovering -> preferences
-    is RecommendationUiState.Question -> preferences
-    is RecommendationUiState.Results -> preferences
-    is RecommendationUiState.Empty -> preferences
-    is RecommendationUiState.SourceUnavailable -> preferences
-    is RecommendationUiState.Relaxation -> preferences
-    is RecommendationUiState.Error -> preferences
-}
-
-internal fun RecommendationPreferences.selectedMediaKind(): RecommendationMediaKind? =
-    when (contentType?.value) {
-        RecommendationContentType.MOVIE -> RecommendationMediaKind.MOVIE
-        RecommendationContentType.TV -> RecommendationMediaKind.SERIES
-        RecommendationContentType.EITHER,
-        null,
-        -> null
-    }
-
-internal fun RecommendationSourceHealth.isPartial(): Boolean =
-    listOf(catalogue, imdb, web, reddit).any { status ->
-        status == RecommendationSourceStatus.DEGRADED ||
-            status == RecommendationSourceStatus.UNAVAILABLE
-    }

@@ -15,17 +15,9 @@ import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.Season
-import com.aliflix.app.recommendation.CatalogRecommendationCandidateRepository
-import com.aliflix.app.recommendation.RecommendationOrchestrator
 import com.aliflix.app.recommendation.RecommendationMediaKind
-import com.aliflix.app.recommendation.PreferenceCorrection
-import com.aliflix.app.recommendation.RecommendationQuestion
 import com.aliflix.app.recommendation.RecommendationDispatchers
 import com.aliflix.app.recommendation.RecommendationStore
-import com.aliflix.app.recommendation.RecommendationUiState
-import com.aliflix.app.recommendation.RecommendationRequestDraft
-import com.aliflix.app.recommendation.AndroidSemanticModelManager
-import com.aliflix.app.recommendation.SemanticModelState
 import com.aliflix.app.recommendation.V3CatalogMedia
 import com.aliflix.app.recommendation.V3TitleDetails
 import kotlinx.coroutines.async
@@ -165,28 +157,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private val playbackProviderRepository = PlaybackProviderRepository(application)
     private val recommendationStore = RecommendationStore(
         context = application,
-        scope = viewModelScope,
-        dispatchers = recommendationDispatchers,
-    )
-    private val semanticModelManager = AndroidSemanticModelManager(
-        context = application,
-        scope = viewModelScope,
-        ioDispatcher = recommendationDispatchers.io,
     )
     private val aiClient = com.aliflix.app.recommendation.RecommendationAiClient(
         baseUrl = BuildConfig.RECOMMENDATION_AI_BASE_URL,
         ioDispatcher = recommendationDispatchers.io
-    )
-    private val recommendationOrchestrator = RecommendationOrchestrator(
-        scope = viewModelScope,
-        repository = CatalogRecommendationCandidateRepository(client, aiClient, omdbClient),
-        store = recommendationStore,
-        likesProvider = { library.likes.value },
-        recentlyPlayedProvider = { library.recent.value },
-        semanticBatchScorerProvider = semanticModelManager::batchScorerOrNull,
-        dispatchers = recommendationDispatchers,
-        aiClient = aiClient,
-        omdbClient = omdbClient,
     )
     private var searchJob: Job? = null
     private var detailJob: Job? = null
@@ -267,7 +241,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 if (token != askSessionToken) return@launch
 
                 val candidates = response.results
-                    .mapIndexed(::mapAskResult)
+                    .map(::mapAskResult)
                     .filter { candidate ->
                         if (!hideWatched) true
                         else !library.recent.value.any { it.key == candidate.media.key } &&
@@ -373,7 +347,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val response = aiClient.getRecommendations(original.copy(cursor = cursor))
                 if (token != askSessionToken) return@launch
-                val appended = (currentResults.items + response.results.mapIndexed(::mapAskResult))
+                val appended = (currentResults.items + response.results.map(::mapAskResult))
                     .distinctBy { it.media.key }
                 _askUiState.value = currentResults.copy(
                     items = appended,
@@ -407,7 +381,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val response = aiClient.getRecommendations(original.copy(cursor = null))
                 if (token != askSessionToken) return@launch
-                val candidates = response.results.mapIndexed(::mapAskResult)
+                val candidates = response.results.map(::mapAskResult)
                 _askUiState.value = if (candidates.isEmpty()) {
                     com.aliflix.app.ui.discover.AskAliflixUiState.Empty(summary, "No titles found.")
                 } else {
@@ -436,7 +410,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun mapAskResult(index: Int, result: com.aliflix.app.recommendation.V3RecommendationResult) =
+    private fun mapAskResult(result: com.aliflix.app.recommendation.V3RecommendationResult) =
         com.aliflix.app.recommendation.RecommendationCandidate(
             media = com.aliflix.app.model.Media(
                 id = result.tmdbId,
@@ -451,40 +425,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 status = result.status.orEmpty(),
                 runtime = result.runtimeMinutes?.let { "$it min" }.orEmpty(),
             ),
-            metadata = com.aliflix.app.recommendation.VerifiedMediaMetadata(
-                genresVerified = true,
-                runtimeMinutes = result.runtimeMinutes,
-                originalLanguage = result.originalLanguage,
-                originCountries = result.originCountries,
-                tmdbVoteCount = result.tmdbVoteCount,
-                status = result.status,
-                verifiedAtMillis = System.currentTimeMillis(),
-            ),
-            evidence = result.matchReasons.firstOrNull().orEmpty(),
-            sources = result.retrievalSources.toSet(),
-            sourceCount = result.retrievalSources.size,
-            sourcePosition = index,
-            score = com.aliflix.app.recommendation.RecommendationScoreBreakdown(
-                semanticRelevance = result.finalScore,
-                confidence = result.finalScore,
-                total = result.finalScore,
-                finalScore = result.finalScore,
-            ),
-            explanation = result.matchLevel,
-            precomputedSemanticScore = result.finalScore,
-            alternativeTitles = setOfNotNull(result.originalTitle).filterNot { it == result.title }.toSet(),
         )
 
     val playbackPreferences: StateFlow<PlaybackPreferences> =
         playbackProviderRepository.preferences
-    val recommendation: StateFlow<RecommendationUiState> =
-        recommendationOrchestrator.state
     val aiRecommendationsEnabled: StateFlow<Boolean> =
         recommendationStore.enabled
-    val semanticModelState: StateFlow<SemanticModelState> =
-        semanticModelManager.state
-    val shouldOfferSemanticModel: StateFlow<Boolean> =
-        semanticModelManager.shouldOfferDownload
 
     fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
         playbackProviderRepository.selectGeneralProvider(provider)
@@ -949,107 +895,18 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearRecent() = library.clearRecent()
 
-    fun submitRecommendationDraft(draft: RecommendationRequestDraft) {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.submitDraft(draft)
-    }
-
-    fun selectRecommendationType(type: RecommendationMediaKind) =
-        recommendationOrchestrator.selectType(type)
-
-    fun showRecommendationMatches() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.showMatches()
-    }
-
-    fun loadMoreRecommendations() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.loadMore()
-    }
-
-    fun retryRecommendationPage() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.retryPage()
-    }
-
-    fun surpriseRecommendation() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.surpriseMe()
-    }
-
-    fun answerRecommendation(
-        question: RecommendationQuestion,
-        values: List<String>,
-    ) {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.answer(question, values)
-    }
-
-    fun previousRecommendationStep() = recommendationOrchestrator.goBack()
-
-    fun restartRecommendations() = recommendationOrchestrator.restart()
-
-    fun retryRecommendations() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.retry()
-    }
-
-    fun requestAnotherRecommendation(
-        media: Media,
-        reason: String? = null,
-    ) {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.requestAnother(media, reason)
-    }
-
-    fun acceptRecommendation(media: Media) =
-        recommendationOrchestrator.accept(media)
-
-    fun moreLikeRecommendation(media: Media) =
-        recommendationOrchestrator.moreLike(media)
-
-    fun lessLikeRecommendation(media: Media) =
-        recommendationOrchestrator.lessLike(media)
-
-    fun markRecommendationSeen(media: Media) =
-        recommendationOrchestrator.alreadySeen(media)
-
-    fun correctRecommendationPreference(key: String) =
-        recommendationOrchestrator.applyCorrection(
-            PreferenceCorrection(key = key, replacement = null),
-        )
-
-    fun relaxRecommendationConstraint(id: String) {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.applyRelaxation(id)
-    }
-
     fun setAiRecommendationsEnabled(enabled: Boolean) {
         recommendationStore.setEnabled(enabled)
         if (!enabled) {
-            recommendationOrchestrator.restart()
             if (_search.value.mode == SearchMode.AI) {
                 selectSearchMode(SearchMode.TITLE)
             }
         }
     }
 
-    fun resetRecommendationTaste() = recommendationOrchestrator.resetTaste()
-
-    fun downloadSemanticModel() = semanticModelManager.download()
-
-    fun dismissSemanticModelOffer() = semanticModelManager.dismissOffer()
-
-    fun deleteSemanticModel() = semanticModelManager.delete()
-
     private fun pauseBackgroundHomeRefresh() {
         homeRefreshJob?.cancel()
         homeRefreshJob = null
-    }
-
-    override fun onCleared() {
-        client.close()
-        semanticModelManager.close()
     }
 
     private companion object {

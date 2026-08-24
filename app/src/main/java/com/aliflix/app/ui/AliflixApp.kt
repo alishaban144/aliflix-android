@@ -192,13 +192,11 @@ import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.player.WebPlayerScreen
 import com.aliflix.app.recommendation.PersonalMatch
 import com.aliflix.app.recommendation.PersonalizationEngine
-import com.aliflix.app.recommendation.SemanticModelState
 import com.aliflix.app.update.AppUpdateManager
 import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
 import com.aliflix.app.update.UpdateInfo
 import com.aliflix.app.ui.discover.DiscoverScreen
-import com.aliflix.app.ui.discover.currentSessionSuggestionOrder
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixAccentPrimary as AliflixRed
@@ -459,10 +457,7 @@ fun AliflixApp(
     val myList by viewModel.myList.collectAsState()
     val recent by viewModel.recent.collectAsState()
     val likes by viewModel.likes.collectAsState()
-    val recommendation by viewModel.recommendation.collectAsState()
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
-    val semanticModelState by viewModel.semanticModelState.collectAsState()
-    val shouldOfferSemanticModel by viewModel.shouldOfferSemanticModel.collectAsState()
     val askUiState by viewModel.askUiState.collectAsState()
     val askEditorState by viewModel.askEditorState.collectAsState()
 
@@ -495,7 +490,6 @@ fun AliflixApp(
     val homeScrollState = rememberLazyListState()
     val searchScrollState = rememberLazyGridState()
     val recommendationScrollState = rememberLazyListState()
-    val discoverSuggestionOrder = remember { currentSessionSuggestionOrder() }
     val listScrollState = rememberLazyGridState()
     val favoritesScrollState = rememberLazyGridState()
     val historyScrollState = rememberLazyGridState()
@@ -1055,13 +1049,9 @@ fun AliflixApp(
 
                     AppScreen.SEARCH -> DiscoverScreen(
                         state = search,
-                        recommendationState = recommendation,
                         aiEnabled = aiRecommendationsEnabled,
                         homeContent = home.content,
                         recent = recent,
-                        suggestionOrder = discoverSuggestionOrder,
-                        semanticModelState = semanticModelState,
-                        shouldOfferSemanticModel = shouldOfferSemanticModel,
                         focusRequestId = discoverFocusRequestId.takeIf {
                             it > consumedDiscoverFocusRequestId
                         },
@@ -1076,24 +1066,6 @@ fun AliflixApp(
                         onSearchTitles = viewModel::searchTitles,
                         onModeChange = viewModel::selectSearchMode,
                         onOpen = ::openDetails,
-                        onSelectRecommendationType = viewModel::selectRecommendationType,
-                        onSubmitRecommendation = viewModel::submitRecommendationDraft,
-                        onSurpriseRecommendation = viewModel::surpriseRecommendation,
-                        onAnswerRecommendation = viewModel::answerRecommendation,
-                        onShowRecommendationMatches = viewModel::showRecommendationMatches,
-                        onPreviousRecommendationStep = viewModel::previousRecommendationStep,
-                        onRestartRecommendations = viewModel::restartRecommendations,
-                        onRetryRecommendations = viewModel::retryRecommendations,
-                        onLoadMoreRecommendations = viewModel::loadMoreRecommendations,
-                        onRetryRecommendationPage = viewModel::retryRecommendationPage,
-                        onRelaxRecommendation = viewModel::relaxRecommendationConstraint,
-                        onDownloadSemanticModel = viewModel::downloadSemanticModel,
-                        onDismissSemanticModelOffer = viewModel::dismissSemanticModelOffer,
-                        onMoreLikeRecommendation = viewModel::moreLikeRecommendation,
-                        onLessLikeRecommendation = viewModel::lessLikeRecommendation,
-                        onRecommendationSeen = viewModel::markRecommendationSeen,
-                        onCorrectRecommendationPreference =
-                            viewModel::correctRecommendationPreference,
                         catalogGridState = searchScrollState,
                         recommendationListState = recommendationScrollState,
                         mediaFilter = searchMediaFilter,
@@ -1135,11 +1107,6 @@ fun AliflixApp(
                         aiRecommendationsEnabled = aiRecommendationsEnabled,
                         onSetAiRecommendationsEnabled =
                             viewModel::setAiRecommendationsEnabled,
-                        onResetRecommendationTaste =
-                            viewModel::resetRecommendationTaste,
-                        semanticModelState = semanticModelState,
-                        onDownloadSemanticModel = viewModel::downloadSemanticModel,
-                        onDeleteSemanticModel = viewModel::deleteSemanticModel,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
                 }
@@ -2907,10 +2874,6 @@ private fun MobileSettingsDialog(
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
-    onResetRecommendationTaste: () -> Unit,
-    semanticModelState: SemanticModelState,
-    onDownloadSemanticModel: () -> Unit,
-    onDeleteSemanticModel: () -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3255,10 +3218,6 @@ private fun MySpaceScreen(
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
-    onResetRecommendationTaste: () -> Unit,
-    semanticModelState: SemanticModelState,
-    onDownloadSemanticModel: () -> Unit,
-    onDeleteSemanticModel: () -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3322,10 +3281,6 @@ private fun MySpaceScreen(
             onEditProviderUrl = onEditProviderUrl,
             aiRecommendationsEnabled = aiRecommendationsEnabled,
             onSetAiRecommendationsEnabled = onSetAiRecommendationsEnabled,
-            onResetRecommendationTaste = onResetRecommendationTaste,
-            semanticModelState = semanticModelState,
-            onDownloadSemanticModel = onDownloadSemanticModel,
-            onDeleteSemanticModel = onDeleteSemanticModel,
             updateUi = updateUi,
             onCheckForUpdates = onCheckForUpdates,
             onDownloadUpdate = onDownloadUpdate,

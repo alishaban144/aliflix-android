@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 101
-val mobileVersionName = "3.1.11"
+val mobileVersionCode = 102
+val mobileVersionName = "3.1.12"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
 val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
@@ -17,15 +17,12 @@ val releaseSigningConfigured = listOf(
 ).all { !it.isNullOrBlank() }
 val githubReleaseBaseUrl =
     "https://github.com/alishaban144/aliflix-android/releases/latest/download"
-val legacyUpdateManifestOverride = providers.gradleProperty("ALIFLIX_UPDATE_MANIFEST_URL")
 val mobileUpdateManifestUrl = providers
     .gradleProperty("ALIFLIX_MOBILE_UPDATE_MANIFEST_URL")
-    .orElse(legacyUpdateManifestOverride)
     .orElse("$githubReleaseBaseUrl/update-mobile.json")
     .get()
 val tvUpdateManifestUrl = providers
     .gradleProperty("ALIFLIX_TV_UPDATE_MANIFEST_URL")
-    .orElse(legacyUpdateManifestOverride)
     .orElse("$githubReleaseBaseUrl/update-tv.json")
     .get()
 
@@ -98,7 +95,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = releaseSigning
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -160,7 +158,6 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jsoup:jsoup:1.19.1")
-    implementation("com.google.mediapipe:tasks-text:0.10.14")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
