@@ -71,25 +71,41 @@ export function passesHardFilters(candidate: Candidate, filters: RecommendationF
 }
 
 function evidence(candidate: Candidate, intent: InterpretedIntent) {
-  const haystack = normalize([candidate.title, candidate.originalTitle, candidate.overview, ...candidate.genres, ...candidate.keywords.map(k => k.name)].filter(Boolean).join(' '));
-  const containsConcept = (value: string): boolean => {
+  // Titles are identifiers, not topical evidence. A title such as "The Case" must
+  // never satisfy a request for a cold case unless its metadata supports that idea.
+  const contentHaystack = normalize([candidate.overview, ...candidate.genres, ...candidate.keywords.map(k => k.name)].filter(Boolean).join(' '));
+  const keywordHaystack = normalize(candidate.keywords.map(keyword => keyword.name).join(' '));
+  const containsConcept = (haystack: string, value: string): boolean => {
     const normalizedValue = normalize(value);
     return normalizedValue.length > 1 && ` ${haystack} `.includes(` ${normalizedValue} `);
   };
-  const groupMatches = intent.requiredConceptGroups.map((group, index) =>
-    group.synonyms.some(containsConcept) || candidate.matchedConceptGroupIndexes.has(index),
-  );
-  const matchingGroupCount = groupMatches.filter(Boolean).length;
-  const concept = groupMatches.length ? matchingGroupCount / groupMatches.length : 0;
-  const groundedGroupCoverage = groupMatches.length ? matchingGroupCount / groupMatches.length : 0;
+  const groupMatches = intent.requiredConceptGroups.map((group, index) => ({
+    matched: group.synonyms.some(value => containsConcept(contentHaystack, value)) || candidate.matchedConceptGroupIndexes.has(index),
+    grounded: group.synonyms.some(value => containsConcept(keywordHaystack, value)) || candidate.matchedConceptGroupIndexes.has(index),
+    weight: Math.max(.1, group.weight),
+  }));
+  const matchedGroupCount = groupMatches.filter(group => group.matched).length;
+  const groundedGroupCount = groupMatches.filter(group => group.grounded).length;
+  const totalConceptWeight = groupMatches.reduce((sum, group) => sum + group.weight, 0);
+  const concept = totalConceptWeight
+    ? groupMatches.reduce((sum, group) => sum + (group.matched ? group.weight : 0), 0) / totalConceptWeight
+    : 0;
+  const groundedGroupCoverage = totalConceptWeight
+    ? groupMatches.reduce((sum, group) => sum + (group.grounded ? group.weight : 0), 0) / totalConceptWeight
+    : 0;
   const keyword = groupMatches.length
-    ? (concept >= 0.5 ? concept : concept * 0.5)
+    ? groundedGroupCoverage
     : candidate.matchedKeywordIds.size ? Math.min(1, candidate.matchedKeywordIds.size / 3) : 0;
   const genreHints = unique([...intent.genreHints, ...intent.hardFilters.includedGenres]);
   const genre = genreHints.length ? genreHints.filter(hint => candidate.genres.some(g => normalize(g) === normalize(hint))).length / genreHints.length : 0;
-  const path = Math.min(1, candidate.retrievalSources.size / 3);
+  const retrievalFamilies = new Set([...candidate.retrievalSources].map(source => source.replace(/:page-\d+$/, '')));
+  const path = Math.min(1, retrievalFamilies.size / 3);
   const quality = Math.min(1, Math.log10((candidate.tmdbVoteCount ?? 0) + 1) / 4) * Math.min(1, (candidate.tmdbRating ?? 0) / 7.5);
-  const excluded = intent.excludedConcepts.some(containsConcept);
+  const excluded = intent.excludedConcepts.some(value => containsConcept(contentHaystack, value));
+  const requestedCertifications = new Set(intent.certifications.map(normalize));
+  const certification = requestedCertifications.size
+    ? candidate.certifications.some(value => requestedCertifications.has(normalize(value))) ? 1 : 0
+    : 0;
   return {
     concept,
     keyword,
@@ -98,21 +114,43 @@ function evidence(candidate: Candidate, intent: InterpretedIntent) {
     quality,
     excluded,
     conceptRequested: groupMatches.length > 0,
+    totalGroupCount: groupMatches.length,
+    matchedGroupCount,
+    groundedGroupCount,
     genreRequested: genreHints.length > 0,
-    keywordGrounded: groundedGroupCoverage > 0,
+    keywordGrounded: groundedGroupCount > 0,
+    certification,
+    certificationRequested: requestedCertifications.size > 0,
   };
+}
+
+function hasRequiredConceptCoverage(total: number, matched: number, weightedCoverage: number): boolean {
+  if (!total) return true;
+  const minimumMatches = total <= 2 ? total : Math.ceil(total * .66);
+  return matched >= minimumMatches && weightedCoverage >= .64;
 }
 
 export function rankCandidates(candidates: Candidate[], intent: InterpretedIntent, filters: RecommendationFilters, similar: boolean, embeddingsAvailable: boolean): RecommendationResult[] {
   for (const candidate of candidates) {
     if (!passesHardFilters(candidate, filters)) { candidate.matchLevel = 'Reject'; continue; }
     const e = evidence(candidate, intent);
+    const semantic = candidate.semanticScore ?? 0;
+    const conceptCoveragePasses = hasRequiredConceptCoverage(e.totalGroupCount, e.matchedGroupCount, e.concept);
+    const anchorSupport = !candidate.anchorEvidenceAvailable || candidate.sharedAnchorKeywordCount > 0 ||
+      candidate.anchorGenreScore >= .25 || semantic >= .50;
+    const directSimilarity = candidate.directRelationshipScore >= .50 && anchorSupport;
+    const groundedSimilarity = candidate.anchorOverlapScore >= .42 && (
+      candidate.sharedAnchorKeywordCount >= 2 || semantic >= .50 ||
+      (candidate.sharedAnchorKeywordCount >= 1 && candidate.anchorGenreScore >= .25 && candidate.anchorOverlapScore >= .72)
+    );
+    const hybridSimilarity = candidate.sharedAnchorKeywordCount >= 1 && candidate.anchorGenreScore >= .25 && semantic >= .52;
+    const similarityEvidencePasses = directSimilarity || groundedSimilarity || hybridSimilarity;
     const signals: Record<string, number> = similar
       ? { semantic: candidate.semanticScore ?? 0, direct: candidate.directRelationshipScore, overlap: candidate.anchorOverlapScore, concept: e.concept, path: e.path, quality: e.quality }
       : { semantic: candidate.semanticScore ?? 0, concept: e.concept, keyword: e.keyword, genre: e.genre, path: e.path, quality: e.quality };
     const weights: Record<string, number> = similar
-      ? { semantic: .30, direct: .28, overlap: .20, concept: .08, path: .11, quality: .03 }
-      : { semantic: .42, concept: .23, keyword: .15, genre: .08, path: .09, quality: .03 };
+      ? { semantic: .22, direct: .38, overlap: .28, concept: .02, path: .05, quality: .05 }
+      : { semantic: .25, concept: .38, keyword: .18, genre: .08, path: .06, quality: .05 };
     if (!embeddingsAvailable || candidate.semanticScore === undefined) delete weights.semantic;
     if (!e.conceptRequested) {
       delete weights.concept;
@@ -125,20 +163,22 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
       rawScore *= 0.65;
     }
     candidate.finalScore = rawScore;
-    const requiredEvidence = intent.requiredConceptGroups.length
-      ? Math.max(e.concept, e.keyword, (candidate.semanticScore ?? 0) * .85)
-      : Math.max(e.genre, e.path, (candidate.semanticScore ?? 0) * .85);
-    const reject = e.excluded || candidate.finalScore < .24 ||
-      (requiredEvidence < .18 && candidate.directRelationshipScore === 0);
+    const noConceptEvidence = !e.conceptRequested && !e.genreRequested && e.path === 0 && semantic === 0;
+    const reject = e.excluded || (e.certificationRequested && e.certification === 0) ||
+      (similar ? !similarityEvidencePasses : !conceptCoveragePasses) ||
+      (!similar && !e.conceptRequested && e.genreRequested && e.genre === 0) ||
+      (!similar && noConceptEvidence) || candidate.finalScore < .28;
     const level: MatchLevel = reject ? 'Reject' : candidate.finalScore >= .78 ? 'Exceptional' : candidate.finalScore >= .62 ? 'Strong' : candidate.finalScore >= .44 ? 'Relevant' : 'Broader but still relevant';
     candidate.matchLevel = level;
     candidate.matchReasons = [
       candidate.directRelationshipScore ? 'Recommended or marked similar by TMDB' : '',
-      e.conceptRequested && e.concept >= .99 ? 'Matches every requested concept' : e.conceptRequested && e.concept >= .5 ? 'Matches most requested concepts' : e.conceptRequested && e.concept > 0 ? 'Matches part of your request' : '',
+      e.conceptRequested && e.concept >= .99 ? 'Matches every requested concept' : e.conceptRequested && conceptCoveragePasses ? 'Matches most requested concepts' : '',
       (candidate.semanticScore ?? 0) >= .72 ? 'Strong meaning and story match' : (candidate.semanticScore ?? 0) >= .56 ? 'Good story and theme match' : '',
-      e.keywordGrounded ? 'Grounded in TMDB keyword data' : '',
+      e.groundedGroupCount >= 2 ? 'Grounded in multiple TMDB keyword concepts' : e.keywordGrounded ? 'Grounded in TMDB keyword data' : '',
+      similar && candidate.sharedAnchorKeywordCount >= 2 ? 'Shares several specific themes with the selected title' : '',
       e.genreRequested && e.genre > .4 ? 'Strong genre fit' : '',
       e.path >= .67 ? 'Confirmed by multiple TMDB discovery paths' : '',
+      e.certificationRequested && e.certification ? 'Matches the requested age rating' : '',
     ].filter(Boolean);
     if (!candidate.matchReasons.length) {
       const hasHardFilters = filters.minimumYear !== undefined || filters.maximumYear !== undefined ||
@@ -157,17 +197,18 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
     .filter(candidate => candidate.matchLevel !== 'Reject')
     .sort((a, b) => (b.finalScore! - a.finalScore!) || a.key.localeCompare(b.key));
 
-  const seenCollections = new Set<number>();
+  const collectionCounts = new Map<number, number>();
   const franchiseDeduplicated: Candidate[] = [];
   for (const candidate of sorted) {
     if (candidate.collectionId) {
-      if (seenCollections.has(candidate.collectionId)) continue;
-      seenCollections.add(candidate.collectionId);
+      const count = collectionCounts.get(candidate.collectionId) || 0;
+      if (count >= 2) continue;
+      collectionCounts.set(candidate.collectionId, count + 1);
     }
     franchiseDeduplicated.push(candidate);
   }
 
-  return diversify(franchiseDeduplicated).map(candidate => ({
+  return franchiseDeduplicated.map(candidate => ({
     tmdbId: candidate.tmdbId, mediaType: candidate.mediaType, title: candidate.title, originalTitle: candidate.originalTitle,
     overview: candidate.overview, posterPath: candidate.posterPath, backdropPath: candidate.backdropPath, releaseDate: candidate.releaseDate,
     genres: candidate.genres, runtimeMinutes: candidate.runtimeMinutes, originalLanguage: candidate.originalLanguage,
@@ -175,53 +216,4 @@ export function rankCandidates(candidates: Candidate[], intent: InterpretedInten
     matchLevel: candidate.matchLevel as Exclude<MatchLevel, 'Reject'>, finalScore: Number(candidate.finalScore!.toFixed(6)),
     matchReasons: candidate.matchReasons, retrievalSources: [...candidate.retrievalSources].sort(),
   }));
-}
-
-function diversify(sorted: Candidate[]): Candidate[] {
-  if (sorted.length < 3) return sorted;
-  const scoreFloor = Math.max(.24, (sorted[0].finalScore ?? 0) - .16);
-  const firstBelowFloor = sorted.findIndex(candidate => (candidate.finalScore ?? 0) < scoreFloor);
-  const poolSize = Math.min(
-    80,
-    firstBelowFloor === -1 ? sorted.length : firstBelowFloor,
-  );
-  if (poolSize < 3) return sorted;
-
-  const relevant = sorted.slice(0, poolSize);
-  const selected = [relevant[0]];
-  const selectedKeys = new Set([relevant[0].key]);
-  while (selected.length < relevant.length) {
-    let best: Candidate | undefined;
-    let bestMmr = Number.NEGATIVE_INFINITY;
-    for (const candidate of relevant) {
-      if (selectedKeys.has(candidate.key)) continue;
-      const maximumSimilarity = Math.max(...selected.map(chosen => candidateSimilarity(candidate, chosen)));
-      const mmr = .88 * (candidate.finalScore ?? 0) - .12 * maximumSimilarity;
-      if (mmr > bestMmr || (mmr === bestMmr && candidate.key.localeCompare(best?.key ?? '') < 0)) {
-        best = candidate;
-        bestMmr = mmr;
-      }
-    }
-    if (!best) break;
-    selected.push(best);
-    selectedKeys.add(best.key);
-  }
-  return [...selected, ...sorted.filter(candidate => !selectedKeys.has(candidate.key))];
-}
-
-function candidateSimilarity(left: Candidate, right: Candidate): number {
-  const leftGenres = new Set(left.genres.map(normalize));
-  const rightGenres = new Set(right.genres.map(normalize));
-  const genreUnion = new Set([...leftGenres, ...rightGenres]);
-  const genreOverlap = genreUnion.size
-    ? [...leftGenres].filter(genre => rightGenres.has(genre)).length / genreUnion.size
-    : 0;
-  const leftYear = Number(left.releaseDate?.slice(0, 4));
-  const rightYear = Number(right.releaseDate?.slice(0, 4));
-  const sameEra = Number.isFinite(leftYear) && Number.isFinite(rightYear)
-    ? Math.max(0, 1 - Math.abs(leftYear - rightYear) / 24)
-    : 0;
-  const sameLanguage = left.originalLanguage && right.originalLanguage &&
-    left.originalLanguage === right.originalLanguage ? 1 : 0;
-  return genreOverlap * .68 + sameEra * .20 + sameLanguage * .12;
 }

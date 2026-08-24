@@ -11,10 +11,11 @@ const intent = (groups: string[][], hard = filters(), genreHints: string[] = [])
   genreHints, toneAndMood: [], broadSearchPhrases: [],
 });
 const candidate = (id: number, title: string, overview: string, overrides: Partial<Candidate> = {}): Candidate => ({
-  key: `tv:${id}`, tmdbId: id, mediaType: 'tv', title, overview, originCountries: [], genreIds: [], genres: [],
+  key: `tv:${id}`, tmdbId: id, mediaType: 'tv', title, overview, originCountries: [], genreIds: [], genres: [], certifications: [],
   keywords: [], matchedKeywordIds: new Set(), matchedConceptGroupIndexes: new Set(),
-  retrievalSources: new Set(['discover:test']), hardFiltersVerified: true,
-  directRelationshipScore: 0, anchorOverlapScore: 0, matchReasons: [], tmdbRating: 7, tmdbVoteCount: 1000, ...overrides,
+  retrievalSources: new Set(['discover:test']), hardFiltersVerified: true, detailsLoaded: true,
+  directRelationshipScore: 0, anchorOverlapScore: 0, anchorEvidenceAvailable: false,
+  sharedAnchorKeywordCount: 0, anchorGenreScore: 0, matchReasons: [], tmdbRating: 7, tmdbVoteCount: 1000, ...overrides,
 });
 
 describe('deterministic recommendation logic', () => {
@@ -93,7 +94,72 @@ describe('deterministic recommendation logic', () => {
     ], intent([['teenagers'], ['supernatural powers']]), filters(), false, false);
 
     expect(ranked.map(item => item.tmdbId)).toEqual([9]);
-    expect(ranked[0].matchReasons).toContain('Grounded in TMDB keyword data');
+    expect(ranked[0].matchReasons).toContain('Grounded in multiple TMDB keyword concepts');
+  });
+
+  it('never treats words in a candidate title as topical evidence', () => {
+    const ranked = rankCandidates([
+      candidate(1, 'The Cold Case Detective', 'A cheerful cooking competition in a city restaurant'),
+      candidate(2, 'Hidden Truths', 'A detective reopens a cold case in a corrupt small town'),
+    ], intent([['detective'], ['cold case'], ['corruption', 'corrupt'], ['small town']]), filters(), false, false);
+
+    expect(ranked.map(item => item.tmdbId)).toEqual([2]);
+  });
+
+  it('requires most independent concept groups instead of accepting two shared keywords', () => {
+    const ranked = rankCandidates([
+      candidate(1, 'Superficial Match', 'A detective visits a small town'),
+      candidate(2, 'Grounded Match', 'A detective investigates a ritual murder in an isolated small town during winter'),
+    ], intent([['detective'], ['ritual murder'], ['isolated'], ['small town'], ['winter']]), filters(), false, false);
+
+    expect(ranked.map(item => item.tmdbId)).toEqual([2]);
+  });
+
+  it('collapses repeated pages into one retrieval path and preserves strict relevance order', () => {
+    const repeated = candidate(1, 'Repeated Pages', 'A funny comedy', {
+      semanticScore: .90,
+      genres: ['Comedy'],
+      retrievalSources: new Set(['discover:concept:page-1', 'discover:concept:page-2', 'discover:concept:page-3']),
+    });
+    const single = candidate(2, 'Single Page', 'A funny comedy', {
+      semanticScore: .85,
+      genres: ['Comedy'],
+      retrievalSources: new Set(['discover:concept:page-1']),
+    });
+    const offGenre = candidate(3, 'Different Era', 'A funny comedy', {
+      semanticScore: .84,
+      genres: ['Documentary'],
+      releaseDate: '1960-01-01',
+    });
+    const ranked = rankCandidates([repeated, single, offGenre], intent([['funny', 'comedy']]), filters(), false, true);
+
+    expect(ranked.map(item => item.tmdbId)).toEqual([1, 2, 3]);
+    expect(ranked[0].finalScore).toBeGreaterThan(ranked[1].finalScore);
+  });
+
+  it('rejects genre-only Similar candidates and accepts specific shared anchor themes', () => {
+    const ranked = rankCandidates([
+      candidate(1, 'Generic Drama', 'A broad prestige drama', {
+        anchorEvidenceAvailable: true, anchorGenreScore: 1, anchorOverlapScore: .22,
+      }),
+      candidate(2, 'Shared Themes', 'A morally compromised lawyer faces a drug cartel', {
+        anchorEvidenceAvailable: true, anchorGenreScore: 1, anchorOverlapScore: .74,
+        sharedAnchorKeywordCount: 2, matchedKeywordIds: new Set([10, 20]),
+      }),
+    ], intent([]), filters(), true, false);
+
+    expect(ranked.map(item => item.tmdbId)).toEqual([2]);
+  });
+
+  it('enforces requested US age ratings from hydrated metadata', () => {
+    const certificationIntent = { ...intent([]), certifications: ['PG-13'] };
+    const ranked = rankCandidates([
+      candidate(1, 'Wrong Rating', 'A filtered catalogue title', { certifications: ['R'] }),
+      candidate(2, 'Right Rating', 'A filtered catalogue title', { certifications: ['PG-13'] }),
+    ], certificationIntent, filters(), false, false);
+
+    expect(ranked.map(item => item.tmdbId)).toEqual([2]);
+    expect(ranked[0].matchReasons).toContain('Matches the requested age rating');
   });
 
   it('renormalizes deterministic signals when embeddings fail and pages broad relevant pools', () => {

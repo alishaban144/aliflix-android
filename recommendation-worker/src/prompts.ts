@@ -24,6 +24,9 @@ Rules:
 - Concept Groups & Keywords:
   - Output canonical, short, lowercase TMDB-style keyword tags for synonyms (e.g. "whodunit", "mind-bending", "plot-twist", "time-loop", "dark-comedy", "neo-noir", "serial-killer", "dystopia", "unreliable-narrator", "small-town", "found-footage", "haunted-house", "amnesia", "cyberpunk", "enemies-to-lovers", "cold-case", "survival").
   - Preserve boolean meaning: synonyms for one idea belong in one group (OR); separate required ideas belong in separate groups (AND).
+  - Decompose a detailed request into 3-8 independent required groups whenever the user expresses that many distinct ideas. Never put unrelated query words into one synonym group.
+  - Do not treat words from a referenced title or generic request words (movie, show, series, story, similar, recommendation) as concepts.
+  - Names placed in crewNames, castNames, or studioNames must not also become required concept groups.
 
 - Negative Tropes (excludedKeywords):
   - When the user excludes elements (e.g. "no zombies", "no aliens", "realistic only / no supernatural"), extract negative keyword tags (e.g. ["zombie", "alien-invasion", "supernatural", "ghost"]).

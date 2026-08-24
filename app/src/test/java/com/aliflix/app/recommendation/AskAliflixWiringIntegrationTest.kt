@@ -36,7 +36,7 @@ class AskAliflixWiringIntegrationTest {
         assertEquals("tv", json.getString("mediaType"))
         assertEquals(1396, json.getJSONObject("anchor").getInt("tmdbId"))
         assertEquals("tv", json.getJSONObject("anchor").getString("mediaType"))
-        assertTrue(json.getString("query").contains("Breaking Bad"))
+        assertEquals("", json.getString("query"))
     }
 
     @Test
@@ -53,7 +53,7 @@ class AskAliflixWiringIntegrationTest {
         assertEquals(2, anchorsArray.length())
         assertEquals(157336, anchorsArray.getJSONObject(0).getInt("tmdbId"))
         assertEquals(335984, anchorsArray.getJSONObject(1).getInt("tmdbId"))
-        assertTrue(json.getString("query").contains("blending Interstellar, Blade Runner 2049"))
+        assertEquals("", json.getString("query"))
     }
 
     @Test

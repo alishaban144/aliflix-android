@@ -46,10 +46,9 @@ object AskAliflixRequestMapper {
         }
         val rawQuery = when (request) {
             is AskAliflixRequest.Describe -> request.text.trim()
-            is AskAliflixRequest.Similar -> {
-                val titles = request.anchors.joinToString(", ") { it.title }
-                "${outputType.label().lowercase()} blending $titles"
-            }
+            // Canonical anchors already carry the identity. Repeating their titles
+            // in free text lets title words leak into semantic intent extraction.
+            is AskAliflixRequest.Similar -> ""
             is AskAliflixRequest.Filters -> request.spec.discoveryText.trim()
         }
         val anchorList = (request as? AskAliflixRequest.Similar)?.anchors?.map {

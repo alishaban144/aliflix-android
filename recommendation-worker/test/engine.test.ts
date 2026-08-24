@@ -210,9 +210,138 @@ describe('TMDB-only recommendation engine', () => {
       embed: async () => { throw new Error('embedding outage'); },
     });
 
-    expect(results).toHaveLength(360);
-    expect(new Set(results.map(item => `${item.mediaType}:${item.tmdbId}`)).size).toBe(360);
+    expect(results).toHaveLength(48);
+    expect(new Set(results.map(item => `${item.mediaType}:${item.tmdbId}`)).size).toBe(48);
     expect(results.every(item => item.retrievalSources.some(source => source.startsWith('discover:')))).toBe(true);
+  });
+
+  it('grounds every resolved group for a multi-keyword TMDB intersection', async () => {
+    const discoverCalls: Array<Record<string, string | number | boolean | undefined>> = [];
+    const groundedTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async (term: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: term.includes('detective') ? 11 : term.includes('ritual') ? 22 : 33, name: term }],
+      }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        discoverCalls.push(params);
+        return { page: 1, total_pages: 1, total_results: 1, results: [{ id: 77, title: 'Grounded Fixture', overview: 'Metadata wording differs', vote_average: 7.5, vote_count: 400 }] };
+      },
+      details: async () => ({ id: 77, title: 'Grounded Fixture', overview: 'Metadata wording differs', keywords: { keywords: [] }, genres: [] }),
+    };
+    const detailedIntent: InterpretedIntent = {
+      ...interpreted,
+      requiredConceptGroups: [
+        { label: 'detective', synonyms: ['detective'], weight: 1 },
+        { label: 'ritual murder', synonyms: ['ritual murder'], weight: 1 },
+        { label: 'isolated', synonyms: ['isolated'], weight: 1 },
+      ],
+      genreHints: [],
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'detective ritual murder isolated' }, {
+      tmdb: groundedTmdb as any,
+      interpret: async () => detailedIntent,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(results.map(item => item.tmdbId)).toEqual([77]);
+    expect(results[0].matchReasons).toContain('Grounded in multiple TMDB keyword concepts');
+    expect(discoverCalls.every(params => params.with_keywords !== undefined)).toBe(true);
+  });
+
+  it('translates cross-media anchors through keywords and target genre names without calling incompatible endpoints', async () => {
+    let recommendationCalls = 0;
+    let similarCalls = 0;
+    const discoverCalls: Array<{ type: string; params: Record<string, string | number | boolean | undefined> }> = [];
+    const crossMediaTmdb = {
+      callsRemaining: 120,
+      genres: async () => ({ genres: [{ id: 18, name: 'Drama' }] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => { recommendationCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      similar: async () => { similarCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      discover: async (type: string, params: Record<string, string | number | boolean | undefined>) => {
+        discoverCalls.push({ type, params });
+        return { page: 1, total_pages: 1, total_results: 1, results: [{ id: 900, title: 'Movie Counterpart', overview: 'A cartel lawyer drama', genre_ids: [18], vote_average: 8, vote_count: 900 }] };
+      },
+      details: async (type: string, id: number) => id === 1396
+        ? { id, name: 'TV Anchor', overview: 'A teacher enters the drug trade', genres: [{ id: 18, name: 'Drama' }], keywords: { results: [{ id: 1, name: 'drug trade' }, { id: 2, name: 'moral decline' }, { id: 3, name: 'cartel' }] } }
+        : { id, title: 'Movie Counterpart', overview: 'A cartel lawyer drama', genres: [{ id: 18, name: 'Drama' }], keywords: { keywords: [{ id: 1, name: 'drug trade' }, { id: 2, name: 'moral decline' }, { id: 3, name: 'cartel' }] }, vote_average: 8, vote_count: 900 },
+    };
+    const similarRequest = RecommendationRequestSchema.parse({
+      ...request,
+      mode: 'similar', query: 'movies blending TV Anchor', mediaType: 'movie',
+      anchor: { tmdbId: 1396, title: 'TV Anchor', mediaType: 'tv' },
+    });
+    let interpretedQuery: string | undefined;
+
+    const results = await processRecommendation({} as any, similarRequest, {
+      tmdb: crossMediaTmdb as any,
+      interpret: async (_env, query) => { interpretedQuery = query; return { ...interpreted, requiredConceptGroups: [], genreHints: [] }; },
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(interpretedQuery).toBe('');
+    expect(recommendationCalls).toBe(0);
+    expect(similarCalls).toBe(0);
+    expect(discoverCalls.length).toBeGreaterThan(0);
+    expect(discoverCalls.every(call => call.type === 'movie' && call.params.with_genres === '18' && String(call.params.with_keywords).includes(','))).toBe(true);
+    expect(results.map(item => `${item.mediaType}:${item.tmdbId}`)).toEqual(['movie:900']);
+  });
+
+  it('never returns candidates whose authoritative detail hydration failed', async () => {
+    const unavailableDetails = {
+      ...fakeTmdb(),
+      details: async () => { throw new ServiceError('TMDB_UNAVAILABLE', 'detail timeout', 503, true); },
+    };
+
+    const results = await processRecommendation({} as any, request, {
+      tmdb: unavailableDetails,
+      interpret: async () => interpreted,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(results).toEqual([]);
+  });
+
+  it('counts every TMDB keyword lookup against the discovery-search cap', async () => {
+    let keywordCalls = 0;
+    const cappedTmdb = {
+      callsRemaining: 120,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => { keywordCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      details: async () => ({ id: 1, title: 'Unused' }),
+    };
+    const manySynonyms: InterpretedIntent = {
+      ...interpreted,
+      requiredConceptGroups: Array.from({ length: 8 }, (_, group) => ({
+        label: `concept-${group}`,
+        synonyms: Array.from({ length: 12 }, (_, synonym) => `term-${group}-${synonym}`),
+        weight: 1,
+      })),
+      broadSearchPhrases: ['extra one', 'extra two', 'extra three'],
+      genreHints: [],
+    };
+
+    await processRecommendation({} as any, { ...request, query: 'many independent ideas' }, {
+      tmdb: cappedTmdb as any,
+      interpret: async () => manySynonyms,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(keywordCalls).toBeLessThanOrEqual(18);
   });
 
   it('supports multi-anchor movie fusion in similar mode', async () => {
