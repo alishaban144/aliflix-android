@@ -153,7 +153,6 @@ export function rankCandidates(
   candidates: Candidate[],
   intent: InterpretedIntent,
   filters: RecommendationFilters,
-  similar: boolean,
   embeddingsAvailable: boolean,
   premiseAssessmentsAvailable = false,
 ): RecommendationResult[] {
@@ -163,49 +162,42 @@ export function rankCandidates(
     const semantic = candidate.semanticScore ?? 0;
     const conceptCoveragePasses = hasRequiredConceptCoverage(e.totalGroupCount, e.matchedGroupCount, e.concept);
     const premiseEvidencePasses = candidate.premiseScore !== undefined && candidate.premiseScore >= .70 && conceptCoveragePasses;
-    const anchorSupport = !candidate.anchorEvidenceAvailable || candidate.sharedAnchorKeywordCount > 0 ||
-      candidate.anchorGenreScore >= .25 || semantic >= .50;
-    const directSimilarity = candidate.directRelationshipScore >= .50 && anchorSupport;
-    const groundedSimilarity = candidate.anchorOverlapScore >= .42 && (
-      candidate.sharedAnchorKeywordCount >= 2 || semantic >= .50 ||
-      (candidate.sharedAnchorKeywordCount >= 1 && candidate.anchorGenreScore >= .25 && candidate.anchorOverlapScore >= .72)
-    );
-    const hybridSimilarity = candidate.sharedAnchorKeywordCount >= 1 && candidate.anchorGenreScore >= .25 && semantic >= .52;
-    const similarityEvidencePasses = directSimilarity || groundedSimilarity || hybridSimilarity;
-    const signals: Record<string, number> = similar
-      ? { semantic: candidate.semanticScore ?? 0, direct: candidate.directRelationshipScore, overlap: candidate.anchorOverlapScore, concept: e.concept, path: e.path, quality: e.quality }
-      : { premise: candidate.premiseScore ?? 0, semantic: candidate.semanticScore ?? 0, concept: e.concept, keyword: e.keyword, genre: e.genre, path: e.path, quality: e.quality };
-    const weights: Record<string, number> = similar
-      ? { semantic: .22, direct: .38, overlap: .28, concept: .02, path: .05, quality: .05 }
-      : premiseAssessmentsAvailable
-        ? { premise: .52, concept: .24, keyword: .08, genre: .05, path: .05, quality: .06 }
-        : { semantic: .25, concept: .38, keyword: .18, genre: .08, path: .06, quality: .05 };
+    const signals: Record<string, number> = {
+      premise: candidate.premiseScore ?? 0,
+      semantic: candidate.semanticScore ?? 0,
+      concept: e.concept,
+      keyword: e.keyword,
+      genre: e.genre,
+      path: e.path,
+      quality: e.quality,
+    };
+    const weights: Record<string, number> = premiseAssessmentsAvailable
+      ? { premise: .52, concept: .24, keyword: .08, genre: .05, path: .05, quality: .06 }
+      : { semantic: .25, concept: .38, keyword: .18, genre: .08, path: .06, quality: .05 };
     if (!embeddingsAvailable || candidate.semanticScore === undefined) delete weights.semantic;
     if (!e.conceptRequested) {
       delete weights.concept;
       delete weights.keyword;
     }
-    if (!similar && !e.genreRequested) delete weights.genre;
+    if (!e.genreRequested) delete weights.genre;
     const denominator = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
     let rawScore = Object.entries(weights).reduce((sum, [name, weight]) => sum + (signals[name] ?? 0) * weight, 0) / denominator;
-    if (!similar && e.genreRequested && e.genre === 0) {
+    if (e.genreRequested && e.genre === 0) {
       rawScore *= 0.65;
     }
     candidate.finalScore = rawScore;
     const noConceptEvidence = !e.conceptRequested && !e.genreRequested && e.path === 0 && semantic === 0;
     const reject = e.excluded || (e.certificationRequested && e.certification === 0) ||
-      (similar ? !similarityEvidencePasses : premiseAssessmentsAvailable ? !premiseEvidencePasses : !conceptCoveragePasses) ||
-      (!similar && !e.conceptRequested && e.genreRequested && e.genre === 0) ||
-      (!similar && noConceptEvidence) || candidate.finalScore < .28;
+      (premiseAssessmentsAvailable ? !premiseEvidencePasses : !conceptCoveragePasses) ||
+      (!e.conceptRequested && e.genreRequested && e.genre === 0) ||
+      noConceptEvidence || candidate.finalScore < .28;
     const level: MatchLevel = reject ? 'Reject' : candidate.finalScore >= .78 ? 'Exceptional' : candidate.finalScore >= .62 ? 'Strong' : candidate.finalScore >= .44 ? 'Relevant' : 'Broader but still relevant';
     candidate.matchLevel = level;
     candidate.matchReasons = [
-      candidate.directRelationshipScore ? 'Recommended or marked similar by TMDB' : '',
-      !similar && premiseEvidencePasses ? candidate.premiseReason || 'Complete premise supported by TMDB metadata' : '',
+      premiseEvidencePasses ? candidate.premiseReason || 'Complete premise supported by TMDB metadata' : '',
       e.conceptRequested && e.concept >= .99 ? 'Matches every requested concept' : e.conceptRequested && conceptCoveragePasses ? 'Matches most requested concepts' : '',
       (candidate.semanticScore ?? 0) >= .72 ? 'Strong meaning and story match' : (candidate.semanticScore ?? 0) >= .56 ? 'Good story and theme match' : '',
       e.groundedGroupCount >= 2 ? 'Grounded in multiple TMDB keyword concepts' : e.keywordGrounded ? 'Grounded in TMDB keyword data' : '',
-      similar && candidate.sharedAnchorKeywordCount >= 2 ? 'Shares several specific themes with the selected title' : '',
       e.genreRequested && e.genre > .4 ? 'Strong genre fit' : '',
       e.path >= .67 ? 'Confirmed by multiple TMDB discovery paths' : '',
       e.certificationRequested && e.certification ? 'Matches the requested age rating' : '',
@@ -217,9 +209,7 @@ export function rankCandidates(
         filters.includedGenres.length > 0 || filters.excludedGenres.length > 0 ||
         filters.minimumTmdbRating !== undefined || filters.seriesStatus !== undefined;
       candidate.matchReasons.push(
-        similar ? 'Related through TMDB similarity data'
-          : hasHardFilters ? 'Matches your selected filters'
-            : 'Relevant based on TMDB metadata',
+        hasHardFilters ? 'Matches your selected filters' : 'Relevant based on TMDB metadata',
       );
     }
   }

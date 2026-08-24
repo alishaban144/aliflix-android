@@ -65,6 +65,17 @@ export interface DescribeRecommendation {
   reason: string;
 }
 
+export interface SimilarAnchorDocument {
+  tmdbId: number;
+  mediaType: MediaType;
+  title: string;
+  originalTitle?: string;
+  releaseYear?: number;
+  overview: string;
+  genres: string[];
+  keywords: string[];
+}
+
 export interface TmdbListItem {
   id: number;
   title?: string;
@@ -121,11 +132,6 @@ export interface Candidate {
   premiseReason?: string;
   geminiRecommendationConfidence?: number;
   geminiRecommendationReason?: string;
-  directRelationshipScore: number;
-  anchorOverlapScore: number;
-  anchorEvidenceAvailable: boolean;
-  sharedAnchorKeywordCount: number;
-  anchorGenreScore: number;
   finalScore?: number;
   matchLevel?: MatchLevel;
   matchReasons: string[];

@@ -1,12 +1,20 @@
-import { assessPremiseCandidates, embedForSearch, interpretQuery, recommendDescribeTitles } from './gemini';
-import { buildKeywordExpressions, canonicalConceptPhrase, cosineSimilarity, mergeFilters, normalize, rankCandidates } from './ranking';
+import {
+  assessPremiseCandidates,
+  assessSimilarCandidates,
+  embedForSearch,
+  interpretQuery,
+  recommendDescribeTitles,
+  recommendSimilarTitles,
+} from './gemini';
+import { buildKeywordExpressions, canonicalConceptPhrase, cosineSimilarity, mergeFilters, normalize, passesHardFilters, rankCandidates } from './ranking';
 import { ParsedRecommendationRequest } from './schemas';
 import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
-import { Candidate, DescribeRecommendation, InterpretedIntent, MediaType, PremiseAssessment, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, TmdbGenre, TmdbKeyword, TmdbListItem } from './types';
+import { Candidate, DescribeRecommendation, InterpretedIntent, MediaType, PremiseAssessment, PremiseCandidateDocument, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, SimilarAnchorDocument, TmdbGenre, TmdbListItem } from './types';
 
 export interface EngineDependencies {
   interpret?: typeof interpretQuery;
   recommendDescribe?: typeof recommendDescribeTitles;
+  recommendSimilar?: typeof recommendSimilarTitles;
   embed?: typeof embedForSearch;
   verifyPremises?: (
     env: RecommendationEnv,
@@ -18,14 +26,22 @@ export interface EngineDependencies {
       genres: string[]; keywords: string[]; geminiReason: string; geminiConfidence: number;
     }>,
   ) => Promise<PremiseAssessment[]>;
-  tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchPerson' | 'searchCompany' | 'discover' | 'recommendations' | 'similar' | 'details'> &
+  verifySimilarity?: (
+    env: RecommendationEnv,
+    anchors: SimilarAnchorDocument[],
+    refinement: string,
+    mediaType: MediaType,
+    candidates: PremiseCandidateDocument[],
+  ) => Promise<PremiseAssessment[]>;
+  tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchPerson' | 'searchCompany' | 'discover' | 'details'> &
     Partial<Pick<TmdbClient, 'searchTitle'>>;
 }
 
 const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
-const MAX_DESCRIBE_RECOMMENDATIONS = 18;
+const MAX_GENERATED_CANDIDATES = 24;
+const MAX_GENERATED_RESULTS = 20;
 const TMDB_DETAIL_RESERVE = 24;
 const DISCOVERY_CONCURRENCY = 4;
 const DETAIL_CONCURRENCY = 4;
@@ -80,12 +96,6 @@ const CONCEPT_SYNONYM_FAMILIES: string[][] = [
   ['time travel', 'travel through time'],
 ];
 
-interface AnchorProfile {
-  keywords: TmdbKeyword[];
-  genreNames: string[];
-  overview?: string;
-}
-
 async function optionalTmdbCall<T>(operation: string, call: () => Promise<T>): Promise<T | undefined> {
   try {
     return await call();
@@ -111,8 +121,7 @@ function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<n
     tmdbRating: item.vote_average, tmdbVoteCount: item.vote_count, popularity: item.popularity, certifications: [], keywords: [],
     matchedKeywordIds: new Set(), matchedConceptGroupIndexes: new Set(),
     retrievalSources: new Set(), hardFiltersVerified: false, detailsLoaded: false,
-    directRelationshipScore: 0, anchorOverlapScore: 0, anchorEvidenceAvailable: false,
-    sharedAnchorKeywordCount: 0, anchorGenreScore: 0, matchReasons: [],
+    matchReasons: [],
   };
 }
 
@@ -167,47 +176,73 @@ function resolveTmdbIdentity(
   });
   const exactYear = exactTitles.find(item => tmdbItemYear(item, mediaType) === recommendation.releaseYear);
   if (exactYear) return exactYear;
-  const adjacentYear = exactTitles.find(item => Math.abs((tmdbItemYear(item, mediaType) || 0) - recommendation.releaseYear) === 1);
-  if (adjacentYear) return adjacentYear;
-  return exactTitles.length === 1 ? exactTitles[0] : undefined;
+  const nearbyYear = exactTitles.find(item => {
+    const year = tmdbItemYear(item, mediaType);
+    return year !== undefined && Math.abs(year - recommendation.releaseYear) <= 2;
+  });
+  if (nearbyYear) return nearbyYear;
+  return exactTitles.length === 1 && tmdbItemYear(exactTitles[0], mediaType) === undefined
+    ? exactTitles[0]
+    : undefined;
 }
 
-async function processDescribeRecommendation(
+async function expandedGeneratedRecommendations(
+  limit: number,
+  generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>,
+): Promise<DescribeRecommendation[]> {
+  const recommendations = new Map<string, DescribeRecommendation>();
+  for (let pass = 0; pass < 2 && recommendations.size < limit; pass++) {
+    const excludedTitles = [...recommendations.values()].map(item => `${item.title} (${item.releaseYear})`);
+    const generated = await generate(excludedTitles);
+    for (const item of generated) {
+      if (item.confidence < .60) continue;
+      const key = `${normalize(item.title)}:${item.releaseYear}`;
+      const existing = recommendations.get(key);
+      if (!existing || item.confidence > existing.confidence) recommendations.set(key, item);
+    }
+  }
+  return [...recommendations.values()]
+    .sort((left, right) => right.confidence - left.confidence || left.title.localeCompare(right.title))
+    .slice(0, limit);
+}
+
+interface GeneratedRecommendationContext {
+  filters: RecommendationFilters;
+  candidateLimit: number;
+  excludedCandidateKeys: Set<string>;
+  recommendationSource: string;
+  verificationSource: string;
+  generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>;
+  verify: (documents: PremiseCandidateDocument[]) => Promise<PremiseAssessment[]>;
+}
+
+async function processGeneratedRecommendations(
   env: RecommendationEnv,
   request: ParsedRecommendationRequest,
   tmdb: NonNullable<EngineDependencies['tmdb']>,
-  dependencies: EngineDependencies,
+  context: GeneratedRecommendationContext,
 ): Promise<RecommendationResult[]> {
   if (!tmdb.searchTitle) {
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB title verification is unavailable', 503, true);
   }
-  const query = request.previousQuery && request.refinementQuery
-    ? `${request.previousQuery}. Additional requirement: ${request.refinementQuery}`
-    : (request.query || request.refinementQuery || '').trim();
-  const filters = mergeFilters(request.filters, emptyIntent().hardFilters);
-  applyQueryDateConstraints(query, filters);
-  const generated = await (dependencies.recommendDescribe || recommendDescribeTitles)(
-    env,
-    query,
-    request.mediaType,
-    filters,
-  );
-  const recommendations = generated
-    .filter(item => item.confidence >= .65)
-    .slice(0, MAX_DESCRIBE_RECOMMENDATIONS);
+  const recommendations = await expandedGeneratedRecommendations(context.candidateLimit, context.generate);
   if (!recommendations.length) return [];
 
   const candidates = new Map<string, Candidate>();
   for (let start = 0; start < recommendations.length; start += DISCOVERY_CONCURRENCY) {
     const batch = recommendations.slice(start, start + DISCOVERY_CONCURRENCY);
-    const responses = await Promise.all(batch.map(item => tmdb.searchTitle!(request.mediaType, item.title)));
+    const responses = await Promise.all(batch.map(item => optionalTmdbCall(
+      `identity:${request.mediaType}:${item.title}`,
+      () => tmdb.searchTitle!(request.mediaType, item.title),
+    )));
     responses.forEach((response, index) => {
+      if (!response) return;
       const recommendation = batch[index];
       const identity = resolveTmdbIdentity(recommendation, request.mediaType, response.results || []);
       if (!identity) return;
       const candidate = toCandidate(identity, request.mediaType, new Map());
-      if (!candidate) return;
-      candidate.retrievalSources.add('gemini:recommendation');
+      if (!candidate || context.excludedCandidateKeys.has(candidate.key)) return;
+      candidate.retrievalSources.add(context.recommendationSource);
       candidate.retrievalSources.add('tmdb:identity-search');
       candidate.geminiRecommendationConfidence = recommendation.confidence;
       candidate.geminiRecommendationReason = recommendation.reason;
@@ -219,19 +254,8 @@ async function processDescribeRecommendation(
   }
 
   const resolved = [...candidates.values()];
-  for (let start = 0; start < resolved.length; start += DETAIL_CONCURRENCY) {
-    await Promise.all(resolved.slice(start, start + DETAIL_CONCURRENCY).map(async candidate => {
-      const details = await tmdb.details(request.mediaType, candidate.tmdbId);
-      mergeDetails(candidate, details);
-      candidate.retrievalSources.add('tmdb:details');
-    }));
-  }
-
-  // Status and every other hard filter are checked from hydrated TMDB data. They
-  // remove ineligible titles but never contribute to premise relevance.
-  const eligible = resolved.filter(candidate => candidate.detailsLoaded && passesKnownFilters(candidate, filters));
-  if (!eligible.length) return [];
-  const documents = eligible.map((candidate, index) => ({
+  if (!resolved.length) return [];
+  const documents = resolved.map((candidate, index) => ({
     index,
     title: candidate.title,
     originalTitle: candidate.originalTitle,
@@ -246,13 +270,7 @@ async function processDescribeRecommendation(
     geminiReason: candidate.geminiRecommendationReason || '',
     geminiConfidence: candidate.geminiRecommendationConfidence || 0,
   }));
-  const assessments = await (dependencies.verifyPremises || assessPremiseCandidates)(
-    env,
-    query,
-    request.mediaType,
-    [],
-    documents,
-  );
+  const assessments = await context.verify(documents);
   const byIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
   if (byIndex.size !== documents.length) {
     throw new ServiceError(
@@ -263,11 +281,44 @@ async function processDescribeRecommendation(
     );
   }
 
-  return eligible.flatMap((candidate, index): RecommendationResult[] => {
-    const assessment = byIndex.get(index)!;
-    if (assessment.relevanceScore < .70) return [];
-    const generationConfidence = candidate.geminiRecommendationConfidence || 0;
-    const score = assessment.relevanceScore * .72 + generationConfidence * .28;
+  const scored = resolved.flatMap((candidate, index) => {
+    const assessment = byIndex.get(index);
+    if (!assessment || assessment.relevanceScore < .70) return [];
+    const score = assessment.relevanceScore * .72 + (candidate.geminiRecommendationConfidence || 0) * .28;
+    candidate.premiseScore = assessment.relevanceScore;
+    candidate.premiseReason = assessment.reason;
+    candidate.finalScore = score;
+    candidate.retrievalSources.add(context.verificationSource);
+    return [{ candidate, assessment, score }];
+  }).sort((left, right) => right.score - left.score || left.candidate.title.localeCompare(right.candidate.title));
+
+  // Gemini precision scoring happens before detail hydration so the finite TMDB
+  // budget is spent only on the strongest candidates. TMDB then authoritatively
+  // verifies every hard filter, including Returning/Ended, without affecting score.
+  const hydrated: typeof scored = [];
+  const detailPool = scored.slice(0, MAX_GENERATED_RESULTS);
+  for (let start = 0; start < detailPool.length; start += DETAIL_CONCURRENCY) {
+    const batch = detailPool.slice(start, start + DETAIL_CONCURRENCY);
+    const details = await Promise.all(batch.map(({ candidate }) => optionalTmdbCall(
+      `details:${request.mediaType}:${candidate.tmdbId}`,
+      () => tmdb.details(request.mediaType, candidate.tmdbId),
+    )));
+    details.forEach((detail, index) => {
+      if (!detail) return;
+      const item = batch[index];
+      mergeDetails(item.candidate, detail);
+      item.candidate.retrievalSources.add('tmdb:details');
+      if (passesHardFilters(item.candidate, context.filters)) hydrated.push(item);
+    });
+  }
+
+  const collectionCounts = new Map<number, number>();
+  return hydrated.flatMap(({ candidate, assessment, score }): RecommendationResult[] => {
+    if (candidate.collectionId) {
+      const count = collectionCounts.get(candidate.collectionId) || 0;
+      if (count >= 2) return [];
+      collectionCounts.set(candidate.collectionId, count + 1);
+    }
     const matchLevel = score >= .88 ? 'Exceptional' : score >= .76 ? 'Strong' : 'Relevant';
     const reasons = [assessment.reason, candidate.geminiRecommendationReason]
       .filter((value): value is string => Boolean(value?.trim()))
@@ -294,7 +345,93 @@ async function processDescribeRecommendation(
       matchReasons: reasons,
       retrievalSources: [...candidate.retrievalSources].sort(),
     }];
-  }).sort((left, right) => right.finalScore - left.finalScore || left.title.localeCompare(right.title));
+  });
+}
+
+async function processDescribeRecommendation(
+  env: RecommendationEnv,
+  request: ParsedRecommendationRequest,
+  tmdb: NonNullable<EngineDependencies['tmdb']>,
+  dependencies: EngineDependencies,
+): Promise<RecommendationResult[]> {
+  const query = request.previousQuery && request.refinementQuery
+    ? `${request.previousQuery}. Additional requirement: ${request.refinementQuery}`
+    : (request.query || request.refinementQuery || '').trim();
+  const filters = mergeFilters(request.filters, emptyIntent().hardFilters);
+  applyQueryDateConstraints(query, filters);
+  return processGeneratedRecommendations(env, request, tmdb, {
+    filters,
+    candidateLimit: MAX_GENERATED_CANDIDATES,
+    excludedCandidateKeys: new Set(),
+    recommendationSource: 'gemini:describe-recommendation',
+    verificationSource: 'gemini:premise-verification',
+    generate: excludedTitles => (dependencies.recommendDescribe || recommendDescribeTitles)(
+      env, query, request.mediaType, filters, excludedTitles,
+    ),
+    verify: documents => (dependencies.verifyPremises || assessPremiseCandidates)(
+      env, query, request.mediaType, [], documents,
+    ),
+  });
+}
+
+async function processSimilarRecommendation(
+  env: RecommendationEnv,
+  request: ParsedRecommendationRequest,
+  tmdb: NonNullable<EngineDependencies['tmdb']>,
+  dependencies: EngineDependencies,
+): Promise<RecommendationResult[]> {
+  const requestedAnchors = request.anchors?.length ? request.anchors : (request.anchor ? [request.anchor] : []);
+  const anchorDetails = await Promise.all(requestedAnchors.map(anchor => optionalTmdbCall(
+    `anchor-details:${anchor.mediaType}:${anchor.tmdbId}`,
+    () => tmdb.details(anchor.mediaType, anchor.tmdbId),
+  )));
+  const anchors = anchorDetails.flatMap((details, index): SimilarAnchorDocument[] => {
+    if (!details) return [];
+    const requested = requestedAnchors[index];
+    const title = (requested.mediaType === 'movie' ? details.title : details.name)?.trim() || requested.title;
+    const date = requested.mediaType === 'movie' ? details.release_date : details.first_air_date;
+    const parsedYear = date ? Number(date.slice(0, 4)) : NaN;
+    return [{
+      tmdbId: requested.tmdbId,
+      mediaType: requested.mediaType,
+      title,
+      originalTitle: requested.mediaType === 'movie' ? details.original_title : details.original_name,
+      releaseYear: Number.isInteger(parsedYear) ? parsedYear : undefined,
+      overview: details.overview || '',
+      genres: (details.genres || []).map(genre => genre.name),
+      keywords: (details.keywords?.keywords || details.keywords?.results || []).map(keyword => keyword.name),
+    }];
+  });
+  if (anchors.length !== requestedAnchors.length) {
+    throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB could not verify every Similar anchor', 503, true);
+  }
+  const refinement = (request.refinementQuery || request.query || '').trim();
+  const filters = mergeFilters(request.filters, emptyIntent().hardFilters);
+  applyQueryDateConstraints(refinement, filters);
+  const excludedCandidateKeys = new Set(
+    requestedAnchors
+      .filter(anchor => anchor.mediaType === request.mediaType)
+      .map(anchor => `${request.mediaType}:${anchor.tmdbId}`),
+  );
+  const candidateLimit = Math.max(18, MAX_GENERATED_CANDIDATES - anchors.length);
+  return processGeneratedRecommendations(env, request, tmdb, {
+    filters,
+    candidateLimit,
+    excludedCandidateKeys,
+    recommendationSource: 'gemini:similar-recommendation',
+    verificationSource: 'gemini:similarity-verification',
+    generate: excludedTitles => (dependencies.recommendSimilar || recommendSimilarTitles)(
+      env,
+      anchors,
+      request.mediaType,
+      refinement,
+      filters,
+      [...anchors.map(anchor => `${anchor.title} (${anchor.releaseYear || 'unknown'})`), ...excludedTitles],
+    ),
+    verify: documents => (dependencies.verifySimilarity || assessSimilarCandidates)(
+      env, anchors, refinement, request.mediaType, documents,
+    ),
+  });
 }
 
 function sourceFamilyCount(candidate: Candidate): number {
@@ -312,32 +449,9 @@ function detailPriority(candidate: Candidate): number {
             source.includes('people') || source.includes('studios') ? 18 :
               source.includes('genre') ? 4 : -8
   ), 0);
-  return candidate.directRelationshipScore * 200 + candidate.matchedConceptGroupIndexes.size * 70 +
+  return candidate.matchedConceptGroupIndexes.size * 70 +
     candidate.matchedKeywordIds.size * 12 + sourceFamilyCount(candidate) * 8 + targetedBonus +
     Math.log10((candidate.tmdbVoteCount || 0) + 1);
-}
-
-function buildAnchorKeywordExpressions(keywordIds: number[], limit = 6): string[] {
-  const ids = [...new Set(keywordIds)].slice(0, 8);
-  if (!ids.length) return [];
-  if (ids.length === 1) return [String(ids[0])];
-  const expressions: string[] = [];
-  if (ids.length >= 3) {
-    for (let first = 0; first < ids.length && expressions.length < limit; first++) {
-      for (let second = first + 1; second < ids.length && expressions.length < limit; second++) {
-        for (let third = second + 1; third < ids.length && expressions.length < Math.min(3, limit); third++) {
-          expressions.push(`${ids[first]},${ids[second]},${ids[third]}`);
-        }
-        if (expressions.length >= Math.min(3, limit)) break;
-      }
-    }
-  }
-  for (let first = 0; first < ids.length && expressions.length < limit; first++) {
-    for (let second = first + 1; second < ids.length && expressions.length < limit; second++) {
-      expressions.push(`${ids[first]},${ids[second]}`);
-    }
-  }
-  return [...new Set(expressions)].slice(0, limit);
 }
 
 function exactKeywordIds(expression: string): number[] {
@@ -507,14 +621,15 @@ function applyQueryDateConstraints(query: string, filters: RecommendationFilters
 }
 
 export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
-  const tmdb = dependencies.tmdb || new TmdbClient(env);
+  const tmdb = dependencies.tmdb || new TmdbClient(env, request.mode === 'filters' ? 38 : 44);
   if (request.mode === 'describe') {
     return processDescribeRecommendation(env, request, tmdb, dependencies);
   }
+  if (request.mode === 'similar') {
+    return processSimilarRecommendation(env, request, tmdb, dependencies);
+  }
   const interpret = dependencies.interpret || interpretQuery;
-  const queryToInterpret = request.mode === 'similar'
-    ? (request.refinementQuery || '')
-    : (request.previousQuery && request.refinementQuery)
+  const queryToInterpret = request.previousQuery && request.refinementQuery
     ? `${request.previousQuery} [Refinement adjustment: ${request.refinementQuery}]`
     : (request.query || request.refinementQuery || '');
   let intent = queryToInterpret.trim()
@@ -529,23 +644,19 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
   const genresById = new Map(genreResponse.genres.map(genre => [genre.id, genre.name]));
   const genresByName = genreLookup(genreResponse.genres);
   const candidates = new Map<string, Candidate>();
-  const anchorProfiles: AnchorProfile[] = [];
   const addPage = (
     page: TmdbPage,
     source: string,
     matchedIds: number[] = [],
     matchedConceptGroups: number[] = [],
-    direct = 0,
   ) => {
-    for (const [position, item] of (page.results || []).entries()) {
+    for (const item of page.results || []) {
       const fresh = toCandidate(item, request.mediaType, genresById);
       if (!fresh) continue;
       const candidate = candidates.get(fresh.key) || fresh;
       candidate.retrievalSources.add(source);
       matchedIds.forEach(id => candidate.matchedKeywordIds.add(id));
       matchedConceptGroups.forEach(index => candidate.matchedConceptGroupIndexes.add(index));
-      const orderedRelationship = direct > 0 ? Math.max(0, direct - position * .01) : 0;
-      candidate.directRelationshipScore = Math.max(candidate.directRelationshipScore, orderedRelationship);
       candidates.set(candidate.key, candidate);
     }
   };
@@ -593,77 +704,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
   };
 
-  const anchors = request.anchors?.length ? request.anchors : (request.anchor ? [request.anchor] : []);
-  if (request.mode === 'similar' && anchors.length) {
-    const allAnchorKeywordIds: number[][] = [];
-    const targetAnchorGenreIds = new Set<number>();
-    for (const anchor of anchors) {
-      const anchorId = anchor.tmdbId;
-      const anchorDetails = await optionalTmdbCall(
-        `details:${anchor.mediaType}:${anchorId}`,
-        () => tmdb.details(anchor.mediaType, anchorId),
-      );
-      if (anchor.mediaType === request.mediaType) {
-        const pagesToFetch = anchors.length > 1 ? 1 : 2;
-        for (let page = 1; page <= pagesToFetch && tmdb.callsRemaining > 12; page++) {
-          const recommendations = await optionalTmdbCall(
-            `recommendations:${anchorId}:page-${page}`,
-            () => tmdb.recommendations(anchor.mediaType, anchorId, page),
-          );
-          if (recommendations) addPage(recommendations, `recommendations:${anchorId}:page-${page}`, [], [], Math.max(.72, 1 - (page - 1) * .12));
-          const similar = await optionalTmdbCall(
-            `similar:${anchorId}:page-${page}`,
-            () => tmdb.similar(anchor.mediaType, anchorId, page),
-          );
-          if (similar) addPage(similar, `similar:${anchorId}:page-${page}`, [], [], Math.max(.62, .86 - (page - 1) * .12));
-        }
-      }
-      if (anchorDetails) {
-        const anchorKeywords = anchorDetails.keywords?.keywords || anchorDetails.keywords?.results || [];
-        const kwIds = anchorKeywords.slice(0, 8).map(keyword => keyword.id);
-        if (kwIds.length) allAnchorKeywordIds.push(kwIds);
-        const genreNames = (anchorDetails.genres || []).map(genre => genre.name);
-        genreNames.forEach(name => {
-          const targetId = genresByName.get(normalize(name));
-          if (targetId !== undefined) targetAnchorGenreIds.add(targetId);
-        });
-        anchorProfiles.push({ keywords: anchorKeywords.slice(0, 12), genreNames, overview: anchorDetails.overview });
-      }
-      if (anchor.mediaType === request.mediaType) candidates.delete(`${request.mediaType}:${anchorId}`);
-    }
-
-    const anchorExpressions: Array<{ expression: string; source: string }> = [];
-    if (allAnchorKeywordIds.length > 1) {
-      buildKeywordExpressions(allAnchorKeywordIds, 5).forEach(expression => {
-        anchorExpressions.push({ expression, source: 'discover:anchor-fusion' });
-      });
-    }
-    for (const keywordIds of allAnchorKeywordIds) {
-      for (const expression of buildAnchorKeywordExpressions(keywordIds, 5)) {
-        anchorExpressions.push({ expression, source: 'discover:anchor-keywords' });
-      }
-    }
-    const seenAnchorExpressions = new Set<string>();
-    for (const { expression, source } of anchorExpressions) {
-      if (seenAnchorExpressions.size >= 8 || seenAnchorExpressions.has(expression)) continue;
-      seenAnchorExpressions.add(expression);
-      await runDiscover(source, {
-        with_keywords: expression,
-        with_genres: targetAnchorGenreIds.size ? [...targetAnchorGenreIds].join('|') : undefined,
-      }, 3, exactKeywordIds(expression));
-    }
-
-    // A genre-only pool is allowed solely as a tiny semantic-recall pool when
-    // exact anchor keywords yielded nothing. It can never pass ranking on genre alone.
-    if (!candidates.size && targetAnchorGenreIds.size && anchorProfiles.some(profile => profile.overview)) {
-      await runDiscover('discover:anchor-semantic-recall', { with_genres: [...targetAnchorGenreIds].join('|') }, 2);
-    }
-
-    for (const anchor of anchors) {
-      if (anchor.mediaType === request.mediaType) candidates.delete(`${request.mediaType}:${anchor.tmdbId}`);
-    }
-  } else {
-    const groupKeywordIds: number[][] = [];
+  const groupKeywordIds: number[][] = [];
     let keywordSearches = 0;
     for (const group of intent.requiredConceptGroups) {
       const ids: number[] = [];
@@ -791,7 +832,6 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
       const generalSort = intent.discoveryProfile === 'blockbusters' ? 'popularity.desc' : 'vote_count.desc';
       await runDiscover('discover:filtered-catalogue', { sort_by: generalSort, ...negativeKeywordParam }, 6);
     }
-  }
 
   // Details are authoritative enrichment. Evidence-rich retrieval paths get the
   // finite detail budget before broad recall or popularity can influence it.
@@ -819,37 +859,9 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     .slice(0, detailsCount)
     .filter(candidate => candidate.detailsLoaded && passesKnownFilters(candidate, filters));
 
-  if (anchorProfiles.length) {
-    const allAnchorKeywordIds = new Set(anchorProfiles.flatMap(profile => profile.keywords.map(keyword => keyword.id)));
-    for (const candidate of hydrated) {
-      const candidateKeywordIds = new Set(candidate.keywords.map(keyword => keyword.id));
-      const sharedKeywordIds = [...allAnchorKeywordIds].filter(id => candidateKeywordIds.has(id));
-      sharedKeywordIds.forEach(id => candidate.matchedKeywordIds.add(id));
-      candidate.anchorEvidenceAvailable = true;
-      candidate.sharedAnchorKeywordCount = sharedKeywordIds.length;
-      const candidateGenres = new Set(candidate.genres.map(normalize));
-      const profileScores = anchorProfiles.map(profile => {
-        const profileKeywordIds = new Set(profile.keywords.map(keyword => keyword.id));
-        const sharedKeywords = [...profileKeywordIds].filter(id => candidateKeywordIds.has(id)).length;
-        const keywordScore = profileKeywordIds.size ? Math.min(1, sharedKeywords / Math.min(3, profileKeywordIds.size)) : 0;
-        const profileGenres = new Set(profile.genreNames.map(normalize));
-        const sharedGenres = [...profileGenres].filter(genre => candidateGenres.has(genre)).length;
-        const genreScore = profileGenres.size ? sharedGenres / profileGenres.size : 0;
-        return { keywordScore, genreScore };
-      });
-      candidate.anchorGenreScore = profileScores.reduce((sum, score) => sum + score.genreScore, 0) / profileScores.length;
-      candidate.anchorOverlapScore = profileScores.reduce(
-        (sum, score) => sum + score.keywordScore * .78 + score.genreScore * .22,
-        0,
-      ) / profileScores.length;
-    }
-  }
-
   let embeddingsAvailable = false;
   if (hydrated.length) {
-    const queryText = request.mode === 'similar'
-      ? anchorProfiles.map(profile => [profile.overview, profile.genreNames.join(', '), profile.keywords.map(keyword => keyword.name).join(', ')].filter(Boolean).join('\n')).join('\n---\n')
-      : [
+    const queryText = [
         queryToInterpret,
         ...intent.requiredConceptGroups.map(group => `${group.label}: ${group.synonyms.join(', ')}`),
         ...intent.softConcepts,
@@ -876,7 +888,6 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     hydrated,
     effectiveIntent,
     filters,
-    request.mode === 'similar',
     embeddingsAvailable,
     false,
   ).slice(0, MAX_CANDIDATES);

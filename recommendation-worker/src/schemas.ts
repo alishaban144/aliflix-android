@@ -142,6 +142,7 @@ export const GeminiDescribeJsonSchema = {
   properties: {
     recommendations: {
       type: 'ARRAY',
+      maxItems: 24,
       items: {
         type: 'OBJECT',
         properties: {

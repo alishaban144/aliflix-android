@@ -7,7 +7,12 @@ if (!endpoint) {
   throw new Error('Usage: npm run gold:live -- https://worker.example.workers.dev');
 }
 
-const fixtures = JSON.parse(await readFile(new URL('../test/fixtures/describe-gold-standards.json', import.meta.url), 'utf8'));
+const describeFixtures = JSON.parse(await readFile(new URL('../test/fixtures/describe-gold-standards.json', import.meta.url), 'utf8'));
+const similarFixtures = JSON.parse(await readFile(new URL('../test/fixtures/similar-gold-standards.json', import.meta.url), 'utf8'));
+const fixtures = [
+  ...describeFixtures.map(fixture => ({ ...fixture, mode: 'describe' })),
+  ...similarFixtures.map(fixture => ({ ...fixture, mode: 'similar' })),
+];
 const normalize = value => value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/^marvel s /u, '');
 const reports = [];
 
@@ -20,9 +25,11 @@ for (const fixture of fixtures) {
     },
     body: JSON.stringify({
       requestId: randomUUID(),
-      mode: 'describe',
-      query: fixture.query,
+      mode: fixture.mode,
+      query: fixture.query || '',
       mediaType: fixture.mediaType,
+      ...(fixture.anchor ? { anchor: fixture.anchor } : {}),
+      ...(fixture.anchors ? { anchors: fixture.anchors } : {}),
       filters: {},
       pageSize: 20,
     }),
@@ -33,11 +40,14 @@ for (const fixture of fixtures) {
   const normalizedTitles = new Set(titles.map(normalize));
   const expectedHits = fixture.expected.filter(title => normalizedTitles.has(normalize(title)));
   const weakHits = fixture.knownWeak.filter(title => normalizedTitles.has(normalize(title)));
-  const passed = body.results.length >= 6 && expectedHits.length >= 4 && weakHits.length === 0;
+  const minimumResults = fixture.minimumResults || (fixture.mode === 'describe' ? 12 : 10);
+  const minimumExpectedHits = fixture.minimumExpectedHits || (fixture.mode === 'describe' ? 4 : 3);
+  const passed = body.results.length >= minimumResults && expectedHits.length >= minimumExpectedHits && weakHits.length === 0;
   reports.push({
     id: fixture.id,
     passed,
     resultCount: body.results.length,
+    minimumResults,
     expectedHits,
     expectedRecall: Number((expectedHits.length / fixture.expected.length).toFixed(3)),
     weakHits,

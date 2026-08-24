@@ -48,8 +48,9 @@ export type TmdbTrendingItem = TmdbListItem & { media_type?: MediaType | 'person
 
 export class TmdbClient {
   private used = 0;
-  // Keep room beneath Cloudflare's 50-subrequest ceiling for Gemini, Durable
-  // Object, rate-limit, and retry traffic in the outer request.
+  // Filters use the conservative default. Generated Describe/Similar requests
+  // explicitly raise this to 44 while capping their Gemini calls so the normal
+  // path remains below Cloudflare Free's 50 external-subrequest ceiling.
   constructor(private readonly env: RecommendationEnv, private readonly budget = 38) {}
   get callsUsed(): number { return this.used; }
   get callsRemaining(): number { return this.budget - this.used; }
@@ -101,8 +102,6 @@ export class TmdbClient {
   discover(type: MediaType, params: Record<string, string | number | boolean | undefined>): Promise<TmdbPage> {
     return this.request(`/discover/${type}`, { include_adult: false, ...params });
   }
-  recommendations(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/recommendations`, { page }); }
-  similar(type: MediaType, id: number, page: number): Promise<TmdbPage> { return this.request(`/${type}/${id}/similar`, { page }); }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
     return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits,external_ids,reviews,content_ratings' : 'keywords,credits,external_ids,reviews,release_dates' });
   }

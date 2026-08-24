@@ -18,7 +18,7 @@ This source tree targets **Aliflix 3.1.12** (`versionCode 102`) for Android 10 a
 - **Native mobile UI** with Home, Discover, title details, genres, and My Space.
 - **No account required** for the published app; personal lists and playback preferences stay on the device.
 - **Ask Aliflix v3** with Describe, Similar, and Filters modes for movies or series.
-- **Grounded recommendations**: Describe uses Gemini 3.7 Flash to propose real titles, exact TMDB identity and hydrated metadata to verify them, and a second Gemini premise gate to reject weak matches. It never falls back to keyword discovery.
+- **Grounded recommendations**: Describe and Similar use Gemini 3.7 Flash to propose real titles, exact TMDB identity and hydrated metadata to verify them, and a second Gemini relevance gate to reject weak matches. They never fall back to keyword or popularity discovery.
 - **Deterministic filtering** after metadata enrichment, including genre inclusion/exclusion, year, runtime, language, country, rating, title exclusions, and TMDB ID exclusions.
 - **Canonical Similar mode** that uses the selected TMDB identity directly, excludes the anchor, and preserves the requested output type.
 - **Useful result cards** with poster, title, year, genres, rating, and match tier.
@@ -35,7 +35,7 @@ flowchart LR
     UI[Jetpack Compose editor] --> VM[AliflixViewModel]
     VM --> Client[RecommendationAiClient]
     Client --> Worker[Cloudflare recommendation worker]
-    Worker --> Gemini[Gemini generation and premise scoring]
+    Worker --> Gemini[Gemini generation and relevance scoring]
     Worker --> TMDB[TMDB titles and metadata]
     Worker --> Session[Durable Object session]
     Session --> Client
@@ -51,9 +51,9 @@ AskAliflixScreen
   -> recommendation-worker
 ```
 
-In Describe mode, Gemini 3.7 Flash generates premise-specific movie or series identities. The Worker exact-resolves every title through TMDB, hydrates its authoritative metadata, applies hard filters such as Returning or Ended only as eligibility checks, and asks Gemini to reject anything whose central story does not match the complete premise. Relevance never receives a popularity, rating, status, generic genre, or title-word boost, and a Gemini failure is surfaced instead of switching to keyword matching.
+In Describe mode, Gemini 3.7 Flash generates a broad premise-specific pool, expands it once when needed, and precision-scores it before the Worker spends its bounded TMDB detail budget on the strongest candidates. The Worker exact-resolves every title through TMDB, hydrates authoritative metadata for up to 20 results, and applies hard filters such as Returning or Ended only as eligibility checks. Relevance never receives a popularity, rating, status, generic genre, or title-word boost.
 
-Similar and Filters modes retain their specialized TMDB retrieval and deterministic hard-filter paths. Missing metadata cannot satisfy a filter that requires it.
+Similar uses the same generated-and-verified design with authoritative TMDB anchor details and a dedicated similarity judge. Single-anchor, multi-anchor, and cross-media matches must share substantive story or narrative connections; broad genre overlap cannot pass. Describe and Similar surface Gemini failures instead of switching to keyword, genre, or popularity matching. Filters retains its specialized deterministic TMDB retrieval path. Missing metadata cannot satisfy a filter that requires it.
 
 Recommendation sessions are stored in a Cloudflare Durable Object. Subsequent pages use signed cursors tied to the request and session instead of fabricated offsets or client-side slicing.
 
@@ -216,7 +216,7 @@ The worker includes:
 
 - Zod request validation.
 - TMDB request authentication, retry, timeout, and bounded-call handling.
-- Gemini 3.7 Flash Describe generation and final premise verification.
+- Gemini 3.7 Flash Describe and Similar generation plus final relevance verification.
 - Gemini intent interpretation and semantic embeddings for non-Describe retrieval.
 - Deterministic hard-filter enforcement.
 - Deduplication and relevance ranking.

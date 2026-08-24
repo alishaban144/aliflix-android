@@ -1,4 +1,10 @@
-import { DESCRIBE_RECOMMENDATIONS_PROMPT, INTERPRET_V3_PROMPT, VERIFY_PREMISE_PROMPT } from './prompts';
+import {
+  DESCRIBE_RECOMMENDATIONS_PROMPT,
+  INTERPRET_V3_PROMPT,
+  SIMILAR_RECOMMENDATIONS_PROMPT,
+  VERIFY_PREMISE_PROMPT,
+  VERIFY_SIMILARITY_PROMPT,
+} from './prompts';
 import {
   GeminiDescribeJsonSchema,
   GeminiDescribeResponseSchema,
@@ -15,6 +21,7 @@ import {
   PremiseCandidateDocument,
   RecommendationEnv,
   ServiceError,
+  SimilarAnchorDocument,
 } from './types';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -158,13 +165,56 @@ export async function recommendDescribeTitles(
   query: string,
   mediaType: MediaType,
   explicitFilters: unknown,
+  excludedTitles: string[] = [],
 ): Promise<DescribeRecommendation[]> {
   const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
   const data = await geminiStructuredInteraction<unknown>(
     env,
     model,
     DESCRIBE_RECOMMENDATIONS_PROMPT,
-    { query, authoritativeMediaType: mediaType, explicitFilters },
+    {
+      query,
+      authoritativeMediaType: mediaType,
+      explicitFilters,
+      targetCount: 24,
+      expansionPass: excludedTitles.length > 0,
+      excludedTitles,
+    },
+    GeminiDescribeJsonSchema,
+    30_000,
+  );
+  const parsed = GeminiDescribeResponseSchema.parse(data);
+  const seen = new Set<string>();
+  return parsed.recommendations.filter(item => {
+    const key = `${item.title.toLocaleLowerCase()}:${item.releaseYear}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export async function recommendSimilarTitles(
+  env: RecommendationEnv,
+  anchors: SimilarAnchorDocument[],
+  mediaType: MediaType,
+  refinement: string,
+  explicitFilters: unknown,
+  excludedTitles: string[] = [],
+): Promise<DescribeRecommendation[]> {
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
+  const data = await geminiStructuredInteraction<unknown>(
+    env,
+    model,
+    SIMILAR_RECOMMENDATIONS_PROMPT,
+    {
+      anchors,
+      authoritativeMediaType: mediaType,
+      refinement,
+      explicitFilters,
+      targetCount: 24,
+      expansionPass: excludedTitles.length > 0,
+      excludedTitles,
+    },
     GeminiDescribeJsonSchema,
     30_000,
   );
@@ -201,6 +251,28 @@ export async function assessPremiseCandidates(
       })),
       candidates,
     },
+    GeminiPremiseAssessmentJsonSchema,
+    30_000,
+  );
+  const parsed = GeminiPremiseAssessmentResponseSchema.parse(data);
+  const validIndexes = new Set(candidates.map(candidate => candidate.index));
+  return parsed.assessments.filter(assessment => validIndexes.has(assessment.index));
+}
+
+export async function assessSimilarCandidates(
+  env: RecommendationEnv,
+  anchors: SimilarAnchorDocument[],
+  refinement: string,
+  mediaType: MediaType,
+  candidates: PremiseCandidateDocument[],
+): Promise<PremiseAssessment[]> {
+  if (!candidates.length) return [];
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
+  const data = await geminiStructuredInteraction<unknown>(
+    env,
+    model,
+    VERIFY_SIMILARITY_PROMPT,
+    { anchors, refinement, authoritativeMediaType: mediaType, candidates },
     GeminiPremiseAssessmentJsonSchema,
     30_000,
   );

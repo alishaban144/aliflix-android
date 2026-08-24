@@ -99,7 +99,7 @@ jobs:
             "$CANDIDATE_ID"
           npx wrangler versions deploy \
             "${CANDIDATE_ID}@100%" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} promoted after six live gold cases" \
+            --message "Aliflix ${RELEASE_VERSION_NAME} promoted after nine live gold cases" \
             --yes
 
   release:
@@ -231,7 +231,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Generates Describe recommendations with Gemini 3.7 Flash, verifies every identity and metadata field through TMDB, rejects weak premise matches without keyword fallback, preserves exact Returning or Ended eligibility, and removes the retired on-device recommendation stack for a much smaller app."
+            "releaseNotes": "Expands Describe to as many as 20 fully verified genuine matches, adds Gemini-generated and Gemini-judged Similar results for same-media, cross-media, and multi-anchor searches, verifies identities and hard filters through TMDB, and never falls back to keyword, genre, or popularity matching."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -242,7 +242,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Generates Describe recommendations with Gemini 3.7 Flash, verifies every identity and metadata field through TMDB, rejects weak premise matches without keyword fallback, preserves exact Returning or Ended eligibility, and removes the retired on-device recommendation stack for a much smaller app."
+          body: "Expands Describe to as many as 20 fully verified genuine matches, adds Gemini-generated and Gemini-judged Similar results for same-media, cross-media, and multi-anchor searches, verifies identities and hard filters through TMDB, and never falls back to keyword, genre, or popularity matching."
           files: |
             aliflix-mobile.apk
             update-mobile.json

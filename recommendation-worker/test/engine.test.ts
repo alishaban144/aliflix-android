@@ -44,7 +44,7 @@ function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean
   };
 }
 
-describe('TMDB-only recommendation engine', () => {
+describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
   it('requires a canonical TMDB ID for similar requests', () => {
     expect(() => RecommendationRequestSchema.parse({
       ...request,
@@ -114,29 +114,29 @@ describe('TMDB-only recommendation engine', () => {
     expect(results).toEqual([]);
   });
 
-  it('uses the canonical Breaking Bad anchor directly, excludes it, and ranks Better Call Saul first', async () => {
-    let remaining = 80;
+  it('uses Gemini to retrieve Similar candidates, excludes the canonical anchor, and rejects superficial matches', async () => {
+    let recommendationCalls = 0;
+    let similarCalls = 0;
+    let discoverCalls = 0;
     const similarTmdb = {
-      get callsRemaining() { return remaining; },
+      callsRemaining: 80,
       genres: async () => ({ genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 16, name: 'Animation' }] }),
       searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
-      recommendations: async (_type: string, _id: number, page: number) => ({
-        page, total_pages: 1, total_results: page === 1 ? 2 : 0,
-        results: page === 1 ? [
-          { id: 60059, name: 'Better Call Saul', overview: 'A crime lawyer in Albuquerque', genre_ids: [80, 18], vote_average: 8.7, vote_count: 6000 },
-          { id: 1396, name: 'Breaking Bad', overview: 'The anchor', genre_ids: [80, 18], vote_average: 8.9, vote_count: 15000 },
-        ] : [],
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: title === 'Better Call Saul'
+          ? [{ id: 60059, name: title, first_air_date: '2015-02-08', overview: 'A compromised lawyer descends into Albuquerque crime.' }]
+          : title === 'Breaking Bad'
+            ? [{ id: 1396, name: title, first_air_date: '2008-01-20', overview: 'The anchor.' }]
+            : [{ id: 999, name: title, first_air_date: '2020-01-01', overview: 'Animated fantasy.' }],
       }),
-      similar: async (_type: string, _id: number, page: number) => ({
-        page, total_pages: 1, total_results: page === 1 ? 1 : 0,
-        results: page === 1 ? [{ id: 999, name: 'Unrelated Anime', overview: 'Animated fantasy', genre_ids: [16], vote_average: 9, vote_count: 9000 }] : [],
-      }),
-      discover: async () => { remaining--; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      recommendations: async () => { recommendationCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      similar: async () => { similarCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      discover: async () => { discoverCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
       details: async (_type: string, id: number) => {
-        remaining--;
-        if (id === 1396) return { id, name: 'Breaking Bad', genres: [{ id: 80, name: 'Crime' }, { id: 18, name: 'Drama' }], keywords: { results: [] } };
+        if (id === 1396) return { id, name: 'Breaking Bad', first_air_date: '2008-01-20', overview: 'A teacher becomes a drug kingpin.', genres: [{ id: 80, name: 'Crime' }, { id: 18, name: 'Drama' }], keywords: { results: [{ id: 1, name: 'moral decline' }] } };
         if (id === 60059) return { id, name: 'Better Call Saul', overview: 'A crime lawyer in Albuquerque', genres: [{ id: 80, name: 'Crime' }, { id: 18, name: 'Drama' }], vote_average: 8.7, vote_count: 6000 };
         return { id, name: 'Unrelated Anime', overview: 'Animated fantasy', genres: [{ id: 16, name: 'Animation' }], vote_average: 9, vote_count: 9000 };
       },
@@ -150,14 +150,29 @@ describe('TMDB-only recommendation engine', () => {
       anchor: { tmdbId: 1396, title: 'Breaking Bad', mediaType: 'tv' },
     });
     const results = await processRecommendation({} as any, similarRequest, {
-      tmdb: similarTmdb,
-      interpret: async () => ({ ...interpreted, requiredConceptGroups: [], genreHints: [], toneAndMood: [] }),
-      embed: async () => { throw new Error('embedding outage'); },
+      tmdb: similarTmdb as any,
+      recommendSimilar: async () => [
+        { title: 'Better Call Saul', releaseYear: 2015, confidence: .97, reason: 'A morally compromised Albuquerque protagonist descends into crime.' },
+        { title: 'Breaking Bad', releaseYear: 2008, confidence: .99, reason: 'The anchor itself.' },
+        { title: 'Unrelated Anime', releaseYear: 2020, confidence: .70, reason: 'It is also dramatic.' },
+      ],
+      verifySimilarity: async (_env, _anchors, _refinement, _type, documents) => documents.map(document => ({
+        index: document.index,
+        relevanceScore: document.title === 'Better Call Saul' ? .96 : .12,
+        matchedGroupIndexes: [],
+        reason: document.title === 'Better Call Saul'
+          ? 'Both center on moral decline inside the Albuquerque criminal world.'
+          : 'Only a broad genre overlaps.',
+      })),
     });
     expect(results[0]?.title).toBe('Better Call Saul');
     expect(results.some(item => item.tmdbId === 1396)).toBe(false);
     expect(results.every(item => item.mediaType === 'tv')).toBe(true);
     expect(results.slice(0, 1).some(item => item.title === 'Unrelated Anime')).toBe(false);
+    expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
+      'gemini:similar-recommendation', 'gemini:similarity-verification', 'tmdb:identity-search', 'tmdb:details',
+    ]));
+    expect({ recommendationCalls, similarCalls, discoverCalls }).toEqual({ recommendationCalls: 0, similarCalls: 0, discoverCalls: 0 });
   });
 
   it('bounds a broad TMDB candidate pool before enrichment', async () => {
@@ -256,22 +271,23 @@ describe('TMDB-only recommendation engine', () => {
     expect(discoverCalls.some(params => String(params.with_keywords).split(',').length === 2)).toBe(true);
   });
 
-  it('translates cross-media anchors through keywords and target genre names without calling incompatible endpoints', async () => {
+  it('uses the same Gemini similarity standard for cross-media anchors without incompatible TMDB endpoints', async () => {
     let recommendationCalls = 0;
     let similarCalls = 0;
-    const discoverCalls: Array<{ type: string; params: Record<string, string | number | boolean | undefined> }> = [];
+    let discoverCalls = 0;
     const crossMediaTmdb = {
       callsRemaining: 120,
       genres: async () => ({ genres: [{ id: 18, name: 'Drama' }] }),
       searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchTitle: async (type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 900, title, release_date: '2019-01-01', overview: 'A cartel lawyer faces moral collapse.' }],
+      }),
       recommendations: async () => { recommendationCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
       similar: async () => { similarCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
-      discover: async (type: string, params: Record<string, string | number | boolean | undefined>) => {
-        discoverCalls.push({ type, params });
-        return { page: 1, total_pages: 1, total_results: 1, results: [{ id: 900, title: 'Movie Counterpart', overview: 'A cartel lawyer drama', genre_ids: [18], vote_average: 8, vote_count: 900 }] };
-      },
+      discover: async () => { discoverCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
       details: async (type: string, id: number) => id === 1396
         ? { id, name: 'TV Anchor', overview: 'A teacher enters the drug trade', genres: [{ id: 18, name: 'Drama' }], keywords: { results: [{ id: 1, name: 'drug trade' }, { id: 2, name: 'moral decline' }, { id: 3, name: 'cartel' }] } }
         : { id, title: 'Movie Counterpart', overview: 'A cartel lawyer drama', genres: [{ id: 18, name: 'Drama' }], keywords: { keywords: [{ id: 1, name: 'drug trade' }, { id: 2, name: 'moral decline' }, { id: 3, name: 'cartel' }] }, vote_average: 8, vote_count: 900 },
@@ -281,19 +297,22 @@ describe('TMDB-only recommendation engine', () => {
       mode: 'similar', query: 'movies blending TV Anchor', mediaType: 'movie',
       anchor: { tmdbId: 1396, title: 'TV Anchor', mediaType: 'tv' },
     });
-    let interpretedQuery: string | undefined;
-
     const results = await processRecommendation({} as any, similarRequest, {
       tmdb: crossMediaTmdb as any,
-      interpret: async (_env, query) => { interpretedQuery = query; return { ...interpreted, requiredConceptGroups: [], genreHints: [] }; },
-      embed: async () => { throw new Error('embedding outage'); },
+      recommendSimilar: async (_env, anchors, type) => {
+        expect(anchors).toHaveLength(1);
+        expect(anchors[0]).toMatchObject({ title: 'TV Anchor', mediaType: 'tv' });
+        expect(type).toBe('movie');
+        return [{ title: 'Movie Counterpart', releaseYear: 2019, confidence: .92, reason: 'A crime-world moral collapse centered on a cartel lawyer.' }];
+      },
+      verifySimilarity: async (_env, _anchors, _refinement, _type, documents) => documents.map(document => ({
+        index: document.index, relevanceScore: .91, matchedGroupIndexes: [], reason: 'Both trace moral collapse inside a cartel-driven crime story.',
+      })),
     });
 
-    expect(interpretedQuery).toBeUndefined();
     expect(recommendationCalls).toBe(0);
     expect(similarCalls).toBe(0);
-    expect(discoverCalls.length).toBeGreaterThan(0);
-    expect(discoverCalls.every(call => call.type === 'movie' && call.params.with_genres === '18' && String(call.params.with_keywords).includes(','))).toBe(true);
+    expect(discoverCalls).toBe(0);
     expect(results.map(item => `${item.mediaType}:${item.tmdbId}`)).toEqual(['movie:900']);
   });
 
@@ -356,8 +375,73 @@ describe('TMDB-only recommendation engine', () => {
     expect(results.map(result => result.title)).toEqual(['Fire in the Sky']);
     expect(results[0].matchReasons[0]).toContain('Extraterrestrial abduction');
     expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
-      'gemini:recommendation', 'tmdb:identity-search', 'tmdb:details',
+      'gemini:describe-recommendation', 'gemini:premise-verification', 'tmdb:identity-search', 'tmdb:details',
     ]));
+  });
+
+  it('expands Describe recall and returns up to twenty fully verified strong matches', async () => {
+    let generationPasses = 0;
+    let titleSearches = 0;
+    let detailCalls = 0;
+    let assessedDocuments = 0;
+    const expandedTmdb = {
+      ...fakeTmdb(),
+      callsRemaining: 100,
+      searchTitle: async (_type: string, title: string) => {
+        titleSearches++;
+        const id = Number(title.replace('Genuine Match ', ''));
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{ id, title, release_date: `${2000 + id}-01-01`, overview: 'The complete requested premise drives the story.' }],
+        };
+      },
+      details: async (_type: string, id: number) => {
+        detailCalls++;
+        return {
+          id,
+          title: `Genuine Match ${id}`,
+          release_date: `${2000 + id}-01-01`,
+          overview: 'The complete requested premise drives the story.',
+          genres: [{ id: 18, name: 'Drama' }],
+          keywords: { keywords: [{ id, name: 'central premise' }] },
+        };
+      },
+    };
+    const results = await processRecommendation({} as any, {
+      ...request, mode: 'describe', query: 'a precise premise with many genuine films', pageSize: 24,
+    }, {
+      tmdb: expandedTmdb as any,
+      recommendDescribe: async (_env, _query, _type, _filters, excludedTitles) => {
+        generationPasses++;
+        const start = excludedTitles?.length ? 13 : 1;
+        const end = excludedTitles?.length ? 24 : 12;
+        return Array.from({ length: end - start + 1 }, (_, offset) => {
+          const id = start + offset;
+          return {
+            title: `Genuine Match ${id}`,
+            releaseYear: 2000 + id,
+            confidence: .98 - id * .001,
+            reason: 'The requested premise is central throughout the story.',
+          };
+        });
+      },
+      verifyPremises: async (_env, _query, _type, _groups, documents) => {
+        assessedDocuments = documents.length;
+        return documents.map(document => ({
+          index: document.index,
+          relevanceScore: .94,
+          matchedGroupIndexes: [],
+          reason: 'The complete premise is the central narrative.',
+        }));
+      },
+    });
+
+    expect(generationPasses).toBe(2);
+    expect(titleSearches).toBe(24);
+    expect(assessedDocuments).toBe(24);
+    expect(detailCalls).toBe(20);
+    expect(results).toHaveLength(20);
+    expect(results.every(result => result.retrievalSources.includes('tmdb:details'))).toBe(true);
   });
 
   it('uses TMDB series status only for eligibility and never changes premise relevance', async () => {
@@ -438,6 +522,33 @@ describe('TMDB-only recommendation engine', () => {
     })).rejects.toBe(failure);
     expect(keywordCalls).toBe(0);
     expect(discoverCalls).toBe(0);
+  });
+
+  it('propagates Gemini Similar failure without invoking broad TMDB retrieval fallback', async () => {
+    let recommendationCalls = 0;
+    let similarCalls = 0;
+    let discoverCalls = 0;
+    const tmdb = {
+      ...fakeTmdb(),
+      details: async (_type: string, id: number) => ({
+        id, name: 'Canonical Anchor', first_air_date: '2020-01-01', overview: 'A distinctive central story.',
+        genres: [{ id: 18, name: 'Drama' }], keywords: { results: [] },
+      }),
+      recommendations: async () => { recommendationCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      similar: async () => { similarCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      discover: async () => { discoverCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+    };
+    const failure = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini timed out', 504, true);
+
+    await expect(processRecommendation({} as any, {
+      ...request,
+      mode: 'similar', mediaType: 'tv',
+      anchor: { tmdbId: 55, title: 'Canonical Anchor', mediaType: 'tv' },
+    }, {
+      tmdb: tmdb as any,
+      recommendSimilar: async () => { throw failure; },
+    })).rejects.toBe(failure);
+    expect({ recommendationCalls, similarCalls, discoverCalls }).toEqual({ recommendationCalls: 0, similarCalls: 0, discoverCalls: 0 });
   });
 
   it('rejects a TV-only seriesStatus filter on movie requests', () => {
@@ -654,16 +765,22 @@ describe('TMDB-only recommendation engine', () => {
     expect(maximumDates.every(date => date <= new Date().toISOString().slice(0, 10))).toBe(true);
   });
 
-  it('supports multi-anchor movie fusion in similar mode', async () => {
+  it('requires Gemini Similar fusion across every canonical anchor', async () => {
     const multiAnchorTmdb = {
       callsRemaining: 50,
       genres: async () => ({ genres: [] }),
       searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 500, title, release_date: '2016-11-11', overview: 'A philosophical science-fiction mystery.' }],
+      }),
       details: async (_type: string, id: number) => ({
         id,
         title: id === 101 ? 'Interstellar' : (id === 102 ? 'Blade Runner 2049' : 'Arrival'),
+        release_date: id === 101 ? '2014-11-07' : id === 102 ? '2017-10-06' : '2016-11-11',
+        overview: id === 101 ? 'Space travel shaped by time and family.' : id === 102 ? 'An artificial person investigates identity.' : 'First contact reshapes time and human identity.',
         genres: [{ id: 878, name: 'Science Fiction' }],
         keywords: { keywords: id === 101 ? [{ id: 9715, name: 'space' }] : [{ id: 4048, name: 'cyberpunk' }] },
       }),
@@ -684,8 +801,22 @@ describe('TMDB-only recommendation engine', () => {
       ],
     }, {
       tmdb: multiAnchorTmdb as any,
-      interpret: async () => interpreted,
-      embed: async () => { throw new Error('embedding outage'); },
+      recommendSimilar: async (_env, anchors) => {
+        expect(anchors.map(anchor => anchor.title)).toEqual(['Interstellar', 'Blade Runner 2049']);
+        return [{
+          title: 'Arrival', releaseYear: 2016, confidence: .96,
+          reason: 'It blends cerebral science fiction, nonlinear time, identity, and intimate human stakes.',
+        }];
+      },
+      verifySimilarity: async (_env, anchors, _refinement, _type, documents) => {
+        expect(anchors).toHaveLength(2);
+        return documents.map(document => ({
+          index: document.index,
+          relevanceScore: .95,
+          matchedGroupIndexes: [],
+          reason: 'It substantively combines the temporal, philosophical, identity, and emotional concerns of both anchors.',
+        }));
+      },
     });
 
     expect(results.length).toBeGreaterThan(0);
