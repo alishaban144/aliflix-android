@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { recommendDescribeTitles } from '../src/gemini';
+import { assessPremiseCandidates, recommendDescribeTitles } from '../src/gemini';
 import { GeminiDescribeResponseSchema } from '../src/schemas';
 import { DESCRIBE_RECOMMENDATIONS_PROMPT, SIMILAR_RECOMMENDATIONS_PROMPT, VERIFY_SIMILARITY_PROMPT } from '../src/prompts';
 
@@ -36,7 +36,7 @@ describe('Gemini Describe contract', () => {
     expect(VERIFY_SIMILARITY_PROMPT).toContain('Cross-media matches use the same standard');
   });
 
-  it('uses the stable Interactions endpoint with medium recommendation thinking and structured JSON', async () => {
+  it('uses low thinking for fast factual candidate recall and structured JSON', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       status: 'completed',
       steps: [{
@@ -64,7 +64,7 @@ describe('Gemini Describe contract', () => {
     expect(url).toBe('https://generativelanguage.googleapis.com/v1/interactions');
     const body = JSON.parse(String(init.body));
     expect(body.model).toBe('gemini-3.7-flash');
-    expect(body.generation_config).toMatchObject({ thinking_level: 'medium', max_output_tokens: 4096 });
+    expect(body.generation_config).toMatchObject({ thinking_level: 'low', max_output_tokens: 4096 });
     expect(body.response_format[0]).toMatchObject({ type: 'text', mime_type: 'application/json' });
     expect(body.service_tier).toBeUndefined();
   });
@@ -82,5 +82,42 @@ describe('Gemini Describe contract', () => {
       {},
     )).rejects.toMatchObject({ code: 'GEMINI_UNAVAILABLE', retryable: true });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses medium thinking for the final premise relevance judgment', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      status: 'completed',
+      steps: [{
+        type: 'model_output',
+        content: [{ type: 'text', text: JSON.stringify({ assessments: [{
+          index: 0,
+          relevanceScore: .96,
+          matchedGroupIndexes: [],
+          reason: 'Alien abduction is the central premise.',
+        }] }) }],
+      }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await assessPremiseCandidates(
+      { GEMINI_API_KEY: 'test-key' } as any,
+      'movies about alien abduction',
+      'movie',
+      [],
+      [{
+        index: 0,
+        title: 'Fire in the Sky',
+        releaseYear: 1993,
+        overview: 'A logger disappears after encountering a UFO.',
+        genres: ['Science Fiction'],
+        keywords: ['alien abduction'],
+        geminiReason: 'A logger is abducted by extraterrestrials.',
+        geminiConfidence: .97,
+      }],
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body.generation_config.thinking_level).toBe('medium');
   });
 });

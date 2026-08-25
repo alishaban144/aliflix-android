@@ -45,7 +45,13 @@ async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function geminiFetch<T>(env: RecommendationEnv, url: string, body: unknown, timeoutMs: number): Promise<T> {
+async function geminiFetch<T>(
+  env: RecommendationEnv,
+  url: string,
+  body: unknown,
+  timeoutMs: number,
+  operation = 'request',
+): Promise<T> {
   if (!env.GEMINI_API_KEY) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini is not configured', 503, true);
 
   // The deadline covers the entire provider operation. The former per-attempt
@@ -92,6 +98,7 @@ async function geminiFetch<T>(env: RecommendationEnv, url: string, body: unknown
           retryable,
           attempt: attempt + 1,
           elapsedMs: Date.now() - startedAt,
+          operation,
         }));
         if (retryable && attempt + 1 < maxAttempts) {
           lastError = new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, 503, true);
@@ -103,7 +110,7 @@ async function geminiFetch<T>(env: RecommendationEnv, url: string, body: unknown
     } catch (error) {
       if (error instanceof ServiceError && !error.retryable) throw error;
       if (error instanceof DOMException && error.name === 'AbortError') {
-        lastError = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request timed out', 504, true);
+        lastError = new ServiceError('GEMINI_UNAVAILABLE', `Gemini ${operation} timed out`, 504, true);
       } else if (error instanceof Error) {
         lastError = error;
       } else {
@@ -135,6 +142,7 @@ async function geminiStructuredInteraction<T>(
   schema: unknown,
   timeoutMs: number,
   thinkingLevel: GeminiThinkingLevel,
+  operation: string,
 ): Promise<T> {
   const data = await geminiFetch<GeminiInteractionResponse>(env, INTERACTIONS_URL, {
     model,
@@ -143,7 +151,7 @@ async function geminiStructuredInteraction<T>(
     response_format: [{ type: 'text', mime_type: 'application/json', schema }],
     generation_config: { max_output_tokens: 4_096, thinking_level: thinkingLevel },
     store: false,
-  }, timeoutMs);
+  }, timeoutMs, operation);
   const text = data.steps
     ?.filter(step => step.type === 'model_output')
     .flatMap(step => step.content || [])
@@ -174,6 +182,7 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
     GeminiIntentJsonSchema,
     20_000,
     'low',
+    'query interpretation',
   );
   return GeminiIntentResponseSchema.parse(data);
 }
@@ -200,7 +209,8 @@ export async function recommendDescribeTitles(
     },
     GeminiDescribeJsonSchema,
     30_000,
-    'medium',
+    'low',
+    'Describe candidate generation',
   );
   const parsed = GeminiDescribeResponseSchema.parse(data);
   const seen = new Set<string>();
@@ -236,7 +246,8 @@ export async function recommendSimilarTitles(
     },
     GeminiDescribeJsonSchema,
     30_000,
-    'medium',
+    'low',
+    'Similar candidate generation',
   );
   const parsed = GeminiDescribeResponseSchema.parse(data);
   const seen = new Set<string>();
@@ -274,6 +285,7 @@ export async function assessPremiseCandidates(
     GeminiPremiseAssessmentJsonSchema,
     30_000,
     'medium',
+    'premise verification',
   );
   const parsed = GeminiPremiseAssessmentResponseSchema.parse(data);
   const validIndexes = new Set(candidates.map(candidate => candidate.index));
@@ -297,6 +309,7 @@ export async function assessSimilarCandidates(
     GeminiPremiseAssessmentJsonSchema,
     30_000,
     'medium',
+    'similarity verification',
   );
   const parsed = GeminiPremiseAssessmentResponseSchema.parse(data);
   const validIndexes = new Set(candidates.map(candidate => candidate.index));

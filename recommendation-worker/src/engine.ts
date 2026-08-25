@@ -198,7 +198,11 @@ async function expandedGeneratedRecommendations(
     const excludedTitles = [...recommendations.values()].map(item => `${item.title} (${item.releaseYear})`);
     const generated = await generate(excludedTitles);
     for (const item of generated) {
-      if (item.confidence < .60) continue;
+      // Candidate confidence is only a recall hint. The independent medium-
+      // thinking Gemini judge below remains the precision gate, so retaining
+      // uncertain but plausible titles improves narrow-premise recall without
+      // allowing them into results merely because they were generated.
+      if (item.confidence < .50) continue;
       const key = `${normalize(item.title)}:${item.releaseYear}`;
       const existing = recommendations.get(key);
       if (!existing || item.confidence > existing.confidence) recommendations.set(key, item);
