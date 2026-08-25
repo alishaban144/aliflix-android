@@ -124,6 +124,43 @@ class AskAliflixWiringIntegrationTest {
     }
 
     @Test
+    fun animationChoicesSerializeOnlyCanonicalTmdbGenreAndLanguageConstraints() {
+        val japanese = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Filters(
+                CatalogDiscoverySpec(
+                    mediaKind = RecommendationMediaKind.SERIES,
+                    includedGenres = listOf("Sci-Fi & Fantasy"),
+                    excludedGenres = listOf("Animation"),
+                    originalLanguage = "ko",
+                    animationFilter = AnimationFilter.JAPANESE_ANIME,
+                ),
+            ),
+            "00000000-0000-4000-8000-000000000009",
+        ).workerRequest.toJson().getJSONObject("filters")
+
+        assertEquals("ja", japanese.getString("originalLanguage"))
+        val japaneseIncluded = japanese.getJSONArray("includedGenres")
+        assertEquals(2, japaneseIncluded.length())
+        assertEquals("Sci-Fi & Fantasy", japaneseIncluded.getString(0))
+        assertEquals("Animation", japaneseIncluded.getString(1))
+        assertEquals(0, japanese.getJSONArray("excludedGenres").length())
+
+        val english = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Filters(
+                CatalogDiscoverySpec(
+                    mediaKind = RecommendationMediaKind.MOVIE,
+                    animationFilter = AnimationFilter.ENGLISH_ANIMATION,
+                ),
+            ),
+            "00000000-0000-4000-8000-000000000010",
+        ).workerRequest.toJson().getJSONObject("filters")
+        assertEquals("en", english.getString("originalLanguage"))
+        val englishIncluded = english.getJSONArray("includedGenres")
+        assertEquals(1, englishIncluded.length())
+        assertEquals("Animation", englishIncluded.getString(0))
+    }
+
+    @Test
     fun responseMappingRetainsTmdbMetadataAndCursor() {
         val response = V3RecommendationResponse.fromJson(JSONObject("""
             {"requestId":"r","totalResults":137,"nextCursor":"cursor","hasMore":true,"results":[{

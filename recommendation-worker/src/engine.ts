@@ -50,6 +50,11 @@ const DISCOVERY_CONCURRENCY = 6;
 const DETAIL_CONCURRENCY = 6;
 const MAX_KEYWORD_SEARCHES = 18;
 const MAX_KEYWORD_SEARCHES_PER_GROUP = 2;
+const TMDB_PAGE_SIZE = 20;
+const TMDB_MAX_PAGE = 500;
+const FILTER_WINDOW_PAGES = 6;
+const FILTER_WINDOW_SIZE = TMDB_PAGE_SIZE * FILTER_WINDOW_PAGES;
+const FILTER_DIVERSITY_CHUNK_SIZE = 24;
 
 const GENERIC_SUBJECT_CONCEPTS = new Set([
   'character', 'characters', 'individual', 'individuals', 'movie', 'movies', 'people', 'person', 'persons',
@@ -552,15 +557,24 @@ function genreLookup(genres: TmdbGenre[]): Map<string, number> {
   return new Map(genres.flatMap(genre => [[normalize(genre.name), genre.id], [normalize(genre.name.replace(/&/g, 'and')), genre.id]]));
 }
 
-function discoverParams(type: MediaType, filters: RecommendationFilters, genreIds: Map<string, number>): Record<string, string | number | boolean | undefined> {
+function discoverParams(
+  type: MediaType,
+  filters: RecommendationFilters,
+  genreIds: Map<string, number>,
+  applyRecommendationVoteFloor = true,
+): Record<string, string | number | boolean | undefined> {
   const included = filters.includedGenres.map(name => genreIds.get(normalize(name))).filter((id): id is number => id !== undefined);
   const excluded = filters.excludedGenres.map(name => genreIds.get(normalize(name))).filter((id): id is number => id !== undefined);
   const params: Record<string, string | number | boolean | undefined> = {
     sort_by: 'vote_count.desc', with_original_language: filters.originalLanguage,
     with_origin_country: filters.originCountries.length ? filters.originCountries.join('|') : undefined,
     with_genres: included.length ? included.join(',') : undefined, without_genres: excluded.length ? excluded.join(',') : undefined,
+    with_status: type === 'tv'
+      ? filters.seriesStatus === 'ended' ? 3 : filters.seriesStatus === 'returning' ? 0 : undefined
+      : undefined,
     'with_runtime.gte': filters.minimumRuntimeMinutes, 'with_runtime.lte': filters.maximumRuntimeMinutes,
-    'vote_average.gte': filters.minimumTmdbRating, 'vote_count.gte': type === 'movie' ? 20 : 10,
+    'vote_average.gte': filters.minimumTmdbRating,
+    'vote_count.gte': applyRecommendationVoteFloor ? (type === 'movie' ? 20 : 10) : undefined,
   };
   if (filters.minimumYear) params[type === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte'] = `${filters.minimumYear}-01-01`;
   const releaseDateMaximumKey = type === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
@@ -569,6 +583,144 @@ function discoverParams(type: MediaType, filters: RecommendationFilters, genreId
     ? [`${filters.maximumYear}-12-31`, today].sort()[0]
     : today;
   return params;
+}
+
+type FilterDiscoveryTmdb = Pick<TmdbClient, 'callsRemaining' | 'genres' | 'discover'>;
+
+export interface FilterDiscoveryDependencies {
+  tmdb?: FilterDiscoveryTmdb;
+}
+
+export interface FilterDiscoveryPage {
+  results: RecommendationResult[];
+  totalResults: number;
+  nextOffset: number | null;
+}
+
+export function supportsDirectFilterPagination(request: ParsedRecommendationRequest): boolean {
+  return request.mode === 'filters' &&
+    !request.query.trim() &&
+    !request.previousQuery?.trim() &&
+    !request.refinementQuery?.trim();
+}
+
+function languageDiversifiedOrder(candidates: Candidate[]): Candidate[] {
+  const remaining = [...candidates];
+  const ordered: Candidate[] = [];
+  const maximumPerLanguage = Math.ceil(FILTER_DIVERSITY_CHUNK_SIZE / 2);
+
+  while (remaining.length) {
+    const chunk: Candidate[] = [];
+    const languageCounts = new Map<string, number>();
+    for (let index = 0; index < remaining.length && chunk.length < FILTER_DIVERSITY_CHUNK_SIZE;) {
+      const language = normalize(remaining[index].originalLanguage || 'undetermined');
+      const count = languageCounts.get(language) || 0;
+      if (count >= maximumPerLanguage) {
+        index++;
+        continue;
+      }
+      const [candidate] = remaining.splice(index, 1);
+      chunk.push(candidate);
+      languageCounts.set(language, count + 1);
+    }
+    if (chunk.length < FILTER_DIVERSITY_CHUNK_SIZE) {
+      chunk.push(...remaining.splice(0, FILTER_DIVERSITY_CHUNK_SIZE - chunk.length));
+    }
+    ordered.push(...chunk);
+  }
+  return ordered;
+}
+
+function filterResult(candidate: Candidate): RecommendationResult {
+  return {
+    tmdbId: candidate.tmdbId,
+    mediaType: candidate.mediaType,
+    title: candidate.title,
+    originalTitle: candidate.originalTitle,
+    overview: candidate.overview,
+    posterPath: candidate.posterPath,
+    backdropPath: candidate.backdropPath,
+    releaseDate: candidate.releaseDate,
+    genres: candidate.genres,
+    runtimeMinutes: candidate.runtimeMinutes,
+    originalLanguage: candidate.originalLanguage,
+    originCountries: candidate.originCountries,
+    tmdbRating: candidate.tmdbRating,
+    tmdbVoteCount: candidate.tmdbVoteCount,
+    status: candidate.status,
+    matchLevel: 'Strong',
+    finalScore: 1,
+    matchReasons: ['Matches your selected filters'],
+    retrievalSources: [...candidate.retrievalSources].sort(),
+  };
+}
+
+/**
+ * Pages plain structured filters directly through TMDB instead of freezing the
+ * first few popularity pages into a small, detail-hydrated recommendation pool.
+ * The signed cursor addresses a deterministic 120-row TMDB window. Every row in
+ * each window remains reachable, while each 24-row display chunk limits a single
+ * original language to half the chunk when alternatives exist.
+ */
+export async function processFilterDiscoveryPage(
+  env: RecommendationEnv,
+  request: ParsedRecommendationRequest,
+  offset: number,
+  dependencies: FilterDiscoveryDependencies = {},
+): Promise<FilterDiscoveryPage> {
+  const tmdb = dependencies.tmdb || new TmdbClient(env, 38);
+  const genreResponse = await tmdb.genres(request.mediaType);
+  const genresById = new Map(genreResponse.genres.map(genre => [genre.id, genre.name]));
+  const genresByName = genreLookup(genreResponse.genres);
+  const baseParams = discoverParams(request.mediaType, request.filters, genresByName, false);
+  const metadataPage = await tmdb.discover(request.mediaType, { ...baseParams, page: 1 });
+  const totalPages = Math.min(TMDB_MAX_PAGE, Math.max(0, metadataPage.total_pages || 0));
+  const totalResults = Math.min(metadataPage.total_results || 0, totalPages * TMDB_PAGE_SIZE);
+  if (!totalPages || !totalResults || offset >= totalResults) {
+    return { results: [], totalResults, nextOffset: null };
+  }
+
+  let windowStart = Math.floor(offset / FILTER_WINDOW_SIZE) * FILTER_WINDOW_SIZE;
+  let withinWindow = offset - windowStart;
+  while (windowStart < totalResults) {
+    const startPage = Math.floor(windowStart / TMDB_PAGE_SIZE) + 1;
+    const endPage = Math.min(totalPages, startPage + FILTER_WINDOW_PAGES - 1);
+    const pageNumbers = Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+    const pages = await Promise.all(pageNumbers.map(page => page === 1
+      ? Promise.resolve(metadataPage)
+      : tmdb.discover(request.mediaType, { ...baseParams, page })));
+
+    const candidates: Candidate[] = [];
+    for (const page of pages) {
+      for (const item of page.results || []) {
+        const candidate = toCandidate(item, request.mediaType, genresById);
+        if (!candidate) continue;
+        if (request.filters.seriesStatus) {
+          candidate.status = request.filters.seriesStatus === 'ended' ? 'Ended' : 'Returning Series';
+        }
+        candidate.hardFiltersVerified = true;
+        candidate.retrievalSources.add(`discover:filtered-catalogue:page-${page.page}`);
+        if (passesKnownFilters(candidate, request.filters)) candidates.push(candidate);
+      }
+    }
+    const ordered = request.filters.originalLanguage
+      ? candidates
+      : languageDiversifiedOrder(candidates);
+    const pageResults = ordered
+      .slice(withinWindow, withinWindow + request.pageSize)
+      .map(filterResult);
+    const consumedInWindow = withinWindow + pageResults.length;
+    const nextWindowStart = windowStart + FILTER_WINDOW_SIZE;
+    const nextOffset = consumedInWindow < ordered.length
+      ? windowStart + consumedInWindow
+      : nextWindowStart < totalResults ? nextWindowStart : null;
+    if (pageResults.length || nextOffset === null) {
+      return { results: pageResults, totalResults, nextOffset };
+    }
+    windowStart = nextWindowStart;
+    withinWindow = 0;
+  }
+  return { results: [], totalResults, nextOffset: null };
 }
 
 function passesKnownFilters(candidate: Candidate, filters: RecommendationFilters): boolean {

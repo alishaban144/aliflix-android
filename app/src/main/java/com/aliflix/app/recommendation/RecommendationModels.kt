@@ -32,6 +32,11 @@ enum class RecommendationMediaKind {
         }
 }
 
+enum class AnimationFilter(val label: String, val tmdbOriginalLanguage: String?) {
+    JAPANESE_ANIME("Japanese anime", "ja"),
+    ENGLISH_ANIMATION("English animation", "en"),
+}
+
 /** The filter state shared by the Ask Aliflix editor and Worker request mapper. */
 data class CatalogDiscoverySpec(
     val mediaKind: RecommendationMediaKind,
@@ -43,6 +48,7 @@ data class CatalogDiscoverySpec(
     val yearMaximum: Int? = null,
     val minimumTmdb: Double? = null,
     val originalLanguage: String? = null,
+    val animationFilter: AnimationFilter? = null,
     val requiredStatus: String? = null,
     val countries: List<String> = emptyList(),
     val discoveryText: String = "",

@@ -55,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.recommendation.CatalogDiscoverySpec
+import com.aliflix.app.recommendation.AnimationFilter
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
@@ -79,7 +80,7 @@ fun AskAliflixFilters(
     var ratingOpen by rememberSaveable { mutableStateOf(false) }
     var regionOpen by rememberSaveable { mutableStateOf(false) }
 
-    val genres = if (spec.mediaKind == RecommendationMediaKind.SERIES) ASK_TMDB_TV_GENRES else ASK_TMDB_MOVIE_GENRES
+    val genres = askTmdbGenres(spec.mediaKind).map(AskTmdbGenre::name)
     val activeCount = selectedFilterCount(spec)
     val hasFilters = activeCount > 0
 
@@ -119,16 +120,42 @@ fun AskAliflixFilters(
                 FilterSection(
                     title = "Genres",
                     icon = Icons.Rounded.Movie,
-                    badgeCount = spec.includedGenres.size,
+                    badgeCount = spec.includedGenres.size + if (spec.animationFilter != null) 1 else 0,
                     expanded = genresOpen,
                     onToggle = { genresOpen = !genresOpen },
                 ) {
+                    FilterSubheading("ANIMATION ORIGIN")
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        AnimationFilter.entries.forEach { choice ->
+                            AskAliflixChip(
+                                label = choice.label,
+                                isSelected = spec.animationFilter == choice,
+                                onClick = {
+                                    val next = choice.takeUnless { spec.animationFilter == choice }
+                                    onSpecChanged(
+                                        spec.copy(
+                                            animationFilter = next,
+                                            includedGenres = spec.includedGenres - "Animation",
+                                            excludedGenres = spec.excludedGenres - "Animation",
+                                            originalLanguage = if (next?.tmdbOriginalLanguage != null) null else spec.originalLanguage,
+                                        )
+                                    )
+                                },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(13.dp))
+                    FilterSubheading("TMDB GENRES")
                     FilterChipGrid(
                         values = genres,
                         selected = spec.includedGenres,
                         onToggle = { genre ->
                             val next = spec.includedGenres.toggle(genre)
-                            onSpecChanged(spec.copy(includedGenres = next, excludedGenres = spec.excludedGenres - genre))
+                            onSpecChanged(spec.copy(
+                                includedGenres = next,
+                                excludedGenres = spec.excludedGenres - genre,
+                                animationFilter = if (genre == "Animation") null else spec.animationFilter,
+                            ))
                         },
                     )
                 }
@@ -147,7 +174,11 @@ fun AskAliflixFilters(
                         selected = spec.excludedGenres,
                         onToggle = { genre ->
                             val next = spec.excludedGenres.toggle(genre)
-                            onSpecChanged(spec.copy(excludedGenres = next, includedGenres = spec.includedGenres - genre))
+                            onSpecChanged(spec.copy(
+                                excludedGenres = next,
+                                includedGenres = spec.includedGenres - genre,
+                                animationFilter = if (genre == "Animation") null else spec.animationFilter,
+                            ))
                         },
                     )
                 }
@@ -228,7 +259,17 @@ fun AskAliflixFilters(
                             AskAliflixChip(
                                 label = option.label,
                                 isSelected = spec.originalLanguage == option.code,
-                                onClick = { onSpecChanged(spec.copy(originalLanguage = option.code)) },
+                                onClick = {
+                                    onSpecChanged(spec.copy(
+                                        originalLanguage = option.code,
+                                        includedGenres = if (spec.animationFilter != null) {
+                                            (spec.includedGenres + "Animation").distinct()
+                                        } else {
+                                            spec.includedGenres
+                                        },
+                                        animationFilter = null,
+                                    ))
+                                },
                             )
                         }
                     }
@@ -383,6 +424,7 @@ private data class FilterOption(val label: String, val code: String?)
 
 internal fun CatalogDiscoverySpec.askFilterSummary(): String {
     val values = buildList {
+        animationFilter?.let { add(it.label) }
         if (includedGenres.isNotEmpty()) add(includedGenres.joinToString(", "))
         if (excludedGenres.isNotEmpty()) add("Avoid ${excludedGenres.joinToString(", ")}")
         when {
@@ -411,7 +453,7 @@ internal fun CatalogDiscoverySpec.askFilterSummary(): String {
 }
 
 private fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
-    spec.includedGenres.size + spec.excludedGenres.size +
+    spec.includedGenres.size + spec.excludedGenres.size + (if (spec.animationFilter != null) 1 else 0) +
         listOf(
             spec.yearMinimum != null || spec.yearMaximum != null,
             spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null,
@@ -429,6 +471,7 @@ private fun CatalogDiscoverySpec.clearAskFilters() = copy(
     yearMaximum = null,
     minimumTmdb = null,
     originalLanguage = null,
+    animationFilter = null,
     requiredStatus = null,
     countries = emptyList(),
 )
@@ -447,12 +490,26 @@ private val ASK_COUNTRIES = listOf(
     FilterOption("France", "FR"), FilterOption("Germany", "DE"),
 )
 
+internal data class AskTmdbGenre(val id: Int, val name: String)
+
+internal fun askTmdbGenres(mediaKind: RecommendationMediaKind): List<AskTmdbGenre> =
+    if (mediaKind == RecommendationMediaKind.SERIES) ASK_TMDB_TV_GENRES else ASK_TMDB_MOVIE_GENRES
+
 private val ASK_TMDB_MOVIE_GENRES = listOf(
-    "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy",
-    "History", "Horror", "Music", "Mystery", "Romance", "Science Fiction", "TV Movie", "Thriller", "War", "Western",
+    AskTmdbGenre(28, "Action"), AskTmdbGenre(12, "Adventure"), AskTmdbGenre(16, "Animation"),
+    AskTmdbGenre(35, "Comedy"), AskTmdbGenre(80, "Crime"), AskTmdbGenre(99, "Documentary"),
+    AskTmdbGenre(18, "Drama"), AskTmdbGenre(10751, "Family"), AskTmdbGenre(14, "Fantasy"),
+    AskTmdbGenre(36, "History"), AskTmdbGenre(27, "Horror"), AskTmdbGenre(10402, "Music"),
+    AskTmdbGenre(9648, "Mystery"), AskTmdbGenre(10749, "Romance"), AskTmdbGenre(878, "Science Fiction"),
+    AskTmdbGenre(10770, "TV Movie"), AskTmdbGenre(53, "Thriller"), AskTmdbGenre(10752, "War"),
+    AskTmdbGenre(37, "Western"),
 )
 
 private val ASK_TMDB_TV_GENRES = listOf(
-    "Action & Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Kids", "Mystery",
-    "News", "Reality", "Sci-Fi & Fantasy", "Soap", "Talk", "War & Politics", "Western",
+    AskTmdbGenre(10759, "Action & Adventure"), AskTmdbGenre(16, "Animation"), AskTmdbGenre(35, "Comedy"),
+    AskTmdbGenre(80, "Crime"), AskTmdbGenre(99, "Documentary"), AskTmdbGenre(18, "Drama"),
+    AskTmdbGenre(10751, "Family"), AskTmdbGenre(10762, "Kids"), AskTmdbGenre(9648, "Mystery"),
+    AskTmdbGenre(10763, "News"), AskTmdbGenre(10764, "Reality"), AskTmdbGenre(10765, "Sci-Fi & Fantasy"),
+    AskTmdbGenre(10766, "Soap"), AskTmdbGenre(10767, "Talk"), AskTmdbGenre(10768, "War & Politics"),
+    AskTmdbGenre(37, "Western"),
 )

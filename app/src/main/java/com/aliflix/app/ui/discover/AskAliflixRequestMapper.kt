@@ -2,6 +2,7 @@ package com.aliflix.app.ui.discover
 
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.CatalogDiscoverySpec
+import com.aliflix.app.recommendation.AnimationFilter
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.V3RecommendationAnchor
 import com.aliflix.app.recommendation.V3RecommendationFilters
@@ -76,16 +77,36 @@ object AskAliflixRequestMapper {
         ))
     }
 
-    private fun CatalogDiscoverySpec.toWorkerFilters() = V3RecommendationFilters(
-        minimumYear = yearMinimum, maximumYear = yearMaximum, originalLanguage = originalLanguage,
-        originCountries = countries, minimumRuntimeMinutes = runtimeMinimumMinutes, maximumRuntimeMinutes = runtimeMaximumMinutes,
-        includedGenres = includedGenres, excludedGenres = excludedGenres, minimumTmdbRating = minimumTmdb,
-        seriesStatus = when (requiredStatus?.trim()?.lowercase()) {
-            "returning series" -> "returning"
-            "ended" -> "ended"
-            else -> null
-        },
-    )
+    private fun CatalogDiscoverySpec.toWorkerFilters(): V3RecommendationFilters {
+        val animationSelected = animationFilter != null
+        val resolvedIncludedGenres = if (animationSelected) {
+            (includedGenres + "Animation").distinct()
+        } else {
+            includedGenres
+        }
+        val resolvedExcludedGenres = if (animationSelected) excludedGenres - "Animation" else excludedGenres
+        val resolvedOriginalLanguage = when (animationFilter) {
+            AnimationFilter.JAPANESE_ANIME -> "ja"
+            AnimationFilter.ENGLISH_ANIMATION -> "en"
+            else -> originalLanguage
+        }
+        return V3RecommendationFilters(
+            minimumYear = yearMinimum,
+            maximumYear = yearMaximum,
+            originalLanguage = resolvedOriginalLanguage,
+            originCountries = countries,
+            minimumRuntimeMinutes = runtimeMinimumMinutes,
+            maximumRuntimeMinutes = runtimeMaximumMinutes,
+            includedGenres = resolvedIncludedGenres,
+            excludedGenres = resolvedExcludedGenres,
+            minimumTmdbRating = minimumTmdb,
+            seriesStatus = when (requiredStatus?.trim()?.lowercase()) {
+                "returning series" -> "returning"
+                "ended" -> "ended"
+                else -> null
+            },
+        )
+    }
 
     private fun MediaType.label() = if (this == MediaType.TV) "Series" else "Movies"
 }

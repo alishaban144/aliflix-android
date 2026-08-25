@@ -1,5 +1,5 @@
 import { ZodError } from 'zod';
-import { processRecommendation } from './engine';
+import { processFilterDiscoveryPage, processRecommendation, supportsDirectFilterPagination } from './engine';
 import { RecommendationRequestSchema } from './schemas';
 import { createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
 import { RecommendationEnv, RecommendationResponse, ServiceError } from './types';
@@ -54,6 +54,21 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
       throw new ServiceError('INVALID_CURSOR', 'The cursor does not match this request', 400, false);
     }
     offset = cursor.offset;
+  }
+
+  if (supportsDirectFilterPagination(parsed)) {
+    const page = await processFilterDiscoveryPage(env, parsed, offset);
+    const nextCursor = page.nextOffset === null ? null : await createCursor(env.CURSOR_SIGNING_SECRET, {
+      v: 1, sessionId, requestId: parsed.requestId, fingerprint, offset: page.nextOffset,
+    });
+    const response: RecommendationResponse = {
+      requestId: parsed.requestId,
+      results: page.results,
+      totalResults: page.totalResults,
+      nextCursor,
+      hasMore: nextCursor !== null,
+    };
+    return json(response);
   }
 
   const stub = env.RECOMMENDATION_SESSIONS.getByName(sessionId);
