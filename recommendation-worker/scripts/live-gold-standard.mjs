@@ -15,45 +15,56 @@ const fixtures = [
 ];
 const normalize = value => value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/^marvel s /u, '');
 const reports = [];
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-for (const fixture of fixtures) {
-  const response = await fetch(`${endpoint}/v3/recommendations`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(versionId ? { 'Cloudflare-Workers-Version-Overrides': `aliflix-recommendations="${versionId}"` } : {}),
-    },
-    body: JSON.stringify({
-      requestId: randomUUID(),
-      mode: fixture.mode,
-      query: fixture.query || '',
-      mediaType: fixture.mediaType,
-      ...(fixture.anchor ? { anchor: fixture.anchor } : {}),
-      ...(fixture.anchors ? { anchors: fixture.anchors } : {}),
-      filters: {},
-      pageSize: 20,
-    }),
-  });
-  const body = await response.json();
-  if (!response.ok) throw new Error(`${fixture.id}: HTTP ${response.status} ${JSON.stringify(body)}`);
-  const titles = body.results.map(result => result.title);
-  const normalizedTitles = new Set(titles.map(normalize));
-  const expectedHits = fixture.expected.filter(title => normalizedTitles.has(normalize(title)));
-  const weakHits = fixture.knownWeak.filter(title => normalizedTitles.has(normalize(title)));
-  const minimumResults = fixture.minimumResults || (fixture.mode === 'describe' ? 12 : 10);
-  const minimumExpectedHits = fixture.minimumExpectedHits || (fixture.mode === 'describe' ? 4 : 3);
-  const passed = body.results.length >= minimumResults && expectedHits.length >= minimumExpectedHits && weakHits.length === 0;
-  reports.push({
-    id: fixture.id,
-    passed,
-    resultCount: body.results.length,
-    minimumResults,
-    expectedHits,
-    expectedRecall: Number((expectedHits.length / fixture.expected.length).toFixed(3)),
-    weakHits,
-    titles,
-  });
+for (const [fixtureIndex, fixture] of fixtures.entries()) {
+  try {
+    const response = await fetch(`${endpoint}/v3/recommendations`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(versionId ? { 'Cloudflare-Workers-Version-Overrides': `aliflix-recommendations="${versionId}"` } : {}),
+      },
+      body: JSON.stringify({
+        requestId: randomUUID(),
+        mode: fixture.mode,
+        query: fixture.query || '',
+        mediaType: fixture.mediaType,
+        ...(fixture.anchor ? { anchor: fixture.anchor } : {}),
+        ...(fixture.anchors ? { anchors: fixture.anchors } : {}),
+        filters: {},
+        pageSize: 20,
+      }),
+      signal: AbortSignal.timeout(180_000),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(`HTTP ${response.status} ${JSON.stringify(body)}`);
+    const titles = body.results.map(result => result.title);
+    const normalizedTitles = new Set(titles.map(normalize));
+    const expectedHits = fixture.expected.filter(title => normalizedTitles.has(normalize(title)));
+    const weakHits = fixture.knownWeak.filter(title => normalizedTitles.has(normalize(title)));
+    const minimumResults = fixture.minimumResults || (fixture.mode === 'describe' ? 12 : 10);
+    const minimumExpectedHits = fixture.minimumExpectedHits || (fixture.mode === 'describe' ? 4 : 3);
+    const passed = body.results.length >= minimumResults && expectedHits.length >= minimumExpectedHits && weakHits.length === 0;
+    reports.push({
+      id: fixture.id,
+      passed,
+      resultCount: body.results.length,
+      minimumResults,
+      expectedHits,
+      expectedRecall: Number((expectedHits.length / fixture.expected.length).toFixed(3)),
+      weakHits,
+      titles,
+    });
+  } catch (error) {
+    reports.push({
+      id: fixture.id,
+      passed: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   console.log(JSON.stringify(reports.at(-1)));
+  if (fixtureIndex < fixtures.length - 1) await sleep(5_000);
 }
 
 const failed = reports.filter(report => !report.passed);

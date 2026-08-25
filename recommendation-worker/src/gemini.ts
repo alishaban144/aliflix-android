@@ -51,13 +51,13 @@ async function geminiFetch<T>(
   body: unknown,
   timeoutMs: number,
   operation = 'request',
+  maxAttempts = 2,
 ): Promise<T> {
   if (!env.GEMINI_API_KEY) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini is not configured', 503, true);
 
   // The deadline covers the entire provider operation. The former per-attempt
   // timeout could turn one 30-second request into five attempts plus backoff,
   // which made an interactive request hang for almost three minutes.
-  const maxAttempts = 2;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
   let lastError: Error | undefined;
@@ -66,9 +66,10 @@ async function geminiFetch<T>(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (attempt > 0) {
       const remainingBeforeDelay = deadline - Date.now();
-      const delay = Math.min(1_500, Math.max(250, providerRetryAfterMs || 0));
+      const exponentialDelay = Math.min(8_000, 1_000 * Math.pow(2, attempt - 1));
+      const delay = Math.min(30_000, providerRetryAfterMs ?? exponentialDelay);
       if (remainingBeforeDelay <= delay + 250) break;
-      await sleep(delay);
+      await sleep(delay + (providerRetryAfterMs === undefined ? Math.random() * 250 : 0));
     }
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
@@ -85,16 +86,31 @@ async function geminiFetch<T>(
       if (!response.ok) {
         const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
         const retryAfterSeconds = Number(response.headers.get('retry-after'));
+        const providerError = await response.json().catch(() => undefined) as {
+          error?: {
+            code?: number | string;
+            status?: string;
+            message?: string;
+            details?: Array<{ '@type'?: string; retryDelay?: string }>;
+          };
+        } | undefined;
+        const retryInfo = providerError?.error?.details?.find(detail =>
+          detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo');
+        const retryInfoMatch = /^(\d+(?:\.\d+)?)s$/.exec(retryInfo?.retryDelay || '');
+        const messageRetryMatch = /retry in\s+(\d+(?:\.\d+)?)s/i.exec(providerError?.error?.message || '');
+        const bodyRetrySeconds = Number(retryInfoMatch?.[1] || messageRetryMatch?.[1]);
         providerRetryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
           ? retryAfterSeconds * 1_000
-          : undefined;
-        const providerError = await response.json().catch(() => undefined) as {
-          error?: { code?: number; status?: string; message?: string };
-        } | undefined;
+          : Number.isFinite(bodyRetrySeconds) && bodyRetrySeconds > 0
+            ? bodyRetrySeconds * 1_000
+            : undefined;
         console.warn(JSON.stringify({
           event: 'gemini_request_failed',
           status: response.status,
+          providerCode: providerError?.error?.code,
           providerStatus: providerError?.error?.status,
+          providerMessage: providerError?.error?.message?.slice(0, 300),
+          providerRetryAfterMs,
           retryable,
           attempt: attempt + 1,
           elapsedMs: Date.now() - startedAt,
@@ -151,7 +167,7 @@ async function geminiStructuredInteraction<T>(
     response_format: [{ type: 'text', mime_type: 'application/json', schema }],
     generation_config: { max_output_tokens: 4_096, thinking_level: thinkingLevel },
     store: false,
-  }, timeoutMs, operation);
+  }, timeoutMs, operation, 3);
   const text = data.steps
     ?.filter(step => step.type === 'model_output')
     .flatMap(step => step.content || [])
@@ -208,7 +224,7 @@ export async function recommendDescribeTitles(
       excludedTitles,
     },
     GeminiDescribeJsonSchema,
-    30_000,
+    45_000,
     'low',
     'Describe candidate generation',
   );
@@ -245,7 +261,7 @@ export async function recommendSimilarTitles(
       excludedTitles,
     },
     GeminiDescribeJsonSchema,
-    30_000,
+    45_000,
     'low',
     'Similar candidate generation',
   );
@@ -283,7 +299,7 @@ export async function assessPremiseCandidates(
       candidates,
     },
     GeminiPremiseAssessmentJsonSchema,
-    30_000,
+    45_000,
     'medium',
     'premise verification',
   );
@@ -307,7 +323,7 @@ export async function assessSimilarCandidates(
     VERIFY_SIMILARITY_PROMPT,
     { anchors, refinement, authoritativeMediaType: mediaType, candidates },
     GeminiPremiseAssessmentJsonSchema,
-    30_000,
+    45_000,
     'medium',
     'similarity verification',
   );

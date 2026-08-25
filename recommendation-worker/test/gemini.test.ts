@@ -69,10 +69,10 @@ describe('Gemini Describe contract', () => {
     expect(body.service_tier).toBeUndefined();
   });
 
-  it('caps retryable Gemini failures at two provider attempts', async () => {
+  it('caps structured retryable Gemini failures at three provider attempts', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       error: { status: 'RESOURCE_EXHAUSTED' },
-    }), { status: 429 }));
+    }), { status: 429, headers: { 'retry-after': '0.001' } }));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(recommendDescribeTitles(
@@ -81,7 +81,43 @@ describe('Gemini Describe contract', () => {
       'movie',
       {},
     )).rejects.toMatchObject({ code: 'GEMINI_UNAVAILABLE', retryable: true });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('honors Gemini RetryInfo from a retryable response body', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          status: 'RESOURCE_EXHAUSTED',
+          details: [{
+            '@type': 'type.googleapis.com/google.rpc.RetryInfo',
+            retryDelay: '0.001s',
+          }],
+        },
+      }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'completed',
+        steps: [{
+          type: 'model_output',
+          content: [{ type: 'text', text: JSON.stringify({ recommendations: [{
+            title: 'Fire in the Sky',
+            releaseYear: 1993,
+            confidence: 0.96,
+            reason: 'An alien abduction survivor recounts what happened.',
+          }] }) }],
+        }],
+      }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const recommendations = await recommendDescribeTitles(
+      { GEMINI_API_KEY: 'secret', GEMINI_GENERATION_MODEL: 'gemini-3.7-flash' } as any,
+      'movies about alien abduction',
+      'movie',
+      {},
+    );
+
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recommendations[0]?.title).toBe('Fire in the Sky');
   });
 
   it('uses medium thinking for the final premise relevance judgment', async () => {

@@ -628,7 +628,10 @@ function applyQueryDateConstraints(query: string, filters: RecommendationFilters
 }
 
 export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
-  const tmdb = dependencies.tmdb || new TmdbClient(env, request.mode === 'filters' ? 38 : 44);
+  // Generated modes can make three Gemini calls with up to three provider
+  // attempts each. Forty actual TMDB attempts keeps the absolute worst case
+  // at 49 external subrequests, below Cloudflare Free's limit of 50.
+  const tmdb = dependencies.tmdb || new TmdbClient(env, request.mode === 'filters' ? 38 : 40);
   if (request.mode === 'describe') {
     return processDescribeRecommendation(env, request, tmdb, dependencies);
   }
