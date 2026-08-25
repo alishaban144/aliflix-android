@@ -42,7 +42,7 @@ class AskAliflixResultPresentationTest {
 
         assertEquals(
             "Crime, Drama / Avoid Comedy / Years 2015-2024 / " +
-                "Runtime 40-65 min / TMDB 7.5+ / Korean / South Korea / Sort: Most Popular",
+                "Runtime 40-65 min / TMDB 7.5+ / Korean / South Korea",
             summary,
         )
     }
@@ -78,7 +78,7 @@ class AskAliflixResultPresentationTest {
             sortBy = RecommendationSort.HIGHEST_RATED,
         ).askFilterSummary()
 
-        assertEquals("Japanese Animation / Sci-Fi & Fantasy / Sort: Highest Rated", summary)
+        assertEquals("Japanese Animation / Sci-Fi & Fantasy", summary)
     }
 
     @Test
@@ -90,5 +90,18 @@ class AskAliflixResultPresentationTest {
             listOf("Japanese Animation", "American Animation"),
             choices.filter { it.endsWith("Animation") },
         )
+    }
+
+    @Test
+    fun sortChoicesIncludeRuntimeOnlyForMovies() {
+        val movieSorts = RecommendationSort.entries.filter {
+            it != RecommendationSort.RUNTIME_SHORT_TO_LONG || RecommendationMediaKind.MOVIE == RecommendationMediaKind.MOVIE
+        }
+        val seriesSorts = RecommendationSort.entries.filter {
+            it != RecommendationSort.RUNTIME_SHORT_TO_LONG || RecommendationMediaKind.SERIES == RecommendationMediaKind.MOVIE
+        }
+
+        assertEquals(true, RecommendationSort.RUNTIME_SHORT_TO_LONG in movieSorts)
+        assertEquals(false, RecommendationSort.RUNTIME_SHORT_TO_LONG in seriesSorts)
     }
 }

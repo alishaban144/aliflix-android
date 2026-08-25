@@ -186,6 +186,11 @@ fun AskAliflixScreen(
                         onLoadMore = onLoadMore,
                         onRetry = onRetry,
                         onRefine = onRefineRequest,
+                        onSortChanged = { newSort ->
+                            val updatedSpec = editorState.spec.copy(sortBy = newSort)
+                            onEditorStateChanged(editorState.copy(spec = updatedSpec))
+                            onSubmitRequest(AskAliflixRequest.Filters(updatedSpec))
+                        },
                         hideWatched = editorState.hideWatched,
                         onToggleHideWatched = onToggleHideWatched,
                         listState = listState,

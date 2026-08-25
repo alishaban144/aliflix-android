@@ -39,7 +39,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.rounded.AddCircle
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.Star
@@ -48,6 +50,8 @@ import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -67,6 +71,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.model.Media
 import com.aliflix.app.recommendation.RecommendationCandidate
+import com.aliflix.app.recommendation.RecommendationMediaKind
+import com.aliflix.app.recommendation.RecommendationSort
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
@@ -96,6 +102,7 @@ fun AskAliflixResults(
     onRetry: () -> Unit,
     listState: LazyListState,
     onRefine: (String) -> Unit = {},
+    onSortChanged: (RecommendationSort) -> Unit = {},
     hideWatched: Boolean = false,
     onToggleHideWatched: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -165,6 +172,8 @@ fun AskAliflixResults(
                     onOpenMedia = onOpenMedia,
                     onLoadMore = onLoadMore,
                     showMatchesHeader = editorState.mode != 1,
+                    isFilterMode = editorState.mode == 2,
+                    onSortChanged = onSortChanged,
                 )
 
                 is AskAliflixUiState.Empty -> AskStateMessage(
@@ -217,6 +226,8 @@ private fun ResultsList(
     onOpenMedia: (Media) -> Unit,
     onLoadMore: () -> Unit,
     showMatchesHeader: Boolean,
+    isFilterMode: Boolean = false,
+    onSortChanged: (RecommendationSort) -> Unit = {},
 ) {
     LazyColumn(
         state = listState,
@@ -230,7 +241,7 @@ private fun ResultsList(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 3.dp, bottom = 5.dp),
-                    verticalAlignment = Alignment.Bottom,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         "Matches",
@@ -238,9 +249,17 @@ private fun ResultsList(
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = (-0.25).sp,
-                        modifier = Modifier.weight(1f),
                     )
+                    Spacer(Modifier.width(8.dp))
                     ResultCountPill(resultCountLabel(state))
+                    Spacer(Modifier.weight(1f))
+                    if (isFilterMode) {
+                        AskAliflixSortDropdown(
+                            selectedSort = state.spec.sortBy,
+                            mediaKind = state.spec.mediaKind,
+                            onSortSelected = onSortChanged,
+                        )
+                    }
                 }
             }
         }
@@ -717,3 +736,99 @@ private fun RefineBottomBar(
         }
     }
 }
+
+@Composable
+private fun AskAliflixSortDropdown(
+    selectedSort: RecommendationSort,
+    mediaKind: RecommendationMediaKind,
+    onSortSelected: (RecommendationSort) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val availableSorts = remember(mediaKind) {
+        RecommendationSort.entries.filter {
+            it != RecommendationSort.RUNTIME_SHORT_TO_LONG || mediaKind == RecommendationMediaKind.MOVIE
+        }
+    }
+
+    Box(modifier = modifier) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = AliflixSurfaceElevated,
+            border = BorderStroke(1.dp, AliflixBorderSubtle),
+            modifier = Modifier.clip(RoundedCornerShape(20.dp)),
+        ) {
+            Row(
+                modifier = Modifier
+                    .clickable { expanded = true }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Tune,
+                    contentDescription = null,
+                    tint = AliflixAccentPrimary,
+                    modifier = Modifier.size(13.dp),
+                )
+                Text(
+                    text = selectedSort.label,
+                    color = AliflixContentPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Icon(
+                    imageVector = Icons.Filled.ArrowDropDown,
+                    contentDescription = "Select sort order",
+                    tint = AliflixContentSecondary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier
+                .background(AliflixSurfaceElevated)
+                .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(12.dp)),
+        ) {
+            availableSorts.forEach { sort ->
+                val isSelected = sort == selectedSort
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = sort.label,
+                                color = if (isSelected) AliflixAccentPrimary else AliflixContentPrimary,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 13.sp,
+                            )
+                            if (isSelected) {
+                                Spacer(Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    tint = AliflixAccentPrimary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        if (sort != selectedSort) {
+                            onSortSelected(sort)
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
