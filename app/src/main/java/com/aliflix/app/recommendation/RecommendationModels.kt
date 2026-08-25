@@ -43,7 +43,6 @@ enum class RecommendationSort(val label: String, val workerValue: String) {
     MOST_VOTED("Most Voted", "most_voted"),
     NEWEST_FIRST("Newest First", "newest_first"),
     OLDEST_FIRST("Oldest First", "oldest_first"),
-    RUNTIME_SHORT_TO_LONG("Runtime: Short to Long", "runtime_short_to_long"),
 }
 
 /** The filter state shared by the Ask Aliflix editor and Worker request mapper. */
