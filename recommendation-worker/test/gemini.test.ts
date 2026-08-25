@@ -36,7 +36,7 @@ describe('Gemini Describe contract', () => {
     expect(VERIFY_SIMILARITY_PROMPT).toContain('Cross-media matches use the same standard');
   });
 
-  it('uses the stable Interactions endpoint with low thinking and structured JSON', async () => {
+  it('uses the stable Interactions endpoint with medium recommendation thinking and structured JSON', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       status: 'completed',
       steps: [{
@@ -64,7 +64,7 @@ describe('Gemini Describe contract', () => {
     expect(url).toBe('https://generativelanguage.googleapis.com/v1/interactions');
     const body = JSON.parse(String(init.body));
     expect(body.model).toBe('gemini-3.7-flash');
-    expect(body.generation_config).toMatchObject({ thinking_level: 'low', max_output_tokens: 4096 });
+    expect(body.generation_config).toMatchObject({ thinking_level: 'medium', max_output_tokens: 4096 });
     expect(body.response_format[0]).toMatchObject({ type: 'text', mime_type: 'application/json' });
     expect(body.service_tier).toBeUndefined();
   });

@@ -39,6 +39,8 @@ interface GeminiEmbeddingResponse {
   embeddings?: Array<{ values?: unknown }>;
 }
 
+type GeminiThinkingLevel = 'low' | 'medium' | 'high';
+
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -132,13 +134,14 @@ async function geminiStructuredInteraction<T>(
   input: unknown,
   schema: unknown,
   timeoutMs: number,
+  thinkingLevel: GeminiThinkingLevel,
 ): Promise<T> {
   const data = await geminiFetch<GeminiInteractionResponse>(env, INTERACTIONS_URL, {
     model,
     input: JSON.stringify(input),
     system_instruction: systemInstruction,
     response_format: [{ type: 'text', mime_type: 'application/json', schema }],
-    generation_config: { max_output_tokens: 4_096, thinking_level: 'low' },
+    generation_config: { max_output_tokens: 4_096, thinking_level: thinkingLevel },
     store: false,
   }, timeoutMs);
   const text = data.steps
@@ -170,6 +173,7 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
     { query, authoritativeMediaType: mediaType },
     GeminiIntentJsonSchema,
     20_000,
+    'low',
   );
   return GeminiIntentResponseSchema.parse(data);
 }
@@ -196,6 +200,7 @@ export async function recommendDescribeTitles(
     },
     GeminiDescribeJsonSchema,
     30_000,
+    'medium',
   );
   const parsed = GeminiDescribeResponseSchema.parse(data);
   const seen = new Set<string>();
@@ -231,6 +236,7 @@ export async function recommendSimilarTitles(
     },
     GeminiDescribeJsonSchema,
     30_000,
+    'medium',
   );
   const parsed = GeminiDescribeResponseSchema.parse(data);
   const seen = new Set<string>();
@@ -267,6 +273,7 @@ export async function assessPremiseCandidates(
     },
     GeminiPremiseAssessmentJsonSchema,
     30_000,
+    'medium',
   );
   const parsed = GeminiPremiseAssessmentResponseSchema.parse(data);
   const validIndexes = new Set(candidates.map(candidate => candidate.index));
@@ -289,6 +296,7 @@ export async function assessSimilarCandidates(
     { anchors, refinement, authoritativeMediaType: mediaType, candidates },
     GeminiPremiseAssessmentJsonSchema,
     30_000,
+    'medium',
   );
   const parsed = GeminiPremiseAssessmentResponseSchema.parse(data);
   const validIndexes = new Set(candidates.map(candidate => candidate.index));
