@@ -94,9 +94,25 @@ jobs:
             "${CANDIDATE_ID}@0%" \
             --message "Aliflix ${RELEASE_VERSION_NAME} isolated live-gold validation" \
             --yes
+          TAIL_LOG="$RUNNER_TEMP/recommendation-worker-tail.jsonl"
+          npx wrangler tail aliflix-recommendations \
+            --version-id "$CANDIDATE_ID" \
+            --format json > "$TAIL_LOG" 2>&1 &
+          TAIL_PID=$!
+          dump_tail() {
+            kill "$TAIL_PID" 2>/dev/null || true
+            wait "$TAIL_PID" 2>/dev/null || true
+            echo "::group::Recommendation Worker candidate logs"
+            cat "$TAIL_LOG" || true
+            echo "::endgroup::"
+          }
+          trap dump_tail EXIT
+          sleep 5
           npm run gold:live -- \
             https://aliflix-recommendations.equable-equipment.workers.dev \
             "$CANDIDATE_ID"
+          trap - EXIT
+          dump_tail
           npx wrangler versions deploy \
             "${CANDIDATE_ID}@100%" \
             --message "Aliflix ${RELEASE_VERSION_NAME} promoted after nine live gold cases" \

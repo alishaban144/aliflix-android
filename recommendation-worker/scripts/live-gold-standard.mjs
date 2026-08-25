@@ -63,7 +63,12 @@ for (const [fixtureIndex, fixture] of fixtures.entries()) {
       error: error instanceof Error ? error.message : String(error),
     });
   }
-  console.log(JSON.stringify(reports.at(-1)));
+  const latestReport = reports.at(-1);
+  console.log(JSON.stringify(latestReport));
+  // A provider failure blocks every later case and can consume more of the
+  // same exhausted quota. Preserve the first exact failure and stop; ordinary
+  // relevance/count failures still run the complete suite.
+  if (latestReport?.error && /GEMINI_UNAVAILABLE|AbortError|timed out/i.test(latestReport.error)) break;
   if (fixtureIndex < fixtures.length - 1) await sleep(5_000);
 }
 
