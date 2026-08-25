@@ -39,7 +39,7 @@ interface GeminiEmbeddingResponse {
   embeddings?: Array<{ values?: unknown }>;
 }
 
-type GeminiThinkingLevel = 'low' | 'medium' | 'high';
+type GeminiThinkingLevel = 'medium' | 'high';
 
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -197,7 +197,7 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
     { query, authoritativeMediaType: mediaType },
     GeminiIntentJsonSchema,
     20_000,
-    'low',
+    'medium',
     'query interpretation',
   );
   return GeminiIntentResponseSchema.parse(data);
@@ -225,7 +225,7 @@ export async function recommendDescribeTitles(
     },
     GeminiDescribeJsonSchema,
     45_000,
-    'low',
+    'medium',
     'Describe candidate generation',
   );
   const parsed = GeminiDescribeResponseSchema.parse(data);
@@ -262,7 +262,7 @@ export async function recommendSimilarTitles(
     },
     GeminiDescribeJsonSchema,
     45_000,
-    'low',
+    'medium',
     'Similar candidate generation',
   );
   const parsed = GeminiDescribeResponseSchema.parse(data);

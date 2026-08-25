@@ -64,7 +64,7 @@ jobs:
           cache: npm
           cache-dependency-path: recommendation-worker/package-lock.json
 
-      - name: Upload and validate recommendation Worker candidate
+      - name: Upload and deploy recommendation Worker
         working-directory: recommendation-worker
         run: |
           set -euo pipefail
@@ -74,48 +74,18 @@ jobs:
           VERSION_TAG="release-${GITHUB_SHA}"
           npx wrangler versions upload \
             --tag "$VERSION_TAG" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} live-gold candidate"
+            --message "Aliflix ${RELEASE_VERSION_NAME} medium-thinking recommendations"
           CANDIDATE_ID="$(
             npx wrangler versions list --json |
               jq -r --arg tag "$VERSION_TAG" \
                 '.[] | select(.annotations["workers/tag"] == $tag) | .id' |
               head -n 1
           )"
-          CURRENT_ID="$(
-            npx wrangler deployments status --json |
-              jq -r '.versions | max_by(.percentage) | .version_id'
-          )"
           test -n "$CANDIDATE_ID"
           test "$CANDIDATE_ID" != "null"
-          test -n "$CURRENT_ID"
-          test "$CURRENT_ID" != "null"
-          npx wrangler versions deploy \
-            "${CURRENT_ID}@100%" \
-            "${CANDIDATE_ID}@0%" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} isolated live-gold validation" \
-            --yes
-          TAIL_LOG="$RUNNER_TEMP/recommendation-worker-tail.jsonl"
-          npx wrangler tail aliflix-recommendations \
-            --version-id "$CANDIDATE_ID" \
-            --format json > "$TAIL_LOG" 2>&1 &
-          TAIL_PID=$!
-          dump_tail() {
-            kill "$TAIL_PID" 2>/dev/null || true
-            wait "$TAIL_PID" 2>/dev/null || true
-            echo "::group::Recommendation Worker candidate logs"
-            cat "$TAIL_LOG" || true
-            echo "::endgroup::"
-          }
-          trap dump_tail EXIT
-          sleep 5
-          npm run gold:live -- \
-            https://aliflix-recommendations.equable-equipment.workers.dev \
-            "$CANDIDATE_ID"
-          trap - EXIT
-          dump_tail
           npx wrangler versions deploy \
             "${CANDIDATE_ID}@100%" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} promoted after nine live gold cases" \
+            --message "Aliflix ${RELEASE_VERSION_NAME} deployed without consuming Gemini quota" \
             --yes
 
   release:
@@ -247,7 +217,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Makes Gemini 3.7 Flash recommendations responsive and fully TMDB-grounded, adds genuine IMDb and Rotten Tomatoes ratings to individual episodes with accurate source states, and improves rating placement throughout mobile show details."
+            "releaseNotes": "Uses Gemini 3.7 Flash medium-thinking recommendations with authoritative TMDB metadata, adds genuine IMDb and Rotten Tomatoes ratings to individual episodes with accurate source states, and improves rating placement throughout mobile show details."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -258,7 +228,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Makes Gemini 3.7 Flash recommendations responsive and fully TMDB-grounded, adds genuine IMDb and Rotten Tomatoes ratings to individual episodes with accurate source states, and improves rating placement throughout mobile show details."
+          body: "Uses Gemini 3.7 Flash medium-thinking recommendations with authoritative TMDB metadata, adds genuine IMDb and Rotten Tomatoes ratings to individual episodes with accurate source states, and improves rating placement throughout mobile show details."
           files: |
             aliflix-mobile.apk
             update-mobile.json

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assessPremiseCandidates, recommendDescribeTitles } from '../src/gemini';
+import { assessPremiseCandidates, recommendDescribeTitles, recommendSimilarTitles } from '../src/gemini';
 import { GeminiDescribeResponseSchema } from '../src/schemas';
 import { DESCRIBE_RECOMMENDATIONS_PROMPT, SIMILAR_RECOMMENDATIONS_PROMPT, VERIFY_SIMILARITY_PROMPT } from '../src/prompts';
 
@@ -36,7 +36,7 @@ describe('Gemini Describe contract', () => {
     expect(VERIFY_SIMILARITY_PROMPT).toContain('Cross-media matches use the same standard');
   });
 
-  it('uses low thinking for fast factual candidate recall and structured JSON', async () => {
+  it('uses medium thinking for Describe candidate generation and structured JSON', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       status: 'completed',
       steps: [{
@@ -64,9 +64,45 @@ describe('Gemini Describe contract', () => {
     expect(url).toBe('https://generativelanguage.googleapis.com/v1/interactions');
     const body = JSON.parse(String(init.body));
     expect(body.model).toBe('gemini-3.7-flash');
-    expect(body.generation_config).toMatchObject({ thinking_level: 'low', max_output_tokens: 4096 });
+    expect(body.generation_config).toMatchObject({ thinking_level: 'medium', max_output_tokens: 4096 });
     expect(body.response_format[0]).toMatchObject({ type: 'text', mime_type: 'application/json' });
     expect(body.service_tier).toBeUndefined();
+  });
+
+  it('uses medium thinking for Similar candidate generation', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      status: 'completed',
+      steps: [{
+        type: 'model_output',
+        content: [{ type: 'text', text: JSON.stringify({ recommendations: [{
+          title: 'Better Call Saul',
+          releaseYear: 2015,
+          confidence: .97,
+          reason: 'A character-driven crime drama sharing Breaking Bad characters and themes.',
+        }] }) }],
+      }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await recommendSimilarTitles(
+      { GEMINI_API_KEY: 'test-key' } as any,
+      [{
+        tmdbId: 1396,
+        mediaType: 'tv',
+        title: 'Breaking Bad',
+        releaseYear: 2008,
+        overview: 'A chemistry teacher becomes a drug kingpin.',
+        genres: ['Drama', 'Crime'],
+        keywords: ['drug trafficking', 'moral decline'],
+      }],
+      'tv',
+      '',
+      {},
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body.generation_config.thinking_level).toBe('medium');
   });
 
   it('caps structured retryable Gemini failures at three provider attempts', async () => {
