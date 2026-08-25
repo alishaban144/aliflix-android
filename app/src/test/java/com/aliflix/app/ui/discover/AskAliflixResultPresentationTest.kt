@@ -93,15 +93,11 @@ class AskAliflixResultPresentationTest {
     }
 
     @Test
-    fun sortChoicesIncludeRuntimeOnlyForMovies() {
-        val movieSorts = RecommendationSort.entries.filter {
-            it != RecommendationSort.RUNTIME_SHORT_TO_LONG || RecommendationMediaKind.MOVIE == RecommendationMediaKind.MOVIE
-        }
-        val seriesSorts = RecommendationSort.entries.filter {
-            it != RecommendationSort.RUNTIME_SHORT_TO_LONG || RecommendationMediaKind.SERIES == RecommendationMediaKind.MOVIE
-        }
-
-        assertEquals(true, RecommendationSort.RUNTIME_SHORT_TO_LONG in movieSorts)
-        assertEquals(false, RecommendationSort.RUNTIME_SHORT_TO_LONG in seriesSorts)
+    fun sortChoicesIncludeStandardDiscoveryOptions() {
+        val sorts = RecommendationSort.entries.map { it.workerValue }
+        assertEquals(
+            listOf("most_popular", "highest_rated", "most_voted", "newest_first", "oldest_first"),
+            sorts,
+        )
     }
 }

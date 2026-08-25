@@ -169,13 +169,13 @@ class AskAliflixWiringIntegrationTest {
             AskAliflixRequest.Filters(
                 CatalogDiscoverySpec(
                     mediaKind = RecommendationMediaKind.MOVIE,
-                    sortBy = RecommendationSort.RUNTIME_SHORT_TO_LONG,
+                    sortBy = RecommendationSort.HIGHEST_RATED,
                 ),
             ),
             "00000000-0000-4000-8000-000000000011",
         ).workerRequest.toJson().getJSONObject("filters")
 
-        assertEquals("runtime_short_to_long", filters.getString("sortBy"))
+        assertEquals("highest_rated", filters.getString("sortBy"))
     }
 
     @Test

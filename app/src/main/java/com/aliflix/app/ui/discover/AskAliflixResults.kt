@@ -745,11 +745,7 @@ private fun AskAliflixSortDropdown(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val availableSorts = remember(mediaKind) {
-        RecommendationSort.entries.filter {
-            it != RecommendationSort.RUNTIME_SHORT_TO_LONG || mediaKind == RecommendationMediaKind.MOVIE
-        }
-    }
+    val availableSorts = remember { RecommendationSort.entries }
 
     Box(modifier = modifier) {
         Surface(
