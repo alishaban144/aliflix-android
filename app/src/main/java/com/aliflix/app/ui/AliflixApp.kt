@@ -5376,28 +5376,17 @@ private fun EpisodeRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                EpisodeRatingPill(
-                    source = "IMDb",
-                    value = ratings.imdb,
-                    accent = Color(0xFFF5C518),
-                )
-                EpisodeRatingPill(
-                    source = "RT",
-                    value = ratings.rottenTomatoes,
-                    accent = Color(0xFFFA3A45),
-                )
-            }
+            EpisodeRatingPill(
+                source = "IMDb",
+                value = ratings.imdb,
+                accent = Color(0xFFF5C518),
+            )
         }
     }
 }
 
 internal data class EpisodeRatingsPresentation(
     val imdb: String,
-    val rottenTomatoes: String,
 )
 
 internal fun episodeRatingsPresentation(episode: Episode): EpisodeRatingsPresentation =
@@ -5410,12 +5399,6 @@ internal fun episodeRatingsPresentation(episode: Episode): EpisodeRatingsPresent
             )
             episode.imdbRatingState == RatingSourceState.NOT_RATED -> "Not rated"
             episode.imdbRatingState == RatingSourceState.UNAVAILABLE -> "Unavailable"
-            else -> "Loading"
-        },
-        rottenTomatoes = when {
-            episode.rottenTomatoesRating != null -> "${episode.rottenTomatoesRating}%"
-            episode.rottenTomatoesState == RatingSourceState.NOT_RATED -> "Not rated"
-            episode.rottenTomatoesState == RatingSourceState.UNAVAILABLE -> "Unavailable"
             else -> "Loading"
         },
     )

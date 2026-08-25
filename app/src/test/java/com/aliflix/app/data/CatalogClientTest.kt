@@ -369,31 +369,6 @@ class CatalogClientTest {
               <div class="overview"><p>Bill and Frank build a life together.</p></div>
             </div></main>
         """.trimIndent()
-        val rtClient = RottenTomatoesClient(
-            RottenTomatoesTransport { url ->
-                val body = if (url.endsWith("/tv/the_last_of_us")) {
-                    """
-                        <html><head><title>The Last of Us - Rotten Tomatoes</title>
-                        <link rel="canonical" href="https://www.rottentomatoes.com/tv/the_last_of_us"></head></html>
-                    """.trimIndent()
-                } else {
-                    """
-                        <html><head><title>The Last of Us - Season 1, Episode 3 Long, Long Time - Rotten Tomatoes</title>
-                        <link rel="canonical" href="https://www.rottentomatoes.com/tv/the_last_of_us/s01/e03"></head><body>
-                        <script type="application/ld+json">
-                          {"@type":"TVEpisode","episodeNumber":"3","name":"Long, Long Time",
-                           "partOfSeries":{"@type":"TVSeries","name":"The Last of Us"}}
-                        </script>
-                        <script type="application/json">
-                          {"criticsScore":{"score":"98","ratingCount":50,"reviewCount":50}}
-                        </script>
-                        </body></html>
-                    """.trimIndent()
-                }
-                RtHttpResponse(url, url, 200, "text/html", body, 10)
-            },
-            {},
-        )
         val client = CatalogClient(
             pageLoader = { url ->
                 if (url.contains("suggestion")) {
@@ -416,7 +391,6 @@ class CatalogClientTest {
                     }}}
                 """.trimIndent()
             },
-            rottenTomatoesClientOverride = rtClient,
         )
         val progress = mutableListOf<List<Episode>>()
 
@@ -434,8 +408,6 @@ class CatalogClientTest {
         assertEquals(RatingSourceState.LOADING, progress.first().single().imdbRatingState)
         assertEquals(8.9, result.single().imdbRating ?: 0.0, 0.001)
         assertEquals(334_000, result.single().imdbVoteCount)
-        assertEquals(98, result.single().rottenTomatoesRating)
-        assertEquals(RatingSourceState.VERIFIED, result.single().rottenTomatoesState)
         assertTrue(progress.any { it.single().imdbRatingState == RatingSourceState.VERIFIED })
     }
 

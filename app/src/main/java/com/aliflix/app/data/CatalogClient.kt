@@ -1259,31 +1259,18 @@ class CatalogClient(
         var enriched = result.map { episode ->
             episode.copy(
                 imdbRatingState = RatingSourceState.LOADING,
-                rottenTomatoesState = RatingSourceState.LOADING,
             )
         }
         onProgress(enriched)
 
-        val imdbRequest = async {
-            try {
-                imdbRatingRepository.ratingsForEpisodes(item, seasonNumber, enriched)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                emptyMap()
-            }
-        }
-        val rottenTomatoesRequest = async {
-            try {
-                rottenTomatoesRatingsForEpisodes(item, enriched)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                emptyMap()
-            }
+        val imdbRatings = try {
+            imdbRatingRepository.ratingsForEpisodes(item, seasonNumber, enriched)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            emptyMap()
         }
 
-        val imdbRatings = imdbRequest.await()
         enriched = enriched.map { episode ->
             val rating = imdbRatings[episode.number]
             episode.copy(
@@ -1294,67 +1281,8 @@ class CatalogClient(
             )
         }
         onProgress(enriched)
-
-        val rottenTomatoesRatings = rottenTomatoesRequest.await()
-        enriched = enriched.map { episode ->
-            val rating = rottenTomatoesRatings[episode.number]
-            episode.copy(
-                rottenTomatoesRating = rating?.rating,
-                rottenTomatoesState = rating?.state ?: RatingSourceState.UNAVAILABLE,
-            )
-        }
-        onProgress(enriched)
         enriched
     }
-
-    private suspend fun rottenTomatoesRatingsForEpisodes(
-        series: Media,
-        episodes: List<Episode>,
-    ): Map<Int, RottenTomatoesSnapshot> {
-        val resolved = linkedMapOf<Int, RottenTomatoesSnapshot>()
-        val missing = mutableListOf<Episode>()
-        for (episode in episodes) {
-            val key = episodeRatingCacheKey(series, episode)
-            val memory = rottenTomatoesRatingsCache[key]
-            val persisted = if (memory == null) {
-                cacheStore?.loadRottenTomatoesRating(
-                    key,
-                    30L * 24 * 60 * 60 * 1_000,
-                )
-            } else {
-                null
-            }
-            val cached = memory ?: persisted
-            if (cached != null) {
-                rottenTomatoesRatingsCache[key] = cached
-                resolved[episode.number] = cached
-            } else {
-                missing += episode
-            }
-        }
-        if (missing.isNotEmpty()) {
-            val live = rottenTomatoesClient.loadEpisodeRatings(series, missing)
-            for (episode in missing) {
-                val snapshot = live[episode.number]
-                    ?: RottenTomatoesSnapshot(null, RatingSourceState.UNAVAILABLE)
-                resolved[episode.number] = snapshot
-                if (snapshot.state in setOf(
-                        RatingSourceState.VERIFIED,
-                        RatingSourceState.STALE,
-                        RatingSourceState.NOT_RATED,
-                    )
-                ) {
-                    val key = episodeRatingCacheKey(series, episode)
-                    rottenTomatoesRatingsCache[key] = snapshot
-                    cacheStore?.saveRottenTomatoesRating(key, snapshot)
-                }
-            }
-        }
-        return resolved
-    }
-
-    private fun episodeRatingCacheKey(series: Media, episode: Episode): String =
-        "episode:${series.key}:s${episode.seasonNumber}:e${episode.number}"
 
     internal fun parsePage(html: String, titlePrefix: String = ""): ParsedPage {
 

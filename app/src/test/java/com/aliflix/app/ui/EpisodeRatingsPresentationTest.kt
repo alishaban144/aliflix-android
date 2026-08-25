@@ -15,47 +15,39 @@ class EpisodeRatingsPresentationTest {
                 title = "Long, Long Time",
                 imdbRating = 8.9,
                 imdbRatingState = RatingSourceState.VERIFIED,
-                rottenTomatoesRating = 98,
-                rottenTomatoesState = RatingSourceState.VERIFIED,
             ),
         )
 
-        assertEquals(EpisodeRatingsPresentation("8.9", "98%"), presentation)
+        assertEquals(EpisodeRatingsPresentation("8.9"), presentation)
     }
 
     @Test
     fun loadingUnavailableAndConfirmedNotRatedAreNotConflated() {
         assertEquals(
-            EpisodeRatingsPresentation("Loading", "Loading"),
+            EpisodeRatingsPresentation("Loading"),
             episodeRatingsPresentation(Episode(1, 1, "Pilot")),
         )
         assertEquals(
-            EpisodeRatingsPresentation("Unavailable", "Not rated"),
+            EpisodeRatingsPresentation("Unavailable"),
             episodeRatingsPresentation(
                 Episode(
                     seasonNumber = 1,
                     number = 1,
                     title = "Pilot",
                     imdbRatingState = RatingSourceState.UNAVAILABLE,
-                    rottenTomatoesState = RatingSourceState.NOT_RATED,
                 ),
             ),
         )
-    }
-
-    @Test
-    fun zeroPercentTomatometerIsStillARealVerifiedValue() {
         assertEquals(
-            "0%",
+            EpisodeRatingsPresentation("Not rated"),
             episodeRatingsPresentation(
                 Episode(
                     seasonNumber = 1,
                     number = 1,
                     title = "Pilot",
-                    rottenTomatoesRating = 0,
-                    rottenTomatoesState = RatingSourceState.VERIFIED,
+                    imdbRatingState = RatingSourceState.NOT_RATED,
                 ),
-            ).rottenTomatoes,
+            ),
         )
     }
 }
