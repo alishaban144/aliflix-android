@@ -1,6 +1,7 @@
 *.iml
 *.log
 .gradle/
+.kotlin/
 .idea/
 local.properties
 build/
@@ -13,3 +14,11 @@ device-debug/
 *.jks
 *.keystore
 keystore.properties
+node_modules/
+.gradle-agent/
+**/.gradle-agent/
+scratch/
+recommendation-worker/node_modules/
+recommendation-worker/dist/
+recommendation-worker/coverage/
+recommendation-worker/.wrangler/

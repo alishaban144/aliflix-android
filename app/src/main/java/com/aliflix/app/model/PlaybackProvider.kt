@@ -50,6 +50,18 @@ enum class PlaybackProviderId(
     }
 }
 
+internal fun defaultGeneralPlaybackProvider(isTv: Boolean): PlaybackProviderId =
+    if (isTv) PlaybackProviderId.RAMOFLIX else PlaybackProviderId.MOVIEPIRE
+
+internal fun mobileGeneralPlaybackProviders(): List<PlaybackProviderId> = buildList {
+    add(PlaybackProviderId.MOVIEPIRE)
+    addAll(
+        PlaybackProviderId.entries.filter { provider ->
+            provider.supportsGeneralPlayback && provider != PlaybackProviderId.MOVIEPIRE
+        },
+    )
+}
+
 data class PlaybackSource(
     val provider: PlaybackProviderId,
     val baseUrl: String = provider.defaultBaseUrl,

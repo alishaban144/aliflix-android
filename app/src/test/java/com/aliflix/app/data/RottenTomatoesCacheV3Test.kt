@@ -30,8 +30,10 @@ class RottenTomatoesCacheV3Test {
         val store = store(directory)
         store.saveRottenTomatoesRating("movie:1", RottenTomatoesSnapshot(97, RatingSourceState.VERIFIED))
         store.saveRottenTomatoesRating("movie:2", RottenTomatoesSnapshot(null, RatingSourceState.NOT_RATED))
+        store.saveRottenTomatoesRating("episode:tv:3:s1:e1", RottenTomatoesSnapshot(0, RatingSourceState.VERIFIED))
         assertEquals(97, store.loadRottenTomatoesRating("movie:1", Long.MAX_VALUE)?.rating)
         assertEquals(RatingSourceState.NOT_RATED, store.loadRottenTomatoesRating("movie:2", Long.MAX_VALUE)?.state)
+        assertEquals(0, store.loadRottenTomatoesRating("episode:tv:3:s1:e1", Long.MAX_VALUE)?.rating)
         assertTrue(File(directory, "rotten-tomatoes-ratings-v3.json").exists())
     }
 

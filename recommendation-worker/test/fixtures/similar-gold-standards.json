@@ -1,0 +1,29 @@
+[
+  {
+    "id": "similar-tv-breaking-bad",
+    "mediaType": "tv",
+    "anchor": { "tmdbId": 1396, "title": "Breaking Bad", "mediaType": "tv" },
+    "expected": ["Better Call Saul", "Ozark", "Narcos", "Snowfall", "The Sopranos", "The Wire", "Queen of the South", "ZeroZeroZero"],
+    "knownWeak": ["Bridgerton", "Grey's Anatomy", "Demon Slayer: Kimetsu no Yaiba"],
+    "minimumResults": 10,
+    "minimumExpectedHits": 3
+  },
+  {
+    "id": "similar-movie-interstellar",
+    "mediaType": "movie",
+    "anchor": { "tmdbId": 157336, "title": "Interstellar", "mediaType": "movie" },
+    "expected": ["Arrival", "Contact", "Ad Astra", "The Martian", "Sunshine", "Gravity", "Solaris", "2001: A Space Odyssey"],
+    "knownWeak": ["Star Wars", "Guardians of the Galaxy"],
+    "minimumResults": 10,
+    "minimumExpectedHits": 3
+  },
+  {
+    "id": "similar-cross-media-breaking-bad-movies",
+    "mediaType": "movie",
+    "anchor": { "tmdbId": 1396, "title": "Breaking Bad", "mediaType": "tv" },
+    "expected": ["Scarface", "Blow", "American Made", "The Godfather", "Sicario", "A Prophet", "Carlito's Way", "City of God"],
+    "knownWeak": ["Superbad", "Road Trip"],
+    "minimumResults": 10,
+    "minimumExpectedHits": 3
+  }
+]

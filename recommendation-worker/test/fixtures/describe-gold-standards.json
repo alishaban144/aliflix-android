@@ -1,0 +1,44 @@
+[
+  {
+    "id": "movie-alien-abduction",
+    "mediaType": "movie",
+    "query": "movies about alien abduction",
+    "expected": ["Fire in the Sky", "The Fourth Kind", "Dark Skies", "Communion", "Alien Abduction", "The UFO Incident", "Phoenix Forgotten", "No One Will Save You"],
+    "knownWeak": ["Interstella 5555", "Save the Green Planet!", "Valerian and the City of a Thousand Planets"]
+  },
+  {
+    "id": "movie-natural-disasters",
+    "mediaType": "movie",
+    "query": "movies about natural disasters",
+    "expected": ["The Impossible", "Twister", "Twisters", "Dante's Peak", "San Andreas", "The Day After Tomorrow", "The Wave", "The Perfect Storm", "2012", "Crawl"],
+    "knownWeak": ["Disaster Movie"]
+  },
+  {
+    "id": "movie-young-supernatural-powers",
+    "mediaType": "movie",
+    "query": "movies where kids or teenagers develop supernatural powers",
+    "expected": ["Chronicle", "Freaks", "Midnight Special", "The Innocents", "Brightburn", "Push", "Code 8", "The Darkest Minds"],
+    "knownWeak": []
+  },
+  {
+    "id": "tv-trapped-mysterious-place",
+    "mediaType": "tv",
+    "query": "shows about people trapped in a mysterious place they cannot escape",
+    "expected": ["From", "Wayward Pines", "Lost", "Under the Dome", "The I-Land", "The Wilds", "Yellowjackets", "Persons Unknown"],
+    "knownWeak": []
+  },
+  {
+    "id": "tv-conscious-ai",
+    "mediaType": "tv",
+    "query": "shows about artificial intelligence or robots becoming conscious",
+    "expected": ["Westworld", "Humans", "Person of Interest", "Better Than Us", "Raised by Wolves", "Almost Human", "Next", "Pantheon"],
+    "knownWeak": []
+  },
+  {
+    "id": "tv-young-supernatural-powers",
+    "mediaType": "tv",
+    "query": "shows about teenagers or young people with supernatural powers",
+    "expected": ["Stranger Things", "The Gifted", "I Am Not Okay with This", "Misfits", "The Umbrella Academy", "Raising Dion", "The Imperfects", "Runaways"],
+    "knownWeak": ["Riverdale"]
+  }
+]

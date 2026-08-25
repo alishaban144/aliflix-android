@@ -10,21 +10,16 @@ import com.aliflix.app.data.PlaybackProviderRepository
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
+import com.aliflix.app.model.MediaCreator
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.Season
-import com.aliflix.app.recommendation.CatalogRecommendationCandidateRepository
-import com.aliflix.app.recommendation.RecommendationOrchestrator
 import com.aliflix.app.recommendation.RecommendationMediaKind
-import com.aliflix.app.recommendation.PreferenceCorrection
-import com.aliflix.app.recommendation.RecommendationQuestion
 import com.aliflix.app.recommendation.RecommendationDispatchers
 import com.aliflix.app.recommendation.RecommendationStore
-import com.aliflix.app.recommendation.RecommendationUiState
-import com.aliflix.app.recommendation.RecommendationRequestDraft
-import com.aliflix.app.recommendation.AndroidSemanticModelManager
-import com.aliflix.app.recommendation.SemanticModelState
+import com.aliflix.app.recommendation.V3CatalogMedia
+import com.aliflix.app.recommendation.V3TitleDetails
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -39,6 +34,7 @@ import kotlinx.coroutines.withContext
 data class HomeUiState(
     val loading: Boolean = true,
     val content: HomeContent? = null,
+    val editorialPicks: List<Media> = emptyList(),
     val error: String? = null,
 )
 
@@ -46,6 +42,51 @@ enum class SearchMode {
     TITLE,
     AI,
 }
+
+private fun V3CatalogMedia.toMedia(fallback: Media? = null): Media {
+    val type = MediaType.from(mediaType)
+    return (fallback ?: Media(id = tmdbId, type = type, title = title)).copy(
+        id = tmdbId,
+        type = type,
+        title = title,
+        overview = overview ?: fallback?.overview.orEmpty(),
+        posterPath = posterPath ?: fallback?.posterPath,
+        backdropPath = backdropPath ?: fallback?.backdropPath,
+        year = releaseDate?.take(4) ?: fallback?.year.orEmpty(),
+        rating = tmdbRating ?: fallback?.rating ?: 0.0,
+        tmdbVoteCount = tmdbVoteCount ?: fallback?.tmdbVoteCount,
+        genres = genres.ifEmpty { fallback?.genres.orEmpty() },
+        originalLanguage = originalLanguage ?: fallback?.originalLanguage.orEmpty(),
+        runtime = runtimeMinutes?.takeIf { it > 0 }?.let { "$it min" }
+            ?: fallback?.runtime.orEmpty(),
+    )
+}
+
+private fun V3TitleDetails.toMedia(fallback: Media): Media = media.toMedia(fallback).copy(
+    imdbId = imdbId ?: fallback.imdbId,
+    status = status.orEmpty(),
+    creators = creators.map { creator ->
+        MediaCreator(
+            tmdbId = creator.tmdbId,
+            name = creator.name,
+            profilePath = creator.profilePath,
+        )
+    },
+    cast = cast.map { it.name },
+    reviews = reviews.map { review ->
+        com.aliflix.app.model.MediaReview(
+            id = review.id,
+            author = review.author,
+            authorName = review.authorName,
+            authorUsername = review.authorUsername,
+            avatarPath = review.avatarPath,
+            rating = review.rating,
+            content = review.content,
+            createdAt = review.createdAt,
+            url = review.url,
+        )
+    }.ifEmpty { fallback.reviews },
+)
 
 enum class SearchPhase {
     IDLE,
@@ -84,6 +125,13 @@ data class GenreUiState(
     val error: String? = null,
 )
 
+data class PersonUiState(
+    val creator: MediaCreator? = null,
+    val loading: Boolean = false,
+    val items: List<Media> = emptyList(),
+    val error: String? = null,
+)
+
 class AliflixViewModel(application: Application) : AndroidViewModel(application) {
     private val recommendationDispatchers = RecommendationDispatchers.Default
     private val omdbCacheStore = com.aliflix.app.data.omdb.OmdbCacheStore(
@@ -109,33 +157,16 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private val playbackProviderRepository = PlaybackProviderRepository(application)
     private val recommendationStore = RecommendationStore(
         context = application,
-        scope = viewModelScope,
-        dispatchers = recommendationDispatchers,
-    )
-    private val semanticModelManager = AndroidSemanticModelManager(
-        context = application,
-        scope = viewModelScope,
-        ioDispatcher = recommendationDispatchers.io,
     )
     private val aiClient = com.aliflix.app.recommendation.RecommendationAiClient(
         baseUrl = BuildConfig.RECOMMENDATION_AI_BASE_URL,
         ioDispatcher = recommendationDispatchers.io
     )
-    private val recommendationOrchestrator = RecommendationOrchestrator(
-        scope = viewModelScope,
-        repository = CatalogRecommendationCandidateRepository(client, aiClient, omdbClient),
-        store = recommendationStore,
-        likesProvider = { library.likes.value },
-        recentlyPlayedProvider = { library.recent.value },
-        semanticBatchScorerProvider = semanticModelManager::batchScorerOrNull,
-        dispatchers = recommendationDispatchers,
-        aiClient = aiClient,
-        omdbClient = omdbClient,
-    )
     private var searchJob: Job? = null
     private var detailJob: Job? = null
     private var episodeJob: Job? = null
     private var genreJob: Job? = null
+    private var personJob: Job? = null
     private var homeRefreshJob: Job? = null
     private var lastHomeRefreshAt = 0L
 
@@ -151,6 +182,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private val _genre = MutableStateFlow(GenreUiState())
     val genre: StateFlow<GenreUiState> = _genre.asStateFlow()
 
+    private val _person = MutableStateFlow(PersonUiState())
+    val person: StateFlow<PersonUiState> = _person.asStateFlow()
+
     val myList = library.myList
     val recent = library.recent
     val likes = library.likes
@@ -165,73 +199,106 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     private var activeAskJob: Job? = null
     private var askSessionToken = 0L
+    private var activeAskRequest: com.aliflix.app.recommendation.V3RecommendationRequest? = null
+    private var activeAskSummary: String? = null
+    private var activeAskSpec: com.aliflix.app.recommendation.CatalogDiscoverySpec? = null
 
     fun submitAskAliflix(request: com.aliflix.app.ui.discover.AskAliflixRequest) {
         pauseBackgroundHomeRefresh()
         activeAskJob?.cancel()
         val token = ++askSessionToken
         
-        val summary = when (request) {
-            is com.aliflix.app.ui.discover.AskAliflixRequest.Describe -> "${if (request.mediaType == com.aliflix.app.model.MediaType.MOVIE) "Movies" else "Series"} - \"${request.text}\""
-            is com.aliflix.app.ui.discover.AskAliflixRequest.Similar -> "${if (request.outputMediaType == com.aliflix.app.model.MediaType.MOVIE) "Movies" else "Series"} - Similar to ${request.anchor.title}"
-            is com.aliflix.app.ui.discover.AskAliflixRequest.Filters -> "Filtered Search"
+        val mapped = com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(request)
+        val summary = mapped.summary
+        val hideWatched = _askEditorState.value.hideWatched
+        val excludedLibraryIds = if (hideWatched) {
+            (library.recent.value.map { it.id } + library.myList.value.map { it.id }).distinct()
+        } else {
+            emptyList<Int>()
         }
+        val requestWithLibraryFilters = if (excludedLibraryIds.isNotEmpty()) {
+            val baseFilters = mapped.workerRequest.filters
+            val updatedFilters = baseFilters.copy(
+                excludedTmdbIds = (baseFilters.excludedTmdbIds + excludedLibraryIds).distinct()
+            )
+            mapped.workerRequest.copy(filters = updatedFilters)
+        } else {
+            mapped.workerRequest
+        }
+
+        activeAskRequest = requestWithLibraryFilters
+        activeAskSummary = summary
+        activeAskSpec = mapped.spec
 
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Searching(summary)
         activeAskJob = viewModelScope.launch {
             try {
-                val clientAi = aiClient ?: throw IllegalStateException("Gemini AI service unavailable")
-                val v3Request = com.aliflix.app.recommendation.V3RecommendationRequest(
-                    requestId = java.util.UUID.randomUUID().toString(),
-                    query = summary,
-                    mediaType = "movie"
-                )
-                
+                val clientAi = aiClient
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    clientAi.getRecommendations(v3Request)
+                    clientAi.getRecommendations(requestWithLibraryFilters)
                 }
                 
                 if (token != askSessionToken) return@launch
 
-                val candidates = response.results.map { result ->
-                    com.aliflix.app.recommendation.RecommendationCandidate(
-                        media = com.aliflix.app.model.Media(
-                            id = result.tmdbId,
-                            title = result.title,
-                            overview = result.overview ?: "",
-                            posterPath = result.posterPath,
-                            backdropPath = result.backdropPath,
-                            type = if (result.mediaType == "tv") com.aliflix.app.model.MediaType.TV else com.aliflix.app.model.MediaType.MOVIE
-                        ),
-                        metadata = com.aliflix.app.recommendation.VerifiedMediaMetadata(genresVerified = true, verifiedAtMillis = System.currentTimeMillis()),
-                        evidence = result.overview ?: "",
-                        sources = emptySet(),
-                        sourceRanks = emptyMap(),
-                        sourceCount = 1,
-                        sourcePosition = 0,
-                        relevanceEvidence = emptyList(),
-                        precomputedSemanticScore = null,
-                        matchReasons = emptyList(),
-                        alternativeTitles = emptySet()
-                    )
-                }
+                val candidates = response.results
+                    .map(::mapAskResult)
+                    .filter { candidate ->
+                        if (!hideWatched) true
+                        else !library.recent.value.any { it.key == candidate.media.key } &&
+                             !library.myList.value.any { it.key == candidate.media.key }
+                    }
 
                 if (candidates.isEmpty()) {
                     _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Empty(summary, "No titles found.")
                 } else {
                     _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Results(
                         requestSummary = summary,
-                        spec = com.aliflix.app.recommendation.CatalogDiscoverySpec(mediaKind = if (v3Request.mediaType == "tv") com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE),
+                        spec = mapped.spec,
                         items = candidates,
-                        hasMore = false
+                        totalAvailable = response.totalResults,
+                        hasMore = response.hasMore,
+                        nextCursor = response.nextCursor,
+                        activeRequest = request,
                     )
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
                 if (token != askSessionToken) return@launch
-                _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, e.message ?: "Failed to find titles")
+                _askUiState.value = if (
+                    e is com.aliflix.app.recommendation.RecommendationAiClientException &&
+                    e.code in setOf("TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED")
+                ) {
+                    com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(summary, e.message ?: "TMDB is unavailable")
+                } else {
+                    com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, e.message ?: "Failed to find titles")
+                }
             }
+        }
+    }
+
+    fun refineAskAliflix(refinement: String) {
+        val currentQuery = activeAskRequest?.query ?: _askEditorState.value.describeText
+        val previousText = if (_askEditorState.value.describeText.isNotBlank()) _askEditorState.value.describeText else currentQuery
+        val newDescribeText = "$previousText, $refinement"
+        _askEditorState.value = _askEditorState.value.copy(describeText = newDescribeText)
+        
+        submitAskAliflix(
+            com.aliflix.app.ui.discover.AskAliflixRequest.Describe(
+                mediaType = _askEditorState.value.mediaType,
+                text = newDescribeText,
+                requiredStatus = _askEditorState.value.spec.requiredStatus,
+                previousText = previousText,
+                refinementText = refinement,
+            )
+        )
+    }
+
+    fun toggleAskHideWatched(hide: Boolean) {
+        _askEditorState.value = _askEditorState.value.copy(hideWatched = hide)
+        val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results
+        if (currentResults != null) {
+            retryAskAliflix()
         }
     }
 
@@ -243,7 +310,23 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskJob?.cancel()
         activeAskJob = null
         askSessionToken++
-        _askEditorState.value = com.aliflix.app.ui.discover.AskAliflixEditorState()
+        activeAskRequest = null
+        activeAskSummary = null
+        activeAskSpec = null
+        val previous = _askEditorState.value
+        _askEditorState.value = previous.copy(
+            describeText = "",
+            similarQuery = "",
+            selectedAnchor = null,
+            selectedAnchors = emptyList(),
+            spec = com.aliflix.app.recommendation.CatalogDiscoverySpec(
+                mediaKind = if (previous.mediaType == com.aliflix.app.model.MediaType.TV) {
+                    com.aliflix.app.recommendation.RecommendationMediaKind.SERIES
+                } else {
+                    com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE
+                },
+            ),
+        )
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Editing
     }
 
@@ -253,31 +336,101 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun loadMoreAskAliflix() {
         val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results ?: return
-        if (currentResults.loadingMore) return
+        val original = activeAskRequest ?: return
+        val cursor = currentResults.nextCursor ?: return
+        if (currentResults.loadingMore || !currentResults.hasMore) return
 
         val token = askSessionToken
         _askUiState.value = currentResults.copy(loadingMore = true)
 
         activeAskJob = viewModelScope.launch {
-            // V3 pagination is disabled for now, simply return the same state
-            if (token != askSessionToken) return@launch
-            _askUiState.value = currentResults.copy(
-                loadingMore = false,
-                hasMore = false
-            )
+            try {
+                val response = aiClient.getRecommendations(original.copy(cursor = cursor))
+                if (token != askSessionToken) return@launch
+                val appended = (currentResults.items + response.results.map(::mapAskResult))
+                    .distinctBy { it.media.key }
+                _askUiState.value = currentResults.copy(
+                    items = appended,
+                    totalAvailable = maxOf(
+                        currentResults.totalAvailable,
+                        response.totalResults,
+                        appended.size,
+                    ),
+                    loadingMore = false,
+                    hasMore = response.hasMore,
+                    nextCursor = response.nextCursor,
+                    loadMoreError = null,
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (token != askSessionToken) return@launch
+                _askUiState.value = currentResults.copy(loadingMore = false, loadMoreError = error.message ?: "Could not load more matches")
+            }
         }
     }
 
+    fun retryAskAliflix() {
+        val original = activeAskRequest ?: return
+        val summary = activeAskSummary ?: return
+        val spec = activeAskSpec ?: return
+        activeAskJob?.cancel()
+        val token = ++askSessionToken
+        _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Searching(summary)
+        activeAskJob = viewModelScope.launch {
+            try {
+                val response = aiClient.getRecommendations(original.copy(cursor = null))
+                if (token != askSessionToken) return@launch
+                val candidates = response.results.map(::mapAskResult)
+                _askUiState.value = if (candidates.isEmpty()) {
+                    com.aliflix.app.ui.discover.AskAliflixUiState.Empty(summary, "No titles found.")
+                } else {
+                    com.aliflix.app.ui.discover.AskAliflixUiState.Results(
+                        requestSummary = summary,
+                        spec = spec,
+                        items = candidates,
+                        totalAvailable = response.totalResults,
+                        hasMore = response.hasMore,
+                        nextCursor = response.nextCursor,
+                    )
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (token == askSessionToken) {
+                    _askUiState.value = if (
+                        error is com.aliflix.app.recommendation.RecommendationAiClientException &&
+                        error.code in setOf("TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED")
+                    ) {
+                        com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(summary, error.message ?: "TMDB is unavailable")
+                    } else {
+                        com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, error.message ?: "Failed to find titles")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun mapAskResult(result: com.aliflix.app.recommendation.V3RecommendationResult) =
+        com.aliflix.app.recommendation.RecommendationCandidate(
+            media = com.aliflix.app.model.Media(
+                id = result.tmdbId,
+                title = result.title,
+                overview = result.overview.orEmpty(),
+                posterPath = result.posterPath,
+                backdropPath = result.backdropPath,
+                type = com.aliflix.app.model.MediaType.from(result.mediaType),
+                year = result.releaseDate?.take(4).orEmpty(),
+                rating = result.tmdbRating ?: 0.0,
+                genres = result.genres,
+                status = result.status.orEmpty(),
+                runtime = result.runtimeMinutes?.let { "$it min" }.orEmpty(),
+            ),
+        )
+
     val playbackPreferences: StateFlow<PlaybackPreferences> =
         playbackProviderRepository.preferences
-    val recommendation: StateFlow<RecommendationUiState> =
-        recommendationOrchestrator.state
     val aiRecommendationsEnabled: StateFlow<Boolean> =
         recommendationStore.enabled
-    val semanticModelState: StateFlow<SemanticModelState> =
-        semanticModelManager.state
-    val shouldOfferSemanticModel: StateFlow<Boolean> =
-        semanticModelManager.shouldOfferDownload
 
     fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
         playbackProviderRepository.selectGeneralProvider(provider)
@@ -331,23 +484,68 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 loading = showLoading && previous.content == null,
                 error = null,
             )
-            _home.value = runCatching {
+            if (!BuildConfig.IS_TV) {
+                _home.value = runCatching {
+                    aiClient.getHomeFeed().toStableMobileHome(
+                        previousContent = previous.content,
+                        previousEditorialPicks = previous.editorialPicks,
+                    )
+                }.fold(
+                    onSuccess = { snapshot ->
+                        lastHomeRefreshAt = System.currentTimeMillis()
+                        HomeUiState(
+                            loading = false,
+                            content = snapshot.content,
+                            editorialPicks = snapshot.editorialPicks,
+                        )
+                    },
+                    onFailure = { error ->
+                        HomeUiState(
+                            loading = false,
+                            content = previous.content,
+                            editorialPicks = previous.editorialPicks,
+                            error = if (previous.content == null) {
+                                error.message ?: "Unable to load TMDB Home."
+                            } else {
+                                null
+                            },
+                        )
+                    },
+                )
+                return@launch
+            }
+            val editorialRequest = async {
+                runCatching {
+                    aiClient.getEditorialPicks()
+                        .map { it.toMedia() }
+                        .distinctBy(Media::key)
+                }.getOrDefault(previous.editorialPicks)
+            }
+            val homeResult = runCatching {
                 client.home { partial ->
                     _home.value = HomeUiState(
                         loading = false,
                         content = partial,
+                        editorialPicks = previous.editorialPicks,
                     )
                 }
             }
+            val editorialPicks = editorialRequest.await()
+            _home.value = homeResult
                 .fold(
                     onSuccess = {
                         lastHomeRefreshAt = System.currentTimeMillis()
-                        HomeUiState(loading = false, content = it)
+                        HomeUiState(
+                            loading = false,
+                            content = it,
+                            editorialPicks = editorialPicks,
+                        )
                     },
                     onFailure = {
                         HomeUiState(
                             loading = false,
                             content = previous.content,
+                            editorialPicks = editorialPicks,
                             error = if (previous.content == null) {
                                 it.message ?: "Unable to load the Aliflix catalogue."
                             } else {
@@ -549,34 +747,70 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _detail.value = DetailUiState(loading = true, item = item)
         detailJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
             try {
+                val tmdbDetails = runCatching {
+                    aiClient.getTitleDetails(item.type.routeName, item.id)
+                }.getOrNull()
+                val authoritativeItem = if (!BuildConfig.IS_TV) {
+                    tmdbDetails?.toStableMobileMedia(item) ?: item
+                } else {
+                    tmdbDetails?.toMedia(item) ?: item
+                }
+                _detail.value = _detail.value.copy(item = authoritativeItem)
+
                 val seasonsRequest = async {
-                    if (item.type == MediaType.TV) client.seasons(item) else emptyList()
+                    if (authoritativeItem.type == MediaType.TV) {
+                        client.seasons(authoritativeItem)
+                    } else {
+                        emptyList()
+                    }
                 }
 
-                launch {
+                episodeJob = launch {
                     val seasons = seasonsRequest.await()
                     val selectedSeason = seasons.firstOrNull()?.number ?: 1
                     _detail.value = _detail.value.copy(
                         seasons = seasons,
                         selectedSeason = selectedSeason,
-                        episodesLoading = item.type == MediaType.TV,
+                        episodesLoading = authoritativeItem.type == MediaType.TV,
                     )
                     
-                    if (item.type == MediaType.TV) {
-                        val currentItem = _detail.value.item ?: item
-                        val episodes = client.episodes(currentItem, selectedSeason)
-                        _detail.value = _detail.value.copy(
-                            episodes = episodes,
-                            episodesLoading = false,
-                        )
+                    if (authoritativeItem.type == MediaType.TV) {
+                        val currentItem = _detail.value.item ?: authoritativeItem
+                        val episodes = client.episodes(currentItem, selectedSeason) { progress ->
+                            val current = _detail.value
+                            if (
+                                current.item?.key == currentItem.key &&
+                                current.selectedSeason == selectedSeason
+                            ) {
+                                _detail.value = current.copy(
+                                    episodes = progress,
+                                    episodesLoading = false,
+                                )
+                            }
+                        }
+                        val current = _detail.value
+                        if (
+                            current.item?.key == currentItem.key &&
+                            current.selectedSeason == selectedSeason
+                        ) {
+                            _detail.value = current.copy(
+                                episodes = episodes,
+                                episodesLoading = false,
+                            )
+                        }
                     }
                 }
 
-                client.details(item) { details, recommendations ->
-                    library.refreshMetadata(details)
+                client.details(authoritativeItem) { details, recommendations ->
+                    val displayDetails = if (!BuildConfig.IS_TV) {
+                        authoritativeItem.mergeStableMobileDetailUpdate(details)
+                    } else {
+                        details
+                    }
+                    library.refreshMetadata(displayDetails)
                     _detail.value = _detail.value.copy(
                         loading = false,
-                        item = details,
+                        item = displayDetails,
                         recommendations = recommendations ?: emptyList(),
                     )
                 }
@@ -603,19 +837,39 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             error = null,
         )
         episodeJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
-            _detail.value = runCatching { client.episodes(item, number) }
+            _detail.value = runCatching {
+                client.episodes(item, number) { progress ->
+                    val latest = _detail.value
+                    if (latest.item?.key == item.key && latest.selectedSeason == number) {
+                        _detail.value = latest.copy(
+                            episodes = progress,
+                            episodesLoading = false,
+                        )
+                    }
+                }
+            }
                 .fold(
                     onSuccess = { episodes ->
-                        _detail.value.copy(
-                            episodes = episodes,
-                            episodesLoading = false,
-                        )
+                        val latest = _detail.value
+                        if (latest.item?.key == item.key && latest.selectedSeason == number) {
+                            latest.copy(
+                                episodes = episodes,
+                                episodesLoading = false,
+                            )
+                        } else {
+                            latest
+                        }
                     },
                     onFailure = {
-                        _detail.value.copy(
-                            episodesLoading = false,
-                            error = it.message ?: "Episodes could not be loaded.",
-                        )
+                        val latest = _detail.value
+                        if (latest.item?.key == item.key && latest.selectedSeason == number) {
+                            latest.copy(
+                                episodesLoading = false,
+                                error = it.message ?: "Episodes could not be loaded.",
+                            )
+                        } else {
+                            latest
+                        }
                     },
                 )
         }
@@ -625,6 +879,43 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         detailJob?.cancel()
         episodeJob?.cancel()
         _detail.value = DetailUiState()
+    }
+
+    fun openPerson(creator: MediaCreator) {
+        personJob?.cancel()
+        _person.value = PersonUiState(creator = creator, loading = true)
+        personJob = viewModelScope.launch {
+            _person.value = runCatching {
+                aiClient.getPersonCredits(creator.tmdbId)
+            }.fold(
+                onSuccess = { response ->
+                    PersonUiState(
+                        creator = creator.copy(
+                            name = response.person.name.takeUnless { name ->
+                                name.isBlank() || name.equals("Creator", ignoreCase = true)
+                            } ?: creator.name,
+                            profilePath = response.person.profilePath ?: creator.profilePath,
+                        ),
+                        items = response.results.map { it.toMedia() }.distinctBy(Media::key),
+                    )
+                },
+                onFailure = { error ->
+                    PersonUiState(
+                        creator = creator,
+                        error = error.message ?: "Creator credits could not be loaded.",
+                    )
+                },
+            )
+        }
+    }
+
+    fun retryPerson() {
+        _person.value.creator?.let(::openPerson)
+    }
+
+    fun closePerson() {
+        personJob?.cancel()
+        _person.value = PersonUiState()
     }
 
     fun toggleMyList(item: Media) = library.toggleMyList(item)
@@ -641,107 +932,18 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearRecent() = library.clearRecent()
 
-    fun submitRecommendationDraft(draft: RecommendationRequestDraft) {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.submitDraft(draft)
-    }
-
-    fun selectRecommendationType(type: RecommendationMediaKind) =
-        recommendationOrchestrator.selectType(type)
-
-    fun showRecommendationMatches() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.showMatches()
-    }
-
-    fun loadMoreRecommendations() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.loadMore()
-    }
-
-    fun retryRecommendationPage() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.retryPage()
-    }
-
-    fun surpriseRecommendation() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.surpriseMe()
-    }
-
-    fun answerRecommendation(
-        question: RecommendationQuestion,
-        values: List<String>,
-    ) {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.answer(question, values)
-    }
-
-    fun previousRecommendationStep() = recommendationOrchestrator.goBack()
-
-    fun restartRecommendations() = recommendationOrchestrator.restart()
-
-    fun retryRecommendations() {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.retry()
-    }
-
-    fun requestAnotherRecommendation(
-        media: Media,
-        reason: String? = null,
-    ) {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.requestAnother(media, reason)
-    }
-
-    fun acceptRecommendation(media: Media) =
-        recommendationOrchestrator.accept(media)
-
-    fun moreLikeRecommendation(media: Media) =
-        recommendationOrchestrator.moreLike(media)
-
-    fun lessLikeRecommendation(media: Media) =
-        recommendationOrchestrator.lessLike(media)
-
-    fun markRecommendationSeen(media: Media) =
-        recommendationOrchestrator.alreadySeen(media)
-
-    fun correctRecommendationPreference(key: String) =
-        recommendationOrchestrator.applyCorrection(
-            PreferenceCorrection(key = key, replacement = null),
-        )
-
-    fun relaxRecommendationConstraint(id: String) {
-        pauseBackgroundHomeRefresh()
-        recommendationOrchestrator.applyRelaxation(id)
-    }
-
     fun setAiRecommendationsEnabled(enabled: Boolean) {
         recommendationStore.setEnabled(enabled)
         if (!enabled) {
-            recommendationOrchestrator.restart()
             if (_search.value.mode == SearchMode.AI) {
                 selectSearchMode(SearchMode.TITLE)
             }
         }
     }
 
-    fun resetRecommendationTaste() = recommendationOrchestrator.resetTaste()
-
-    fun downloadSemanticModel() = semanticModelManager.download()
-
-    fun dismissSemanticModelOffer() = semanticModelManager.dismissOffer()
-
-    fun deleteSemanticModel() = semanticModelManager.delete()
-
     private fun pauseBackgroundHomeRefresh() {
         homeRefreshJob?.cancel()
         homeRefreshJob = null
-    }
-
-    override fun onCleared() {
-        client.close()
-        semanticModelManager.close()
     }
 
     private companion object {

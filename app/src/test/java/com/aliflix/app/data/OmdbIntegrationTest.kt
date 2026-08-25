@@ -84,6 +84,29 @@ class OmdbIntegrationTest {
     }
 
     @Test
+    fun canonicalImdbIdRejectsMismatchedOmdbTitle() {
+        val obsession = Media(
+            id = 1_339_713,
+            type = MediaType.MOVIE,
+            title = "Obsession",
+            year = "2026",
+            rating = 8.2,
+            imdbId = "tt37287335",
+        )
+        val wrongTitle = OmdbTitleMetadata(
+            found = true,
+            imdbId = "tt1234567",
+            title = "Obsession",
+            year = 2023,
+            type = "movie",
+            imdbRating = 6.2,
+            rottenTomatoesRating = 41,
+        )
+
+        assertEquals(obsession, obsession.mergeWithOmdb(wrongTitle))
+    }
+
+    @Test
     fun testHardGenreValidationSpiderManRejection() {
         val requiredGenresNorm = listOf("horror")
 

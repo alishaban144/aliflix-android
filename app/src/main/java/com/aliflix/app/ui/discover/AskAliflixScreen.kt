@@ -1,25 +1,17 @@
 package com.aliflix.app.ui.discover
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.aliflix.app.model.Media
-import com.aliflix.app.model.MediaType
-import com.aliflix.app.recommendation.CatalogDiscoverySpec
-import com.aliflix.app.ui.theme.AliflixBackgroundBase
+import com.aliflix.app.ui.common.aliflixScreenBackground
 
 @Composable
 fun AskAliflixScreen(
@@ -30,146 +22,175 @@ fun AskAliflixScreen(
     onReset: () -> Unit,
     onEdit: () -> Unit,
     onOpenMedia: (Media) -> Unit,
-    onSearchTitles: suspend (String) -> List<Media>,
     suggestions: List<Media>,
     suggestionsLoading: Boolean,
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
     listState: LazyListState,
+    onRefineRequest: (String) -> Unit = {},
+    onToggleHideWatched: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .background(AliflixBackgroundBase)
-            .windowInsetsPadding(WindowInsets.statusBars)
+            .aliflixScreenBackground()
+            .windowInsetsPadding(WindowInsets.statusBars),
     ) {
-        // TOP APP BAR: ← Ask Aliflix  BETA  Reset
-        AskAliflixHeader(
-            onReset = onReset,
-            onBack = onBack
-        )
+        Column(modifier = Modifier.fillMaxSize()) {
+            AskAliflixHeader(
+                onReset = onReset,
+                onBack = onBack,
+                showNewSearch = uiState !is AskAliflixUiState.Editing,
+            )
 
-        // Primary Screen State Transition (Editing vs Results / Searching / Empty / Error)
-        AnimatedContent(
-            targetState = uiState is AskAliflixUiState.Editing,
-            transitionSpec = {
-                fadeIn(AskAliflixMotion.stateTransitionSpec()) togetherWith fadeOut(AskAliflixMotion.stateTransitionSpec())
-            },
-            label = "ask-screen-state"
-        ) { isEditing ->
-            if (isEditing) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    // MODE & MEDIA TYPE CONTROL (Movies | Series) + (Describe | Similar | Filters)
-                    AskAliflixModeSelector(
-                        selectedMode = editorState.mode,
-                        onModeSelected = { newMode ->
-                            onEditorStateChanged(editorState.copy(mode = newMode))
-                        },
-                        selectedMediaType = editorState.mediaType,
-                        onMediaTypeSelected = { newType ->
-                            onEditorStateChanged(
-                                editorState.copy(
-                                    mediaType = newType,
-                                    spec = editorState.spec.copy(mediaKind = if (newType == com.aliflix.app.model.MediaType.TV) com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)
+            AnimatedContent(
+                targetState = uiState is AskAliflixUiState.Editing,
+                transitionSpec = { AskAliflixMotion.editorResultTransition(targetState) },
+                label = "ask-screen-state",
+                modifier = Modifier.weight(1f),
+            ) { isEditing ->
+                if (isEditing) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        AskAliflixModeSelector(
+                            selectedMode = editorState.mode,
+                            onModeSelected = { onEditorStateChanged(editorState.copy(mode = it)) },
+                            selectedMediaType = editorState.mediaType,
+                            onMediaTypeSelected = { newType ->
+                                onEditorStateChanged(
+                                    editorState.copy(
+                                        mediaType = newType,
+                                        spec = editorState.spec.copy(
+                                            mediaKind = if (newType == com.aliflix.app.model.MediaType.TV) {
+                                                com.aliflix.app.recommendation.RecommendationMediaKind.SERIES
+                                            } else {
+                                                com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE
+                                            },
+                                            requiredStatus = if (newType == com.aliflix.app.model.MediaType.TV) {
+                                                editorState.spec.requiredStatus
+                                            } else {
+                                                null
+                                            },
+                                            sortBy = if (
+                                                newType == com.aliflix.app.model.MediaType.TV &&
+                                                editorState.spec.sortBy == com.aliflix.app.recommendation.RecommendationSort.RUNTIME_SHORT_TO_LONG
+                                            ) {
+                                                com.aliflix.app.recommendation.RecommendationSort.MOST_POPULAR
+                                            } else {
+                                                editorState.spec.sortBy
+                                            },
+                                        ),
+                                    )
                                 )
+                            },
+                        )
+
+                        if (editorState.mediaType == com.aliflix.app.model.MediaType.TV) {
+                            AskAliflixSeriesStatusSelector(
+                                selectedStatus = editorState.spec.requiredStatus,
+                                onStatusSelected = { status ->
+                                    onEditorStateChanged(editorState.copy(spec = editorState.spec.copy(requiredStatus = status)))
+                                },
                             )
                         }
-                    )
 
-                    // MODE WORKSPACE CONTENT (Directional horizontal animation between modes)
-                    AnimatedContent(
-                        targetState = editorState.mode,
-                        transitionSpec = {
-                            AskAliflixMotion.horizontalModeTransition(targetState > initialState)
-                        },
-                        label = "ask-mode-workspace",
-                        modifier = Modifier.weight(1f)
-                    ) { mode ->
-                        when (mode) {
-                            0 -> {
-                                // DESCRIBE WORKSPACE
-                                AskAliflixDescribe(
+                        AnimatedContent(
+                            targetState = editorState.mode,
+                            transitionSpec = { AskAliflixMotion.horizontalModeTransition(targetState > initialState) },
+                            label = "ask-mode-workspace",
+                            modifier = Modifier.weight(1f),
+                        ) { mode ->
+                            when (mode) {
+                                0 -> AskAliflixDescribe(
                                     text = editorState.describeText,
-                                    onTextChanged = { text ->
-                                        onEditorStateChanged(editorState.copy(describeText = text))
-                                    },
+                                    onTextChanged = { onEditorStateChanged(editorState.copy(describeText = it)) },
                                     mediaType = editorState.mediaType,
                                     onSubmit = {
                                         onSubmitRequest(
                                             AskAliflixRequest.Describe(
                                                 mediaType = editorState.mediaType,
-                                                text = editorState.describeText
+                                                text = editorState.describeText,
+                                                requiredStatus = editorState.spec.requiredStatus,
                                             )
                                         )
                                     },
-                                    loading = false
+                                    loading = false,
                                 )
-                            }
 
-                            1 -> {
-                                // SIMILAR WORKSPACE
-                                AskAliflixSimilar(
-                                    query = editorState.similarQuery,
-                                    onQueryChanged = { q ->
-                                        onEditorStateChanged(editorState.copy(similarQuery = q))
-                                    },
-                                    selectedAnchor = editorState.selectedAnchor,
-                                    onAnchorSelected = { anchor ->
-                                        onEditorStateChanged(
-                                            editorState.copy(
-                                                selectedAnchor = anchor,
-                                                similarQuery = anchor?.title ?: editorState.similarQuery
-                                            )
-                                        )
-                                    },
-                                    suggestions = suggestions,
-                                    suggestionsLoading = suggestionsLoading,
-                                    outputMediaType = editorState.mediaType,
-                                    onSubmit = {
-                                        editorState.selectedAnchor?.let { anchor ->
-                                            onSubmitRequest(
-                                                AskAliflixRequest.Similar(
-                                                    outputMediaType = editorState.mediaType,
-                                                    anchor = anchor
+                                1 -> {
+                                    val anchors = if (editorState.selectedAnchors.isNotEmpty()) {
+                                        editorState.selectedAnchors
+                                    } else {
+                                        listOfNotNull(editorState.selectedAnchor)
+                                    }
+                                    AskAliflixSimilar(
+                                        query = editorState.similarQuery,
+                                        onQueryChanged = { onEditorStateChanged(editorState.copy(similarQuery = it)) },
+                                        selectedAnchors = anchors,
+                                        onAddAnchor = { item ->
+                                            if (anchors.none { it.key == item.key } && anchors.size < 4) {
+                                                val updated = anchors + item
+                                                onEditorStateChanged(
+                                                    editorState.copy(
+                                                        selectedAnchors = updated,
+                                                        selectedAnchor = updated.firstOrNull(),
+                                                        similarQuery = "",
+                                                    )
+                                                )
+                                            }
+                                        },
+                                        onRemoveAnchor = { item ->
+                                            val updated = anchors.filterNot { it.key == item.key }
+                                            onEditorStateChanged(
+                                                editorState.copy(
+                                                    selectedAnchors = updated,
+                                                    selectedAnchor = updated.firstOrNull(),
                                                 )
                                             )
-                                        }
-                                    },
-                                    loading = false
-                                )
-                            }
+                                        },
+                                        suggestions = suggestions,
+                                        suggestionsLoading = suggestionsLoading,
+                                        outputMediaType = editorState.mediaType,
+                                        onSubmit = {
+                                            if (anchors.isNotEmpty()) {
+                                                onSubmitRequest(
+                                                    AskAliflixRequest.Similar(
+                                                        outputMediaType = editorState.mediaType,
+                                                        anchors = anchors,
+                                                        requiredStatus = editorState.spec.requiredStatus,
+                                                    )
+                                                )
+                                            }
+                                        },
+                                        loading = false,
+                                    )
+                                }
 
-                            2 -> {
-                                // FILTERS WORKSPACE
-                                AskAliflixFilters(
+                                else -> AskAliflixFilters(
                                     spec = editorState.spec,
-                                    onSpecChanged = { newSpec ->
-                                        onEditorStateChanged(editorState.copy(spec = newSpec))
-                                    },
-                                    onSubmit = {
-                                        onSubmitRequest(
-                                            AskAliflixRequest.Filters(spec = editorState.spec)
-                                        )
-                                    },
-                                    loading = false
+                                    onSpecChanged = { onEditorStateChanged(editorState.copy(spec = it)) },
+                                    onSubmit = { onSubmitRequest(AskAliflixRequest.Filters(editorState.spec)) },
+                                    loading = false,
                                 )
                             }
                         }
                     }
+                } else {
+                    AskAliflixResults(
+                        uiState = uiState,
+                        editorState = editorState,
+                        onOpenMedia = onOpenMedia,
+                        onEdit = onEdit,
+                        onReset = onReset,
+                        onLoadMore = onLoadMore,
+                        onRetry = onRetry,
+                        onRefine = onRefineRequest,
+                        hideWatched = editorState.hideWatched,
+                        onToggleHideWatched = onToggleHideWatched,
+                        listState = listState,
+                    )
                 }
-            } else {
-                // RESULTS / SEARCHING / EMPTY / ERROR VIEW
-                AskAliflixResults(
-                    uiState = uiState,
-                    onOpenMedia = onOpenMedia,
-                    onEdit = onEdit,
-                    onReset = onReset,
-                    onLoadMore = onLoadMore,
-                    onRetry = onRetry,
-                    listState = listState
-                )
             }
         }
     }

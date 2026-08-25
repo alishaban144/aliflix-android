@@ -3,17 +3,26 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val mobileVersionCode = 105
+val mobileVersionName = "3.1.15"
+val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
+val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("ALIFLIX_KEY_PASSWORD")
+val releaseSigningConfigured = listOf(
+    releaseKeystoreFile,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
 val githubReleaseBaseUrl =
     "https://github.com/alishaban144/aliflix-android/releases/latest/download"
-val legacyUpdateManifestOverride = providers.gradleProperty("ALIFLIX_UPDATE_MANIFEST_URL")
 val mobileUpdateManifestUrl = providers
     .gradleProperty("ALIFLIX_MOBILE_UPDATE_MANIFEST_URL")
-    .orElse(legacyUpdateManifestOverride)
     .orElse("$githubReleaseBaseUrl/update-mobile.json")
     .get()
 val tvUpdateManifestUrl = providers
     .gradleProperty("ALIFLIX_TV_UPDATE_MANIFEST_URL")
-    .orElse(legacyUpdateManifestOverride)
     .orElse("$githubReleaseBaseUrl/update-tv.json")
     .get()
 
@@ -25,14 +34,14 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 69
-        versionName = "2.9.18"
+        versionCode = 71
+        versionName = "2.9.20"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
             "String",
             "RECOMMENDATION_AI_BASE_URL",
-            "\"https://aliflix-recommendations.alishaban144.workers.dev\""
+            "\"https://aliflix-recommendations.equable-equipment.workers.dev\""
         )
     }
 
@@ -40,6 +49,8 @@ android {
     productFlavors {
         create("mobile") {
             dimension = "formFactor"
+            versionCode = mobileVersionCode
+            versionName = mobileVersionName
             buildConfigField("boolean", "IS_TV", "false")
             buildConfigField(
                 "String",
@@ -71,21 +82,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
-    val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
-    val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
-    val releaseKeyPassword = System.getenv("ALIFLIX_KEY_PASSWORD")
-    val releaseSigning = if (
-        !releaseKeystoreFile.isNullOrBlank() &&
-        !releaseKeystorePassword.isNullOrBlank() &&
-        !releaseKeyAlias.isNullOrBlank() &&
-        !releaseKeyPassword.isNullOrBlank()
-    ) {
+    val releaseSigning = if (releaseSigningConfigured) {
         signingConfigs.create("aliflixRelease") {
-            storeFile = file(releaseKeystoreFile)
-            storePassword = releaseKeystorePassword
-            keyAlias = releaseKeyAlias
-            keyPassword = releaseKeyPassword
+            storeFile = file(requireNotNull(releaseKeystoreFile))
+            storePassword = requireNotNull(releaseKeystorePassword)
+            keyAlias = requireNotNull(releaseKeyAlias)
+            keyPassword = requireNotNull(releaseKeyPassword)
         }
     } else {
         null
@@ -93,12 +95,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            if (releaseSigning != null) {
-                signingConfig = releaseSigning
-            } else {
-                signingConfig = signingConfigs.getByName("debug")
-            }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = releaseSigning
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -121,6 +120,25 @@ android {
     }
 }
 
+val validateReleaseSigning by tasks.registering {
+    group = "verification"
+    description = "Fails production release packaging when release signing credentials are unavailable."
+    doLast {
+        check(releaseSigningConfigured) {
+            "Production release builds require ALIFLIX_KEYSTORE_FILE, ALIFLIX_KEYSTORE_PASSWORD, ALIFLIX_KEY_ALIAS, and ALIFLIX_KEY_PASSWORD."
+        }
+        check(file(requireNotNull(releaseKeystoreFile)).isFile) {
+            "Production release keystore does not exist: $releaseKeystoreFile"
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name.matches(Regex("^(assemble|bundle|package)(Mobile|Tv)?Release$"))) {
+        dependsOn(validateReleaseSigning)
+    }
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
@@ -130,6 +148,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
+    implementation("androidx.webkit:webkit:1.17.0")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
@@ -139,7 +158,6 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jsoup:jsoup:1.19.1")
-    implementation("com.google.mediapipe:tasks-text:0.10.14")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")

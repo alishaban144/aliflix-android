@@ -2,7 +2,9 @@ package com.aliflix.app.data
 
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.Episode
 import com.aliflix.app.model.RatingSourceState
+import com.aliflix.app.model.HomeContent
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -11,6 +13,174 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImdbRatingRepositoryTest {
+    @Test
+    fun episodeSeasonRatingsAreResolvedFromTheVerifiedParentSeries() = runTest {
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = null,
+            pageLoader = {
+                """{"d":[{"id":"tt0903747","l":"Breaking Bad","q":"TV series","qid":"tvSeries","rank":41,"y":2008}]}"""
+            },
+            graphQlTransport = ImdbGraphQlTransport { _, body, _ ->
+                assertTrue(body.contains("includeSeasons: [\\\"5\\\"]"))
+                """
+                    {"data":{"title":{
+                      "id":"tt0903747",
+                      "titleText":{"text":"Breaking Bad"},
+                      "releaseYear":{"year":2008},
+                      "titleType":{"id":"tvSeries"},
+                      "episodes":{"episodes":{"edges":[
+                        {"node":{"id":"tt2301451","titleText":{"text":"Ozymandias"},
+                          "releaseDate":{"year":2013,"month":9,"day":15},
+                          "series":{"episodeNumber":{"seasonNumber":5,"episodeNumber":14}},
+                          "ratingsSummary":{"aggregateRating":9.5,"voteCount":506720}}},
+                        {"node":{"id":"tt2301453","titleText":{"text":"Granite State"},
+                          "releaseDate":{"year":2013,"month":9,"day":22},
+                          "series":{"episodeNumber":{"seasonNumber":5,"episodeNumber":15}},
+                          "ratingsSummary":{"aggregateRating":null,"voteCount":0}}}
+                      ]}}
+                    }}}
+                """.trimIndent()
+            },
+        )
+
+        val ratings = repository.ratingsForEpisodes(
+            series = Media(
+                id = 1396,
+                type = MediaType.TV,
+                title = "Breaking Bad",
+                year = "2008",
+                imdbId = "tt0903747",
+            ),
+            seasonNumber = 5,
+            episodes = listOf(
+                Episode(5, 14, "Ozymandias"),
+                Episode(5, 15, "Granite State"),
+            ),
+        )
+
+        assertEquals("tt2301451", ratings[14]?.imdbId)
+        assertEquals(9.5, ratings[14]?.rating ?: 0.0, 0.001)
+        assertEquals(506_720, ratings[14]?.voteCount)
+        assertEquals(RatingSourceState.VERIFIED, ratings[14]?.state)
+        assertEquals(RatingSourceState.NOT_RATED, ratings[15]?.state)
+    }
+
+    @Test
+    fun episodeRatingsRejectAResponseForTheWrongParentSeries() = runTest {
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = null,
+            pageLoader = {
+                """{"d":[{"id":"tt0903747","l":"Breaking Bad","q":"TV series","qid":"tvSeries","rank":41,"y":2008}]}"""
+            },
+            graphQlTransport = ImdbGraphQlTransport { _, _, _ ->
+                """
+                    {"data":{"title":{
+                      "id":"tt0944947",
+                      "titleText":{"text":"Game of Thrones"},
+                      "releaseYear":{"year":2011},
+                      "titleType":{"id":"tvSeries"},
+                      "episodes":{"episodes":{"edges":[]}}
+                    }}}
+                """.trimIndent()
+            },
+        )
+
+        val ratings = repository.ratingsForEpisodes(
+            series = Media(1396, MediaType.TV, "Breaking Bad", year = "2008"),
+            seasonNumber = 5,
+            episodes = listOf(Episode(5, 14, "Ozymandias")),
+        )
+
+        assertEquals(RatingSourceState.UNAVAILABLE, ratings[14]?.state)
+        assertEquals(null, ratings[14]?.rating)
+    }
+
+    @Test
+    fun canonicalImdbIdRejectsPreviouslyCachedWrongTitleRating() = runTest {
+        val wrongCached = ImdbRatingSnapshot(
+            identity = ImdbTitleIdentity(
+                imdbId = "tt1234567",
+                title = "Another Obsession",
+                year = 2023,
+                type = MediaType.MOVIE,
+            ),
+            rating = 6.2,
+            voteCount = 12_000,
+            state = RatingSourceState.VERIFIED,
+        )
+        var saved: ImdbRatingSnapshot? = null
+        val cache = object : CatalogCacheStore {
+            override suspend fun loadHome(): HomeContent? = null
+            override suspend fun saveHome(content: HomeContent) = Unit
+            override suspend fun loadImdbRating(mediaKey: String, maxAgeMs: Long) = wrongCached
+            override suspend fun saveImdbRating(mediaKey: String, snapshot: ImdbRatingSnapshot) {
+                saved = snapshot
+            }
+        }
+        var graphCalls = 0
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = cache,
+            pageLoader = { error("HTML fallback must not run") },
+            graphQlTransport = ImdbGraphQlTransport { _, _, _ ->
+                graphCalls += 1
+                ratedPayload("tt37287335", "Obsession", 2025, "movie", 7.8, 325_953)
+            },
+        )
+
+        val result = repository.ratingFor(
+            Media(
+                id = 1_339_713,
+                type = MediaType.MOVIE,
+                title = "Obsession",
+                year = "2026",
+                imdbId = "tt37287335",
+            ),
+        )
+
+        assertEquals(1, graphCalls)
+        assertEquals("tt37287335", result.identity.imdbId)
+        assertEquals(7.8, result.rating ?: 0.0, 0.001)
+        assertEquals("tt37287335", saved?.identity?.imdbId)
+    }
+
+    @Test
+    fun typedSuggestionReplacesWrongImdbIdCarriedByOlderLibraryMetadata() = runTest {
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = null,
+            pageLoader = { url ->
+                if (url.contains("suggestion")) {
+                    """
+                    {"d":[
+                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"y":2025},
+                      {"id":"tt39365308","l":"Obsession","q":"short","qid":"short","rank":35788,"y":2026}
+                    ]}
+                    """.trimIndent()
+                } else {
+                    error("Unexpected URL $url")
+                }
+            },
+            graphQlTransport = ImdbGraphQlTransport { _, body, _ ->
+                assertTrue(body.contains("tt37287335"))
+                ratedPayload("tt37287335", "Obsession", 2025, "movie", 7.8, 325_953)
+            },
+        )
+
+        val result = repository.ratingFor(
+            Media(
+                id = 1_339_713,
+                type = MediaType.MOVIE,
+                title = "Obsession",
+                year = "2026",
+                imdbId = "tt1234567",
+                imdbRating = 6.2,
+                imdbRatingState = RatingSourceState.VERIFIED,
+            ),
+        )
+
+        assertEquals("tt37287335", result.identity.imdbId)
+        assertEquals(7.8, result.rating ?: 0.0, 0.001)
+    }
+
     @Test
     fun primaryFailureContinuesToCachingHostWithRequiredHeaders() = runTest {
         val requests = mutableListOf<Pair<String, Map<String, String>>>()
@@ -150,6 +320,63 @@ class ImdbRatingRepositoryTest {
         )
 
         repository.ratingFor(media("tt1375666", "Inception", "2010"))
+    }
+
+    @Test
+    fun featureFilmPreferredOverShortFilmInResolveIdentity() = runTest {
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = null,
+            pageLoader = { url ->
+                if (url.contains("suggestion")) {
+                    """
+                    {"d":[
+                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"tl":"2025","y":2025},
+                      {"id":"tt39365308","l":"Obsession","q":"short","qid":"short","rank":35788,"tl":"2026 Short","y":2026}
+                    ]}
+                    """.trimIndent()
+                } else {
+                    error("Unexpected URL $url")
+                }
+            },
+            graphQlTransport = ImdbGraphQlTransport { _, _, _ ->
+                ratedPayload("tt37287335", "Obsession", 2025, "movie", 7.8, 325_953)
+            },
+        )
+
+        val result = repository.ratingFor(
+            media(
+                imdbId = "",
+                title = "Obsession",
+                year = "2026",
+            ),
+        )
+
+        assertEquals("tt37287335", result.identity.imdbId)
+        assertEquals(RatingSourceState.VERIFIED, result.state)
+        assertEquals(7.8, result.rating ?: 0.0, 0.001)
+        assertEquals(325_953, result.voteCount)
+    }
+
+    @Test
+    fun releaseYearDriftWithinTwoYearsIsAcceptedInGraphQL() = runTest {
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = null,
+            pageLoader = { error("HTML fallback must not run") },
+            graphQlTransport = ImdbGraphQlTransport { _, _, _ ->
+                ratedPayload("tt37287335", "Obsession", 2025, "movie", 7.8, 325_953)
+            },
+        )
+
+        val result = repository.ratingFor(
+            media(
+                imdbId = "tt37287335",
+                title = "Obsession",
+                year = "2026",
+            ),
+        )
+
+        assertEquals(RatingSourceState.VERIFIED, result.state)
+        assertEquals(7.8, result.rating ?: 0.0, 0.001)
     }
 
     private fun media(

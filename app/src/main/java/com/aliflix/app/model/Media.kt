@@ -20,6 +20,21 @@ enum class RatingSourceState {
     UNAVAILABLE,
 }
 
+data class MediaCreator(
+    val tmdbId: Int,
+    val name: String,
+    val profilePath: String? = null,
+) {
+    val profileUrl: String?
+        get() = profilePath?.let { path ->
+            when {
+                path.startsWith("https://") || path.startsWith("http://") -> path
+                path.startsWith("/") -> "https://image.tmdb.org/t/p/w185$path"
+                else -> null
+            }
+        }
+}
+
 data class Media(
     val id: Int,
     val type: MediaType,
@@ -35,11 +50,16 @@ data class Media(
     val imdbRatingState: RatingSourceState? = null,
     val rottenTomatoesRating: Int? = null,
     val rottenTomatoesState: RatingSourceState? = null,
+    val tmdbVoteCount: Int? = null,
     val genres: List<String> = emptyList(),
     val cast: List<String> = emptyList(),
+    val status: String = "",
+    val originalLanguage: String = "",
+    val creators: List<MediaCreator> = emptyList(),
     val runtime: String = "",
     val omdbGenres: List<String> = emptyList(),
     val omdbFullPlot: String? = null,
+    val reviews: List<MediaReview> = emptyList(),
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
@@ -48,7 +68,7 @@ data class Media(
         get() = imageUrl(backdropPath, "w1280")
 
     fun mergeWithOmdb(omdb: com.aliflix.app.data.omdb.OmdbTitleMetadata): Media {
-        if (!omdb.found) return this
+        if (!omdb.found || !matchesOmdbIdentity(omdb)) return this
 
         val mergedImdbId = imdbId.takeIf { it?.matches(Regex("tt\\d+")) == true } ?: omdb.imdbId
         val mergedImdbRating = omdb.imdbRating ?: imdbRating
@@ -89,6 +109,34 @@ data class Media(
         )
     }
 
+    private fun matchesOmdbIdentity(
+        omdb: com.aliflix.app.data.omdb.OmdbTitleMetadata,
+    ): Boolean {
+        val currentImdbId = imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
+        val returnedImdbId = omdb.imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
+        if (currentImdbId != null) return returnedImdbId == currentImdbId
+
+        val returnedType = omdb.type?.lowercase().orEmpty()
+        val typeMatches = when (type) {
+            MediaType.MOVIE -> returnedType in setOf("movie", "tv movie")
+            MediaType.TV -> returnedType in setOf("series", "tv series", "miniseries")
+        }
+        if (!typeMatches) return false
+
+        fun normalized(value: String): String = java.text.Normalizer
+            .normalize(value, java.text.Normalizer.Form.NFKD)
+            .replace(Regex("\\p{M}+"), "")
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+
+        val returnedTitle = omdb.title?.let(::normalized).orEmpty()
+        if (returnedTitle.isBlank() || returnedTitle != normalized(title)) return false
+
+        val currentYear = year.take(4).toIntOrNull()
+        return currentYear == null || omdb.year == null || kotlin.math.abs(currentYear - omdb.year) <= 2
+    }
+
     private fun String?.isNull_or_blank(): Boolean = this == null || this.isBlank()
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -106,8 +154,21 @@ data class Media(
         imdbRatingState?.let { put("imdbRatingState", it.name) }
         rottenTomatoesRating?.let { put("rottenTomatoesRating", it) }
         rottenTomatoesState?.let { put("rottenTomatoesState", it.name) }
+        tmdbVoteCount?.let { put("tmdbVoteCount", it) }
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
+        put("status", status)
+        put("originalLanguage", originalLanguage)
+        put("creators", org.json.JSONArray().apply {
+            creators.forEach { creator ->
+                put(
+                    JSONObject()
+                        .put("tmdbId", creator.tmdbId)
+                        .put("name", creator.name)
+                        .put("profilePath", creator.profilePath),
+                )
+            }
+        })
         put("runtime", runtime)
         put("omdbGenres", org.json.JSONArray(omdbGenres))
         omdbFullPlot?.let { put("omdbFullPlot", it) }
@@ -155,6 +216,9 @@ data class Media(
                     ?.let { value ->
                         RatingSourceState.entries.firstOrNull { it.name == value }
                     },
+                tmdbVoteCount = json.optInt("tmdbVoteCount").takeIf {
+                    json.has("tmdbVoteCount") && it >= 0
+                },
                 genres = json.optJSONArray("genres")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         array.optString(index).takeIf(String::isNotBlank)
@@ -163,6 +227,22 @@ data class Media(
                 cast = json.optJSONArray("cast")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         array.optString(index).takeIf(String::isNotBlank)
+                    }
+                }.orEmpty(),
+                status = json.optString("status"),
+                originalLanguage = json.optString("originalLanguage"),
+                creators = json.optJSONArray("creators")?.let { array ->
+                    (0 until array.length()).mapNotNull { index ->
+                        val creator = array.optJSONObject(index) ?: return@mapNotNull null
+                        val id = creator.optInt("tmdbId")
+                        val name = creator.optString("name").trim()
+                        if (id <= 0 || name.isBlank()) return@mapNotNull null
+                        MediaCreator(
+                            tmdbId = id,
+                            name = name,
+                            profilePath = creator.optString("profilePath")
+                                .takeIf { it.isNotBlank() && it != "null" },
+                        )
                     }
                 }.orEmpty(),
                 runtime = json.optString("runtime", ""),
@@ -200,8 +280,12 @@ data class Episode(
     val overview: String = "",
     val stillPath: String? = null,
     val runtime: String = "",
+    val imdbId: String? = null,
     val imdbRating: Double? = null,
+    val imdbVoteCount: Int? = null,
+    val imdbRatingState: RatingSourceState? = null,
     val rottenTomatoesRating: Int? = null,
+    val rottenTomatoesState: RatingSourceState? = null,
 ) {
     val stillUrl: String?
         get() = stillPath?.let { path ->

@@ -1,0 +1,834 @@
+import { describe, expect, it } from 'vitest';
+import { processRecommendation } from '../src/engine';
+import { ParsedRecommendationRequest, RecommendationRequestSchema } from '../src/schemas';
+import { InterpretedIntent, ServiceError } from '../src/types';
+import { applyTmdbAuthentication } from '../src/tmdb';
+
+const request: ParsedRecommendationRequest = {
+  requestId: '00000000-0000-4000-8000-000000000001', mode: 'filters', query: 'funny movies', mediaType: 'movie', pageSize: 20,
+  filters: {
+    minimumYear: undefined, maximumYear: undefined, originalLanguage: undefined, originCountries: [],
+    minimumRuntimeMinutes: undefined, maximumRuntimeMinutes: undefined, includedGenres: [], excludedGenres: [],
+    minimumTmdbRating: undefined, excludedTmdbIds: [], excludedTitles: [],
+  },
+};
+const interpreted: InterpretedIntent = {
+  hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [] },
+  requiredConceptGroups: [{ label: 'comedy', synonyms: ['funny', 'comedy'], weight: 1 }], softConcepts: [], excludedConcepts: [],
+  excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
+  genreHints: ['Comedy'], toneAndMood: ['funny'], broadSearchPhrases: [],
+};
+
+function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean } = {}) {
+  let remaining = 40;
+  return {
+    get callsRemaining() { return remaining; },
+    genres: async () => ({ genres: [{ id: 35, name: 'Comedy' }] }),
+    searchKeyword: async () => ({ page: 1, total_pages: 1, total_results: 1, results: [{ id: 99, name: 'comedy' }] }),
+    searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+    searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+    searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+    recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+    similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+    details: async (_type: string, id: number) => ({ id, title: 'Funny Fixture', overview: 'A funny comedy', genre_ids: [35], genres: [{ id: 35, name: 'Comedy' }] }),
+    discover: async () => {
+      remaining--;
+      if (options.authFail) throw new ServiceError('TMDB_AUTH_FAILED', 'TMDB rejected the credential', 503, false);
+      if (options.fail) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB failed', 503, true);
+      const results = options.empty ? [] : [
+        { id: 7, title: 'Funny Fixture', overview: 'A funny comedy', genre_ids: [35], vote_average: 7.2, vote_count: 500 },
+        { id: 7, title: 'Funny Fixture', overview: 'A duplicate TMDB row', genre_ids: [35], vote_average: 7.2, vote_count: 500 },
+      ];
+      return { page: 1, total_pages: 1, total_results: results.length, results };
+    },
+  };
+}
+
+describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
+  it('requires a canonical TMDB ID for similar requests', () => {
+    expect(() => RecommendationRequestSchema.parse({
+      ...request,
+      mode: 'similar',
+      anchor: { title: 'Breaking Bad', mediaType: 'tv' },
+    })).toThrow();
+  });
+
+  it('uses a v3 API key as api_key and only a separately named read token as Bearer', () => {
+    const keyUrl = new URL('https://api.themoviedb.org/3/discover/movie');
+    const keyHeaders: Record<string, string> = {};
+    applyTmdbAuthentication({ TMDB_API_KEY: 'v3-key' }, keyUrl, keyHeaders);
+    expect(keyUrl.searchParams.get('api_key')).toBe('v3-key');
+    expect(keyHeaders.authorization).toBeUndefined();
+
+    const tokenUrl = new URL('https://api.themoviedb.org/3/discover/tv');
+    const tokenHeaders: Record<string, string> = {};
+    applyTmdbAuthentication({ TMDB_READ_ACCESS_TOKEN: 'read-token' }, tokenUrl, tokenHeaders);
+    expect(tokenUrl.searchParams.has('api_key')).toBe(false);
+    expect(tokenHeaders.authorization).toBe('Bearer read-token');
+
+    const bothUrl = new URL('https://api.themoviedb.org/3/discover/movie');
+    const bothHeaders: Record<string, string> = {};
+    applyTmdbAuthentication(
+      { TMDB_API_KEY: 'updated-v3-key', TMDB_READ_ACCESS_TOKEN: 'older-read-token' },
+      bothUrl,
+      bothHeaders,
+    );
+    expect(bothUrl.searchParams.get('api_key')).toBe('updated-v3-key');
+    expect(bothHeaders.authorization).toBeUndefined();
+
+    const unambiguousUrl = new URL('https://api.themoviedb.org/3/discover/tv');
+    const unambiguousHeaders: Record<string, string> = {};
+    applyTmdbAuthentication({ TMDB_API_KEY: `eyJ${'x'.repeat(120)}` }, unambiguousUrl, unambiguousHeaders);
+    expect(unambiguousUrl.searchParams.get('api_key')).toMatch(/^eyJ/);
+    expect(unambiguousHeaders.authorization).toBeUndefined();
+  });
+
+  it('deduplicates by media type and TMDB ID, retains TMDB retrieval evidence, and survives embedding failure', async () => {
+    const results = await processRecommendation({} as any, request, {
+      tmdb: fakeTmdb(), interpret: async () => interpreted,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ tmdbId: 7, mediaType: 'movie', title: 'Funny Fixture' });
+    expect(results[0].retrievalSources.every(source => source.startsWith('discover:'))).toBe(true);
+    expect(JSON.stringify(results)).not.toMatch(/home|omdb|localSearch|scrap/i);
+  });
+
+  it('skips exhausted transient discovery pages without inventing fallback results', async () => {
+    const results = await processRecommendation({} as any, request, {
+      tmdb: fakeTmdb({ fail: true }), interpret: async () => interpreted,
+    });
+    expect(results).toEqual([]);
+  });
+
+  it('still propagates a non-retryable TMDB credential failure', async () => {
+    await expect(processRecommendation({} as any, request, {
+      tmdb: fakeTmdb({ authFail: true }), interpret: async () => interpreted,
+    })).rejects.toMatchObject({ code: 'TMDB_AUTH_FAILED', retryable: false });
+  });
+
+  it('returns a true empty pool for a narrow no-result request', async () => {
+    const results = await processRecommendation({} as any, { ...request, query: 'nonexistent narrow fixture' }, {
+      tmdb: fakeTmdb({ empty: true }), interpret: async () => interpreted,
+    });
+    expect(results).toEqual([]);
+  });
+
+  it('uses Gemini to retrieve Similar candidates, excludes the canonical anchor, and rejects superficial matches', async () => {
+    let recommendationCalls = 0;
+    let similarCalls = 0;
+    let discoverCalls = 0;
+    const similarTmdb = {
+      callsRemaining: 80,
+      genres: async () => ({ genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 16, name: 'Animation' }] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: title === 'Better Call Saul'
+          ? [{ id: 60059, name: title, first_air_date: '2015-02-08', overview: 'A compromised lawyer descends into Albuquerque crime.' }]
+          : title === 'Breaking Bad'
+            ? [{ id: 1396, name: title, first_air_date: '2008-01-20', overview: 'The anchor.' }]
+            : [{ id: 999, name: title, first_air_date: '2020-01-01', overview: 'Animated fantasy.' }],
+      }),
+      recommendations: async () => { recommendationCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      similar: async () => { similarCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      discover: async () => { discoverCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      details: async (_type: string, id: number) => {
+        if (id === 1396) return { id, name: 'Breaking Bad', first_air_date: '2008-01-20', overview: 'A teacher becomes a drug kingpin.', genres: [{ id: 80, name: 'Crime' }, { id: 18, name: 'Drama' }], keywords: { results: [{ id: 1, name: 'moral decline' }] } };
+        if (id === 60059) return { id, name: 'Better Call Saul', overview: 'A crime lawyer in Albuquerque', genres: [{ id: 80, name: 'Crime' }, { id: 18, name: 'Drama' }], vote_average: 8.7, vote_count: 6000 };
+        return { id, name: 'Unrelated Anime', overview: 'Animated fantasy', genres: [{ id: 16, name: 'Animation' }], vote_average: 9, vote_count: 9000 };
+      },
+    };
+    const similarRequest = RecommendationRequestSchema.parse({
+      ...request,
+      requestId: '00000000-0000-4000-8000-000000000099',
+      mode: 'similar',
+      query: 'series similar to Breaking Bad',
+      mediaType: 'tv',
+      anchor: { tmdbId: 1396, title: 'Breaking Bad', mediaType: 'tv' },
+    });
+    const results = await processRecommendation({} as any, similarRequest, {
+      tmdb: similarTmdb as any,
+      recommendSimilar: async () => [
+        { title: 'Better Call Saul', releaseYear: 2015, confidence: .97, reason: 'A morally compromised Albuquerque protagonist descends into crime.' },
+        { title: 'Breaking Bad', releaseYear: 2008, confidence: .99, reason: 'The anchor itself.' },
+        { title: 'Unrelated Anime', releaseYear: 2020, confidence: .70, reason: 'It is also dramatic.' },
+      ],
+      verifySimilarity: async (_env, _anchors, _refinement, _type, documents) => documents.map(document => ({
+        index: document.index,
+        relevanceScore: document.title === 'Better Call Saul' ? .96 : .12,
+        matchedGroupIndexes: [],
+        reason: document.title === 'Better Call Saul'
+          ? 'Both center on moral decline inside the Albuquerque criminal world.'
+          : 'Only a broad genre overlaps.',
+      })),
+    });
+    expect(results[0]?.title).toBe('Better Call Saul');
+    expect(results.some(item => item.tmdbId === 1396)).toBe(false);
+    expect(results.every(item => item.mediaType === 'tv')).toBe(true);
+    expect(results.slice(0, 1).some(item => item.title === 'Unrelated Anime')).toBe(false);
+    expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
+      'gemini:similar-recommendation', 'gemini:similarity-verification', 'tmdb:identity-search', 'tmdb:details',
+    ]));
+    expect({ recommendationCalls, similarCalls, discoverCalls }).toEqual({ recommendationCalls: 0, similarCalls: 0, discoverCalls: 0 });
+  });
+
+  it('bounds a broad TMDB candidate pool before enrichment', async () => {
+    let remaining = 220;
+    const largePoolTmdb = {
+      get callsRemaining() { return remaining; },
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      details: async (_type: string, id: number) => {
+        remaining--;
+        return { id, title: `TMDB Movie ${id}`, overview: 'A genuine TMDB catalogue title' };
+      },
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        remaining--;
+        const page = Number(params.page || 1);
+        const sort = String(params.sort_by || 'vote_count.desc');
+        const offset = sort === 'popularity.desc' ? 100_000
+          : sort === 'primary_release_date.desc' ? 200_000
+            : sort === 'vote_average.desc' ? 300_000
+              : 0;
+        const results = Array.from({ length: 20 }, (_, index) => {
+          const id = offset + (page - 1) * 20 + index + 1;
+          return {
+            id,
+            title: `TMDB Movie ${id}`,
+            overview: 'A genuine TMDB catalogue title',
+            genre_ids: [],
+            vote_average: 7.4,
+            vote_count: 2_500,
+          };
+        });
+        return { page, total_pages: 500, total_results: 10_000, results };
+      },
+    };
+    const broadIntent: InterpretedIntent = {
+      hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [] },
+      requiredConceptGroups: [], softConcepts: [], excludedConcepts: [],
+      excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
+      genreHints: [], toneAndMood: [], broadSearchPhrases: [],
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'surprise me' }, {
+      tmdb: largePoolTmdb,
+      interpret: async () => broadIntent,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(results).toHaveLength(48);
+    expect(new Set(results.map(item => `${item.mediaType}:${item.tmdbId}`)).size).toBe(48);
+    expect(results.every(item => item.retrievalSources.some(source => source.startsWith('discover:')))).toBe(true);
+  });
+
+  it('grounds every resolved group for a multi-keyword TMDB intersection', async () => {
+    const discoverCalls: Array<Record<string, string | number | boolean | undefined>> = [];
+    const groundedTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async (term: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: term.includes('detective') ? 11 : term.includes('ritual') ? 22 : 33, name: term }],
+      }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        discoverCalls.push(params);
+        return { page: 1, total_pages: 1, total_results: 1, results: [{ id: 77, title: 'Grounded Fixture', overview: 'Metadata wording differs', vote_average: 7.5, vote_count: 400 }] };
+      },
+      details: async () => ({ id: 77, title: 'Grounded Fixture', overview: 'Metadata wording differs', keywords: { keywords: [] }, genres: [] }),
+    };
+    const detailedIntent: InterpretedIntent = {
+      ...interpreted,
+      requiredConceptGroups: [
+        { label: 'detective', synonyms: ['detective'], weight: 1 },
+        { label: 'ritual murder', synonyms: ['ritual murder'], weight: 1 },
+        { label: 'isolated', synonyms: ['isolated'], weight: 1 },
+      ],
+      genreHints: [],
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'detective ritual murder isolated' }, {
+      tmdb: groundedTmdb as any,
+      interpret: async () => detailedIntent,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(results.map(item => item.tmdbId)).toEqual([77]);
+    expect(results[0].matchReasons).toContain('Grounded in multiple TMDB keyword concepts');
+    expect(discoverCalls.filter(params => params.with_keywords !== undefined).length).toBeGreaterThan(0);
+    expect(discoverCalls.some(params => String(params.with_keywords).split(',').length === 2)).toBe(true);
+  });
+
+  it('uses the same Gemini similarity standard for cross-media anchors without incompatible TMDB endpoints', async () => {
+    let recommendationCalls = 0;
+    let similarCalls = 0;
+    let discoverCalls = 0;
+    const crossMediaTmdb = {
+      callsRemaining: 120,
+      genres: async () => ({ genres: [{ id: 18, name: 'Drama' }] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchTitle: async (type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 900, title, release_date: '2019-01-01', overview: 'A cartel lawyer faces moral collapse.' }],
+      }),
+      recommendations: async () => { recommendationCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      similar: async () => { similarCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      discover: async () => { discoverCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      details: async (type: string, id: number) => id === 1396
+        ? { id, name: 'TV Anchor', overview: 'A teacher enters the drug trade', genres: [{ id: 18, name: 'Drama' }], keywords: { results: [{ id: 1, name: 'drug trade' }, { id: 2, name: 'moral decline' }, { id: 3, name: 'cartel' }] } }
+        : { id, title: 'Movie Counterpart', overview: 'A cartel lawyer drama', genres: [{ id: 18, name: 'Drama' }], keywords: { keywords: [{ id: 1, name: 'drug trade' }, { id: 2, name: 'moral decline' }, { id: 3, name: 'cartel' }] }, vote_average: 8, vote_count: 900 },
+    };
+    const similarRequest = RecommendationRequestSchema.parse({
+      ...request,
+      mode: 'similar', query: 'movies blending TV Anchor', mediaType: 'movie',
+      anchor: { tmdbId: 1396, title: 'TV Anchor', mediaType: 'tv' },
+    });
+    const results = await processRecommendation({} as any, similarRequest, {
+      tmdb: crossMediaTmdb as any,
+      recommendSimilar: async (_env, anchors, type) => {
+        expect(anchors).toHaveLength(1);
+        expect(anchors[0]).toMatchObject({ title: 'TV Anchor', mediaType: 'tv' });
+        expect(type).toBe('movie');
+        return [{ title: 'Movie Counterpart', releaseYear: 2019, confidence: .92, reason: 'A crime-world moral collapse centered on a cartel lawyer.' }];
+      },
+      verifySimilarity: async (_env, _anchors, _refinement, _type, documents) => documents.map(document => ({
+        index: document.index, relevanceScore: .91, matchedGroupIndexes: [], reason: 'Both trace moral collapse inside a cartel-driven crime story.',
+      })),
+    });
+
+    expect(recommendationCalls).toBe(0);
+    expect(similarCalls).toBe(0);
+    expect(discoverCalls).toBe(0);
+    expect(results.map(item => `${item.mediaType}:${item.tmdbId}`)).toEqual(['movie:900']);
+  });
+
+  it('never returns candidates whose authoritative detail hydration failed', async () => {
+    const unavailableDetails = {
+      ...fakeTmdb(),
+      details: async () => { throw new ServiceError('TMDB_UNAVAILABLE', 'detail timeout', 503, true); },
+    };
+
+    const results = await processRecommendation({} as any, request, {
+      tmdb: unavailableDetails,
+      interpret: async () => interpreted,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(results).toEqual([]);
+  });
+
+  it('uses only Gemini recommendations for Describe, then exact-resolves and premise-verifies TMDB metadata', async () => {
+    const seedTmdb = {
+      callsRemaining: 120,
+      genres: async () => ({ genres: [{ id: 878, name: 'Science Fiction' }] }),
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{
+          id: title === 'Fire in the Sky' ? 1 : 2,
+          title,
+           release_date: title === 'Fire in the Sky' ? '1993-03-12' : '2014-04-04',
+           overview: title === 'Fire in the Sky'
+            ? 'A logger disappears after an encounter with an extraterrestrial craft and returns with memories of abduction.'
+            : 'Friends meet for an ordinary cooking competition.',
+          genre_ids: [878], vote_average: 7, vote_count: 500,
+        }],
+      }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      details: async (_type: string, id: number) => id === 1
+        ? { id, title: 'Fire in the Sky', release_date: '1993-03-12', overview: 'A logger disappears after an encounter with an extraterrestrial craft and returns with memories of abduction.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [{ id: 10, name: 'alien' }, { id: 11, name: 'abduction' }] }, vote_average: 7, vote_count: 500 }
+        : { id, title: 'Alien Abduction', release_date: '2014-04-04', overview: 'Friends meet for an ordinary cooking competition.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [] }, vote_average: 7, vote_count: 500 },
+    };
+
+    const results = await processRecommendation({} as any, { ...request, mode: 'describe', query: 'visitors from space take a logger' }, {
+      tmdb: seedTmdb,
+      recommendDescribe: async () => [
+        { title: 'Fire in the Sky', releaseYear: 1993, confidence: .96, reason: 'A logger is abducted by extraterrestrials.' },
+        { title: 'Alien Abduction', releaseYear: 2014, confidence: .80, reason: 'The title appears related.' },
+      ],
+      verifyPremises: async (_env, _query, _type, _groups, documents) => {
+        expect(documents.map(document => document.title)).toEqual(['Fire in the Sky', 'Alien Abduction']);
+        return documents.map(document => document.overview.includes('extraterrestrial craft')
+          ? { index: document.index, relevanceScore: .96, matchedGroupIndexes: [0, 1], reason: 'Extraterrestrial abduction is central to the synopsis' }
+          : { index: document.index, relevanceScore: .08, matchedGroupIndexes: [], reason: 'No abduction premise is supported' });
+      },
+    });
+
+    expect(results.map(result => result.title)).toEqual(['Fire in the Sky']);
+    expect(results[0].matchReasons[0]).toContain('Extraterrestrial abduction');
+    expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
+      'gemini:describe-recommendation', 'gemini:premise-verification', 'tmdb:identity-search', 'tmdb:details',
+    ]));
+  });
+
+  it('expands Describe recall and returns up to twenty fully verified strong matches', async () => {
+    let generationPasses = 0;
+    let titleSearches = 0;
+    let detailCalls = 0;
+    let assessedDocuments = 0;
+    const expandedTmdb = {
+      ...fakeTmdb(),
+      callsRemaining: 100,
+      searchTitle: async (_type: string, title: string) => {
+        titleSearches++;
+        const id = Number(title.replace('Genuine Match ', ''));
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{ id, title, release_date: `${2000 + id}-01-01`, overview: 'The complete requested premise drives the story.' }],
+        };
+      },
+      details: async (_type: string, id: number) => {
+        detailCalls++;
+        return {
+          id,
+          title: `Genuine Match ${id}`,
+          release_date: `${2000 + id}-01-01`,
+          overview: 'The complete requested premise drives the story.',
+          genres: [{ id: 18, name: 'Drama' }],
+          keywords: { keywords: [{ id, name: 'central premise' }] },
+        };
+      },
+    };
+    const results = await processRecommendation({} as any, {
+      ...request, mode: 'describe', query: 'a precise premise with many genuine films', pageSize: 24,
+    }, {
+      tmdb: expandedTmdb as any,
+      recommendDescribe: async (_env, _query, _type, _filters, excludedTitles) => {
+        generationPasses++;
+        const start = excludedTitles?.length ? 13 : 1;
+        const end = excludedTitles?.length ? 24 : 12;
+        return Array.from({ length: end - start + 1 }, (_, offset) => {
+          const id = start + offset;
+          return {
+            title: `Genuine Match ${id}`,
+            releaseYear: 2000 + id,
+            confidence: .98 - id * .001,
+            reason: 'The requested premise is central throughout the story.',
+          };
+        });
+      },
+      verifyPremises: async (_env, _query, _type, _groups, documents) => {
+        assessedDocuments = documents.length;
+        return documents.map(document => ({
+          index: document.index,
+          relevanceScore: .94,
+          matchedGroupIndexes: [],
+          reason: 'The complete premise is the central narrative.',
+        }));
+      },
+    });
+
+    expect(generationPasses).toBe(2);
+    expect(titleSearches).toBe(24);
+    expect(assessedDocuments).toBe(24);
+    expect(detailCalls).toBe(20);
+    expect(results).toHaveLength(20);
+    expect(results.every(result => result.retrievalSources.includes('tmdb:details'))).toBe(true);
+  });
+
+  it('uses TMDB series status only for eligibility and never changes premise relevance', async () => {
+    const statusTmdb = {
+      ...fakeTmdb(),
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{
+          id: title === 'Still Running' ? 10 : 20,
+          name: title,
+          first_air_date: title === 'Still Running' ? '2022-01-01' : '2018-01-01',
+          overview: 'People are trapped in a mysterious place they cannot escape.',
+        }],
+      }),
+      details: async (_type: string, id: number) => ({
+        id,
+        name: id === 10 ? 'Still Running' : 'Completed Mystery',
+        first_air_date: id === 10 ? '2022-01-01' : '2018-01-01',
+        overview: 'People are trapped in a mysterious place they cannot escape.',
+        status: id === 10 ? 'Returning Series' : 'Ended',
+        genres: [{ id: 9648, name: 'Mystery' }],
+        keywords: { results: [] },
+      }),
+    };
+    const generated = [
+      { title: 'Still Running', releaseYear: 2022, confidence: .98, reason: 'The characters cannot leave the mysterious location.' },
+      { title: 'Completed Mystery', releaseYear: 2018, confidence: .82, reason: 'The characters cannot leave the mysterious location.' },
+    ];
+    const verifyPremises = async (_env: unknown, _query: string, _type: string, _groups: unknown[], documents: Array<{ index: number }>) =>
+      documents.map(document => ({
+        index: document.index,
+        relevanceScore: .91,
+        matchedGroupIndexes: [],
+        reason: 'Being trapped in the inescapable location is the central premise.',
+      }));
+    const tvDescribe = { ...request, mode: 'describe' as const, mediaType: 'tv' as const };
+
+    const unrestricted = await processRecommendation({} as any, tvDescribe, {
+      tmdb: statusTmdb,
+      recommendDescribe: async () => generated,
+      verifyPremises: verifyPremises as any,
+    });
+    const endedOnly = await processRecommendation({} as any, {
+      ...tvDescribe,
+      filters: { ...request.filters, seriesStatus: 'ended' as const },
+    }, {
+      tmdb: statusTmdb,
+      recommendDescribe: async () => generated,
+      verifyPremises: verifyPremises as any,
+    });
+
+    expect(endedOnly.map(result => result.title)).toEqual(['Completed Mystery']);
+    expect(endedOnly[0].status).toBe('Ended');
+    expect(endedOnly[0].finalScore).toBe(
+      unrestricted.find(result => result.title === 'Completed Mystery')?.finalScore,
+    );
+  });
+
+  it('propagates Gemini Describe failure without invoking keyword or discover fallback', async () => {
+    let keywordCalls = 0;
+    let discoverCalls = 0;
+    const tmdb = {
+      ...fakeTmdb(),
+      searchKeyword: async () => {
+        keywordCalls++;
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+      discover: async () => {
+        discoverCalls++;
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+    };
+    const failure = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini timed out', 504, true);
+
+    await expect(processRecommendation({} as any, { ...request, mode: 'describe' }, {
+      tmdb,
+      recommendDescribe: async () => { throw failure; },
+    })).rejects.toBe(failure);
+    expect(keywordCalls).toBe(0);
+    expect(discoverCalls).toBe(0);
+  });
+
+  it('propagates Gemini Similar failure without invoking broad TMDB retrieval fallback', async () => {
+    let recommendationCalls = 0;
+    let similarCalls = 0;
+    let discoverCalls = 0;
+    const tmdb = {
+      ...fakeTmdb(),
+      details: async (_type: string, id: number) => ({
+        id, name: 'Canonical Anchor', first_air_date: '2020-01-01', overview: 'A distinctive central story.',
+        genres: [{ id: 18, name: 'Drama' }], keywords: { results: [] },
+      }),
+      recommendations: async () => { recommendationCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      similar: async () => { similarCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      discover: async () => { discoverCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+    };
+    const failure = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini timed out', 504, true);
+
+    await expect(processRecommendation({} as any, {
+      ...request,
+      mode: 'similar', mediaType: 'tv',
+      anchor: { tmdbId: 55, title: 'Canonical Anchor', mediaType: 'tv' },
+    }, {
+      tmdb: tmdb as any,
+      recommendSimilar: async () => { throw failure; },
+    })).rejects.toBe(failure);
+    expect({ recommendationCalls, similarCalls, discoverCalls }).toEqual({ recommendationCalls: 0, similarCalls: 0, discoverCalls: 0 });
+  });
+
+  it('rejects a TV-only seriesStatus filter on movie requests', () => {
+    expect(() => RecommendationRequestSchema.parse({
+      ...request,
+      filters: { seriesStatus: 'ended' },
+    })).toThrow('seriesStatus is only valid for TV recommendations');
+  });
+
+  it('rejects runtime sorting for TV requests', () => {
+    expect(() => RecommendationRequestSchema.parse({
+      ...request,
+      mediaType: 'tv',
+      filters: { sortBy: 'runtime_short_to_long' },
+    })).toThrow('runtime_short_to_long is only valid for movie recommendations');
+  });
+
+  it('counts every TMDB keyword lookup against the discovery-search cap', async () => {
+    let keywordCalls = 0;
+    const cappedTmdb = {
+      callsRemaining: 120,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => { keywordCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      details: async () => ({ id: 1, title: 'Unused' }),
+    };
+    const manySynonyms: InterpretedIntent = {
+      ...interpreted,
+      requiredConceptGroups: Array.from({ length: 8 }, (_, group) => ({
+        label: `concept-${group}`,
+        synonyms: Array.from({ length: 12 }, (_, synonym) => `term-${group}-${synonym}`),
+        weight: 1,
+      })),
+      broadSearchPhrases: ['extra one', 'extra two', 'extra three'],
+      genreHints: [],
+    };
+
+    await processRecommendation({} as any, { ...request, query: 'many independent ideas' }, {
+      tmdb: cappedTmdb as any,
+      interpret: async () => manySynonyms,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(keywordCalls).toBeLessThanOrEqual(18);
+  });
+
+  it('does not ground concepts with fuzzy TMDB keyword search results', async () => {
+    const keywordDiscoveries: string[] = [];
+    const fuzzyTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 1, total_results: 1, results: [{ id: 999, name: 'unrelated keyword' }] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        if (params.with_keywords) keywordDiscoveries.push(String(params.with_keywords));
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+      details: async () => ({ id: 1, title: 'Unused' }),
+    };
+
+    await processRecommendation({} as any, { ...request, query: 'precise obscure concept' }, {
+      tmdb: fuzzyTmdb as any,
+      interpret: async () => ({ ...interpreted, requiredConceptGroups: [{ label: 'precise', synonyms: ['precise'], weight: 1 }], genreHints: [] }),
+    });
+
+    expect(keywordDiscoveries).toEqual([]);
+  });
+
+  it('grounds safe singular and plural variants without enabling fuzzy matches', async () => {
+    const keywordDiscoveries: string[] = [];
+    const morphologyTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => ({
+        page: 1, total_pages: 1, total_results: 2,
+        results: [{ id: 101, name: 'teenager' }, { id: 999, name: 'teenage comedy' }],
+      }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        if (params.with_keywords) keywordDiscoveries.push(String(params.with_keywords));
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{ id: 101, title: 'Grounded Teen Story', overview: 'Metadata wording differs', vote_average: 7.2, vote_count: 500 }],
+        };
+      },
+      details: async () => ({
+        id: 101, title: 'Grounded Teen Story', overview: 'Metadata wording differs',
+        keywords: { keywords: [{ id: 101, name: 'teenager' }] }, genres: [], vote_average: 7.2, vote_count: 500,
+      }),
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'teenagers' }, {
+      tmdb: morphologyTmdb as any,
+      interpret: async () => ({
+        ...interpreted,
+        requiredConceptGroups: [{ label: 'teenagers', synonyms: ['teenagers'], weight: 1 }],
+        genreHints: [],
+      }),
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(keywordDiscoveries.length).toBeGreaterThan(0);
+    expect(keywordDiscoveries.every(expression => expression === '101')).toBe(true);
+    expect(results.map(item => item.tmdbId)).toEqual([101]);
+  });
+
+  it('uses a semantic synonym after ignoring duplicate hyphen and spacing variants', async () => {
+    const searchedTerms: string[] = [];
+    const synonymTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async (term: string) => {
+        searchedTerms.push(term);
+        return term === 'psychic ability'
+          ? { page: 1, total_pages: 1, total_results: 1, results: [{ id: 303, name: 'psychic ability' }] }
+          : { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 303, title: 'Supernatural Fixture', overview: 'Metadata wording differs', vote_average: 7.5, vote_count: 700 }],
+      }),
+      details: async () => ({
+        id: 303, title: 'Supernatural Fixture', overview: 'Metadata wording differs',
+        keywords: { keywords: [{ id: 303, name: 'psychic ability' }] }, genres: [], vote_average: 7.5, vote_count: 700,
+      }),
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'supernatural powers' }, {
+      tmdb: synonymTmdb as any,
+      interpret: async () => ({
+        ...interpreted,
+        requiredConceptGroups: [{
+          label: 'supernatural powers',
+          synonyms: ['supernatural powers', 'supernatural-powers'],
+          weight: 1,
+        }],
+        genreHints: [],
+      }),
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(searchedTerms).toEqual(['supernatural powers', 'psychic ability']);
+    expect(results.map(item => item.tmdbId)).toEqual([303]);
+  });
+
+  it('merges duplicate genre concepts and omits narrative connector verbs', async () => {
+    let keywordCalls = 0;
+    const discoverCalls: Array<Record<string, string | number | boolean | undefined>> = [];
+    const cleanedTmdb = {
+      callsRemaining: 100,
+      genres: async () => ({ genres: [{ id: 35, name: 'Comedy' }] }),
+      searchKeyword: async () => { keywordCalls++; return { page: 1, total_pages: 0, total_results: 0, results: [] }; },
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        discoverCalls.push(params);
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{ id: 35, title: 'Real Comedy', overview: 'A joyful night out', genre_ids: [35], vote_average: 7.4, vote_count: 800 }],
+        };
+      },
+      details: async () => ({
+        id: 35, title: 'Real Comedy', overview: 'A joyful night out', genres: [{ id: 35, name: 'Comedy' }],
+        keywords: { keywords: [] }, vote_average: 7.4, vote_count: 800,
+      }),
+    };
+    const noisyIntent: InterpretedIntent = {
+      ...interpreted,
+      requiredConceptGroups: [
+        { label: 'funny', synonyms: ['funny'], weight: 1 },
+        { label: 'comedy', synonyms: ['comedy'], weight: 1 },
+        { label: 'solving', synonyms: ['solving'], weight: 1 },
+      ],
+      genreHints: ['Comedy'],
+      broadSearchPhrases: ['funny', 'comedy'],
+    };
+
+    const results = await processRecommendation({} as any, { ...request, query: 'funny comedy solving' }, {
+      tmdb: cleanedTmdb as any,
+      interpret: async () => noisyIntent,
+      embed: async () => { throw new Error('embedding outage'); },
+    });
+
+    expect(keywordCalls).toBe(0);
+    expect(discoverCalls.some(params => params.with_genres === '35' && params.with_keywords === undefined)).toBe(true);
+    expect(results.map(item => item.tmdbId)).toEqual([35]);
+  });
+
+  it('caps TMDB discovery at the current date', async () => {
+    const maximumDates: string[] = [];
+    const datedTmdb = {
+      ...fakeTmdb(),
+      discover: async (_type: string, params: Record<string, string | number | boolean | undefined>) => {
+        const maximum = params['primary_release_date.lte'];
+        if (maximum) maximumDates.push(String(maximum));
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+    };
+
+    await processRecommendation({} as any, { ...request, mode: 'filters', query: '' }, {
+      tmdb: datedTmdb,
+      interpret: async () => ({ ...interpreted, requiredConceptGroups: [], genreHints: [], toneAndMood: [] }),
+    });
+
+    expect(maximumDates.length).toBeGreaterThan(0);
+    expect(maximumDates.every(date => date <= new Date().toISOString().slice(0, 10))).toBe(true);
+  });
+
+  it('requires Gemini Similar fusion across every canonical anchor', async () => {
+    const multiAnchorTmdb = {
+      callsRemaining: 50,
+      genres: async () => ({ genres: [] }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 500, title, release_date: '2016-11-11', overview: 'A philosophical science-fiction mystery.' }],
+      }),
+      details: async (_type: string, id: number) => ({
+        id,
+        title: id === 101 ? 'Interstellar' : (id === 102 ? 'Blade Runner 2049' : 'Arrival'),
+        release_date: id === 101 ? '2014-11-07' : id === 102 ? '2017-10-06' : '2016-11-11',
+        overview: id === 101 ? 'Space travel shaped by time and family.' : id === 102 ? 'An artificial person investigates identity.' : 'First contact reshapes time and human identity.',
+        genres: [{ id: 878, name: 'Science Fiction' }],
+        keywords: { keywords: id === 101 ? [{ id: 9715, name: 'space' }] : [{ id: 4048, name: 'cyberpunk' }] },
+      }),
+      recommendations: async (_type: string, id: number) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 500, title: 'Arrival', overview: 'A philosophical sci-fi film', genre_ids: [878], vote_average: 8.0, vote_count: 5000 }],
+      }),
+      similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+    };
+
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'similar',
+      anchors: [
+        { tmdbId: 101, title: 'Interstellar', mediaType: 'movie' },
+        { tmdbId: 102, title: 'Blade Runner 2049', mediaType: 'movie' },
+      ],
+    }, {
+      tmdb: multiAnchorTmdb as any,
+      recommendSimilar: async (_env, anchors) => {
+        expect(anchors.map(anchor => anchor.title)).toEqual(['Interstellar', 'Blade Runner 2049']);
+        return [{
+          title: 'Arrival', releaseYear: 2016, confidence: .96,
+          reason: 'It blends cerebral science fiction, nonlinear time, identity, and intimate human stakes.',
+        }];
+      },
+      verifySimilarity: async (_env, anchors, _refinement, _type, documents) => {
+        expect(anchors).toHaveLength(2);
+        return documents.map(document => ({
+          index: document.index,
+          relevanceScore: .95,
+          matchedGroupIndexes: [],
+          reason: 'It substantively combines the temporal, philosophical, identity, and emotional concerns of both anchors.',
+        }));
+      },
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].tmdbId).toBe(500);
+    expect(results[0].title).toBe('Arrival');
+  });
+});
