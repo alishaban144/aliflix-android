@@ -81,7 +81,6 @@ fun AskAliflixFilters(
     var yearRuntimeOpen by rememberSaveable { mutableStateOf(false) }
     var ratingOpen by rememberSaveable { mutableStateOf(false) }
     var regionOpen by rememberSaveable { mutableStateOf(false) }
-    var sortOpen by rememberSaveable { mutableStateOf(false) }
 
     val genres = askTmdbGenres(spec.mediaKind).map(AskTmdbGenre::name)
     val genreChoices = askGenreChoices(spec.mediaKind)
@@ -295,29 +294,6 @@ fun AskAliflixFilters(
                 }
             }
 
-            item {
-                val availableSorts = RecommendationSort.entries.filter {
-                    it != RecommendationSort.RUNTIME_SHORT_TO_LONG || spec.mediaKind == RecommendationMediaKind.MOVIE
-                }
-                FilterSection(
-                    title = "Sort by",
-                    icon = Icons.Rounded.Tune,
-                    badgeCount = if (spec.sortBy == RecommendationSort.MOST_POPULAR) 0 else 1,
-                    expanded = sortOpen,
-                    onToggle = { sortOpen = !sortOpen },
-                ) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        availableSorts.forEach { sort ->
-                            AskAliflixChip(
-                                label = sort.label,
-                                isSelected = spec.sortBy == sort,
-                                onClick = { onSpecChanged(spec.copy(sortBy = sort)) },
-                            )
-                        }
-                    }
-                }
-            }
-
             item { Spacer(Modifier.height(6.dp)) }
         }
 
@@ -475,7 +451,6 @@ internal fun CatalogDiscoverySpec.askFilterSummary(): String {
                 ASK_COUNTRIES.firstOrNull { it.code == code }?.label ?: code
             })
         }
-        add("Sort: ${sortBy.label}")
     }
     return values.joinToString(" / ").ifBlank { "No filters selected" }
 }
@@ -488,7 +463,6 @@ private fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
             spec.minimumTmdb != null,
             spec.originalLanguage != null,
             spec.requiredStatus != null,
-            spec.sortBy != RecommendationSort.MOST_POPULAR,
         ).count { it } + spec.countries.size
 
 private fun CatalogDiscoverySpec.clearAskFilters() = copy(
