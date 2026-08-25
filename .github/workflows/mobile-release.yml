@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.14"
+      - "release/v3.1.15"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.14"
+        description: "Release tag, for example v3.1.15"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "104"
-  RELEASE_VERSION_NAME: "3.1.14"
+  RELEASE_VERSION_CODE: "105"
+  RELEASE_VERSION_NAME: "3.1.15"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -74,7 +74,7 @@ jobs:
           VERSION_TAG="release-${GITHUB_SHA}"
           npx wrangler versions upload \
             --tag "$VERSION_TAG" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} complete TMDB filter pagination"
+            --message "Aliflix ${RELEASE_VERSION_NAME} Ask Aliflix sorting and recommendation engine updates"
           CANDIDATE_ID="$(
             npx wrangler versions list --json |
               jq -r --arg tag "$VERSION_TAG" \
@@ -85,7 +85,7 @@ jobs:
           test "$CANDIDATE_ID" != "null"
           npx wrangler versions deploy \
             "${CANDIDATE_ID}@100%" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} filter pagination release" \
+            --message "Aliflix ${RELEASE_VERSION_NAME} sorting release" \
             --yes
 
   release:
@@ -121,7 +121,7 @@ jobs:
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
           else
             test "${GITHUB_REF_TYPE}" = "branch"
-            test "${GITHUB_REF_NAME}" = "release/v3.1.14"
+            test "${GITHUB_REF_NAME}" = "release/v3.1.15"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then
@@ -217,7 +217,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Expands Ask Aliflix Filters to complete TMDB-backed pagination, makes Ended and Returning series return full catalogues, keeps official TMDB genres, and adds separate Japanese anime and English animation choices."
+            "releaseNotes": "Adds sorting filters (popularity, rating, votes, release date, runtime) to Ask Aliflix search results and enhances recommendation engine ranking."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -228,7 +228,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Expands Ask Aliflix Filters to complete TMDB-backed pagination, makes Ended and Returning series return full catalogues, keeps official TMDB genres, and adds separate Japanese anime and English animation choices."
+          body: "Adds sorting filters (popularity, rating, votes, release date, runtime) to Ask Aliflix search results and enhances recommendation engine ranking."
           files: |
             aliflix-mobile.apk
             update-mobile.json
