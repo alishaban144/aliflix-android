@@ -558,6 +558,14 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     })).toThrow('seriesStatus is only valid for TV recommendations');
   });
 
+  it('rejects runtime sorting for TV requests', () => {
+    expect(() => RecommendationRequestSchema.parse({
+      ...request,
+      mediaType: 'tv',
+      filters: { sortBy: 'runtime_short_to_long' },
+    })).toThrow('runtime_short_to_long is only valid for movie recommendations');
+  });
+
   it('counts every TMDB keyword lookup against the discovery-search cap', async () => {
     let keywordCalls = 0;
     const cappedTmdb = {

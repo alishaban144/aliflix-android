@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -57,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.aliflix.app.recommendation.CatalogDiscoverySpec
 import com.aliflix.app.recommendation.AnimationFilter
 import com.aliflix.app.recommendation.RecommendationMediaKind
+import com.aliflix.app.recommendation.RecommendationSort
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
@@ -79,8 +81,12 @@ fun AskAliflixFilters(
     var yearRuntimeOpen by rememberSaveable { mutableStateOf(false) }
     var ratingOpen by rememberSaveable { mutableStateOf(false) }
     var regionOpen by rememberSaveable { mutableStateOf(false) }
+    var sortOpen by rememberSaveable { mutableStateOf(false) }
 
     val genres = askTmdbGenres(spec.mediaKind).map(AskTmdbGenre::name)
+    val genreChoices = askGenreChoices(spec.mediaKind)
+    val selectedGenreChoices = spec.includedGenres.filterNot { it == "Animation" } +
+        listOfNotNull(spec.animationFilter?.label)
     val activeCount = selectedFilterCount(spec)
     val hasFilters = activeCount > 0
 
@@ -124,38 +130,28 @@ fun AskAliflixFilters(
                     expanded = genresOpen,
                     onToggle = { genresOpen = !genresOpen },
                 ) {
-                    FilterSubheading("ANIMATION ORIGIN")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        AnimationFilter.entries.forEach { choice ->
-                            AskAliflixChip(
-                                label = choice.label,
-                                isSelected = spec.animationFilter == choice,
-                                onClick = {
-                                    val next = choice.takeUnless { spec.animationFilter == choice }
-                                    onSpecChanged(
-                                        spec.copy(
-                                            animationFilter = next,
-                                            includedGenres = spec.includedGenres - "Animation",
-                                            excludedGenres = spec.excludedGenres - "Animation",
-                                            originalLanguage = if (next?.tmdbOriginalLanguage != null) null else spec.originalLanguage,
-                                        )
-                                    )
-                                },
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(13.dp))
                     FilterSubheading("TMDB GENRES")
                     FilterChipGrid(
-                        values = genres,
-                        selected = spec.includedGenres,
-                        onToggle = { genre ->
-                            val next = spec.includedGenres.toggle(genre)
-                            onSpecChanged(spec.copy(
-                                includedGenres = next,
-                                excludedGenres = spec.excludedGenres - genre,
-                                animationFilter = if (genre == "Animation") null else spec.animationFilter,
-                            ))
+                        values = genreChoices,
+                        selected = selectedGenreChoices,
+                        onToggle = { choice ->
+                            val animationChoice = AnimationFilter.entries.firstOrNull { it.label == choice }
+                            if (animationChoice != null) {
+                                val next = animationChoice.takeUnless { spec.animationFilter == animationChoice }
+                                onSpecChanged(spec.copy(
+                                    animationFilter = next,
+                                    includedGenres = spec.includedGenres - "Animation",
+                                    excludedGenres = spec.excludedGenres - "Animation",
+                                    originalLanguage = if (next != null) null else spec.originalLanguage,
+                                    countries = if (next != null) emptyList() else spec.countries,
+                                ))
+                            } else {
+                                val next = spec.includedGenres.toggle(choice)
+                                onSpecChanged(spec.copy(
+                                    includedGenres = next,
+                                    excludedGenres = spec.excludedGenres - choice,
+                                ))
+                            }
                         },
                     )
                 }
@@ -283,8 +279,39 @@ fun AskAliflixFilters(
                                 isSelected = selected,
                                 onClick = {
                                     val next = if (option.code == null) emptyList() else spec.countries.toggle(option.code)
-                                    onSpecChanged(spec.copy(countries = next))
+                                    onSpecChanged(spec.copy(
+                                        countries = next,
+                                        includedGenres = if (spec.animationFilter != null) {
+                                            (spec.includedGenres + "Animation").distinct()
+                                        } else {
+                                            spec.includedGenres
+                                        },
+                                        animationFilter = null,
+                                    ))
                                 },
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                val availableSorts = RecommendationSort.entries.filter {
+                    it != RecommendationSort.RUNTIME_SHORT_TO_LONG || spec.mediaKind == RecommendationMediaKind.MOVIE
+                }
+                FilterSection(
+                    title = "Sort by",
+                    icon = Icons.Rounded.Tune,
+                    badgeCount = if (spec.sortBy == RecommendationSort.MOST_POPULAR) 0 else 1,
+                    expanded = sortOpen,
+                    onToggle = { sortOpen = !sortOpen },
+                ) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        availableSorts.forEach { sort ->
+                            AskAliflixChip(
+                                label = sort.label,
+                                isSelected = spec.sortBy == sort,
+                                onClick = { onSpecChanged(spec.copy(sortBy = sort)) },
                             )
                         }
                     }
@@ -296,7 +323,7 @@ fun AskAliflixFilters(
 
         AskAliflixStickyCta(
             label = if (loading) "Loading…" else "Show matches",
-            enabled = hasFilters,
+            enabled = !loading,
             loading = loading,
             onClick = onSubmit,
         )
@@ -448,6 +475,7 @@ internal fun CatalogDiscoverySpec.askFilterSummary(): String {
                 ASK_COUNTRIES.firstOrNull { it.code == code }?.label ?: code
             })
         }
+        add("Sort: ${sortBy.label}")
     }
     return values.joinToString(" / ").ifBlank { "No filters selected" }
 }
@@ -460,6 +488,7 @@ private fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
             spec.minimumTmdb != null,
             spec.originalLanguage != null,
             spec.requiredStatus != null,
+            spec.sortBy != RecommendationSort.MOST_POPULAR,
         ).count { it } + spec.countries.size
 
 private fun CatalogDiscoverySpec.clearAskFilters() = copy(
@@ -474,6 +503,7 @@ private fun CatalogDiscoverySpec.clearAskFilters() = copy(
     animationFilter = null,
     requiredStatus = null,
     countries = emptyList(),
+    sortBy = RecommendationSort.MOST_POPULAR,
 )
 
 private fun <T> List<T>.toggle(value: T): List<T> = if (value in this) this - value else this + value
@@ -494,6 +524,11 @@ internal data class AskTmdbGenre(val id: Int, val name: String)
 
 internal fun askTmdbGenres(mediaKind: RecommendationMediaKind): List<AskTmdbGenre> =
     if (mediaKind == RecommendationMediaKind.SERIES) ASK_TMDB_TV_GENRES else ASK_TMDB_MOVIE_GENRES
+
+internal fun askGenreChoices(mediaKind: RecommendationMediaKind): List<String> =
+    askTmdbGenres(mediaKind).flatMap { genre ->
+        if (genre.name == "Animation") AnimationFilter.entries.map(AnimationFilter::label) else listOf(genre.name)
+    }
 
 private val ASK_TMDB_MOVIE_GENRES = listOf(
     AskTmdbGenre(28, "Action"), AskTmdbGenre(12, "Adventure"), AskTmdbGenre(16, "Animation"),

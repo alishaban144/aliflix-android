@@ -85,16 +85,13 @@ object AskAliflixRequestMapper {
             includedGenres
         }
         val resolvedExcludedGenres = if (animationSelected) excludedGenres - "Animation" else excludedGenres
-        val resolvedOriginalLanguage = when (animationFilter) {
-            AnimationFilter.JAPANESE_ANIME -> "ja"
-            AnimationFilter.ENGLISH_ANIMATION -> "en"
-            else -> originalLanguage
-        }
+        val resolvedOriginalLanguage = if (animationSelected) null else originalLanguage
+        val resolvedCountries = animationFilter?.let { listOf(it.tmdbOriginCountry) } ?: countries
         return V3RecommendationFilters(
             minimumYear = yearMinimum,
             maximumYear = yearMaximum,
             originalLanguage = resolvedOriginalLanguage,
-            originCountries = countries,
+            originCountries = resolvedCountries,
             minimumRuntimeMinutes = runtimeMinimumMinutes,
             maximumRuntimeMinutes = runtimeMaximumMinutes,
             includedGenres = resolvedIncludedGenres,
@@ -105,6 +102,7 @@ object AskAliflixRequestMapper {
                 "ended" -> "ended"
                 else -> null
             },
+            sortBy = sortBy.workerValue,
         )
     }
 

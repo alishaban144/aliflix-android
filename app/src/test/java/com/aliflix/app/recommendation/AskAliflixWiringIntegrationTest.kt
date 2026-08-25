@@ -119,12 +119,13 @@ class AskAliflixWiringIntegrationTest {
         assertEquals("ko", filters.getString("originalLanguage"))
         assertEquals("KR", filters.getJSONArray("originCountries").getString(0))
         assertEquals(7.5, filters.getDouble("minimumTmdbRating"), 0.0)
+        assertEquals("most_popular", filters.getString("sortBy"))
         assertFalse(filters.has("minimumImdb"))
         assertFalse(filters.has("minimumRottenTomatoes"))
     }
 
     @Test
-    fun animationChoicesSerializeOnlyCanonicalTmdbGenreAndLanguageConstraints() {
+    fun animationChoicesSerializeOnlyCanonicalTmdbGenreAndOriginCountryConstraints() {
         val japanese = AskAliflixRequestMapper.map(
             AskAliflixRequest.Filters(
                 CatalogDiscoverySpec(
@@ -132,32 +133,49 @@ class AskAliflixWiringIntegrationTest {
                     includedGenres = listOf("Sci-Fi & Fantasy"),
                     excludedGenres = listOf("Animation"),
                     originalLanguage = "ko",
-                    animationFilter = AnimationFilter.JAPANESE_ANIME,
+                    countries = listOf("US"),
+                    animationFilter = AnimationFilter.JAPANESE_ANIMATION,
                 ),
             ),
             "00000000-0000-4000-8000-000000000009",
         ).workerRequest.toJson().getJSONObject("filters")
 
-        assertEquals("ja", japanese.getString("originalLanguage"))
+        assertFalse(japanese.has("originalLanguage"))
+        assertEquals("JP", japanese.getJSONArray("originCountries").getString(0))
         val japaneseIncluded = japanese.getJSONArray("includedGenres")
         assertEquals(2, japaneseIncluded.length())
         assertEquals("Sci-Fi & Fantasy", japaneseIncluded.getString(0))
         assertEquals("Animation", japaneseIncluded.getString(1))
         assertEquals(0, japanese.getJSONArray("excludedGenres").length())
 
-        val english = AskAliflixRequestMapper.map(
+        val american = AskAliflixRequestMapper.map(
             AskAliflixRequest.Filters(
                 CatalogDiscoverySpec(
                     mediaKind = RecommendationMediaKind.MOVIE,
-                    animationFilter = AnimationFilter.ENGLISH_ANIMATION,
+                    animationFilter = AnimationFilter.AMERICAN_ANIMATION,
                 ),
             ),
             "00000000-0000-4000-8000-000000000010",
         ).workerRequest.toJson().getJSONObject("filters")
-        assertEquals("en", english.getString("originalLanguage"))
-        val englishIncluded = english.getJSONArray("includedGenres")
-        assertEquals(1, englishIncluded.length())
-        assertEquals("Animation", englishIncluded.getString(0))
+        assertEquals("US", american.getJSONArray("originCountries").getString(0))
+        val americanIncluded = american.getJSONArray("includedGenres")
+        assertEquals(1, americanIncluded.length())
+        assertEquals("Animation", americanIncluded.getString(0))
+    }
+
+    @Test
+    fun selectedSortIsForwardedToTheWorker() {
+        val filters = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Filters(
+                CatalogDiscoverySpec(
+                    mediaKind = RecommendationMediaKind.MOVIE,
+                    sortBy = RecommendationSort.RUNTIME_SHORT_TO_LONG,
+                ),
+            ),
+            "00000000-0000-4000-8000-000000000011",
+        ).workerRequest.toJson().getJSONObject("filters")
+
+        assertEquals("runtime_short_to_long", filters.getString("sortBy"))
     }
 
     @Test

@@ -32,9 +32,18 @@ enum class RecommendationMediaKind {
         }
 }
 
-enum class AnimationFilter(val label: String, val tmdbOriginalLanguage: String?) {
-    JAPANESE_ANIME("Japanese anime", "ja"),
-    ENGLISH_ANIMATION("English animation", "en"),
+enum class AnimationFilter(val label: String, val tmdbOriginCountry: String) {
+    JAPANESE_ANIMATION("Japanese Animation", "JP"),
+    AMERICAN_ANIMATION("American Animation", "US"),
+}
+
+enum class RecommendationSort(val label: String, val workerValue: String) {
+    MOST_POPULAR("Most Popular", "most_popular"),
+    HIGHEST_RATED("Highest Rated", "highest_rated"),
+    MOST_VOTED("Most Voted", "most_voted"),
+    NEWEST_FIRST("Newest First", "newest_first"),
+    OLDEST_FIRST("Oldest First", "oldest_first"),
+    RUNTIME_SHORT_TO_LONG("Runtime: Short to Long", "runtime_short_to_long"),
 }
 
 /** The filter state shared by the Ask Aliflix editor and Worker request mapper. */
@@ -51,6 +60,7 @@ data class CatalogDiscoverySpec(
     val animationFilter: AnimationFilter? = null,
     val requiredStatus: String? = null,
     val countries: List<String> = emptyList(),
+    val sortBy: RecommendationSort = RecommendationSort.MOST_POPULAR,
     val discoveryText: String = "",
 )
 

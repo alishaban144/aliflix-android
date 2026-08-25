@@ -33,6 +33,7 @@ export function mergeFilters(structured: RecommendationFilters, interpreted: Rec
       : interpreted.excludedGenres.filter(genre => !structuredIncluded.has(normalize(genre)))),
     minimumTmdbRating: structured.minimumTmdbRating ?? interpreted.minimumTmdbRating,
     seriesStatus: structured.seriesStatus ?? interpreted.seriesStatus,
+    sortBy: structured.sortBy ?? interpreted.sortBy,
     excludedTmdbIds: unique(structured.excludedTmdbIds.length ? structured.excludedTmdbIds : interpreted.excludedTmdbIds),
     excludedTitles: unique(structured.excludedTitles.length ? structured.excludedTitles : interpreted.excludedTitles),
   };

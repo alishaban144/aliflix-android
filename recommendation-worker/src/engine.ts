@@ -54,7 +54,6 @@ const TMDB_PAGE_SIZE = 20;
 const TMDB_MAX_PAGE = 500;
 const FILTER_WINDOW_PAGES = 6;
 const FILTER_WINDOW_SIZE = TMDB_PAGE_SIZE * FILTER_WINDOW_PAGES;
-const FILTER_DIVERSITY_CHUNK_SIZE = 24;
 
 const GENERIC_SUBJECT_CONCEPTS = new Set([
   'character', 'characters', 'individual', 'individuals', 'movie', 'movies', 'people', 'person', 'persons',
@@ -557,6 +556,20 @@ function genreLookup(genres: TmdbGenre[]): Map<string, number> {
   return new Map(genres.flatMap(genre => [[normalize(genre.name), genre.id], [normalize(genre.name.replace(/&/g, 'and')), genre.id]]));
 }
 
+function tmdbSort(type: MediaType, sortBy: RecommendationFilters['sortBy']): string {
+  switch (sortBy) {
+    case 'most_popular': return 'popularity.desc';
+    case 'highest_rated': return 'vote_average.desc';
+    case 'most_voted': return 'vote_count.desc';
+    case 'newest_first': return type === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc';
+    case 'oldest_first': return type === 'movie' ? 'primary_release_date.asc' : 'first_air_date.asc';
+    // TMDB Discover filters by runtime but does not expose runtime as a native
+    // sort. Direct movie-filter pagination handles this mode separately.
+    case 'runtime_short_to_long': return 'popularity.desc';
+    default: return 'vote_count.desc';
+  }
+}
+
 function discoverParams(
   type: MediaType,
   filters: RecommendationFilters,
@@ -566,7 +579,7 @@ function discoverParams(
   const included = filters.includedGenres.map(name => genreIds.get(normalize(name))).filter((id): id is number => id !== undefined);
   const excluded = filters.excludedGenres.map(name => genreIds.get(normalize(name))).filter((id): id is number => id !== undefined);
   const params: Record<string, string | number | boolean | undefined> = {
-    sort_by: 'vote_count.desc', with_original_language: filters.originalLanguage,
+    sort_by: tmdbSort(type, filters.sortBy), with_original_language: filters.originalLanguage,
     with_origin_country: filters.originCountries.length ? filters.originCountries.join('|') : undefined,
     with_genres: included.length ? included.join(',') : undefined, without_genres: excluded.length ? excluded.join(',') : undefined,
     with_status: type === 'tv'
@@ -604,33 +617,6 @@ export function supportsDirectFilterPagination(request: ParsedRecommendationRequ
     !request.refinementQuery?.trim();
 }
 
-function languageDiversifiedOrder(candidates: Candidate[]): Candidate[] {
-  const remaining = [...candidates];
-  const ordered: Candidate[] = [];
-  const maximumPerLanguage = Math.ceil(FILTER_DIVERSITY_CHUNK_SIZE / 2);
-
-  while (remaining.length) {
-    const chunk: Candidate[] = [];
-    const languageCounts = new Map<string, number>();
-    for (let index = 0; index < remaining.length && chunk.length < FILTER_DIVERSITY_CHUNK_SIZE;) {
-      const language = normalize(remaining[index].originalLanguage || 'undetermined');
-      const count = languageCounts.get(language) || 0;
-      if (count >= maximumPerLanguage) {
-        index++;
-        continue;
-      }
-      const [candidate] = remaining.splice(index, 1);
-      chunk.push(candidate);
-      languageCounts.set(language, count + 1);
-    }
-    if (chunk.length < FILTER_DIVERSITY_CHUNK_SIZE) {
-      chunk.push(...remaining.splice(0, FILTER_DIVERSITY_CHUNK_SIZE - chunk.length));
-    }
-    ordered.push(...chunk);
-  }
-  return ordered;
-}
-
 function filterResult(candidate: Candidate): RecommendationResult {
   return {
     tmdbId: candidate.tmdbId,
@@ -655,6 +641,104 @@ function filterResult(candidate: Candidate): RecommendationResult {
   };
 }
 
+async function processRuntimeSortedMoviePage(
+  tmdb: FilterDiscoveryTmdb,
+  request: ParsedRecommendationRequest,
+  offset: number,
+  genresById: Map<number, string>,
+  baseParams: Record<string, string | number | boolean | undefined>,
+): Promise<FilterDiscoveryPage> {
+  const lowerRuntime = Math.max(1, request.filters.minimumRuntimeMinutes || 1);
+  const upperRuntime = Math.min(1_000, request.filters.maximumRuntimeMinutes || 1_000);
+  const pageCache = new Map<string, TmdbPage>();
+  const fetchRange = async (minimum: number, maximum: number, page = 1): Promise<TmdbPage> => {
+    const key = `${minimum}:${maximum}:${page}`;
+    const cached = pageCache.get(key);
+    if (cached) return cached;
+    const response = await tmdb.discover('movie', {
+      ...baseParams,
+      sort_by: 'popularity.desc',
+      'with_runtime.gte': minimum,
+      'with_runtime.lte': maximum,
+      page,
+    });
+    pageCache.set(key, response);
+    return response;
+  };
+  const resultCount = (page: TmdbPage): number => {
+    const reachablePages = Math.min(TMDB_MAX_PAGE, Math.max(0, page.total_pages || 0));
+    return Math.min(Math.max(0, page.total_results || 0), reachablePages * TMDB_PAGE_SIZE);
+  };
+  const countRange = async (minimum: number, maximum: number): Promise<number> =>
+    resultCount(await fetchRange(minimum, maximum));
+
+  const totalResults = await countRange(lowerRuntime, upperRuntime);
+  if (!totalResults || offset >= totalResults) return { results: [], totalResults, nextOffset: null };
+
+  const findRuntimeAtOffset = async (targetOffset: number): Promise<{ runtime: number; withinRuntime: number; count: number } | null> => {
+    let low = lowerRuntime;
+    let high = upperRuntime;
+    let residual = targetOffset;
+    while (low < high) {
+      const midpoint = Math.floor((low + high) / 2);
+      const leftCount = await countRange(low, midpoint);
+      if (residual < leftCount) {
+        high = midpoint;
+      } else {
+        residual -= leftCount;
+        low = midpoint + 1;
+      }
+    }
+    const count = await countRange(low, low);
+    return residual < count ? { runtime: low, withinRuntime: residual, count } : null;
+  };
+
+  const results: RecommendationResult[] = [];
+  let cursorOffset = offset;
+  let runtimeGroupsVisited = 0;
+  // Two exact-runtime groups keep this path below the Worker's subrequest
+  // ceiling while still returning a full page for normal movie catalogues.
+  while (results.length < request.pageSize && cursorOffset < totalResults && runtimeGroupsVisited < 2) {
+    const located = await findRuntimeAtOffset(cursorOffset);
+    if (!located) break;
+    runtimeGroupsVisited++;
+    const groupStart = cursorOffset - located.withinRuntime;
+    let withinRuntime = located.withinRuntime;
+    while (withinRuntime < located.count && results.length < request.pageSize) {
+      const pageNumber = Math.floor(withinRuntime / TMDB_PAGE_SIZE) + 1;
+      const pageOffset = withinRuntime % TMDB_PAGE_SIZE;
+      const response = await fetchRange(located.runtime, located.runtime, pageNumber);
+      const rows = (response.results || []).slice(pageOffset);
+      if (!rows.length) {
+        cursorOffset = groupStart + located.count;
+        break;
+      }
+      const remainingSlots = request.pageSize - results.length;
+      const consumedRows = rows.slice(0, remainingSlots);
+      for (const item of consumedRows) {
+        cursorOffset++;
+        withinRuntime++;
+        const candidate = toCandidate(item, 'movie', genresById);
+        if (!candidate) continue;
+        candidate.runtimeMinutes = located.runtime;
+        candidate.hardFiltersVerified = true;
+        candidate.retrievalSources.add(`discover:runtime-${located.runtime}:page-${response.page}`);
+        if (passesKnownFilters(candidate, request.filters)) results.push(filterResult(candidate));
+      }
+      if (consumedRows.length < remainingSlots && withinRuntime < located.count && response.results.length < TMDB_PAGE_SIZE) {
+        cursorOffset = groupStart + located.count;
+        break;
+      }
+    }
+  }
+
+  return {
+    results,
+    totalResults,
+    nextOffset: cursorOffset < totalResults ? cursorOffset : null,
+  };
+}
+
 /**
  * Pages plain structured filters directly through TMDB instead of freezing the
  * first few popularity pages into a small, detail-hydrated recommendation pool.
@@ -673,6 +757,9 @@ export async function processFilterDiscoveryPage(
   const genresById = new Map(genreResponse.genres.map(genre => [genre.id, genre.name]));
   const genresByName = genreLookup(genreResponse.genres);
   const baseParams = discoverParams(request.mediaType, request.filters, genresByName, false);
+  if (request.mediaType === 'movie' && request.filters.sortBy === 'runtime_short_to_long') {
+    return processRuntimeSortedMoviePage(tmdb, request, offset, genresById, baseParams);
+  }
   const metadataPage = await tmdb.discover(request.mediaType, { ...baseParams, page: 1 });
   const totalPages = Math.min(TMDB_MAX_PAGE, Math.max(0, metadataPage.total_pages || 0));
   const totalResults = Math.min(metadataPage.total_results || 0, totalPages * TMDB_PAGE_SIZE);
@@ -703,15 +790,12 @@ export async function processFilterDiscoveryPage(
         if (passesKnownFilters(candidate, request.filters)) candidates.push(candidate);
       }
     }
-    const ordered = request.filters.originalLanguage
-      ? candidates
-      : languageDiversifiedOrder(candidates);
-    const pageResults = ordered
+    const pageResults = candidates
       .slice(withinWindow, withinWindow + request.pageSize)
       .map(filterResult);
     const consumedInWindow = withinWindow + pageResults.length;
     const nextWindowStart = windowStart + FILTER_WINDOW_SIZE;
-    const nextOffset = consumedInWindow < ordered.length
+    const nextOffset = consumedInWindow < candidates.length
       ? windowStart + consumedInWindow
       : nextWindowStart < totalResults ? nextWindowStart : null;
     if (pageResults.length || nextOffset === null) {

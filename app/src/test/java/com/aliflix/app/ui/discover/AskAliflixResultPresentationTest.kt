@@ -5,6 +5,7 @@ import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.CatalogDiscoverySpec
 import com.aliflix.app.recommendation.AnimationFilter
 import com.aliflix.app.recommendation.RecommendationMediaKind
+import com.aliflix.app.recommendation.RecommendationSort
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -41,7 +42,7 @@ class AskAliflixResultPresentationTest {
 
         assertEquals(
             "Crime, Drama / Avoid Comedy / Years 2015-2024 / " +
-                "Runtime 40-65 min / TMDB 7.5+ / Korean / South Korea",
+                "Runtime 40-65 min / TMDB 7.5+ / Korean / South Korea / Sort: Most Popular",
             summary,
         )
     }
@@ -73,9 +74,21 @@ class AskAliflixResultPresentationTest {
         val summary = CatalogDiscoverySpec(
             mediaKind = RecommendationMediaKind.SERIES,
             includedGenres = listOf("Sci-Fi & Fantasy"),
-            animationFilter = AnimationFilter.JAPANESE_ANIME,
+            animationFilter = AnimationFilter.JAPANESE_ANIMATION,
+            sortBy = RecommendationSort.HIGHEST_RATED,
         ).askFilterSummary()
 
-        assertEquals("Japanese anime / Sci-Fi & Fantasy", summary)
+        assertEquals("Japanese Animation / Sci-Fi & Fantasy / Sort: Highest Rated", summary)
+    }
+
+    @Test
+    fun animationReplacesTheCanonicalAnimationChipInsideTheTmdbGenreChoices() {
+        val choices = askGenreChoices(RecommendationMediaKind.SERIES)
+
+        assertEquals(false, "Animation" in choices)
+        assertEquals(
+            listOf("Japanese Animation", "American Animation"),
+            choices.filter { it.endsWith("Animation") },
+        )
     }
 }

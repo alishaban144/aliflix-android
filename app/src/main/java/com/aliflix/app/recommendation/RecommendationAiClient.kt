@@ -131,6 +131,7 @@ data class V3RecommendationFilters(
     val excludedGenres: List<String> = emptyList(),
     val minimumTmdbRating: Double? = null,
     val seriesStatus: String? = null,
+    val sortBy: String? = null,
     val excludedTmdbIds: List<Int> = emptyList(),
     val excludedTitles: List<String> = emptyList(),
 ) {
@@ -140,6 +141,7 @@ data class V3RecommendationFilters(
         minimumRuntimeMinutes?.let { put("minimumRuntimeMinutes", it) }; maximumRuntimeMinutes?.let { put("maximumRuntimeMinutes", it) }
         put("includedGenres", JSONArray(includedGenres)); put("excludedGenres", JSONArray(excludedGenres))
         minimumTmdbRating?.let { put("minimumTmdbRating", it) }; seriesStatus?.let { put("seriesStatus", it) }
+        sortBy?.let { put("sortBy", it) }
         put("excludedTmdbIds", JSONArray(excludedTmdbIds)); put("excludedTitles", JSONArray(excludedTitles))
     }
 }

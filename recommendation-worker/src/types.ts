@@ -1,5 +1,6 @@
 export type MediaType = 'movie' | 'tv';
 export type RequestMode = 'describe' | 'similar' | 'filters';
+export type RecommendationSort = 'most_popular' | 'highest_rated' | 'most_voted' | 'newest_first' | 'oldest_first' | 'runtime_short_to_long';
 
 export interface RecommendationFilters {
   minimumYear?: number;
@@ -12,6 +13,7 @@ export interface RecommendationFilters {
   excludedGenres: string[];
   minimumTmdbRating?: number;
   seriesStatus?: 'returning' | 'ended';
+  sortBy?: RecommendationSort;
   excludedTmdbIds: number[];
   excludedTitles: string[];
 }

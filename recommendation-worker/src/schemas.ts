@@ -14,6 +14,9 @@ const RecommendationFiltersObjectSchema = z.object({
   excludedGenres: z.array(trimmed.min(1).max(80)).max(20).default([]),
   minimumTmdbRating: z.number().min(0).max(10).nullish().transform(value => value ?? undefined),
   seriesStatus: z.preprocess(value => value ?? undefined, z.enum(['returning', 'ended']).optional()),
+  sortBy: z.preprocess(value => value ?? undefined, z.enum([
+    'most_popular', 'highest_rated', 'most_voted', 'newest_first', 'oldest_first', 'runtime_short_to_long',
+  ]).optional()),
   excludedTmdbIds: z.array(z.number().int().positive()).max(100).default([]),
   excludedTitles: z.array(trimmed.min(1).max(200)).max(100).default([]),
 });
@@ -58,6 +61,9 @@ export const RecommendationRequestSchema = z.object({
   }
   if (value.mediaType !== 'tv' && value.filters.seriesStatus) {
     ctx.addIssue({ code: 'custom', path: ['filters', 'seriesStatus'], message: 'seriesStatus is only valid for TV recommendations' });
+  }
+  if (value.mediaType !== 'movie' && value.filters.sortBy === 'runtime_short_to_long') {
+    ctx.addIssue({ code: 'custom', path: ['filters', 'sortBy'], message: 'runtime_short_to_long is only valid for movie recommendations' });
   }
 });
 

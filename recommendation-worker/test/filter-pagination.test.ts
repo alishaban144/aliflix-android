@@ -22,6 +22,7 @@ const filtersRequest = (overrides: Partial<ParsedRecommendationRequest> = {}): P
     excludedGenres: [],
     minimumTmdbRating: undefined,
     seriesStatus: undefined,
+    sortBy: 'most_popular',
     excludedTmdbIds: [],
     excludedTitles: [],
   },
@@ -128,7 +129,7 @@ describe('direct TMDB filter pagination', () => {
     expect(returningTmdb.discoverParams.every(params => params.with_status === 0)).toBe(true);
   });
 
-  it('keeps every TMDB row reachable while surfacing non-dominant languages in the first page', async () => {
+  it('keeps every TMDB row reachable in the selected TMDB sort order', async () => {
     const items = catalogue();
     const firstTmdb = fakeTmdb(items);
     const first = await processFilterDiscoveryPage(
@@ -141,13 +142,7 @@ describe('direct TMDB filter pagination', () => {
     expect(first.totalResults).toBe(120);
     expect(first.results).toHaveLength(24);
     expect(first.nextOffset).toBe(24);
-    expect(first.results.filter(item => item.originalLanguage === 'ja')).toHaveLength(12);
-    expect(first.results.map(item => item.title)).toEqual(expect.arrayContaining([
-      'Undone',
-      'Pantheon',
-      'Common Side Effects',
-      'The Amazing Digital Circus',
-    ]));
+    expect(first.results.filter(item => item.originalLanguage === 'ja')).toHaveLength(24);
     expect(firstTmdb.discoverParams.map(params => params.page)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(firstTmdb.discoverParams.every(params => params.with_genres === '16,10765')).toBe(true);
     expect(firstTmdb.discoverParams.every(params => params['vote_count.gte'] === undefined)).toBe(true);
@@ -167,5 +162,92 @@ describe('direct TMDB filter pagination', () => {
     expect(allIds).toHaveLength(120);
     expect(new Set(allIds).size).toBe(120);
     expect(new Set(allIds)).toEqual(new Set(items.map(item => item.id)));
+  });
+
+  it.each([
+    ['most_popular', 'popularity.desc'],
+    ['highest_rated', 'vote_average.desc'],
+    ['most_voted', 'vote_count.desc'],
+    ['newest_first', 'first_air_date.desc'],
+    ['oldest_first', 'first_air_date.asc'],
+  ] as const)('maps %s to TMDB Discover sort %s', async (sortBy, expectedSort) => {
+    const tmdb = fakeTmdb(catalogue());
+    await processFilterDiscoveryPage(
+      {} as RecommendationEnv,
+      filtersRequest({ filters: { ...filtersRequest().filters, sortBy } }),
+      0,
+      { tmdb },
+    );
+
+    expect(tmdb.discoverParams.every(params => params.sort_by === expectedSort)).toBe(true);
+  });
+
+  it('paginates movies in exact ascending runtime order across duration groups', async () => {
+    const items = [
+      ...Array.from({ length: 30 }, (_, index) => ({
+        id: 500_000 + index,
+        title: `Short Movie ${index + 1}`,
+        runtime: 70,
+        genre_ids: [16],
+        release_date: '2020-01-01',
+        vote_average: 7,
+        vote_count: 100,
+      })),
+      ...Array.from({ length: 30 }, (_, index) => ({
+        id: 600_000 + index,
+        title: `Long Movie ${index + 1}`,
+        runtime: 95,
+        genre_ids: [16],
+        release_date: '2020-01-01',
+        vote_average: 7,
+        vote_count: 100,
+      })),
+    ];
+    let callsUsed = 0;
+    const runtimeTmdb = {
+      get callsRemaining() { return 100 - callsUsed; },
+      genres: async () => ({ genres: [{ id: 16, name: 'Animation' }] }),
+      discover: async (_mediaType: 'movie' | 'tv', params: Record<string, string | number | boolean | undefined>) => {
+        callsUsed++;
+        const minimum = Number(params['with_runtime.gte'] || 1);
+        const maximum = Number(params['with_runtime.lte'] || 1_000);
+        const matching = items.filter(item => item.runtime >= minimum && item.runtime <= maximum);
+        const page = Number(params.page || 1);
+        return {
+          page,
+          results: matching.slice((page - 1) * 20, page * 20),
+          total_pages: Math.ceil(matching.length / 20),
+          total_results: matching.length,
+        };
+      },
+    };
+    const runtimeRequest = filtersRequest({
+      mediaType: 'movie',
+      filters: {
+        ...filtersRequest().filters,
+        includedGenres: ['Animation'],
+        sortBy: 'runtime_short_to_long',
+      },
+    });
+
+    const first = await processFilterDiscoveryPage(
+      {} as RecommendationEnv,
+      runtimeRequest,
+      0,
+      { tmdb: runtimeTmdb },
+    );
+    const second = await processFilterDiscoveryPage(
+      {} as RecommendationEnv,
+      runtimeRequest,
+      first.nextOffset!,
+      { tmdb: runtimeTmdb },
+    );
+
+    expect(first.results).toHaveLength(24);
+    expect(first.results.every(item => item.runtimeMinutes === 70)).toBe(true);
+    expect(second.results).toHaveLength(24);
+    expect(second.results.slice(0, 6).every(item => item.runtimeMinutes === 70)).toBe(true);
+    expect(second.results.slice(6).every(item => item.runtimeMinutes === 95)).toBe(true);
+    expect(second.nextOffset).toBe(48);
   });
 });

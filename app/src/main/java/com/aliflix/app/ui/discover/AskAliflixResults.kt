@@ -201,7 +201,7 @@ fun AskAliflixResults(
             }
         }
 
-        if (results != null) {
+        if (results != null && editorState.mode != 2) {
             RefineBottomBar(
                 onRefine = onRefine,
                 refining = results.refining,

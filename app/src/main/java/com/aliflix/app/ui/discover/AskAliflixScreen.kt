@@ -72,6 +72,14 @@ fun AskAliflixScreen(
                                             } else {
                                                 null
                                             },
+                                            sortBy = if (
+                                                newType == com.aliflix.app.model.MediaType.TV &&
+                                                editorState.spec.sortBy == com.aliflix.app.recommendation.RecommendationSort.RUNTIME_SHORT_TO_LONG
+                                            ) {
+                                                com.aliflix.app.recommendation.RecommendationSort.MOST_POPULAR
+                                            } else {
+                                                editorState.spec.sortBy
+                                            },
                                         ),
                                     )
                                 )
