@@ -2,6 +2,7 @@ package com.aliflix.app.data
 
 import android.util.Log
 import com.aliflix.app.BuildConfig
+import com.aliflix.app.model.Episode
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
@@ -9,9 +10,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.runInterruptible
 import org.json.JSONObject
 import org.jsoup.Jsoup
@@ -20,6 +23,7 @@ import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.Normalizer
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.system.measureTimeMillis
 
 data class RtHttpResponse(
@@ -105,6 +109,8 @@ class RottenTomatoesClient internal constructor(
         if (BuildConfig.DEBUG) Log.d("AliflixRT", diagnostic.toString())
     },
 ) {
+    private val canonicalTvPaths = ConcurrentHashMap<String, String>()
+
     constructor() : this(AndroidRottenTomatoesTransport())
 
     /** Compatibility constructor for HTML parser tests; production never uses the catalogue page loader. */
@@ -120,6 +126,32 @@ class RottenTomatoesClient internal constructor(
         is RottenTomatoesFetchResult.Verified -> RottenTomatoesSnapshot(result.rating, RatingSourceState.VERIFIED)
         RottenTomatoesFetchResult.ConfirmedNotRated -> RottenTomatoesSnapshot(null, RatingSourceState.NOT_RATED)
         is RottenTomatoesFetchResult.Unavailable -> RottenTomatoesSnapshot(null, RatingSourceState.UNAVAILABLE)
+    }
+
+    suspend fun loadEpisodeRatings(
+        series: Media,
+        episodes: List<Episode>,
+    ): Map<Int, RottenTomatoesSnapshot> {
+        val requested = episodes
+            .filter { series.type == MediaType.TV && it.seasonNumber >= 0 && it.number > 0 }
+            .distinctBy(Episode::number)
+        if (requested.isEmpty()) return emptyMap()
+        val seriesPath = resolveTvSeriesPath(series)
+            ?: return requested.associate { episode ->
+                episode.number to RottenTomatoesSnapshot(null, RatingSourceState.UNAVAILABLE)
+            }
+
+        val results = linkedMapOf<Int, RottenTomatoesSnapshot>()
+        for (batch in requested.chunked(MAX_EPISODE_CONCURRENCY)) {
+            coroutineScope {
+                batch.map { episode ->
+                    async {
+                        episode.number to loadEpisodeRating(seriesPath, series, episode)
+                    }
+                }.awaitAll()
+            }.forEach { (number, snapshot) -> results[number] = snapshot }
+        }
+        return results
     }
 
     suspend fun loadFetchResult(item: Media): RottenTomatoesFetchResult {
@@ -174,6 +206,228 @@ class RottenTomatoesClient internal constructor(
             return searchDirect
         }
         return evaluatePage(fetchOrUnavailable("$ROTTEN_TOMATOES_URL$bestPath"), item, started)
+    }
+
+    private suspend fun resolveTvSeriesPath(series: Media): String? {
+        canonicalTvPaths[series.key]?.let { return it }
+        val resolved = withTimeoutOrNull(SERIES_PATH_TIMEOUT_MS) {
+            val slug = rottenTomatoesSlug(series.title)
+            val year = series.year.take(4).takeIf { it.matches(Regex("\\d{4}")) }
+            val yearInt = year?.toIntOrNull()
+            val directPaths = buildList {
+                add("/tv/$slug")
+                year?.let { add("/tv/${slug}_$it") }
+                yearInt?.let {
+                    add("/tv/${slug}_${it - 1}")
+                    add("/tv/${slug}_${it + 1}")
+                }
+            }.distinct()
+            for (path in directPaths) {
+                when (val outcome = fetchOrUnavailable("$ROTTEN_TOMATOES_URL$path")) {
+                    is FetchOutcome.Failure -> if (outcome.result.reason in setOf(
+                            FailureReason.HTTP_403,
+                            FailureReason.HTTP_429,
+                            FailureReason.BLOCKED_PAGE,
+                        )
+                    ) return@withTimeoutOrNull null
+                    is FetchOutcome.Success -> {
+                        verifiedSeriesPath(outcome.response, series)?.let {
+                            return@withTimeoutOrNull it
+                        }
+                    }
+                }
+            }
+
+            val query = URLEncoder.encode(series.title, StandardCharsets.UTF_8.toString())
+            val search = fetchOrUnavailable("$ROTTEN_TOMATOES_URL/search?search=$query")
+            if (search !is FetchOutcome.Success || isBlockedPage(search.response.body)) {
+                return@withTimeoutOrNull null
+            }
+            for (path in parseCandidatePaths(search.response.body, series)
+                .mapNotNull(::rootTvPath)
+                .distinct()
+                .take(2)
+            ) {
+                val outcome = fetchOrUnavailable("$ROTTEN_TOMATOES_URL$path")
+                if (outcome is FetchOutcome.Success) {
+                    verifiedSeriesPath(outcome.response, series)?.let {
+                        return@withTimeoutOrNull it
+                    }
+                }
+            }
+            null
+        }
+        if (resolved != null) canonicalTvPaths[series.key] = resolved
+        return resolved
+    }
+
+    private fun verifiedSeriesPath(response: RtHttpResponse, series: Media): String? {
+        if (response.statusCode !in 200..299 || response.body.isBlank() || isBlockedPage(response.body)) {
+            return null
+        }
+        if (!isIdentityVerified(response.body, series)) return null
+        val document = Jsoup.parse(response.body, response.finalUrl)
+        val canonical = document.selectFirst("link[rel=canonical]")
+            ?.absUrl("href")
+            .orEmpty()
+            .ifBlank { response.finalUrl }
+        return rootTvPath(canonical)
+    }
+
+    private fun rootTvPath(raw: String): String? {
+        val path = runCatching {
+            if (raw.startsWith("http://") || raw.startsWith("https://")) {
+                URI(raw).path
+            } else {
+                raw.substringBefore('?').substringBefore('#')
+            }
+        }.getOrNull()?.trimEnd('/') ?: return null
+        return path.takeIf { it.matches(Regex("^/tv/[A-Za-z0-9_.-]+$")) }
+    }
+
+    private suspend fun loadEpisodeRating(
+        seriesPath: String,
+        series: Media,
+        episode: Episode,
+    ): RottenTomatoesSnapshot {
+        val season = episode.seasonNumber.toString().padStart(2, '0')
+        val number = episode.number.toString().padStart(2, '0')
+        val url = "$ROTTEN_TOMATOES_URL$seriesPath/s$season/e$number"
+        val started = System.currentTimeMillis()
+        return try {
+            withTimeout(ABSOLUTE_TIMEOUT_MS) {
+                evaluateEpisodePage(fetchOrUnavailable(url), series, episode, started)
+            }
+        } catch (cancelled: TimeoutCancellationException) {
+            emitFailure(series, started, FailureReason.TIMEOUT, url = url)
+            RottenTomatoesSnapshot(null, RatingSourceState.UNAVAILABLE)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            emitFailure(series, started, FailureReason.NETWORK, url = url)
+            RottenTomatoesSnapshot(null, RatingSourceState.UNAVAILABLE)
+        }
+    }
+
+    private fun evaluateEpisodePage(
+        outcome: FetchOutcome,
+        series: Media,
+        episode: Episode,
+        started: Long,
+    ): RottenTomatoesSnapshot {
+        if (outcome is FetchOutcome.Failure) {
+            emitFailure(
+                series,
+                started,
+                outcome.result.reason,
+                outcome.result.statusCode,
+                outcome.result.finalUrl,
+            )
+            return RottenTomatoesSnapshot(null, RatingSourceState.UNAVAILABLE)
+        }
+        val response = (outcome as FetchOutcome.Success).response
+        val reason = when {
+            response.statusCode == 403 -> FailureReason.HTTP_403
+            response.statusCode == 429 -> FailureReason.HTTP_429
+            response.statusCode !in 200..299 -> FailureReason.HTTP_OTHER
+            response.body.isBlank() -> FailureReason.EMPTY_RESPONSE
+            isBlockedPage(response.body) -> FailureReason.BLOCKED_PAGE
+            !isEpisodeIdentityVerified(response.body, response.finalUrl, series, episode) ->
+                FailureReason.IDENTITY_MISMATCH
+            else -> null
+        }
+        if (reason != null) {
+            emitDiagnostic(
+                response,
+                series,
+                System.currentTimeMillis() - started,
+                RatingSourceState.UNAVAILABLE,
+                null,
+                reason,
+            )
+            return RottenTomatoesSnapshot(null, RatingSourceState.UNAVAILABLE)
+        }
+
+        val rating = parseRating(response.body)
+        val state = when {
+            rating != null -> RatingSourceState.VERIFIED
+            hasConfirmedNoCriticRating(response.body) -> RatingSourceState.NOT_RATED
+            else -> RatingSourceState.UNAVAILABLE
+        }
+        val failure = if (state == RatingSourceState.UNAVAILABLE) FailureReason.PARSER_FAILURE else null
+        emitDiagnostic(
+            response,
+            series,
+            System.currentTimeMillis() - started,
+            state,
+            rating,
+            failure,
+        )
+        return RottenTomatoesSnapshot(rating, state)
+    }
+
+    internal fun isEpisodeIdentityVerified(
+        html: String,
+        finalUrl: String,
+        series: Media,
+        episode: Episode,
+    ): Boolean {
+        if (html.isBlank()) return false
+        val document = Jsoup.parse(html, finalUrl)
+        val canonical = document.selectFirst("link[rel=canonical]")
+            ?.absUrl("href")
+            .orEmpty()
+            .ifBlank { finalUrl }
+        val canonicalPath = runCatching { URI(canonical).path }.getOrNull().orEmpty().trimEnd('/')
+        val expectedSuffix = "/s${episode.seasonNumber.toString().padStart(2, '0')}" +
+            "/e${episode.number.toString().padStart(2, '0')}"
+        if (!canonicalPath.endsWith(expectedSuffix)) return false
+
+        var jsonIdentityMatches = false
+        document.select("script[type=application/ld+json]").forEach { script ->
+            val json = runCatching { JSONObject(script.data()) }.getOrNull()
+                ?: return@forEach
+            if (!json.optString("@type").equals("TVEpisode", ignoreCase = true)) {
+                return@forEach
+            }
+            val returnedNumber = json.opt("episodeNumber")?.toString()?.toIntOrNull()
+            val returnedSeries = json.optJSONObject("partOfSeries")
+                ?.optString("name")
+                .orEmpty()
+            val returnedTitle = json.optString("name")
+            val seriesMatches = titleIdentityScore(
+                normalizeText(series.title),
+                normalizeText(returnedSeries),
+            ) >= 65
+            val episodeMatches = episode.title.equals("Episode ${episode.number}", ignoreCase = true) ||
+                titleIdentityScore(normalizeText(episode.title), normalizeText(returnedTitle)) >= 55
+            if (returnedNumber == episode.number && seriesMatches && episodeMatches) {
+                jsonIdentityMatches = true
+            }
+        }
+        if (jsonIdentityMatches) return true
+
+        val pageTitle = normalizeText(document.title())
+        return pageTitle.contains(normalizeText(series.title)) &&
+            (
+                episode.title.equals("Episode ${episode.number}", ignoreCase = true) ||
+                    pageTitle.contains(normalizeText(episode.title))
+                )
+    }
+
+    internal fun hasConfirmedNoCriticRating(html: String): Boolean {
+        val document = Jsoup.parse(html, ROTTEN_TOMATOES_URL)
+        document.select("script[type=application/json]").forEach { script ->
+            val json = runCatching { JSONObject(script.data()) }.getOrNull()
+                ?: return@forEach
+            val critics = json.optJSONObject("criticsScore") ?: return@forEach
+            val score = critics.opt("score")?.toString()?.toIntOrNull()
+            val ratingCount = critics.optInt("ratingCount", -1)
+            val reviewCount = critics.optInt("reviewCount", -1)
+            if (score == null && ratingCount == 0 && reviewCount == 0) return true
+        }
+        return Regex("Tomatometer\\s+0\\s+Reviews?", RegexOption.IGNORE_CASE)
+            .containsMatchIn(document.text())
     }
 
     private suspend fun raceDirect(paths: List<String>, item: Media, started: Long): RottenTomatoesFetchResult = coroutineScope {
@@ -391,8 +645,9 @@ class RottenTomatoesClient internal constructor(
             Regex("""tomatometerscore\s*=\s*["']?(\d{1,3})""", RegexOption.IGNORE_CASE),
             Regex(""""criticsScore"\s*:\s*"?(\d{1,3})""", RegexOption.IGNORE_CASE),
             Regex(""""criticsScore"\s*:\s*\{[^{}]*"score"\s*:\s*"(\d{1,3})"""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)),
-            Regex(""""scorePercent"\s*:\s*"(\d{1,3})%""", RegexOption.IGNORE_CASE),
         )
+        const val SERIES_PATH_TIMEOUT_MS = 6_000L
+        const val MAX_EPISODE_CONCURRENCY = 4
         private val blockedMarkers = listOf(
             "captcha", "access denied", "request blocked", "challenge page", "security challenge",
             "verify you are human", "enable javascript to continue", "are you a robot", "robot check",

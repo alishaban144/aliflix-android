@@ -25,7 +25,7 @@ import {
 } from './types';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1/interactions';
 const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
 };
@@ -46,18 +46,26 @@ async function sleep(ms: number): Promise<void> {
 async function geminiFetch<T>(env: RecommendationEnv, url: string, body: unknown, timeoutMs: number): Promise<T> {
   if (!env.GEMINI_API_KEY) throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini is not configured', 503, true);
 
-  const maxRetries = 4;
+  // The deadline covers the entire provider operation. The former per-attempt
+  // timeout could turn one 30-second request into five attempts plus backoff,
+  // which made an interactive request hang for almost three minutes.
+  const maxAttempts = 2;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
   let lastError: Error | undefined;
   let providerRetryAfterMs: number | undefined;
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (attempt > 0) {
-      const exponentialDelay = Math.min(8_000, 1_000 * Math.pow(2, attempt - 1));
-      const delay = Math.min(8_000, Math.max(exponentialDelay, providerRetryAfterMs || 0));
-      await sleep(delay + Math.random() * 250);
+      const remainingBeforeDelay = deadline - Date.now();
+      const delay = Math.min(1_500, Math.max(250, providerRetryAfterMs || 0));
+      if (remainingBeforeDelay <= delay + 250) break;
+      await sleep(delay);
     }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), remainingMs);
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -81,8 +89,9 @@ async function geminiFetch<T>(env: RecommendationEnv, url: string, body: unknown
           providerStatus: providerError?.error?.status,
           retryable,
           attempt: attempt + 1,
+          elapsedMs: Date.now() - startedAt,
         }));
-        if (retryable && attempt < maxRetries) {
+        if (retryable && attempt + 1 < maxAttempts) {
           lastError = new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, 503, true);
           continue;
         }
@@ -98,7 +107,7 @@ async function geminiFetch<T>(env: RecommendationEnv, url: string, body: unknown
       } else {
         lastError = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request failed', 503, true);
       }
-      if (attempt >= maxRetries) {
+      if (attempt + 1 >= maxAttempts || Date.now() >= deadline) {
         if (lastError instanceof ServiceError) throw lastError;
         throw new ServiceError('GEMINI_UNAVAILABLE', lastError.message || 'Gemini request failed', 503, true);
       }
@@ -107,7 +116,13 @@ async function geminiFetch<T>(env: RecommendationEnv, url: string, body: unknown
     }
   }
 
-  throw lastError || new ServiceError('GEMINI_UNAVAILABLE', 'Gemini request failed', 503, true);
+  if (lastError instanceof ServiceError) throw lastError;
+  throw new ServiceError(
+    'GEMINI_UNAVAILABLE',
+    lastError?.message || `Gemini request exceeded its ${timeoutMs}ms deadline`,
+    504,
+    true,
+  );
 }
 
 async function geminiStructuredInteraction<T>(
@@ -123,8 +138,7 @@ async function geminiStructuredInteraction<T>(
     input: JSON.stringify(input),
     system_instruction: systemInstruction,
     response_format: [{ type: 'text', mime_type: 'application/json', schema }],
-    generation_config: { max_output_tokens: 4_096 },
-    service_tier: 'standard',
+    generation_config: { max_output_tokens: 4_096, thinking_level: 'low' },
     store: false,
   }, timeoutMs);
   const text = data.steps

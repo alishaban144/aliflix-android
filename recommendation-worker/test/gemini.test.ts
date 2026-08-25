@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { recommendDescribeTitles } from '../src/gemini';
 import { GeminiDescribeResponseSchema } from '../src/schemas';
 import { DESCRIBE_RECOMMENDATIONS_PROMPT, SIMILAR_RECOMMENDATIONS_PROMPT, VERIFY_SIMILARITY_PROMPT } from '../src/prompts';
 
 describe('Gemini Describe contract', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('requires real title identity, release year, premise confidence, and rationale', () => {
     expect(GeminiDescribeResponseSchema.parse({
       recommendations: [{
@@ -29,5 +34,53 @@ describe('Gemini Describe contract', () => {
     expect(SIMILAR_RECOMMENDATIONS_PROMPT).toContain('blend distinctive elements from all anchors');
     expect(VERIFY_SIMILARITY_PROMPT).toContain('matching only one anchor cannot score 0.70 or higher');
     expect(VERIFY_SIMILARITY_PROMPT).toContain('Cross-media matches use the same standard');
+  });
+
+  it('uses the stable Interactions endpoint with low thinking and structured JSON', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      status: 'completed',
+      steps: [{
+        type: 'model_output',
+        content: [{ type: 'text', text: JSON.stringify({ recommendations: [{
+          title: 'Fire in the Sky',
+          releaseYear: 1993,
+          confidence: .97,
+          reason: 'An extraterrestrial abduction is the central event.',
+        }] }) }],
+      }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const results = await recommendDescribeTitles(
+      { GEMINI_API_KEY: 'test-key' } as any,
+      'movies about alien abduction',
+      'movie',
+      {},
+    );
+
+    expect(results.map(result => result.title)).toEqual(['Fire in the Sky']);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1/interactions');
+    const body = JSON.parse(String(init.body));
+    expect(body.model).toBe('gemini-3.7-flash');
+    expect(body.generation_config).toMatchObject({ thinking_level: 'low', max_output_tokens: 4096 });
+    expect(body.response_format[0]).toMatchObject({ type: 'text', mime_type: 'application/json' });
+    expect(body.service_tier).toBeUndefined();
+  });
+
+  it('caps retryable Gemini failures at two provider attempts', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      error: { status: 'RESOURCE_EXHAUSTED' },
+    }), { status: 429 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(recommendDescribeTitles(
+      { GEMINI_API_KEY: 'test-key' } as any,
+      'movies about alien abduction',
+      'movie',
+      {},
+    )).rejects.toMatchObject({ code: 'GEMINI_UNAVAILABLE', retryable: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

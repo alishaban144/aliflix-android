@@ -280,8 +280,12 @@ data class Episode(
     val overview: String = "",
     val stillPath: String? = null,
     val runtime: String = "",
+    val imdbId: String? = null,
     val imdbRating: Double? = null,
+    val imdbVoteCount: Int? = null,
+    val imdbRatingState: RatingSourceState? = null,
     val rottenTomatoesRating: Int? = null,
+    val rottenTomatoesState: RatingSourceState? = null,
 ) {
     val stillUrl: String?
         get() = stillPath?.let { path ->

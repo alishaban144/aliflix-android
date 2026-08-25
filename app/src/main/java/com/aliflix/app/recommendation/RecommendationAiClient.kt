@@ -84,7 +84,10 @@ class RecommendationAiClient(
             connection = URL(url).openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.connectTimeout = 8_000
-            connection.readTimeout = 45_000
+            // Describe and Similar deliberately wait for both Gemini premise
+            // verification and authoritative TMDB hydration. Keep the mobile
+            // socket above the Worker's bounded provider deadline.
+            connection.readTimeout = 75_000
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             continuation.invokeOnCancellation { connection.disconnect() }

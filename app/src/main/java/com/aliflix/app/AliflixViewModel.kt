@@ -765,7 +765,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
 
-                launch {
+                episodeJob = launch {
                     val seasons = seasonsRequest.await()
                     val selectedSeason = seasons.firstOrNull()?.number ?: 1
                     _detail.value = _detail.value.copy(
@@ -776,11 +776,28 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     
                     if (authoritativeItem.type == MediaType.TV) {
                         val currentItem = _detail.value.item ?: authoritativeItem
-                        val episodes = client.episodes(currentItem, selectedSeason)
-                        _detail.value = _detail.value.copy(
-                            episodes = episodes,
-                            episodesLoading = false,
-                        )
+                        val episodes = client.episodes(currentItem, selectedSeason) { progress ->
+                            val current = _detail.value
+                            if (
+                                current.item?.key == currentItem.key &&
+                                current.selectedSeason == selectedSeason
+                            ) {
+                                _detail.value = current.copy(
+                                    episodes = progress,
+                                    episodesLoading = false,
+                                )
+                            }
+                        }
+                        val current = _detail.value
+                        if (
+                            current.item?.key == currentItem.key &&
+                            current.selectedSeason == selectedSeason
+                        ) {
+                            _detail.value = current.copy(
+                                episodes = episodes,
+                                episodesLoading = false,
+                            )
+                        }
                     }
                 }
 
@@ -820,19 +837,39 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             error = null,
         )
         episodeJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
-            _detail.value = runCatching { client.episodes(item, number) }
+            _detail.value = runCatching {
+                client.episodes(item, number) { progress ->
+                    val latest = _detail.value
+                    if (latest.item?.key == item.key && latest.selectedSeason == number) {
+                        _detail.value = latest.copy(
+                            episodes = progress,
+                            episodesLoading = false,
+                        )
+                    }
+                }
+            }
                 .fold(
                     onSuccess = { episodes ->
-                        _detail.value.copy(
-                            episodes = episodes,
-                            episodesLoading = false,
-                        )
+                        val latest = _detail.value
+                        if (latest.item?.key == item.key && latest.selectedSeason == number) {
+                            latest.copy(
+                                episodes = episodes,
+                                episodesLoading = false,
+                            )
+                        } else {
+                            latest
+                        }
                     },
                     onFailure = {
-                        _detail.value.copy(
-                            episodesLoading = false,
-                            error = it.message ?: "Episodes could not be loaded.",
-                        )
+                        val latest = _detail.value
+                        if (latest.item?.key == item.key && latest.selectedSeason == number) {
+                            latest.copy(
+                                episodesLoading = false,
+                                error = it.message ?: "Episodes could not be loaded.",
+                            )
+                        } else {
+                            latest
+                        }
                     },
                 )
         }

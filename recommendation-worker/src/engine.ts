@@ -43,8 +43,11 @@ const MAX_DETAIL_CANDIDATES = 64;
 const MAX_GENERATED_CANDIDATES = 24;
 const MAX_GENERATED_RESULTS = 20;
 const TMDB_DETAIL_RESERVE = 24;
-const DISCOVERY_CONCURRENCY = 4;
-const DETAIL_CONCURRENCY = 4;
+// Cloudflare permits six simultaneous outbound connections per invocation.
+// Filling all six lanes keeps Gemini-grounded requests interactive without
+// increasing the total subrequest budget.
+const DISCOVERY_CONCURRENCY = 6;
+const DETAIL_CONCURRENCY = 6;
 const MAX_KEYWORD_SEARCHES = 18;
 const MAX_KEYWORD_SEARCHES_PER_GROUP = 2;
 

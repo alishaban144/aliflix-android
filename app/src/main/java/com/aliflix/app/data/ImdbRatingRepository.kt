@@ -2,6 +2,7 @@ package com.aliflix.app.data
 
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.Episode
 import com.aliflix.app.model.RatingSourceState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -33,6 +34,18 @@ data class ImdbRatingSnapshot(
     val fetchedAtMillis: Long = System.currentTimeMillis(),
 )
 
+data class ImdbEpisodeRatingSnapshot(
+    val imdbId: String?,
+    val title: String,
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+    val year: Int?,
+    val rating: Double?,
+    val voteCount: Int?,
+    val state: RatingSourceState,
+    val fetchedAtMillis: Long = System.currentTimeMillis(),
+)
+
 fun interface ImdbGraphQlTransport {
     suspend fun postJson(
         url: String,
@@ -43,6 +56,12 @@ fun interface ImdbGraphQlTransport {
 
 interface ImdbRatingRepository {
     suspend fun ratingFor(media: Media): ImdbRatingSnapshot
+
+    suspend fun ratingsForEpisodes(
+        series: Media,
+        seasonNumber: Int,
+        episodes: List<Episode>,
+    ): Map<Int, ImdbEpisodeRatingSnapshot> = emptyMap()
 }
 
 class HttpImdbGraphQlTransport(
@@ -198,6 +217,105 @@ class DefaultImdbRatingRepository(
             )
     }
 
+    override suspend fun ratingsForEpisodes(
+        series: Media,
+        seasonNumber: Int,
+        episodes: List<Episode>,
+    ): Map<Int, ImdbEpisodeRatingSnapshot> {
+        if (series.type != MediaType.TV || seasonNumber < 0) return emptyMap()
+        val requested = episodes
+            .filter { it.seasonNumber == seasonNumber && it.number > 0 }
+            .distinctBy(Episode::number)
+        if (requested.isEmpty()) return emptyMap()
+
+        val fresh = linkedMapOf<Int, ImdbEpisodeRatingSnapshot>()
+        val stale = linkedMapOf<Int, ImdbEpisodeRatingSnapshot>()
+        for (episode in requested) {
+            val key = episodeRatingCacheKey(series, episode)
+            cacheStore?.loadImdbRating(key, FRESH_CACHE_AGE_MS)
+                ?.takeIf { cachedEpisodeIdentityMatches(episode, it) }
+                ?.toEpisodeSnapshot(seasonNumber, episode.number)
+                ?.let { fresh[episode.number] = it }
+            if (episode.number !in fresh) {
+                cacheStore?.loadImdbRating(key, STALE_CACHE_AGE_MS)
+                    ?.takeIf { cachedEpisodeIdentityMatches(episode, it) }
+                    ?.toEpisodeSnapshot(seasonNumber, episode.number)
+                    ?.let { stale[episode.number] = it }
+            }
+        }
+        if (fresh.size == requested.size) return fresh
+
+        val identityCandidates = buildList {
+            try {
+                resolveIdentity(series)?.let(::add)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // A carried IMDb ID is still verified against the returned parent series below.
+            }
+            series.imdbId
+                ?.takeIf(IMDB_ID_PATTERN::matches)
+                ?.let { imdbId ->
+                    add(
+                        ImdbTitleIdentity(
+                            imdbId = imdbId,
+                            title = series.title,
+                            year = series.year.take(4).toIntOrNull(),
+                            type = MediaType.TV,
+                        ),
+                    )
+                }
+        }.distinctBy(ImdbTitleIdentity::imdbId)
+
+        for (identity in identityCandidates) {
+            for (endpoint in GRAPHQL_ENDPOINTS) {
+                try {
+                    val parsed = parseGraphQlEpisodeRatings(
+                        payload = graphQlTransport.postJson(
+                            endpoint,
+                            episodeRatingsQuery(identity.imdbId, seasonNumber),
+                            IMDB_WEB_HEADERS,
+                        ),
+                        expectedSeries = identity,
+                        expectedSeason = seasonNumber,
+                    )
+                    val resolved = requested.associate { episode ->
+                        val live = parsed[episode.number]
+                            ?.takeIf { episodeIdentityMatches(episode, it) }
+                        val snapshot = live
+                            ?: fresh[episode.number]
+                            ?: stale[episode.number]?.asStale()
+                            ?: unavailableEpisodeSnapshot(episode)
+                        if (live != null && live.state in setOf(
+                                RatingSourceState.VERIFIED,
+                                RatingSourceState.NOT_RATED,
+                            )
+                        ) {
+                            cacheStore?.saveImdbRating(
+                                episodeRatingCacheKey(series, episode),
+                                live.toCachedSnapshot(),
+                            )
+                        }
+                        episode.number to snapshot
+                    }
+                    return resolved
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    // Each IMDb GraphQL host is independent.
+                }
+            }
+        }
+
+        return requested.associate { episode ->
+            episode.number to (
+                fresh[episode.number]
+                    ?: stale[episode.number]?.asStale()
+                    ?: unavailableEpisodeSnapshot(episode)
+                )
+        }
+    }
+
     internal fun cachedIdentityMatches(
         media: Media,
         snapshot: ImdbRatingSnapshot,
@@ -315,6 +433,69 @@ class DefaultImdbRatingRepository(
         )
     }
 
+    internal fun parseGraphQlEpisodeRatings(
+        payload: String,
+        expectedSeries: ImdbTitleIdentity,
+        expectedSeason: Int,
+    ): Map<Int, ImdbEpisodeRatingSnapshot> {
+        val root = JSONObject(payload)
+        if (root.optJSONArray("errors")?.length()?.let { it > 0 } == true) {
+            throw IOException("IMDb GraphQL returned errors")
+        }
+        val title = root.optJSONObject("data")?.optJSONObject("title")
+            ?: throw IOException("IMDb did not return the parent series")
+        if (!matchesIdentity(title, expectedSeries)) {
+            throw IOException("IMDb returned a different parent series")
+        }
+        val edges = title.optJSONObject("episodes")
+            ?.optJSONObject("episodes")
+            ?.optJSONArray("edges")
+            ?: return emptyMap()
+        val fetchedAt = nowMillis()
+        return (0 until edges.length())
+            .mapNotNull(edges::optJSONObject)
+            .mapNotNull { edge ->
+                val node = edge.optJSONObject("node") ?: return@mapNotNull null
+                val numbering = node.optJSONObject("series")
+                    ?.optJSONObject("episodeNumber")
+                    ?: return@mapNotNull null
+                val season = numbering.optInt("seasonNumber", -1)
+                val episode = numbering.optInt("episodeNumber", -1)
+                if (season != expectedSeason || episode <= 0) return@mapNotNull null
+                val imdbId = node.optString("id").takeIf(IMDB_ID_PATTERN::matches)
+                    ?: return@mapNotNull null
+                val titleText = node.optJSONObject("titleText")
+                    ?.optString("text")
+                    ?.trim()
+                    .orEmpty()
+                if (titleText.isBlank()) return@mapNotNull null
+                val summary = node.optJSONObject("ratingsSummary")
+                val rating = summary?.optDouble("aggregateRating")
+                    ?.takeIf { !it.isNaN() && it in 0.1..10.0 }
+                val votes = summary?.optInt("voteCount")
+                    ?.takeIf { summary.has("voteCount") && it >= 0 }
+                val year = node.optJSONObject("releaseDate")
+                    ?.optInt("year")
+                    ?.takeIf { it > 0 }
+                episode to ImdbEpisodeRatingSnapshot(
+                    imdbId = imdbId,
+                    title = titleText,
+                    seasonNumber = season,
+                    episodeNumber = episode,
+                    year = year,
+                    rating = rating,
+                    voteCount = votes,
+                    state = if (rating == null) {
+                        RatingSourceState.NOT_RATED
+                    } else {
+                        RatingSourceState.VERIFIED
+                    },
+                    fetchedAtMillis = fetchedAt,
+                )
+            }
+            .toMap()
+    }
+
     internal fun parseImdbPageRating(
         html: String,
         identity: ImdbTitleIdentity,
@@ -423,6 +604,87 @@ class DefaultImdbRatingRepository(
                 "ratingsSummary { aggregateRating voteCount } } }",
         )
         .toString()
+
+    private fun episodeRatingsQuery(imdbId: String, seasonNumber: Int): String = JSONObject()
+        .put(
+            "query",
+            "query AliflixEpisodeRatings { title(id: \"$imdbId\") { " +
+                "id titleText { text } releaseYear { year } titleType { id } " +
+                "episodes { episodes(first: 999, filter: { includeSeasons: [\"$seasonNumber\"] }) { " +
+                "edges { node { id titleText { text } releaseDate { year month day } " +
+                "series { episodeNumber { seasonNumber episodeNumber } } " +
+                "ratingsSummary { aggregateRating voteCount } } } } } } }",
+        )
+        .toString()
+
+    private fun episodeRatingCacheKey(series: Media, episode: Episode): String =
+        "episode:${series.key}:s${episode.seasonNumber}:e${episode.number}"
+
+    private fun cachedEpisodeIdentityMatches(
+        episode: Episode,
+        snapshot: ImdbRatingSnapshot,
+    ): Boolean = snapshot.identity.imdbId.matches(IMDB_ID_PATTERN) &&
+        episodeIdentityMatches(
+            episode,
+            snapshot.toEpisodeSnapshot(episode.seasonNumber, episode.number),
+        )
+
+    private fun episodeIdentityMatches(
+        episode: Episode,
+        snapshot: ImdbEpisodeRatingSnapshot,
+    ): Boolean {
+        if (snapshot.seasonNumber != episode.seasonNumber || snapshot.episodeNumber != episode.number) {
+            return false
+        }
+        if (episode.title.equals("Episode ${episode.number}", ignoreCase = true)) return true
+        return titleIdentityScore(normalize(episode.title), normalize(snapshot.title)) >= 65
+    }
+
+    private fun ImdbRatingSnapshot.toEpisodeSnapshot(
+        seasonNumber: Int,
+        episodeNumber: Int,
+    ) = ImdbEpisodeRatingSnapshot(
+        imdbId = identity.imdbId,
+        title = identity.title,
+        seasonNumber = seasonNumber,
+        episodeNumber = episodeNumber,
+        year = identity.year,
+        rating = rating,
+        voteCount = voteCount,
+        state = state,
+        fetchedAtMillis = fetchedAtMillis,
+    )
+
+    private fun ImdbEpisodeRatingSnapshot.toCachedSnapshot() = ImdbRatingSnapshot(
+        identity = ImdbTitleIdentity(
+            imdbId = imdbId.orEmpty(),
+            title = title,
+            year = year,
+            type = MediaType.TV,
+        ),
+        rating = rating,
+        voteCount = voteCount,
+        state = state,
+        fetchedAtMillis = fetchedAtMillis,
+    )
+
+    private fun ImdbEpisodeRatingSnapshot.asStale() = if (state == RatingSourceState.VERIFIED) {
+        copy(state = RatingSourceState.STALE)
+    } else {
+        this
+    }
+
+    private fun unavailableEpisodeSnapshot(episode: Episode) = ImdbEpisodeRatingSnapshot(
+        imdbId = null,
+        title = episode.title,
+        seasonNumber = episode.seasonNumber,
+        episodeNumber = episode.number,
+        year = null,
+        rating = null,
+        voteCount = null,
+        state = RatingSourceState.UNAVAILABLE,
+        fetchedAtMillis = nowMillis(),
+    )
 
     private fun matchesIdentity(
         payload: JSONObject,

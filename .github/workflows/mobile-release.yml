@@ -231,7 +231,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Expands Describe to as many as 20 fully verified genuine matches, adds Gemini-generated and Gemini-judged Similar results for same-media, cross-media, and multi-anchor searches, verifies identities and hard filters through TMDB, and never falls back to keyword, genre, or popularity matching."
+            "releaseNotes": "Makes Gemini 3.7 Flash recommendations responsive and fully TMDB-grounded, adds genuine IMDb and Rotten Tomatoes ratings to individual episodes with accurate source states, and improves rating placement throughout mobile show details."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -242,7 +242,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Expands Describe to as many as 20 fully verified genuine matches, adds Gemini-generated and Gemini-judged Similar results for same-media, cross-media, and multi-anchor searches, verifies identities and hard filters through TMDB, and never falls back to keyword, genre, or popularity matching."
+          body: "Makes Gemini 3.7 Flash recommendations responsive and fully TMDB-grounded, adds genuine IMDb and Rotten Tomatoes ratings to individual episodes with accurate source states, and improves rating placement throughout mobile show details."
           files: |
             aliflix-mobile.apk
             update-mobile.json

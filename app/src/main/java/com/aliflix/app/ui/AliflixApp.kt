@@ -5115,7 +5115,11 @@ private fun RatingsRow(item: Media) {
         label = "external-ratings-together",
     ) { ratings ->
         FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(
+                9.dp,
+                Alignment.CenterHorizontally,
+            ),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             RatingPill(
@@ -5278,6 +5282,7 @@ private fun EpisodeRow(
     episode: Episode,
     onPlay: () -> Unit,
 ) {
+    val ratings = episodeRatingsPresentation(episode)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -5371,25 +5376,78 @@ private fun EpisodeRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = buildString {
-                    append("IMDb ")
-                    append(
-                        episode.imdbRating?.let {
-                            String.format(java.util.Locale.US, "%.1f", it)
-                        } ?: "Not rated",
-                    )
-                    append("  \u2022  RT ")
-                    append(episode.rottenTomatoesRating?.let { "$it%" } ?: "Not rated")
-                },
-                color = AliflixMuted,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.25.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                EpisodeRatingPill(
+                    source = "IMDb",
+                    value = ratings.imdb,
+                    accent = Color(0xFFF5C518),
+                )
+                EpisodeRatingPill(
+                    source = "RT",
+                    value = ratings.rottenTomatoes,
+                    accent = Color(0xFFFA3A45),
+                )
+            }
         }
+    }
+}
+
+internal data class EpisodeRatingsPresentation(
+    val imdb: String,
+    val rottenTomatoes: String,
+)
+
+internal fun episodeRatingsPresentation(episode: Episode): EpisodeRatingsPresentation =
+    EpisodeRatingsPresentation(
+        imdb = when {
+            episode.imdbRating != null -> String.format(
+                java.util.Locale.US,
+                "%.1f",
+                episode.imdbRating,
+            )
+            episode.imdbRatingState == RatingSourceState.NOT_RATED -> "Not rated"
+            episode.imdbRatingState == RatingSourceState.UNAVAILABLE -> "Unavailable"
+            else -> "Loading"
+        },
+        rottenTomatoes = when {
+            episode.rottenTomatoesRating != null -> "${episode.rottenTomatoesRating}%"
+            episode.rottenTomatoesState == RatingSourceState.NOT_RATED -> "Not rated"
+            episode.rottenTomatoesState == RatingSourceState.UNAVAILABLE -> "Unavailable"
+            else -> "Loading"
+        },
+    )
+
+@Composable
+private fun EpisodeRatingPill(
+    source: String,
+    value: String,
+    accent: Color,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(7.dp))
+            .background(accent.copy(alpha = 0.11f))
+            .border(1.dp, accent.copy(alpha = 0.24f), RoundedCornerShape(7.dp))
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = source,
+            color = accent,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Black,
+        )
+        Text(
+            text = value,
+            color = AliflixContentSecondary,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
     }
 }
 

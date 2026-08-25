@@ -2,6 +2,7 @@ package com.aliflix.app.data
 
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.Episode
 import com.aliflix.app.model.RatingSourceState
 import com.aliflix.app.model.HomeContent
 import java.io.IOException
@@ -12,6 +13,88 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImdbRatingRepositoryTest {
+    @Test
+    fun episodeSeasonRatingsAreResolvedFromTheVerifiedParentSeries() = runTest {
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = null,
+            pageLoader = {
+                """{"d":[{"id":"tt0903747","l":"Breaking Bad","q":"TV series","qid":"tvSeries","rank":41,"y":2008}]}"""
+            },
+            graphQlTransport = ImdbGraphQlTransport { _, body, _ ->
+                assertTrue(body.contains("includeSeasons: [\\\"5\\\"]"))
+                """
+                    {"data":{"title":{
+                      "id":"tt0903747",
+                      "titleText":{"text":"Breaking Bad"},
+                      "releaseYear":{"year":2008},
+                      "titleType":{"id":"tvSeries"},
+                      "episodes":{"episodes":{"edges":[
+                        {"node":{"id":"tt2301451","titleText":{"text":"Ozymandias"},
+                          "releaseDate":{"year":2013,"month":9,"day":15},
+                          "series":{"episodeNumber":{"seasonNumber":5,"episodeNumber":14}},
+                          "ratingsSummary":{"aggregateRating":9.5,"voteCount":506720}}},
+                        {"node":{"id":"tt2301453","titleText":{"text":"Granite State"},
+                          "releaseDate":{"year":2013,"month":9,"day":22},
+                          "series":{"episodeNumber":{"seasonNumber":5,"episodeNumber":15}},
+                          "ratingsSummary":{"aggregateRating":null,"voteCount":0}}}
+                      ]}}
+                    }}}
+                """.trimIndent()
+            },
+        )
+
+        val ratings = repository.ratingsForEpisodes(
+            series = Media(
+                id = 1396,
+                type = MediaType.TV,
+                title = "Breaking Bad",
+                year = "2008",
+                imdbId = "tt0903747",
+            ),
+            seasonNumber = 5,
+            episodes = listOf(
+                Episode(5, 14, "Ozymandias"),
+                Episode(5, 15, "Granite State"),
+            ),
+        )
+
+        assertEquals("tt2301451", ratings[14]?.imdbId)
+        assertEquals(9.5, ratings[14]?.rating ?: 0.0, 0.001)
+        assertEquals(506_720, ratings[14]?.voteCount)
+        assertEquals(RatingSourceState.VERIFIED, ratings[14]?.state)
+        assertEquals(RatingSourceState.NOT_RATED, ratings[15]?.state)
+    }
+
+    @Test
+    fun episodeRatingsRejectAResponseForTheWrongParentSeries() = runTest {
+        val repository = DefaultImdbRatingRepository(
+            cacheStore = null,
+            pageLoader = {
+                """{"d":[{"id":"tt0903747","l":"Breaking Bad","q":"TV series","qid":"tvSeries","rank":41,"y":2008}]}"""
+            },
+            graphQlTransport = ImdbGraphQlTransport { _, _, _ ->
+                """
+                    {"data":{"title":{
+                      "id":"tt0944947",
+                      "titleText":{"text":"Game of Thrones"},
+                      "releaseYear":{"year":2011},
+                      "titleType":{"id":"tvSeries"},
+                      "episodes":{"episodes":{"edges":[]}}
+                    }}}
+                """.trimIndent()
+            },
+        )
+
+        val ratings = repository.ratingsForEpisodes(
+            series = Media(1396, MediaType.TV, "Breaking Bad", year = "2008"),
+            seasonNumber = 5,
+            episodes = listOf(Episode(5, 14, "Ozymandias")),
+        )
+
+        assertEquals(RatingSourceState.UNAVAILABLE, ratings[14]?.state)
+        assertEquals(null, ratings[14]?.rating)
+    }
+
     @Test
     fun canonicalImdbIdRejectsPreviouslyCachedWrongTitleRating() = runTest {
         val wrongCached = ImdbRatingSnapshot(

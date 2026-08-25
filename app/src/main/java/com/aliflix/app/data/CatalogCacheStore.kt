@@ -206,7 +206,9 @@ class AndroidCatalogCacheStore internal constructor(
                     ?: return@decode null
                 if (ageMs > cacheAgeFor(state, maxAgeMs)) return@decode null
                 RottenTomatoesSnapshot(
-                    rating = entry.optInt("rating").takeIf { entry.has("rating") && it > 0 },
+                    rating = entry.optInt("rating").takeIf {
+                        entry.has("rating") && it in 0..100
+                    },
                     state = if (
                         state == RatingSourceState.VERIFIED && ageMs > VERIFIED_RT_FRESH_AGE_MS
                     ) RatingSourceState.STALE else state,
