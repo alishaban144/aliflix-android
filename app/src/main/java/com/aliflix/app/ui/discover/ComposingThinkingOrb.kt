@@ -42,8 +42,8 @@ import kotlin.math.sqrt
  * Exact upstream "composing" animation using the shipped 64px preset.
  * Background is fully transparent.
  *
- * Intended Aliflix usage is deliberately limited to the Discover Ask Aliflix
- * entry, the Ask Aliflix page header, and the shared "Finding matches" state.
+ * Intended Aliflix usage is deliberately limited to the shared
+ * "Finding matches" state across every Ask Aliflix tab.
  *
  * Caller controls displayed size with Modifier.size(...).
  */

@@ -125,6 +125,7 @@ import com.aliflix.app.SearchUiState
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.ui.launch.AnimatedAliflixHeatmapLogo
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBackgroundBase
@@ -447,7 +448,7 @@ internal fun DiscoverScreen(
                                     .padding(horizontal = 16.dp, vertical = 15.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                ComposingThinkingOrb(
+                                AnimatedAliflixHeatmapLogo(
                                     modifier = Modifier.size(46.dp),
                                 )
                                 Spacer(modifier = Modifier.width(13.dp))

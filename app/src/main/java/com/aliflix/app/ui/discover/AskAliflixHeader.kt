@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aliflix.app.ui.launch.AnimatedAliflixHeatmapLogo
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
@@ -49,7 +50,7 @@ fun AskAliflixHeader(
                     tint = AliflixContentPrimary,
                 )
             }
-            ComposingThinkingOrb(
+            AnimatedAliflixHeatmapLogo(
                 modifier = Modifier.size(42.dp),
             )
             Spacer(modifier = Modifier.width(10.dp))

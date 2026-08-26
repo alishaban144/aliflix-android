@@ -1,5 +1,6 @@
 package com.aliflix.app.ui.launch
 
+import android.animation.ValueAnimator
 import android.graphics.BlurMaskFilter
 import android.graphics.Paint
 import android.os.SystemClock
@@ -56,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.em
 import com.aliflix.app.ui.common.AliflixLogoGeometry
+import kotlinx.coroutines.isActive
 import kotlin.math.floor
 import kotlin.math.min
 import kotlin.math.pow
@@ -383,6 +385,32 @@ internal fun calculateWordState(
             opacity to y
         }
     }
+}
+
+@Composable
+fun AnimatedAliflixHeatmapLogo(
+    modifier: Modifier = Modifier,
+) {
+    val reducedMotion = remember { !ValueAnimator.areAnimatorsEnabled() }
+    var startNanos by remember { mutableLongStateOf(0L) }
+    var elapsedSeconds by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(reducedMotion) {
+        if (reducedMotion) return@LaunchedEffect
+        while (isActive) {
+            withFrameNanos { frameTimeNanos ->
+                if (startNanos == 0L) {
+                    startNanos = frameTimeNanos
+                }
+                elapsedSeconds = ((frameTimeNanos - startNanos) / 1_000_000_000.0).toFloat()
+            }
+        }
+    }
+
+    AliflixHeatmapLogo(
+        timeSeconds = if (reducedMotion) 0f else elapsedSeconds,
+        modifier = modifier,
+    )
 }
 
 @Composable
