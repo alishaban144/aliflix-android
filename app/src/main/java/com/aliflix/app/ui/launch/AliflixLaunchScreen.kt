@@ -55,6 +55,27 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 
+internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 1.15f
+internal const val LAUNCH_WORD_SLOT_SECONDS = 0.8f
+internal const val LAUNCH_WORD_COUNT = 3
+internal const val LAUNCH_REDUCED_MOTION_MIN_SECONDS = 0.8f
+internal const val LAUNCH_EXIT_DURATION_SECONDS = 1.05f
+
+internal fun isLaunchSequenceComplete(
+    elapsedSeconds: Float,
+    isReducedMotion: Boolean,
+): Boolean = elapsedSeconds >= if (isReducedMotion) {
+    LAUNCH_REDUCED_MOTION_MIN_SECONDS
+} else {
+    LAUNCH_WORD_SEQUENCE_START_SECONDS + LAUNCH_WORD_SLOT_SECONDS * LAUNCH_WORD_COUNT
+}
+
+internal fun isLaunchExitReady(
+    isHomeReady: Boolean,
+    elapsedSeconds: Float,
+    isReducedMotion: Boolean,
+): Boolean = isHomeReady && isLaunchSequenceComplete(elapsedSeconds, isReducedMotion)
+
 object AliflixLaunchTheme {
     val Background = Color(0xFF07080C)
     val BaseFill = Color(0xFF0B0911)
@@ -126,10 +147,6 @@ fun AliflixLaunchOverlay(
     var isDismissed by remember { mutableStateOf(false) }
 
     LaunchedEffect(isReducedMotion) {
-        if (isReducedMotion) {
-            elapsedSeconds = 2.0f
-            return@LaunchedEffect
-        }
         while (!isDismissed) {
             withFrameNanos { frameTimeNanos ->
                 if (startNanos == 0L) {
@@ -140,23 +157,22 @@ fun AliflixLaunchOverlay(
         }
     }
 
-    LaunchedEffect(isHomeReady, elapsedSeconds, isReducedMotion) {
-        if (isHomeReady && !isDismissed) {
-            if (isReducedMotion) {
-                isDismissed = true
-                onLaunchComplete()
-            } else if (exitStartSeconds < 0f) {
-                exitStartSeconds = elapsedSeconds
-            }
+    val exitReady = isLaunchExitReady(isHomeReady, elapsedSeconds, isReducedMotion)
+
+    LaunchedEffect(exitReady) {
+        if (exitReady && !isDismissed && exitStartSeconds < 0f) {
+            exitStartSeconds = elapsedSeconds
         }
     }
 
-    var exitProgress by remember { mutableFloatStateOf(0f) }
+    val exitProgress = if (exitStartSeconds >= 0f) {
+        ((elapsedSeconds - exitStartSeconds) / LAUNCH_EXIT_DURATION_SECONDS).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
 
-    if (exitStartSeconds >= 0f && !isDismissed) {
-        val exitElapsed = elapsedSeconds - exitStartSeconds
-        exitProgress = (exitElapsed / 1.05f).coerceIn(0f, 1f)
-        if (exitProgress >= 1f) {
+    LaunchedEffect(exitProgress) {
+        if (exitProgress >= 1f && !isDismissed) {
             isDismissed = true
             onLaunchComplete()
         }
@@ -300,13 +316,16 @@ internal fun calculateWordState(
     if (isReducedMotion) {
         return if (wordIndex == 0) 1f to 0f else 0f to 8f
     }
-    if (seq < 1.15f) return 0f to 8f
-    val wordTime = seq - 1.15f
-    val slot = 1.35f
-    val activeIdx = (floor(wordTime / slot).toInt()) % 3
+    if (seq < LAUNCH_WORD_SEQUENCE_START_SECONDS) return 0f to 8f
+    val wordTime = seq - LAUNCH_WORD_SEQUENCE_START_SECONDS
+    val sequenceDuration = LAUNCH_WORD_SLOT_SECONDS * LAUNCH_WORD_COUNT
+    if (wordTime >= sequenceDuration) {
+        return if (wordIndex == LAUNCH_WORD_COUNT - 1) 1f to 0f else 0f to 8f
+    }
+    val activeIdx = floor(wordTime / LAUNCH_WORD_SLOT_SECONDS).toInt()
     if (wordIndex != activeIdx) return 0f to 8f
 
-    val local = (wordTime % slot) / slot
+    val local = (wordTime % LAUNCH_WORD_SLOT_SECONDS) / LAUNCH_WORD_SLOT_SECONDS
     return when {
         local < 0.18f -> {
             val p = local / 0.18f
@@ -314,7 +333,7 @@ internal fun calculateWordState(
             val y = 8f * (1f - easeOutCubic(p))
             opacity to y
         }
-        local < 0.76f -> {
+        local < 0.76f || wordIndex == LAUNCH_WORD_COUNT - 1 -> {
             1f to 0f
         }
         else -> {

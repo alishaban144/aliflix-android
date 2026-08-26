@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assessPremiseCandidates,
+  GEMINI_37_RECOMMENDATION_LIMIT,
+  GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS,
   GEMINI_GENERATION_TIMEOUT_MS,
   GEMINI_STRUCTURED_MAX_ATTEMPTS,
   GEMINI_VERIFICATION_TIMEOUT_MS,
@@ -8,7 +10,13 @@ import {
   recommendSimilarTitles,
 } from '../src/gemini';
 import { GeminiDescribeResponseSchema } from '../src/schemas';
-import { DESCRIBE_RECOMMENDATIONS_PROMPT, SIMILAR_RECOMMENDATIONS_PROMPT, VERIFY_SIMILARITY_PROMPT } from '../src/prompts';
+import {
+  DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT,
+  DESCRIBE_RECOMMENDATIONS_PROMPT,
+  SIMILAR_RECOMMENDATIONS_COMPACT_PROMPT,
+  SIMILAR_RECOMMENDATIONS_PROMPT,
+  VERIFY_SIMILARITY_PROMPT,
+} from '../src/prompts';
 
 describe('Gemini Describe contract', () => {
   afterEach(() => {
@@ -98,7 +106,7 @@ describe('Gemini Describe contract', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await recommendSimilarTitles(
-      { GEMINI_API_KEY: 'test-key' } as any,
+      { GEMINI_API_KEY: 'test-key', GEMINI_GENERATION_MODEL: 'gemini-3.7-flash' } as any,
       [{
         tmdbId: 1396,
         mediaType: 'tv',
@@ -116,6 +124,49 @@ describe('Gemini Describe contract', () => {
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const body = JSON.parse(String(init.body));
     expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe('medium');
+    expect(body.generationConfig.maxOutputTokens).toBe(GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS);
+    expect(body.generationConfig.responseMimeType).toBe('application/json');
+    expect(body.systemInstruction.parts[0].text).toBe(SIMILAR_RECOMMENDATIONS_COMPACT_PROMPT);
+    expect(JSON.parse(body.contents[0].parts[0].text).targetCount).toBe(GEMINI_37_RECOMMENDATION_LIMIT);
+  });
+
+  it('keeps 3.7 medium thinking but uses the bounded low-latency generation contract', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      candidates: [{
+        finishReason: 'STOP',
+        content: { parts: [{ text: JSON.stringify({ recommendations: [{
+          title: 'Coherence',
+          releaseYear: 2013,
+          confidence: .94,
+          reason: 'Friends encounter fractured realities during a comet flyby.',
+        }] }) }] },
+      }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await recommendDescribeTitles(
+      { GEMINI_API_KEY: 'test-key', GEMINI_GENERATION_MODEL: 'gemini-3.7-flash' } as any,
+      'mind-bending science fiction about fractured realities',
+      'movie',
+      {},
+      [],
+      12,
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent');
+    const body = JSON.parse(String(init.body));
+    expect(body.generationConfig).toMatchObject({
+      maxOutputTokens: GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS,
+      thinkingConfig: { thinkingLevel: 'medium' },
+      responseMimeType: 'application/json',
+    });
+    expect(body.generationConfig.responseJsonSchema.type).toBe('object');
+    expect(body.generationConfig.responseFormat).toBeUndefined();
+    expect(body.systemInstruction.parts[0].text).toBe(DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT);
+    expect(body.systemInstruction.parts[0].text).toContain('Return fewer instead of padding');
+    expect(JSON.parse(body.contents[0].parts[0].text).targetCount).toBe(GEMINI_37_RECOMMENDATION_LIMIT);
   });
 
   it('does not automatically retry a structured Gemini quota failure', async () => {

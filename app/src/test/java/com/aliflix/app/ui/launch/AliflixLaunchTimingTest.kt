@@ -12,25 +12,30 @@ class AliflixLaunchTimingTest {
         assertEquals(0f, word0BeforeStart.first, 0.001f)
 
         // Word 0 (MOVIES) starts at 1.15s
-        // At 1.15s + 0.18 * 1.35s = 1.393s -> fade in completes
+        assertEquals(0.8f, LAUNCH_WORD_SLOT_SECONDS, 0.001f)
+
+        // At 1.15s + 0.18 * 0.8s = 1.294s -> fade in completes
         val word0MidFadeIn = calculateWordState(seq = 1.25f, wordIndex = 0, isReducedMotion = false)
         assertTrue("Word 0 should be fading in", word0MidFadeIn.first > 0f && word0MidFadeIn.first < 1f)
 
-        val word0Hold = calculateWordState(seq = 1.80f, wordIndex = 0, isReducedMotion = false)
+        val word0Hold = calculateWordState(seq = 1.55f, wordIndex = 0, isReducedMotion = false)
         assertEquals("Word 0 should have full opacity during readable hold", 1f, word0Hold.first, 0.001f)
         assertEquals("Word 0 should have 0 translation Y during hold", 0f, word0Hold.second, 0.001f)
 
-        // At 1.15s + 1.35s = 2.50s, Word 0 is completely faded out and Word 1 (SERIES) starts
-        val word0AtSlotEnd = calculateWordState(seq = 2.50f, wordIndex = 0, isReducedMotion = false)
+        // At 1.15s + 0.8s = 1.95s, Word 0 is out and Word 1 (SERIES) starts
+        val word0AtSlotEnd = calculateWordState(seq = 1.95f, wordIndex = 0, isReducedMotion = false)
         assertEquals("Word 0 should be 0 at end of slot", 0f, word0AtSlotEnd.first, 0.001f)
 
         // Word 1 (SERIES) during hold
-        val word1Hold = calculateWordState(seq = 3.15f, wordIndex = 1, isReducedMotion = false)
+        val word1Hold = calculateWordState(seq = 2.35f, wordIndex = 1, isReducedMotion = false)
         assertEquals("Word 1 should have full opacity during readable hold", 1f, word1Hold.first, 0.001f)
 
         // Word 2 (STORIES) during hold
-        val word2Hold = calculateWordState(seq = 4.50f, wordIndex = 2, isReducedMotion = false)
+        val word2Hold = calculateWordState(seq = 3.15f, wordIndex = 2, isReducedMotion = false)
         assertEquals("Word 2 should have full opacity during readable hold", 1f, word2Hold.first, 0.001f)
+
+        val word2WhileWaitingForHome = calculateWordState(seq = 8f, wordIndex = 2, isReducedMotion = false)
+        assertEquals("STORIES should remain visible while Home is still loading", 1f, word2WhileWaitingForHome.first, 0.001f)
     }
 
     @Test
@@ -57,5 +62,19 @@ class AliflixLaunchTimingTest {
         assertEquals(0f, word0.second, 0.001f)
         assertEquals(0f, word1.first, 0.001f)
         assertEquals(0f, word2.first, 0.001f)
+    }
+
+    @Test
+    fun testLaunchCannotExitBeforeEveryWordHasHadItsSlot() {
+        val sequenceEnd = LAUNCH_WORD_SEQUENCE_START_SECONDS +
+            LAUNCH_WORD_SLOT_SECONDS * LAUNCH_WORD_COUNT
+
+        assertTrue(!isLaunchSequenceComplete(sequenceEnd - 0.01f, isReducedMotion = false))
+        assertTrue(isLaunchSequenceComplete(sequenceEnd, isReducedMotion = false))
+        assertTrue(!isLaunchExitReady(isHomeReady = true, elapsedSeconds = sequenceEnd - 0.01f, isReducedMotion = false))
+        assertTrue(!isLaunchExitReady(isHomeReady = false, elapsedSeconds = sequenceEnd, isReducedMotion = false))
+        assertTrue(isLaunchExitReady(isHomeReady = true, elapsedSeconds = sequenceEnd, isReducedMotion = false))
+        assertTrue(!isLaunchSequenceComplete(0.79f, isReducedMotion = true))
+        assertTrue(isLaunchSequenceComplete(0.8f, isReducedMotion = true))
     }
 }

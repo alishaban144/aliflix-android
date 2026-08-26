@@ -1,6 +1,8 @@
 import {
+  DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT,
   DESCRIBE_RECOMMENDATIONS_PROMPT,
   INTERPRET_V3_PROMPT,
+  SIMILAR_RECOMMENDATIONS_COMPACT_PROMPT,
   SIMILAR_RECOMMENDATIONS_PROMPT,
   VERIFY_PREMISE_PROMPT,
   VERIFY_SIMILARITY_PROMPT,
@@ -28,6 +30,8 @@ const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 export const GEMINI_GENERATION_TIMEOUT_MS = 30_000;
 export const GEMINI_VERIFICATION_TIMEOUT_MS = 20_000;
 export const GEMINI_STRUCTURED_MAX_ATTEMPTS = 1;
+export const GEMINI_37_RECOMMENDATION_LIMIT = 8;
+export const GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS = 3_072;
 const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
 };
@@ -44,6 +48,10 @@ interface GeminiEmbeddingResponse {
 }
 
 type GeminiThinkingLevel = 'medium' | 'high';
+
+function isGemini37Flash(model: string): boolean {
+  return model === 'gemini-3.7-flash';
+}
 
 function responseJsonSchema(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(responseJsonSchema);
@@ -203,7 +211,21 @@ async function geminiStructuredContent<T>(
   timeoutMs: number,
   thinkingLevel: GeminiThinkingLevel,
   operation: string,
+  maxOutputTokens = 8_192,
 ): Promise<T> {
+  const convertedSchema = responseJsonSchema(schema);
+  // Keep the already-proven 3.5 request shape unchanged. Gemini 3.7 uses the
+  // mature generateContent structured-output fields from Google's REST API;
+  // avoiding the newer nested responseFormat path prevents extra server-side
+  // response negotiation on its latency-sensitive recommendation requests.
+  const structuredOutputConfig = isGemini37Flash(model)
+    ? {
+        responseMimeType: 'application/json',
+        responseJsonSchema: convertedSchema,
+      }
+    : {
+        responseFormat: { text: { mimeType: 'APPLICATION_JSON', schema: convertedSchema } },
+      };
   const data = await geminiFetch<GeminiGenerateContentResponse>(
     env,
     `${API_BASE}/${encodeURIComponent(model)}:generateContent`,
@@ -211,9 +233,9 @@ async function geminiStructuredContent<T>(
       systemInstruction: { parts: [{ text: systemInstruction }] },
       contents: [{ role: 'user', parts: [{ text: JSON.stringify(input) }] }],
       generationConfig: {
-        maxOutputTokens: 8_192,
+        maxOutputTokens,
         thinkingConfig: { thinkingLevel },
-        responseFormat: { text: { mimeType: 'APPLICATION_JSON', schema: responseJsonSchema(schema) } },
+        ...structuredOutputConfig,
       },
     },
     timeoutMs,
@@ -277,15 +299,17 @@ export async function recommendDescribeTitles(
   targetCount = 12,
 ): Promise<DescribeRecommendation[]> {
   const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
+  const optimized37 = isGemini37Flash(model);
+  const recommendationLimit = optimized37 ? GEMINI_37_RECOMMENDATION_LIMIT : 12;
   const data = await geminiStructuredContent<unknown>(
     env,
     model,
-    DESCRIBE_RECOMMENDATIONS_PROMPT,
+    optimized37 ? DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT : DESCRIBE_RECOMMENDATIONS_PROMPT,
     {
       query,
       authoritativeMediaType: mediaType,
       explicitFilters,
-      targetCount: Math.min(12, Math.max(1, targetCount)),
+      targetCount: Math.min(recommendationLimit, Math.max(1, targetCount)),
       expansionPass: excludedTitles.length > 0,
       excludedTitles,
     },
@@ -293,6 +317,7 @@ export async function recommendDescribeTitles(
     GEMINI_GENERATION_TIMEOUT_MS,
     'medium',
     'Describe candidate generation',
+    optimized37 ? GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS : 8_192,
   );
   const parsed = GeminiDescribeResponseSchema.parse(data);
   const seen = new Set<string>();
@@ -314,16 +339,18 @@ export async function recommendSimilarTitles(
   targetCount = 12,
 ): Promise<DescribeRecommendation[]> {
   const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
+  const optimized37 = isGemini37Flash(model);
+  const recommendationLimit = optimized37 ? GEMINI_37_RECOMMENDATION_LIMIT : 12;
   const data = await geminiStructuredContent<unknown>(
     env,
     model,
-    SIMILAR_RECOMMENDATIONS_PROMPT,
+    optimized37 ? SIMILAR_RECOMMENDATIONS_COMPACT_PROMPT : SIMILAR_RECOMMENDATIONS_PROMPT,
     {
       anchors,
       authoritativeMediaType: mediaType,
       refinement,
       explicitFilters,
-      targetCount: Math.min(12, Math.max(1, targetCount)),
+      targetCount: Math.min(recommendationLimit, Math.max(1, targetCount)),
       expansionPass: excludedTitles.length > 0,
       excludedTitles,
     },
@@ -331,6 +358,7 @@ export async function recommendSimilarTitles(
     GEMINI_GENERATION_TIMEOUT_MS,
     'medium',
     'Similar candidate generation',
+    optimized37 ? GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS : 8_192,
   );
   const parsed = GeminiDescribeResponseSchema.parse(data);
   const seen = new Set<string>();
