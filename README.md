@@ -7,7 +7,7 @@
 
 Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by Gemini interpretation and authoritative TMDB metadata.
 
-This source tree targets **Aliflix 3.1.20** (`versionCode 110`) for Android 10 and newer.
+This source tree targets **Aliflix 3.1.21** (`versionCode 111`) for Android 10 and newer.
 
 [Download the latest mobile APK](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk) | [View release notes](https://github.com/alishaban144/aliflix-android/releases/latest)
 
@@ -18,11 +18,7 @@ This source tree targets **Aliflix 3.1.20** (`versionCode 110`) for Android 10 a
 - **Native mobile UI** with Home, Discover, title details, genres, and My Space.
 - **No account required** for the published app; personal lists and playback preferences stay on the device.
 - **Ask Aliflix v3** with Describe, Similar, and Filters modes for movies or series.
-<<<<<<< HEAD
-- **Grounded recommendations**: Gemini interprets intent while TMDB remains the authority for titles, types, posters, genres, years, runtime, countries, languages, and ratings.
-=======
 - **Grounded recommendations**: Describe and Similar use Gemini 3.7 Flash to propose real titles, exact TMDB identity and hydrated metadata to verify them, and a second Gemini relevance gate to reject weak matches. They never fall back to keyword or popularity discovery.
->>>>>>> release/v3.1.15
 - **Deterministic filtering** after metadata enrichment, including genre inclusion/exclusion, year, runtime, language, country, rating, title exclusions, and TMDB ID exclusions.
 - **Canonical Similar mode** that uses the selected TMDB identity directly, excludes the anchor, and preserves the requested output type.
 - **Useful result cards** with poster, title, year, genres, rating, and match tier.

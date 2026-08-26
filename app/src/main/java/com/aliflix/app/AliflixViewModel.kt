@@ -496,11 +496,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             viewModelScope.launch {
                 val cached = homeSnapshotStore.loadSnapshot()
                 if (cached != null && _home.value.content == null) {
-                    _home.value = HomeUiState(
-                        loading = false,
+                    _home.value = _home.value.copy(
                         content = cached.content,
                         editorialPicks = cached.editorialPicks,
-                        error = null,
                     )
                 }
             }
@@ -535,7 +533,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         homeRefreshJob = viewModelScope.launch {
             val previous = _home.value
             _home.value = previous.copy(
-                loading = showLoading && previous.content == null,
+                loading = if (showLoading) true else previous.loading,
                 error = null,
             )
             if (!BuildConfig.IS_TV) {

@@ -506,7 +506,7 @@ fun AliflixApp(
     var consumedDiscoverFocusRequestId by remember { mutableIntStateOf(0) }
     var libraryPage by rememberSaveable { mutableIntStateOf(0) }
     var launchCompleted by rememberSaveable { mutableStateOf(false) }
-    val isHomeReady = home.content != null || (!home.loading && home.error != null)
+    val isHomeReady = !home.loading && (home.content != null || home.error != null)
     val requestedDetailProvider = PlaybackProviderId.fromStoredValue(detailProviderName)
     val detailProvider = requestedDetailProvider?.takeIf { provider ->
         detail.item?.let(provider::isAvailableFor) == true

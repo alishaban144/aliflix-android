@@ -292,7 +292,7 @@ private fun AliflixLaunchStage(
     }
 }
 
-private fun calculateWordState(
+internal fun calculateWordState(
     seq: Float,
     wordIndex: Int,
     isReducedMotion: Boolean,
@@ -302,7 +302,7 @@ private fun calculateWordState(
     }
     if (seq < 1.15f) return 0f to 8f
     val wordTime = seq - 1.15f
-    val slot = 1.8f
+    val slot = 1.35f
     val activeIdx = (floor(wordTime / slot).toInt()) % 3
     if (wordIndex != activeIdx) return 0f to 8f
 
