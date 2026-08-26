@@ -4779,7 +4779,15 @@ private fun DetailScreen(
             }
         }
 
-        if (state.loading) {
+        if (state.recommendations.isNotEmpty()) {
+            item(key = "recommendations") {
+                MediaRail(
+                    rail = ContentRail("More Like This", state.recommendations),
+                    onOpen = onOpen,
+                    compact = true,
+                )
+            }
+        } else if (state.loading) {
             item(key = "detail-loading") {
                 Box(
                     modifier = Modifier
@@ -4789,14 +4797,6 @@ private fun DetailScreen(
                 ) {
                     CircularProgressIndicator(color = AliflixRed)
                 }
-            }
-        } else if (state.recommendations.isNotEmpty()) {
-            item(key = "recommendations") {
-                MediaRail(
-                    rail = ContentRail("More Like This", state.recommendations),
-                    onOpen = onOpen,
-                    compact = true,
-                )
             }
         }
     }

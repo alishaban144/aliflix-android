@@ -74,7 +74,7 @@ describe('Gemini Describe contract', () => {
     expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent');
     const body = JSON.parse(String(init.body));
     expect(body.generationConfig).toMatchObject({
-      maxOutputTokens: 3072,
+      maxOutputTokens: 8192,
       thinkingConfig: { thinkingLevel: 'medium' },
       responseFormat: { text: { mimeType: 'APPLICATION_JSON' } },
     });

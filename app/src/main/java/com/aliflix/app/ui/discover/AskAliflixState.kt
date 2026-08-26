@@ -19,12 +19,14 @@ sealed interface AskAliflixRequest {
         val anchors: List<Media> = emptyList(),
         val anchor: Media? = anchors.firstOrNull(),
         val requiredStatus: String? = null,
+        val refinementText: String? = null,
     ) : AskAliflixRequest {
-        constructor(outputMediaType: MediaType, anchor: Media, requiredStatus: String? = null) : this(
+        constructor(outputMediaType: MediaType, anchor: Media, requiredStatus: String? = null, refinementText: String? = null) : this(
             outputMediaType = outputMediaType,
             anchors = listOf(anchor),
             anchor = anchor,
             requiredStatus = requiredStatus,
+            refinementText = refinementText,
         )
     }
 

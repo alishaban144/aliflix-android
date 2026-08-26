@@ -653,28 +653,39 @@ private fun RefineBottomBar(
     val keyboard = LocalSoftwareKeyboardController.current
     val canSubmit = refineText.isNotBlank() && !refining
 
+    fun submit() {
+        if (canSubmit) {
+            keyboard?.hide()
+            onRefine(refineText.trim())
+            refineText = ""
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(26.dp),
-            color = AliflixSurfaceElevated.copy(alpha = 0.95f),
-            border = BorderStroke(1.dp, AliflixBorderSubtle),
-            shadowElevation = 4.dp,
+            shape = RoundedCornerShape(28.dp),
+            color = AliflixSurfaceElevated.copy(alpha = 0.92f),
+            border = BorderStroke(
+                width = 1.dp,
+                color = if (canSubmit) AliflixAccentSecondary.copy(alpha = 0.45f) else AliflixBorderSubtle,
+            ),
+            shadowElevation = 8.dp,
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 14.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+                    .padding(start = 16.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Tune,
                     contentDescription = null,
-                    tint = AliflixAccentSecondary,
+                    tint = if (canSubmit) AliflixAccentSecondary else AliflixContentTertiary,
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.width(10.dp))
@@ -683,7 +694,7 @@ private fun RefineBottomBar(
                     onValueChange = { refineText = it },
                     placeholder = {
                         Text(
-                            "Refine matches (e.g. post-2020, darker tone)...",
+                            "Refine results...",
                             color = AliflixContentTertiary,
                             fontSize = 13.sp,
                             maxLines = 1,
@@ -691,6 +702,12 @@ private fun RefineBottomBar(
                         )
                     },
                     singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onDone = { submit() }
+                    ),
                     modifier = Modifier.weight(1f),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color.Transparent,
@@ -705,30 +722,27 @@ private fun RefineBottomBar(
                 Spacer(Modifier.width(6.dp))
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
-                        .background(if (canSubmit) AliflixAccentPrimary else AliflixSurfaceSecondary.copy(alpha = 0.6f))
-                        .clickable(enabled = canSubmit) {
-                            if (canSubmit) {
-                                keyboard?.hide()
-                                onRefine(refineText.trim())
-                                refineText = ""
-                            }
-                        },
+                        .background(
+                            if (canSubmit) AliflixAccentPrimary
+                            else AliflixSurfaceSecondary.copy(alpha = 0.5f)
+                        )
+                        .clickable(enabled = canSubmit) { submit() },
                     contentAlignment = Alignment.Center,
                 ) {
                     if (refining) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
                             color = AliflixAccentSecondary,
                         )
                     } else {
                         Icon(
                             Icons.AutoMirrored.Rounded.ArrowForward,
-                            contentDescription = "Send refinement",
+                            contentDescription = "Submit refinement",
                             tint = if (canSubmit) Color.White else AliflixContentTertiary,
-                            modifier = Modifier.size(17.dp),
+                            modifier = Modifier.size(16.dp),
                         )
                     }
                 }

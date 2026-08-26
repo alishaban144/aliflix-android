@@ -48,11 +48,16 @@ object AskAliflixRequestMapper {
             }
             is AskAliflixRequest.Similar -> {
                 val titles = request.anchors.map { it.title }
-                when (titles.size) {
+                val base = when (titles.size) {
                     0 -> "${outputType.label()} — similar titles"
                     1 -> "${outputType.label()} — similar to ${titles[0]}"
                     2 -> "${outputType.label()} — blending ${titles[0]} & ${titles[1]}"
                     else -> "${outputType.label()} — blending ${titles.size} titles"
+                }
+                if (!request.refinementText.isNullOrBlank()) {
+                    "$base — “${request.refinementText.trim()}”"
+                } else {
+                    base
                 }
             }
             is AskAliflixRequest.Filters -> "${outputType.label()} — your selected filters"
@@ -77,7 +82,8 @@ object AskAliflixRequestMapper {
             anchor = anchorList.firstOrNull(),
             anchors = anchorList,
             previousQuery = (request as? AskAliflixRequest.Describe)?.previousText,
-            refinementQuery = (request as? AskAliflixRequest.Describe)?.refinementText,
+            refinementQuery = (request as? AskAliflixRequest.Describe)?.refinementText
+                ?: (request as? AskAliflixRequest.Similar)?.refinementText,
             filters = spec.toWorkerFilters(),
             pageSize = 24,
         ))

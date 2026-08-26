@@ -333,6 +333,7 @@ data class V3TitleDetails(
     val creators: List<V3CatalogPerson>,
     val cast: List<V3CatalogPerson>,
     val reviews: List<V3Review> = emptyList(),
+    val recommendations: List<V3CatalogMedia> = emptyList(),
 ) {
     companion object {
         fun fromJson(json: JSONObject) = V3TitleDetails(
@@ -342,6 +343,7 @@ data class V3TitleDetails(
             creators = json.optJSONArray("creators").toStringList { V3CatalogPerson.fromJson(it) },
             cast = json.optJSONArray("cast").toStringList { V3CatalogPerson.fromJson(it) },
             reviews = json.optJSONArray("reviews").toStringList { V3Review.fromJson(it) },
+            recommendations = json.optJSONArray("recommendations").toStringList { V3CatalogMedia.fromJson(it) },
         )
     }
 }

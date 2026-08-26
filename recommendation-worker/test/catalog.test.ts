@@ -41,6 +41,16 @@ describe('TMDB-backed mobile catalogue routes', () => {
         created_by: [{ id: 66633, name: 'Vince Gilligan', profile_path: '/vince.jpg' }],
         aggregate_credits: { cast: [{ id: 17419, name: 'Bryan Cranston' }] },
         external_ids: { imdb_id: 'tt0903747' },
+        recommendations: {
+          results: [
+            { id: 60059, name: 'Better Call Saul', media_type: 'tv', poster_path: '/bcs.jpg', vote_average: 8.7, vote_count: 5000, genre_ids: [18, 80] },
+          ],
+        },
+        similar: {
+          results: [
+            { id: 1402, name: 'The Walking Dead', media_type: 'tv', poster_path: '/twd.jpg', vote_average: 8.1, vote_count: 14000, genre_ids: [18] },
+          ],
+        },
         reviews: {
           results: [
             {
@@ -68,6 +78,10 @@ describe('TMDB-backed mobile catalogue routes', () => {
       originalLanguage: 'en',
       creators: [{ tmdbId: 66633, name: 'Vince Gilligan', profilePath: '/vince.jpg' }],
       cast: [{ tmdbId: 17419, name: 'Bryan Cranston' }],
+      recommendations: [
+        { tmdbId: 60059, title: 'Better Call Saul' },
+        { tmdbId: 1402, title: 'The Walking Dead' },
+      ],
       reviews: [{
         id: 'rev-1',
         author: 'Walter',

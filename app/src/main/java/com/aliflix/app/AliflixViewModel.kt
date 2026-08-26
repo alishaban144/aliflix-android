@@ -191,8 +191,6 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     val recent = library.recent
     val likes = library.likes
 
-
-
     private val _askUiState = MutableStateFlow<com.aliflix.app.ui.discover.AskAliflixUiState>(com.aliflix.app.ui.discover.AskAliflixUiState.Editing)
     val askUiState: StateFlow<com.aliflix.app.ui.discover.AskAliflixUiState> = _askUiState.asStateFlow()
 
@@ -206,7 +204,6 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private var activeAskSpec: com.aliflix.app.recommendation.CatalogDiscoverySpec? = null
 
     fun submitAskAliflix(request: com.aliflix.app.ui.discover.AskAliflixRequest) {
-        pauseBackgroundHomeRefresh()
         activeAskJob?.cancel()
         val token = ++askSessionToken
         
@@ -238,9 +235,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Searching(summary)
         activeAskJob = viewModelScope.launch {
             try {
-                val clientAi = aiClient
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    clientAi.getRecommendations(requestWithLibraryFilters)
+                    aiClient.getRecommendations(requestWithLibraryFilters)
                 }
                 
                 if (token != askSessionToken) return@launch
@@ -283,20 +279,34 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun refineAskAliflix(refinement: String) {
-        val currentQuery = activeAskRequest?.query ?: _askEditorState.value.describeText
-        val previousText = if (_askEditorState.value.describeText.isNotBlank()) _askEditorState.value.describeText else currentQuery
-        val newDescribeText = "$previousText, $refinement"
-        _askEditorState.value = _askEditorState.value.copy(describeText = newDescribeText)
-        
-        submitAskAliflix(
-            com.aliflix.app.ui.discover.AskAliflixRequest.Describe(
-                mediaType = _askEditorState.value.mediaType,
-                text = newDescribeText,
-                requiredStatus = _askEditorState.value.spec.requiredStatus,
-                previousText = previousText,
-                refinementText = refinement,
+        val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results
+        val activeReq = currentResults?.activeRequest
+        if (activeReq is com.aliflix.app.ui.discover.AskAliflixRequest.Similar || _askEditorState.value.mode == 1) {
+            val anchors = (activeReq as? com.aliflix.app.ui.discover.AskAliflixRequest.Similar)?.anchors
+                ?: (_askEditorState.value.selectedAnchors.ifEmpty { listOfNotNull(_askEditorState.value.selectedAnchor) })
+            submitAskAliflix(
+                com.aliflix.app.ui.discover.AskAliflixRequest.Similar(
+                    outputMediaType = _askEditorState.value.mediaType,
+                    anchors = anchors,
+                    requiredStatus = _askEditorState.value.spec.requiredStatus,
+                    refinementText = refinement.trim(),
+                )
             )
-        )
+        } else {
+            val currentQuery = activeAskRequest?.query ?: _askEditorState.value.describeText
+            val previousText = if (_askEditorState.value.describeText.isNotBlank()) _askEditorState.value.describeText else currentQuery
+            val newDescribeText = if (previousText.isNotBlank()) "$previousText, $refinement" else refinement
+            _askEditorState.value = _askEditorState.value.copy(describeText = newDescribeText)
+            submitAskAliflix(
+                com.aliflix.app.ui.discover.AskAliflixRequest.Describe(
+                    mediaType = _askEditorState.value.mediaType,
+                    text = newDescribeText,
+                    requiredStatus = _askEditorState.value.spec.requiredStatus,
+                    previousText = previousText,
+                    refinementText = refinement,
+                )
+            )
+        }
     }
 
     fun toggleAskHideWatched(hide: Boolean) {
@@ -773,12 +783,16 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 val tmdbDetails = runCatching {
                     aiClient.getTitleDetails(item.type.routeName, item.id)
                 }.getOrNull()
+                val tmdbRecommendations = tmdbDetails?.recommendations?.map { it.toMedia() }.orEmpty()
                 val authoritativeItem = if (!BuildConfig.IS_TV) {
                     tmdbDetails?.toStableMobileMedia(item) ?: item
                 } else {
                     tmdbDetails?.toMedia(item) ?: item
                 }
-                _detail.value = _detail.value.copy(item = authoritativeItem)
+                _detail.value = _detail.value.copy(
+                    item = authoritativeItem,
+                    recommendations = tmdbRecommendations.ifEmpty { _detail.value.recommendations },
+                )
 
                 val seasonsRequest = async {
                     if (authoritativeItem.type == MediaType.TV) {
@@ -831,10 +845,17 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         details
                     }
                     library.refreshMetadata(displayDetails)
+                    val resolvedRecs = if (tmdbRecommendations.isNotEmpty()) {
+                        tmdbRecommendations
+                    } else if (!recommendations.isNullOrEmpty()) {
+                        recommendations
+                    } else {
+                        _detail.value.recommendations
+                    }
                     _detail.value = _detail.value.copy(
                         loading = false,
                         item = displayDetails,
-                        recommendations = recommendations ?: emptyList(),
+                        recommendations = resolvedRecs,
                     )
                 }
             } catch (error: CancellationException) {

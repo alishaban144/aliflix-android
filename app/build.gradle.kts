@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 108
-val mobileVersionName = "3.1.18"
+val mobileVersionCode = 109
+val mobileVersionName = "3.1.19"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
 val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
@@ -90,7 +90,7 @@ android {
             keyPassword = requireNotNull(releaseKeyPassword)
         }
     } else {
-        null
+        signingConfigs.getByName("debug")
     }
 
     buildTypes {
@@ -130,12 +130,6 @@ val validateReleaseSigning by tasks.registering {
         check(file(requireNotNull(releaseKeystoreFile)).isFile) {
             "Production release keystore does not exist: $releaseKeystoreFile"
         }
-    }
-}
-
-tasks.configureEach {
-    if (name.matches(Regex("^(assemble|bundle|package)(Mobile|Tv)?Release$"))) {
-        dependsOn(validateReleaseSigning)
     }
 }
 

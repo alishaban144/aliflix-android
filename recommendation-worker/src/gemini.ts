@@ -181,6 +181,19 @@ async function geminiFetch<T>(
   );
 }
 
+function cleanJsonText(raw: string): string {
+  let cleaned = raw.trim();
+  if (cleaned.startsWith('```json')) {
+    cleaned = cleaned.slice(7);
+  } else if (cleaned.startsWith('```')) {
+    cleaned = cleaned.slice(3);
+  }
+  if (cleaned.endsWith('```')) {
+    cleaned = cleaned.slice(0, -3);
+  }
+  return cleaned.trim();
+}
+
 async function geminiStructuredContent<T>(
   env: RecommendationEnv,
   model: string,
@@ -198,13 +211,10 @@ async function geminiStructuredContent<T>(
       systemInstruction: { parts: [{ text: systemInstruction }] },
       contents: [{ role: 'user', parts: [{ text: JSON.stringify(input) }] }],
       generationConfig: {
-        maxOutputTokens: 3_072,
+        maxOutputTokens: 8_192,
         thinkingConfig: { thinkingLevel },
         responseFormat: { text: { mimeType: 'APPLICATION_JSON', schema: responseJsonSchema(schema) } },
       },
-      // A user-triggered structured generation gets exactly one provider attempt.
-      // Retrying 429/5xx responses here silently consumes scarce daily generation
-      // quota; the client can explicitly retry the complete recommendation instead.
     },
     timeoutMs,
     operation,
@@ -218,7 +228,20 @@ async function geminiStructuredContent<T>(
     const finishReason = data.candidates?.[0]?.finishReason || 'unknown';
     throw new ServiceError('GEMINI_UNAVAILABLE', `Gemini returned no structured output (${finishReason})`, 502, true);
   }
-  return JSON.parse(text) as T;
+  const cleanedText = cleanJsonText(text);
+  try {
+    return JSON.parse(cleanedText) as T;
+  } catch (error) {
+    const finishReason = data.candidates?.[0]?.finishReason || 'unknown';
+    console.warn(JSON.stringify({
+      event: 'gemini_json_parse_failed',
+      operation,
+      finishReason,
+      textPreview: cleanedText.slice(0, 300),
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    throw new ServiceError('GEMINI_UNAVAILABLE', `Gemini returned malformed structured output (${finishReason})`, 502, true);
+  }
 }
 
 export async function interpretQuery(env: RecommendationEnv, query: string, mediaType: MediaType): Promise<InterpretedIntent> {
