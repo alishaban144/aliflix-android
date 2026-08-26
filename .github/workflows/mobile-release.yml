@@ -72,17 +72,18 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           npm ci
           VERSION_TAG="release-${GITHUB_SHA}"
-          npx wrangler versions upload \
-            --tag "$VERSION_TAG" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} release"
+          UPLOAD_OUTPUT="$(
+            npx wrangler versions upload \
+              --tag "$VERSION_TAG" \
+              --message "Aliflix ${RELEASE_VERSION_NAME} release" 2>&1
+          )"
+          printf '%s\n' "$UPLOAD_OUTPUT"
           CANDIDATE_ID="$(
-            npx wrangler versions list --json |
-              jq -r --arg tag "$VERSION_TAG" \
-                '.[] | select(.annotations["workers/tag"] == $tag) | .id' |
-              head -n 1
+            sed -nE \
+              's/^Worker Version ID:[[:space:]]*([0-9a-fA-F-]{36}).*$/\1/p' \
+              <<<"$UPLOAD_OUTPUT"
           )"
           test -n "$CANDIDATE_ID"
-          test "$CANDIDATE_ID" != "null"
           npx wrangler versions deploy \
             "${CANDIDATE_ID}@100%" \
             --message "Aliflix ${RELEASE_VERSION_NAME} release" \
