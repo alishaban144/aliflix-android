@@ -7,7 +7,7 @@
 
 Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by Gemini interpretation and authoritative TMDB metadata.
 
-This source tree targets **Aliflix 3.1.23** (`versionCode 113`) for Android 10 and newer.
+This source tree targets **Aliflix 3.1.24** (`versionCode 114`) for Android 10 and newer.
 
 [Download the latest mobile APK](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk) | [View release notes](https://github.com/alishaban144/aliflix-android/releases/latest)
 
@@ -18,7 +18,7 @@ This source tree targets **Aliflix 3.1.23** (`versionCode 113`) for Android 10 a
 - **Native mobile UI** with Home, Discover, title details, genres, and My Space.
 - **No account required** for the published app; personal lists and playback preferences stay on the device.
 - **Ask Aliflix v3** with Describe, Similar, and Filters modes for movies or series.
-- **Grounded recommendations**: Describe and Similar use Gemini 3.7 Flash to propose real titles, exact TMDB identity and hydrated metadata to verify them, and a second Gemini relevance gate to reject weak matches. They never fall back to keyword or popularity discovery.
+- **Grounded recommendations**: Describe and Similar use the selected Gemini model to propose real titles, then exact TMDB identity and hydrated metadata verify every result. Describe can recover from a temporary Gemini failure through strict TMDB concept retrieval without another Gemini call or popularity padding.
 - **Deterministic filtering** after metadata enrichment, including genre inclusion/exclusion, year, runtime, language, country, rating, title exclusions, and TMDB ID exclusions.
 - **Canonical Similar mode** that uses the selected TMDB identity directly, excludes the anchor, and preserves the requested output type.
 - **Useful result cards** with poster, title, year, genres, rating, and match tier.
@@ -35,11 +35,7 @@ flowchart LR
     UI[Jetpack Compose editor] --> VM[AliflixViewModel]
     VM --> Client[RecommendationAiClient]
     Client --> Worker[Cloudflare recommendation worker]
-<<<<<<< HEAD
-    Worker --> Gemini[Gemini intent and embeddings]
-=======
-    Worker --> Gemini[Gemini generation and relevance scoring]
->>>>>>> release/v3.1.15
+    Worker --> Gemini[Gemini generation and optional embeddings]
     Worker --> TMDB[TMDB titles and metadata]
     Worker --> Session[Durable Object session]
     Session --> Client
@@ -55,13 +51,9 @@ AskAliflixScreen
   -> recommendation-worker
 ```
 
-<<<<<<< HEAD
-The worker uses Gemini for semantic interpretation and relevance signals, then retrieves and validates real TMDB titles. Explicit UI filters override interpreted filters. Candidates are deduplicated and pruned before bounded metadata enrichment, then hard filters are applied deterministically. Missing metadata cannot satisfy a filter that requires it.
-=======
-In Describe mode, Gemini 3.7 Flash generates a broad premise-specific pool, expands it once when needed, and precision-scores it before the Worker spends its bounded TMDB detail budget on the strongest candidates. The Worker exact-resolves every title through TMDB, hydrates authoritative metadata for up to 20 results, and applies hard filters such as Returning or Ended only as eligibility checks. Relevance never receives a popularity, rating, status, generic genre, or title-word boost.
+Describe makes one compact, low-effort request to the selected Gemini model and asks for a bounded premise-specific title set. The Worker exact-resolves every title through TMDB, hydrates authoritative metadata, and applies hard filters such as Returning or Ended only as eligibility checks. Relevance never receives a popularity, rating, status, generic genre, or title-word boost. If Gemini has a retryable capacity, quota, timeout, or structured-output failure, Describe derives only the query's explicit concepts locally and uses exact TMDB keyword/genre retrieval with deterministic ranking; it does not make another Gemini or embedding request and returns fewer results instead of padding.
 
-Similar uses the same generated-and-verified design with authoritative TMDB anchor details and a dedicated similarity judge. Single-anchor, multi-anchor, and cross-media matches must share substantive story or narrative connections; broad genre overlap cannot pass. Describe and Similar surface Gemini failures instead of switching to keyword, genre, or popularity matching. Filters retains its specialized deterministic TMDB retrieval path. Missing metadata cannot satisfy a filter that requires it.
->>>>>>> release/v3.1.15
+Similar uses authoritative TMDB anchor details and a dedicated medium-effort generation contract. Single-anchor, multi-anchor, and cross-media matches must share substantive story or narrative connections; broad genre overlap cannot pass. Filters retains its specialized deterministic TMDB retrieval path. Missing metadata cannot satisfy a filter that requires it.
 
 Recommendation sessions are stored in a Cloudflare Durable Object. Subsequent pages use signed cursors tied to the request and session instead of fabricated offsets or client-side slicing.
 
@@ -224,12 +216,9 @@ The worker includes:
 
 - Zod request validation.
 - TMDB request authentication, retry, timeout, and bounded-call handling.
-<<<<<<< HEAD
-- Gemini intent interpretation and semantic embeddings.
-=======
-- Gemini 3.7 Flash Describe and Similar generation plus final relevance verification.
-- Gemini intent interpretation and semantic embeddings for non-Describe retrieval.
->>>>>>> release/v3.1.15
+- Low-effort Gemini Describe generation with a strict zero-extra-Gemini TMDB fallback.
+- Medium-effort Similar generation from authoritative TMDB anchors.
+- Gemini intent interpretation and semantic embeddings for filter queries with text.
 - Deterministic hard-filter enforcement.
 - Deduplication and relevance ranking.
 - Durable Object recommendation sessions.
@@ -309,14 +298,8 @@ https://github.com/alishaban144/aliflix-android/releases/latest/download/update-
 
 ## Current release
 
-- Version: **3.1.19**
-- Version code: **109**
+- Version: **3.1.24**
+- Version code: **114**
 - Minimum Android version: **Android 10 / API 29**
-<<<<<<< HEAD
-- Release page: [Aliflix 3.1.17](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.17)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.17/aliflix-mobile.apk)
-
-=======
-- Release page: [Aliflix 3.1.19](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.19)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.19/aliflix-mobile.apk)
->>>>>>> release/v3.1.20
+- Release page: [Aliflix 3.1.24](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.24)
+- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.24/aliflix-mobile.apk)

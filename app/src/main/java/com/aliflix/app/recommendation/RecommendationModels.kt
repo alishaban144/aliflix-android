@@ -53,12 +53,12 @@ enum class GeminiRecommendationModel(
     GEMINI_3_5_FLASH(
         label = "Gemini 3.5 Flash",
         workerValue = "gemini-3.5-flash",
-        supportingText = "Recommended • medium effort",
+        supportingText = "Recommended",
     ),
     GEMINI_3_7_FLASH(
         label = "Gemini 3.7 Flash",
         workerValue = "gemini-3.7-flash",
-        supportingText = "Newest • medium effort",
+        supportingText = "Newest",
     );
 
     companion object {

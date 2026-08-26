@@ -539,9 +539,11 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     );
   });
 
-  it('propagates Gemini Describe failure without invoking keyword or discover fallback', async () => {
+  it('falls back to strict TMDB retrieval after a retryable Describe provider failure without another Gemini call', async () => {
     let keywordCalls = 0;
     let discoverCalls = 0;
+    let detailCalls = 0;
+    let embeddingCalls = 0;
     const tmdb = {
       ...fakeTmdb(),
       searchKeyword: async () => {
@@ -550,17 +552,41 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
       },
       discover: async () => {
         discoverCalls++;
-        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{ id: 7, title: 'Funny Fixture', overview: 'A funny comedy', genre_ids: [35], vote_average: 7.2, vote_count: 500 }],
+        };
+      },
+      details: async (_type: string, id: number) => {
+        detailCalls++;
+        return { id, title: 'Funny Fixture', overview: 'A funny comedy', genres: [{ id: 35, name: 'Comedy' }] };
       },
     };
     const failure = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini timed out', 504, true);
 
-    await expect(processRecommendation({} as any, { ...request, mode: 'describe' }, {
+    const results = await processRecommendation({} as any, { ...request, mode: 'describe' }, {
       tmdb,
       recommendDescribe: async () => { throw failure; },
-    })).rejects.toBe(failure);
+      embed: async () => {
+        embeddingCalls++;
+        throw new Error('fallback must not call Gemini embeddings');
+      },
+    });
+
     expect(keywordCalls).toBe(0);
-    expect(discoverCalls).toBe(0);
+    expect(discoverCalls).toBeGreaterThan(0);
+    expect(detailCalls).toBeGreaterThan(0);
+    expect(embeddingCalls).toBe(0);
+    expect(results.map(result => result.title)).toEqual(['Funny Fixture']);
+    expect(results[0].retrievalSources.some(source => source.startsWith('discover:genre-hints'))).toBe(true);
+  });
+
+  it('does not hide a non-retryable Describe configuration failure behind fallback results', async () => {
+    const failure = new ServiceError('GEMINI_UNAVAILABLE', 'Invalid Gemini request', 502, false);
+    await expect(processRecommendation({} as any, { ...request, mode: 'describe' }, {
+      tmdb: fakeTmdb(),
+      recommendDescribe: async () => { throw failure; },
+    })).rejects.toBe(failure);
   });
 
   it('propagates Gemini Similar failure without invoking broad TMDB retrieval fallback', async () => {

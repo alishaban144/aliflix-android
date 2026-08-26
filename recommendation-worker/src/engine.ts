@@ -1,5 +1,6 @@
 import {
   embedForSearch,
+  fallbackIntentFromQuery,
   interpretQuery,
   recommendDescribeTitles,
   recommendSimilarTitles,
@@ -184,9 +185,8 @@ async function generatedRecommendations(
   // count; a hidden expansion request could double quota use for one tap.
   const generated = await generate([]);
   for (const item of generated) {
-    // The single medium-thinking pass is instructed to self-audit the complete
-    // premise. Keep a strict relevance floor; TMDB independently verifies the
-    // returned identity and every authoritative metadata filter afterward.
+    // Keep a strict relevance floor from the single generation pass; TMDB
+    // independently verifies identity and every authoritative metadata filter.
     if (item.confidence < MIN_GENERATED_CONFIDENCE) continue;
     const key = `${normalize(item.title)}:${item.releaseYear}`;
     const existing = recommendations.get(key);
@@ -252,9 +252,8 @@ async function processGeneratedRecommendations(
     return { candidate, score };
   }).sort((left, right) => right.score - left.score || left.candidate.title.localeCompare(right.candidate.title));
 
-  // Gemini self-audits premise relevance in one medium-thinking generation.
-  // TMDB then authoritatively verifies identity and every hard filter, including
-  // Returning/Ended, without adding a second sequential AI request.
+  // TMDB authoritatively verifies Gemini's title identity and every hard filter,
+  // including Returning/Ended, without adding a second sequential AI request.
   const hydrated: typeof scored = [];
   const detailPool = scored.slice(0, MAX_GENERATED_RESULTS);
   for (let start = 0; start < detailPool.length; start += DETAIL_CONCURRENCY) {
@@ -829,8 +828,22 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
   const recommendationEnv = request.geminiModel
     ? { ...env, GEMINI_GENERATION_MODEL: request.geminiModel }
     : env;
+  let providerFallbackIntent: InterpretedIntent | undefined;
+  let disableGeminiEmbeddings = false;
   if (request.mode === 'describe') {
-    return processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies);
+    try {
+      return await processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies);
+    } catch (error) {
+      if (!(error instanceof ServiceError && error.code === 'GEMINI_UNAVAILABLE' && error.retryable)) throw error;
+      const fallbackQuery = request.query || request.refinementQuery || '';
+      providerFallbackIntent = fallbackIntentFromQuery(fallbackQuery);
+      disableGeminiEmbeddings = true;
+      console.warn(JSON.stringify({
+        event: 'describe_tmdb_fallback',
+        model: recommendationEnv.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash',
+        reason: error.message,
+      }));
+    }
   }
   if (request.mode === 'similar') {
     return processSimilarRecommendation(recommendationEnv, request, tmdb, dependencies);
@@ -839,9 +852,9 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
   const queryToInterpret = request.previousQuery && request.refinementQuery
     ? `${request.previousQuery} [Refinement adjustment: ${request.refinementQuery}]`
     : (request.query || request.refinementQuery || '');
-  let intent = queryToInterpret.trim()
+  let intent = providerFallbackIntent || (queryToInterpret.trim()
     ? await interpret(recommendationEnv, queryToInterpret, request.mediaType)
-    : emptyIntent();
+    : emptyIntent());
   intent = cleanInterpretedIntent(intent);
   applyQueryDateConstraints(queryToInterpret, intent.hardFilters);
   const filters = mergeFilters(request.filters, intent.hardFilters);
@@ -1067,7 +1080,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     .filter(candidate => candidate.detailsLoaded && passesKnownFilters(candidate, filters));
 
   let embeddingsAvailable = false;
-  if (hydrated.length) {
+  if (hydrated.length && !disableGeminiEmbeddings) {
     const queryText = [
         queryToInterpret,
         ...intent.requiredConceptGroups.map(group => `${group.label}: ${group.synonyms.join(', ')}`),

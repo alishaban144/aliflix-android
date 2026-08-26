@@ -55,11 +55,16 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 
-internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 1.15f
-internal const val LAUNCH_WORD_SLOT_SECONDS = 0.8f
+internal const val LAUNCH_TITLE_START_SECONDS = 0.3f
+internal const val LAUNCH_TITLE_REVEAL_SECONDS = 0.58f
+internal const val LAUNCH_ROTATOR_START_SECONDS = 0.78f
+internal const val LAUNCH_ROTATOR_REVEAL_SECONDS = 0.35f
+internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 0.95f
+internal const val LAUNCH_WORD_SLOT_SECONDS = 0.7f
 internal const val LAUNCH_WORD_COUNT = 3
-internal const val LAUNCH_REDUCED_MOTION_MIN_SECONDS = 0.8f
-internal const val LAUNCH_EXIT_DURATION_SECONDS = 0.45f
+internal const val LAUNCH_REDUCED_MOTION_MIN_SECONDS = 0.65f
+internal const val LAUNCH_EXIT_DURATION_SECONDS = 0.3f
+internal const val LAUNCH_LOGO_MOTION_RATE = 1.15f
 
 internal fun isLaunchSequenceComplete(
     elapsedSeconds: Float,
@@ -238,13 +243,15 @@ private fun AliflixLaunchStage(
     val stageWidth = minOf(screenWidth * 0.76f, 390.dp)
     val logoSize = minOf(screenWidth * 0.66f, 270.dp)
 
-    // ALIFLIX title reveal timing: starts at 0.45s, duration 0.75s
-    val titleProgress = if (isReducedMotion) 1f else ((seq - 0.45f) / 0.75f).coerceIn(0f, 1f)
+    val titleProgress = if (isReducedMotion) 1f else {
+        ((seq - LAUNCH_TITLE_START_SECONDS) / LAUNCH_TITLE_REVEAL_SECONDS).coerceIn(0f, 1f)
+    }
     val titleOpacity = titleProgress * 0.98f
     val titleTranslateY = if (isReducedMotion) 0.dp else 8.dp * (1f - easeOutCubic(titleProgress))
 
-    // Subtitle rotator group reveal timing: starts at 1.05s, duration 0.55s
-    val rotatorProgress = if (isReducedMotion) 1f else ((seq - 1.05f) / 0.55f).coerceIn(0f, 1f)
+    val rotatorProgress = if (isReducedMotion) 1f else {
+        ((seq - LAUNCH_ROTATOR_START_SECONDS) / LAUNCH_ROTATOR_REVEAL_SECONDS).coerceIn(0f, 1f)
+    }
 
     Column(
         modifier = Modifier
@@ -383,7 +390,7 @@ fun AliflixHeatmapLogo(
         // pulseY = 87 - sin(t * 1.55) * 15
         // bandX = -50 + ((t * 27) % 190)
         // breathe = 1 + sin(t * 2.1) * 0.065
-        val t = timeSeconds
+        val t = timeSeconds * LAUNCH_LOGO_MOTION_RATE
         val sweepX = -104f + ((t * 24f) % 194f)
         val pulseX = -14f + ((t * 31f) % 148f)
         val pulseY = 87f - sin(t * 1.55f) * 15f

@@ -3,9 +3,11 @@ import {
   assessPremiseCandidates,
   GEMINI_37_RECOMMENDATION_LIMIT,
   GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS,
+  GEMINI_DESCRIBE_TIMEOUT_MS,
   GEMINI_GENERATION_TIMEOUT_MS,
   GEMINI_STRUCTURED_MAX_ATTEMPTS,
   GEMINI_VERIFICATION_TIMEOUT_MS,
+  fallbackIntentFromQuery,
   recommendDescribeTitles,
   recommendSimilarTitles,
 } from '../src/gemini';
@@ -52,8 +54,9 @@ describe('Gemini Describe contract', () => {
     expect(VERIFY_SIMILARITY_PROMPT).toContain('Cross-media matches use the same standard');
   });
 
-  it('uses medium thinking for Describe candidate generation and structured JSON', async () => {
+  it('uses low thinking and a compact bounded prompt for Describe candidate generation', async () => {
     expect(GEMINI_GENERATION_TIMEOUT_MS).toBe(30_000);
+    expect(GEMINI_DESCRIBE_TIMEOUT_MS).toBe(24_000);
     expect(GEMINI_VERIFICATION_TIMEOUT_MS).toBe(20_000);
     expect(GEMINI_STRUCTURED_MAX_ATTEMPTS).toBe(1);
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
@@ -82,13 +85,13 @@ describe('Gemini Describe contract', () => {
     expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent');
     const body = JSON.parse(String(init.body));
     expect(body.generationConfig).toMatchObject({
-      maxOutputTokens: 8192,
-      thinkingConfig: { thinkingLevel: 'medium' },
+      maxOutputTokens: GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS,
+      thinkingConfig: { thinkingLevel: 'low' },
       responseFormat: { text: { mimeType: 'APPLICATION_JSON' } },
     });
     expect(body.generationConfig.responseFormat.text.schema.type).toBe('object');
     expect(body.generationConfig.responseFormat.text.schema.properties.recommendations.type).toBe('array');
-    expect(body.systemInstruction.parts[0].text).toContain('primary recommendation expert');
+    expect(body.systemInstruction.parts[0].text).toBe(DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT);
     expect(JSON.parse(body.contents[0].parts[0].text).targetCount).toBe(12);
   });
 
@@ -130,7 +133,16 @@ describe('Gemini Describe contract', () => {
     expect(JSON.parse(body.contents[0].parts[0].text).targetCount).toBe(GEMINI_37_RECOMMENDATION_LIMIT);
   });
 
-  it('keeps 3.7 medium thinking but uses the bounded low-latency generation contract', async () => {
+  it('extracts explicit concepts conservatively for a zero-Gemini TMDB fallback', () => {
+    const intent = fallbackIntentFromQuery('shows about artificial intelligence or robots becoming conscious');
+    expect(intent.requiredConceptGroups.map(group => group.label)).toEqual([
+      'artificial intelligence', 'robots', 'conscious',
+    ]);
+    expect(intent.genreHints).toEqual([]);
+    expect(intent.broadSearchPhrases).toEqual(['artificial intelligence', 'robots', 'conscious']);
+  });
+
+  it('uses low thinking and the bounded low-latency Describe contract for 3.7', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       candidates: [{
         finishReason: 'STOP',
@@ -159,7 +171,7 @@ describe('Gemini Describe contract', () => {
     const body = JSON.parse(String(init.body));
     expect(body.generationConfig).toMatchObject({
       maxOutputTokens: GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS,
-      thinkingConfig: { thinkingLevel: 'medium' },
+      thinkingConfig: { thinkingLevel: 'low' },
       responseMimeType: 'application/json',
     });
     expect(body.generationConfig.responseJsonSchema.type).toBe('object');
@@ -184,6 +196,21 @@ describe('Gemini Describe contract', () => {
     await expect(recommendDescribeTitles(
       { GEMINI_API_KEY: 'test-key' } as any,
       'movies about alien abduction',
+      'movie',
+      {},
+    )).rejects.toMatchObject({ code: 'GEMINI_UNAVAILABLE', retryable: true });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('turns invalid Describe schema output into a retryable fallback signal', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ recommendations: [] }) }] } }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(recommendDescribeTitles(
+      { GEMINI_API_KEY: 'test-key' } as any,
+      'movies about aliens',
       'movie',
       {},
     )).rejects.toMatchObject({ code: 'GEMINI_UNAVAILABLE', retryable: true });

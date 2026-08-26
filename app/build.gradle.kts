@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 113
-val mobileVersionName = "3.1.23"
+val mobileVersionCode = 114
+val mobileVersionName = "3.1.24"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
 val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")

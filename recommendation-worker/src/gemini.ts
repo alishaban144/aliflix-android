@@ -1,6 +1,5 @@
 import {
   DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT,
-  DESCRIBE_RECOMMENDATIONS_PROMPT,
   INTERPRET_V3_PROMPT,
   SIMILAR_RECOMMENDATIONS_COMPACT_PROMPT,
   SIMILAR_RECOMMENDATIONS_PROMPT,
@@ -28,6 +27,7 @@ import {
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 export const GEMINI_GENERATION_TIMEOUT_MS = 30_000;
+export const GEMINI_DESCRIBE_TIMEOUT_MS = 24_000;
 export const GEMINI_VERIFICATION_TIMEOUT_MS = 20_000;
 export const GEMINI_STRUCTURED_MAX_ATTEMPTS = 1;
 export const GEMINI_37_RECOMMENDATION_LIMIT = 8;
@@ -35,6 +35,36 @@ export const GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS = 3_072;
 const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
 };
+
+const FALLBACK_STOP_WORDS = new Set([
+  'about', 'after', 'also', 'an', 'and', 'are', 'be', 'become', 'becomes', 'becoming', 'before', 'but', 'can',
+  'could', 'find', 'finding', 'finds', 'for', 'from', 'get', 'gets', 'give', 'has', 'have', 'in', 'into', 'is',
+  'just', 'less', 'like', 'made', 'me', 'more', 'movie', 'movies', 'need',
+  'of', 'or', 'please', 'really', 'recommend', 'recommendation', 'series', 'show', 'shows', 'something',
+  'story', 'stories', 'surprise', 'that', 'the', 'their', 'them', 'these', 'this', 'to', 'very', 'want',
+  'where', 'which', 'with', 'would',
+]);
+
+const FALLBACK_PHRASES = [
+  'artificial intelligence', 'coming of age', 'dark comedy', 'enemies to lovers', 'found footage',
+  'haunted house', 'mind bending', 'plot twist', 'serial killer', 'small town', 'time loop', 'time travel',
+  'true crime', 'unreliable narrator', 'cold case', 'psychological thriller', 'supernatural powers',
+];
+
+const FALLBACK_GENRE_CLUES: Array<[RegExp, string]> = [
+  [/\b(?:funny|comedy|comic)\b/u, 'Comedy'],
+  [/\b(?:detective|murder|crime|criminal|heist|serial killer)\b/u, 'Crime'],
+  [/\b(?:mystery|whodunit|cold case)\b/u, 'Mystery'],
+  [/\b(?:scary|horror|haunted|slasher)\b/u, 'Horror'],
+  [/\b(?:romance|romantic|love)\b/u, 'Romance'],
+  [/\b(?:science fiction|sci fi|space|cyberpunk|time travel|time loop|alien|aliens|extraterrestrial)\b/u, 'Science Fiction'],
+  [/\b(?:fantasy|magic|magical)\b/u, 'Fantasy'],
+  [/\b(?:war|wartime)\b/u, 'War'],
+  [/\b(?:western|cowboy)\b/u, 'Western'],
+  [/\b(?:documentary|true crime)\b/u, 'Documentary'],
+  [/\b(?:animation|animated|anime)\b/u, 'Animation'],
+  [/\b(?:thriller|suspense|tense)\b/u, 'Thriller'],
+];
 
 interface GeminiGenerateContentResponse {
   candidates?: Array<{
@@ -47,7 +77,7 @@ interface GeminiEmbeddingResponse {
   embeddings?: Array<{ values?: unknown }>;
 }
 
-type GeminiThinkingLevel = 'medium' | 'high';
+type GeminiThinkingLevel = 'low' | 'medium' | 'high';
 
 function isGemini37Flash(model: string): boolean {
   return model === 'gemini-3.7-flash';
@@ -213,6 +243,63 @@ function cleanJsonText(raw: string): string {
   return cleaned.trim();
 }
 
+/**
+ * Builds a conservative TMDB-search intent when Gemini generation is
+ * temporarily unavailable. It deliberately preserves only explicit concepts;
+ * the engine still requires exact TMDB keyword identities and hydrated details.
+ */
+export function fallbackIntentFromQuery(query: string): InterpretedIntent {
+  const normalizedQuery = query
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const excludedConcepts: string[] = [];
+  const negativePattern = /\b(?:avoid|exclude|excluding|no|without)\s+([\p{L}\p{N}-]+(?:\s+[\p{L}\p{N}-]+)?)/gu;
+  for (const match of normalizedQuery.matchAll(negativePattern)) {
+    const value = match[1]?.trim();
+    if (value && !excludedConcepts.includes(value)) excludedConcepts.push(value);
+  }
+
+  let positiveText = normalizedQuery.replace(negativePattern, ' ');
+  const concepts: string[] = [];
+  for (const phrase of FALLBACK_PHRASES) {
+    if (` ${positiveText} `.includes(` ${phrase} `)) {
+      concepts.push(phrase);
+      positiveText = ` ${positiveText} `.replace(` ${phrase} `, ' ').trim();
+    }
+  }
+  for (const word of positiveText.split(/\s+/)) {
+    if (concepts.length >= 8) break;
+    if (word.length < 3 || FALLBACK_STOP_WORDS.has(word) || /^(?:19|20)\d{2}$/.test(word)) continue;
+    if (!concepts.includes(word)) concepts.push(word);
+  }
+
+  const genreHints = FALLBACK_GENRE_CLUES
+    .filter(([pattern]) => pattern.test(normalizedQuery))
+    .map(([, genre]) => genre)
+    .filter((genre, index, values) => values.indexOf(genre) === index);
+  return {
+    hardFilters: { ...EMPTY_FILTERS },
+    requiredConceptGroups: concepts.map(concept => ({
+      label: concept,
+      synonyms: [concept, concept.includes(' ') ? concept.replace(/\s+/g, '-') : concept]
+        .filter((value, index, values) => values.indexOf(value) === index),
+      weight: 1,
+    })),
+    softConcepts: [],
+    excludedConcepts,
+    excludedKeywords: excludedConcepts,
+    crewNames: [],
+    castNames: [],
+    studioNames: [],
+    certifications: [],
+    genreHints,
+    toneAndMood: [],
+    broadSearchPhrases: concepts.slice(0, 4),
+  };
+}
+
 async function geminiStructuredContent<T>(
   env: RecommendationEnv,
   model: string,
@@ -315,7 +402,7 @@ export async function recommendDescribeTitles(
   const data = await geminiStructuredContent<unknown>(
     env,
     model,
-    optimized37 ? DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT : DESCRIBE_RECOMMENDATIONS_PROMPT,
+    DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT,
     {
       query,
       authoritativeMediaType: mediaType,
@@ -325,12 +412,22 @@ export async function recommendDescribeTitles(
       excludedTitles,
     },
     GeminiDescribeJsonSchema,
-    GEMINI_GENERATION_TIMEOUT_MS,
-    'medium',
+    GEMINI_DESCRIBE_TIMEOUT_MS,
+    'low',
     'Describe candidate generation',
-    optimized37 ? GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS : 8_192,
+    GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS,
   );
-  const parsed = GeminiDescribeResponseSchema.parse(data);
+  let parsed: ReturnType<typeof GeminiDescribeResponseSchema.parse>;
+  try {
+    parsed = GeminiDescribeResponseSchema.parse(data);
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'gemini_describe_schema_failed',
+      model,
+      error: error instanceof Error ? error.message.slice(0, 300) : String(error),
+    }));
+    throw new ServiceError('GEMINI_UNAVAILABLE', 'Gemini returned invalid Describe recommendations', 502, true);
+  }
   const seen = new Set<string>();
   return parsed.recommendations.filter(item => {
     const key = `${item.title.toLocaleLowerCase()}:${item.releaseYear}`;
