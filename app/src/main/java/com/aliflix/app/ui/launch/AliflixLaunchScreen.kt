@@ -59,7 +59,7 @@ internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 1.15f
 internal const val LAUNCH_WORD_SLOT_SECONDS = 0.8f
 internal const val LAUNCH_WORD_COUNT = 3
 internal const val LAUNCH_REDUCED_MOTION_MIN_SECONDS = 0.8f
-internal const val LAUNCH_EXIT_DURATION_SECONDS = 1.05f
+internal const val LAUNCH_EXIT_DURATION_SECONDS = 0.45f
 
 internal fun isLaunchSequenceComplete(
     elapsedSeconds: Float,
@@ -75,6 +75,15 @@ internal fun isLaunchExitReady(
     elapsedSeconds: Float,
     isReducedMotion: Boolean,
 ): Boolean = isHomeReady && isLaunchSequenceComplete(elapsedSeconds, isReducedMotion)
+
+internal fun calculateLaunchExitProgress(
+    elapsedSeconds: Float,
+    exitStartSeconds: Float,
+): Float = if (exitStartSeconds >= 0f) {
+    ((elapsedSeconds - exitStartSeconds) / LAUNCH_EXIT_DURATION_SECONDS).coerceIn(0f, 1f)
+} else {
+    0f
+}
 
 object AliflixLaunchTheme {
     val Background = Color(0xFF07080C)
@@ -165,11 +174,7 @@ fun AliflixLaunchOverlay(
         }
     }
 
-    val exitProgress = if (exitStartSeconds >= 0f) {
-        ((elapsedSeconds - exitStartSeconds) / LAUNCH_EXIT_DURATION_SECONDS).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
+    val exitProgress = calculateLaunchExitProgress(elapsedSeconds, exitStartSeconds)
 
     LaunchedEffect(exitProgress) {
         if (exitProgress >= 1f && !isDismissed) {

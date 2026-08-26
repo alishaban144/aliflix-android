@@ -153,6 +153,17 @@ async function geminiFetch<T>(
           continue;
         }
         const providerMessage = providerError?.error?.message?.trim().slice(0, 300);
+        const isGemini37CapacityFailure = response.status === 503
+          && isGemini37Flash(decodeURIComponent(url).split('/').at(-1)?.split(':')[0] || '')
+          && /high demand/i.test(providerMessage || '');
+        if (isGemini37CapacityFailure) {
+          throw new ServiceError(
+            'GEMINI_UNAVAILABLE',
+            'Gemini 3.7 Flash is temporarily at capacity. Switch to Gemini 3.5 Flash in Settings and try again.',
+            503,
+            true,
+          );
+        }
         const diagnostic = providerMessage ? `: ${providerMessage}` : '';
         throw new ServiceError(
           'GEMINI_UNAVAILABLE',

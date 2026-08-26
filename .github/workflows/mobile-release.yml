@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.22"
+      - "release/v3.1.23"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.22"
+        description: "Release tag, for example v3.1.23"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "112"
-  RELEASE_VERSION_NAME: "3.1.22"
+  RELEASE_VERSION_CODE: "113"
+  RELEASE_VERSION_NAME: "3.1.23"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -217,7 +217,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Fixes Gemini 3.7 Flash recommendation timeouts without extending the deadline, and keeps the launch screen visible until Home is ready after a faster word sequence."
+            "releaseNotes": "Makes the post-STORIES launch fade faster, recommends Gemini 3.5 Flash at medium effort for reliable genuine results, and gives clear guidance when Gemini 3.7 Flash is temporarily at capacity."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -228,7 +228,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Fixes Gemini 3.7 Flash recommendation timeouts without extending the deadline, and keeps the launch screen visible until Home is ready after a faster word sequence."
+          body: "Makes the post-STORIES launch fade faster, recommends Gemini 3.5 Flash at medium effort for reliable genuine results, and gives clear guidance when Gemini 3.7 Flash is temporarily at capacity."
           files: |
             aliflix-mobile.apk
             update-mobile.json

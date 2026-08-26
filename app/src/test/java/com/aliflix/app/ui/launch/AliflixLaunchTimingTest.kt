@@ -77,4 +77,12 @@ class AliflixLaunchTimingTest {
         assertTrue(!isLaunchSequenceComplete(0.79f, isReducedMotion = true))
         assertTrue(isLaunchSequenceComplete(0.8f, isReducedMotion = true))
     }
+
+    @Test
+    fun testPostStoriesExitFadeCompletesInUnderHalfASecond() {
+        assertEquals(0.45f, LAUNCH_EXIT_DURATION_SECONDS, 0.001f)
+        assertEquals(0f, calculateLaunchExitProgress(elapsedSeconds = 4f, exitStartSeconds = -1f), 0.001f)
+        assertEquals(0.5f, calculateLaunchExitProgress(elapsedSeconds = 4.225f, exitStartSeconds = 4f), 0.001f)
+        assertEquals(1f, calculateLaunchExitProgress(elapsedSeconds = 4.45f, exitStartSeconds = 4f), 0.001f)
+    }
 }

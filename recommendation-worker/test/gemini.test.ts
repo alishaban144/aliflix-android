@@ -190,6 +190,31 @@ describe('Gemini Describe contract', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it('returns actionable guidance for a 3.7 high-demand capacity failure', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      error: {
+        status: 'UNAVAILABLE',
+        message: 'This model is currently experiencing high demand. Please try again later.',
+      },
+    }), { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(recommendDescribeTitles(
+      {
+        GEMINI_API_KEY: 'test-key',
+        GEMINI_GENERATION_MODEL: 'gemini-3.7-flash',
+      } as any,
+      'shows about artificial intelligence or robots becoming conscious',
+      'tv',
+      {},
+    )).rejects.toMatchObject({
+      code: 'GEMINI_UNAVAILABLE',
+      message: 'Gemini 3.7 Flash is temporarily at capacity. Switch to Gemini 3.5 Flash in Settings and try again.',
+      retryable: true,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it('uses medium thinking for the final premise relevance judgment', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       candidates: [{
