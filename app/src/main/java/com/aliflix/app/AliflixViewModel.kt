@@ -18,6 +18,8 @@ import com.aliflix.app.model.Season
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationDispatchers
 import com.aliflix.app.recommendation.RecommendationStore
+import com.aliflix.app.recommendation.GeminiRecommendationModel
+import com.aliflix.app.recommendation.buildAskAliflixShowMoreRequest
 import com.aliflix.app.recommendation.V3CatalogMedia
 import com.aliflix.app.recommendation.V3TitleDetails
 import kotlinx.coroutines.async
@@ -208,7 +210,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskJob?.cancel()
         val token = ++askSessionToken
         
-        val mapped = com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(request)
+        val mapped = com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(
+            request = request,
+            geminiModel = recommendationStore.geminiModel.value,
+        )
         val summary = mapped.summary
         val hideWatched = _askEditorState.value.hideWatched
         val excludedLibraryIds = if (hideWatched) {
@@ -256,7 +261,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         spec = mapped.spec,
                         items = candidates,
                         totalAvailable = response.totalResults,
-                        hasMore = response.hasMore,
+                        hasMore = response.hasMore || requestWithLibraryFilters.mode != "filters",
                         nextCursor = response.nextCursor,
                         activeRequest = request,
                     )
@@ -337,18 +342,29 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun loadMoreAskAliflix() {
         val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results ?: return
         val original = activeAskRequest ?: return
-        val cursor = currentResults.nextCursor ?: return
         if (currentResults.loadingMore || !currentResults.hasMore) return
+        val nextRequest = if (original.mode == "filters") {
+            val cursor = currentResults.nextCursor ?: return
+            original.copy(cursor = cursor)
+        } else {
+            buildAskAliflixShowMoreRequest(
+                original = original,
+                displayed = currentResults.items,
+                selectedModel = recommendationStore.geminiModel.value,
+            )
+        }
 
         val token = askSessionToken
-        _askUiState.value = currentResults.copy(loadingMore = true)
+        _askUiState.value = currentResults.copy(loadingMore = true, loadMoreError = null)
 
         activeAskJob = viewModelScope.launch {
             try {
-                val response = aiClient.getRecommendations(original.copy(cursor = cursor))
+                val response = aiClient.getRecommendations(nextRequest)
                 if (token != askSessionToken) return@launch
-                val appended = (currentResults.items + response.results.map(::mapAskResult))
+                val additional = response.results.map(::mapAskResult)
+                val appended = (currentResults.items + additional)
                     .distinctBy { it.media.key }
+                val addedCount = appended.size - currentResults.items.size
                 _askUiState.value = currentResults.copy(
                     items = appended,
                     totalAvailable = maxOf(
@@ -357,7 +373,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         appended.size,
                     ),
                     loadingMore = false,
-                    hasMore = response.hasMore,
+                    hasMore = if (original.mode == "filters") response.hasMore else addedCount > 0,
                     nextCursor = response.nextCursor,
                     loadMoreError = null,
                 )
@@ -379,7 +395,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Searching(summary)
         activeAskJob = viewModelScope.launch {
             try {
-                val response = aiClient.getRecommendations(original.copy(cursor = null))
+                val response = aiClient.getRecommendations(
+                    original.copy(
+                        cursor = null,
+                        geminiModel = recommendationStore.geminiModel.value.workerValue,
+                    ),
+                )
                 if (token != askSessionToken) return@launch
                 val candidates = response.results.map(::mapAskResult)
                 _askUiState.value = if (candidates.isEmpty()) {
@@ -390,7 +411,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         spec = spec,
                         items = candidates,
                         totalAvailable = response.totalResults,
-                        hasMore = response.hasMore,
+                        hasMore = response.hasMore || original.mode != "filters",
                         nextCursor = response.nextCursor,
                     )
                 }
@@ -431,6 +452,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         playbackProviderRepository.preferences
     val aiRecommendationsEnabled: StateFlow<Boolean> =
         recommendationStore.enabled
+    val geminiRecommendationModel: StateFlow<GeminiRecommendationModel> =
+        recommendationStore.geminiModel
 
     fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
         playbackProviderRepository.selectGeneralProvider(provider)
@@ -939,6 +962,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 selectSearchMode(SearchMode.TITLE)
             }
         }
+    }
+
+    fun setGeminiRecommendationModel(model: GeminiRecommendationModel) {
+        recommendationStore.setGeminiModel(model)
     }
 
     private fun pauseBackgroundHomeRefresh() {

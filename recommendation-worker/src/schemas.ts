@@ -17,7 +17,7 @@ const RecommendationFiltersObjectSchema = z.object({
   sortBy: z.preprocess(value => value ?? undefined, z.enum([
     'most_popular', 'highest_rated', 'most_voted', 'newest_first', 'oldest_first', 'runtime_short_to_long',
   ]).optional()),
-  excludedTmdbIds: z.array(z.number().int().positive()).max(100).default([]),
+  excludedTmdbIds: z.array(z.number().int().positive()).max(1000).default([]),
   excludedTitles: z.array(trimmed.min(1).max(200)).max(100).default([]),
 });
 
@@ -39,6 +39,7 @@ const AnchorSchema = z.object({
 export const RecommendationRequestSchema = z.object({
   requestId: z.string().uuid(),
   mode: z.enum(['describe', 'similar', 'filters']).default('describe'),
+  geminiModel: z.enum(['gemini-3.5-flash', 'gemini-3.7-flash']).optional(),
   query: z.string().trim().max(2000).default(''),
   mediaType,
   anchor: AnchorSchema.optional(),

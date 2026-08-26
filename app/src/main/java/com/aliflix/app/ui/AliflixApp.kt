@@ -192,6 +192,7 @@ import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.player.WebPlayerScreen
 import com.aliflix.app.recommendation.PersonalMatch
 import com.aliflix.app.recommendation.PersonalizationEngine
+import com.aliflix.app.recommendation.GeminiRecommendationModel
 import com.aliflix.app.update.AppUpdateManager
 import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
@@ -458,6 +459,7 @@ fun AliflixApp(
     val recent by viewModel.recent.collectAsState()
     val likes by viewModel.likes.collectAsState()
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
+    val geminiRecommendationModel by viewModel.geminiRecommendationModel.collectAsState()
     val askUiState by viewModel.askUiState.collectAsState()
     val askEditorState by viewModel.askEditorState.collectAsState()
 
@@ -1107,6 +1109,8 @@ fun AliflixApp(
                         aiRecommendationsEnabled = aiRecommendationsEnabled,
                         onSetAiRecommendationsEnabled =
                             viewModel::setAiRecommendationsEnabled,
+                        geminiRecommendationModel = geminiRecommendationModel,
+                        onSetGeminiRecommendationModel = viewModel::setGeminiRecommendationModel,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
                 }
@@ -2874,6 +2878,8 @@ private fun MobileSettingsDialog(
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
+    geminiRecommendationModel: GeminiRecommendationModel,
+    onSetGeminiRecommendationModel: (GeminiRecommendationModel) -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3140,6 +3146,92 @@ private fun MobileSettingsDialog(
                             )
                         }
 
+                        var geminiModelExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = aiRecommendationsEnabled) {
+                                        geminiModelExpanded = true
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 9.dp)
+                                    .alpha(if (aiRecommendationsEnabled) 1f else 0.55f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    Text(
+                                        text = "Recommendation model",
+                                        color = AliflixMuted,
+                                        fontSize = 10.sp,
+                                    )
+                                    Text(
+                                        text = geminiRecommendationModel.label,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    Text(
+                                        text = geminiRecommendationModel.supportingText,
+                                        color = AliflixContentTertiary,
+                                        fontSize = 9.sp,
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDropDown,
+                                    contentDescription = "Choose Gemini recommendation model",
+                                    tint = AliflixContentSecondary,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = geminiModelExpanded,
+                                onDismissRequest = { geminiModelExpanded = false },
+                                modifier = Modifier.background(AliflixSurfaceRaised),
+                            ) {
+                                GeminiRecommendationModel.entries.forEach { model ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                Text(
+                                                    text = model.label,
+                                                    color = AliflixContentPrimary,
+                                                    fontWeight = if (model == geminiRecommendationModel) {
+                                                        FontWeight.Bold
+                                                    } else {
+                                                        FontWeight.Normal
+                                                    },
+                                                )
+                                                Text(
+                                                    text = model.supportingText,
+                                                    color = AliflixContentSecondary,
+                                                    fontSize = 10.sp,
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            geminiModelExpanded = false
+                                            onSetGeminiRecommendationModel(model)
+                                        },
+                                        trailingIcon = if (model == geminiRecommendationModel) {
+                                            {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = AliflixAccentSecondary,
+                                                )
+                                            }
+                                        } else {
+                                            null
+                                        },
+                                    )
+                                }
+                            }
+                        }
+
                     }
                 }
 
@@ -3218,6 +3310,8 @@ private fun MySpaceScreen(
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
+    geminiRecommendationModel: GeminiRecommendationModel,
+    onSetGeminiRecommendationModel: (GeminiRecommendationModel) -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3281,6 +3375,8 @@ private fun MySpaceScreen(
             onEditProviderUrl = onEditProviderUrl,
             aiRecommendationsEnabled = aiRecommendationsEnabled,
             onSetAiRecommendationsEnabled = onSetAiRecommendationsEnabled,
+            geminiRecommendationModel = geminiRecommendationModel,
+            onSetGeminiRecommendationModel = onSetGeminiRecommendationModel,
             updateUi = updateUi,
             onCheckForUpdates = onCheckForUpdates,
             onDownloadUpdate = onDownloadUpdate,

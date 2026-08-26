@@ -37,6 +37,7 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
   const fingerprintInput = {
     requestId: parsed.requestId,
     mode: parsed.mode,
+    geminiModel: parsed.geminiModel,
     query: parsed.query,
     mediaType: parsed.mediaType,
     anchor: parsed.anchor,

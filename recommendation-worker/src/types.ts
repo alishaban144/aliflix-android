@@ -27,6 +27,7 @@ export interface RecommendationAnchor {
 export interface RecommendationRequest {
   requestId: string;
   mode: RequestMode;
+  geminiModel?: 'gemini-3.5-flash' | 'gemini-3.7-flash';
   query: string;
   mediaType: MediaType;
   anchor?: RecommendationAnchor;
@@ -197,7 +198,9 @@ export interface SecretBindings {
   CURSOR_SIGNING_SECRET: string;
 }
 
-export type RecommendationEnv = Env & SecretBindings;
+export type RecommendationEnv = Omit<Env, 'GEMINI_GENERATION_MODEL'> & {
+  GEMINI_GENERATION_MODEL?: 'gemini-3.5-flash' | 'gemini-3.7-flash';
+} & SecretBindings;
 
 export class ServiceError extends Error {
   constructor(

@@ -25,14 +25,18 @@ import {
 } from './types';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1/interactions';
+export const GEMINI_GENERATION_TIMEOUT_MS = 30_000;
+export const GEMINI_VERIFICATION_TIMEOUT_MS = 20_000;
+export const GEMINI_STRUCTURED_MAX_ATTEMPTS = 1;
 const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
 };
 
-interface GeminiInteractionResponse {
-  status?: string;
-  steps?: Array<{ type?: string; content?: Array<{ type?: string; text?: unknown }> }>;
+interface GeminiGenerateContentResponse {
+  candidates?: Array<{
+    finishReason?: string;
+    content?: { parts?: Array<{ text?: unknown; thought?: boolean }> };
+  }>;
 }
 
 interface GeminiEmbeddingResponse {
@@ -40,6 +44,26 @@ interface GeminiEmbeddingResponse {
 }
 
 type GeminiThinkingLevel = 'medium' | 'high';
+
+function responseJsonSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(responseJsonSchema);
+  if (!schema || typeof schema !== 'object') return schema;
+  const source = schema as Record<string, unknown>;
+  const converted = Object.fromEntries(
+    Object.entries(source)
+      .filter(([key]) => key !== 'nullable')
+      .map(([key, value]) => [
+        key,
+        key === 'type' && typeof value === 'string'
+          ? value.toLowerCase()
+          : responseJsonSchema(value),
+      ]),
+  );
+  if (source.nullable === true && typeof converted.type === 'string') {
+    converted.type = [converted.type, 'null'];
+  }
+  return converted;
+}
 
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -120,7 +144,14 @@ async function geminiFetch<T>(
           lastError = new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, 503, true);
           continue;
         }
-        throw new ServiceError('GEMINI_UNAVAILABLE', `Gemini request failed (${response.status})`, retryable ? 503 : 502, retryable);
+        const providerMessage = providerError?.error?.message?.trim().slice(0, 300);
+        const diagnostic = providerMessage ? `: ${providerMessage}` : '';
+        throw new ServiceError(
+          'GEMINI_UNAVAILABLE',
+          `Gemini request failed (${response.status})${diagnostic}`,
+          retryable ? 503 : 502,
+          retryable,
+        );
       }
       return await response.json() as T;
     } catch (error) {
@@ -150,7 +181,7 @@ async function geminiFetch<T>(
   );
 }
 
-async function geminiStructuredInteraction<T>(
+async function geminiStructuredContent<T>(
   env: RecommendationEnv,
   model: string,
   systemInstruction: string,
@@ -160,21 +191,32 @@ async function geminiStructuredInteraction<T>(
   thinkingLevel: GeminiThinkingLevel,
   operation: string,
 ): Promise<T> {
-  const data = await geminiFetch<GeminiInteractionResponse>(env, INTERACTIONS_URL, {
-    model,
-    input: JSON.stringify(input),
-    system_instruction: systemInstruction,
-    response_format: [{ type: 'text', mime_type: 'application/json', schema }],
-    generation_config: { max_output_tokens: 4_096, thinking_level: thinkingLevel },
-    store: false,
-  }, timeoutMs, operation, 3);
-  const text = data.steps
-    ?.filter(step => step.type === 'model_output')
-    .flatMap(step => step.content || [])
-    .find(content => content.type === 'text' && typeof content.text === 'string')
+  const data = await geminiFetch<GeminiGenerateContentResponse>(
+    env,
+    `${API_BASE}/${encodeURIComponent(model)}:generateContent`,
+    {
+      systemInstruction: { parts: [{ text: systemInstruction }] },
+      contents: [{ role: 'user', parts: [{ text: JSON.stringify(input) }] }],
+      generationConfig: {
+        maxOutputTokens: 3_072,
+        thinkingConfig: { thinkingLevel },
+        responseFormat: { text: { mimeType: 'APPLICATION_JSON', schema: responseJsonSchema(schema) } },
+      },
+      // A user-triggered structured generation gets exactly one provider attempt.
+      // Retrying 429/5xx responses here silently consumes scarce daily generation
+      // quota; the client can explicitly retry the complete recommendation instead.
+    },
+    timeoutMs,
+    operation,
+    GEMINI_STRUCTURED_MAX_ATTEMPTS,
+  );
+  const text = data.candidates
+    ?.flatMap(candidate => candidate.content?.parts || [])
+    .find(part => !part.thought && typeof part.text === 'string')
     ?.text;
   if (typeof text !== 'string' || !text) {
-    throw new ServiceError('GEMINI_UNAVAILABLE', `Gemini interaction returned no structured output (${data.status || 'unknown'})`, 502, true);
+    const finishReason = data.candidates?.[0]?.finishReason || 'unknown';
+    throw new ServiceError('GEMINI_UNAVAILABLE', `Gemini returned no structured output (${finishReason})`, 502, true);
   }
   return JSON.parse(text) as T;
 }
@@ -188,15 +230,15 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
     };
   }
 
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
 
-  const data = await geminiStructuredInteraction<unknown>(
+  const data = await geminiStructuredContent<unknown>(
     env,
     model,
     INTERPRET_V3_PROMPT,
     { query, authoritativeMediaType: mediaType },
     GeminiIntentJsonSchema,
-    20_000,
+    30_000,
     'medium',
     'query interpretation',
   );
@@ -209,9 +251,10 @@ export async function recommendDescribeTitles(
   mediaType: MediaType,
   explicitFilters: unknown,
   excludedTitles: string[] = [],
+  targetCount = 12,
 ): Promise<DescribeRecommendation[]> {
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
-  const data = await geminiStructuredInteraction<unknown>(
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
+  const data = await geminiStructuredContent<unknown>(
     env,
     model,
     DESCRIBE_RECOMMENDATIONS_PROMPT,
@@ -219,12 +262,12 @@ export async function recommendDescribeTitles(
       query,
       authoritativeMediaType: mediaType,
       explicitFilters,
-      targetCount: 24,
+      targetCount: Math.min(12, Math.max(1, targetCount)),
       expansionPass: excludedTitles.length > 0,
       excludedTitles,
     },
     GeminiDescribeJsonSchema,
-    45_000,
+    GEMINI_GENERATION_TIMEOUT_MS,
     'medium',
     'Describe candidate generation',
   );
@@ -245,9 +288,10 @@ export async function recommendSimilarTitles(
   refinement: string,
   explicitFilters: unknown,
   excludedTitles: string[] = [],
+  targetCount = 12,
 ): Promise<DescribeRecommendation[]> {
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
-  const data = await geminiStructuredInteraction<unknown>(
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
+  const data = await geminiStructuredContent<unknown>(
     env,
     model,
     SIMILAR_RECOMMENDATIONS_PROMPT,
@@ -256,12 +300,12 @@ export async function recommendSimilarTitles(
       authoritativeMediaType: mediaType,
       refinement,
       explicitFilters,
-      targetCount: 24,
+      targetCount: Math.min(12, Math.max(1, targetCount)),
       expansionPass: excludedTitles.length > 0,
       excludedTitles,
     },
     GeminiDescribeJsonSchema,
-    45_000,
+    GEMINI_GENERATION_TIMEOUT_MS,
     'medium',
     'Similar candidate generation',
   );
@@ -283,8 +327,8 @@ export async function assessPremiseCandidates(
   candidates: PremiseCandidateDocument[],
 ): Promise<PremiseAssessment[]> {
   if (!candidates.length) return [];
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
-  const data = await geminiStructuredInteraction<unknown>(
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
+  const data = await geminiStructuredContent<unknown>(
     env,
     model,
     VERIFY_PREMISE_PROMPT,
@@ -299,7 +343,7 @@ export async function assessPremiseCandidates(
       candidates,
     },
     GeminiPremiseAssessmentJsonSchema,
-    45_000,
+    GEMINI_VERIFICATION_TIMEOUT_MS,
     'medium',
     'premise verification',
   );
@@ -316,14 +360,14 @@ export async function assessSimilarCandidates(
   candidates: PremiseCandidateDocument[],
 ): Promise<PremiseAssessment[]> {
   if (!candidates.length) return [];
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.7-flash';
-  const data = await geminiStructuredInteraction<unknown>(
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
+  const data = await geminiStructuredContent<unknown>(
     env,
     model,
     VERIFY_SIMILARITY_PROMPT,
     { anchors, refinement, authoritativeMediaType: mediaType, candidates },
     GeminiPremiseAssessmentJsonSchema,
-    45_000,
+    GEMINI_VERIFICATION_TIMEOUT_MS,
     'medium',
     'similarity verification',
   );

@@ -1,6 +1,4 @@
 import {
-  assessPremiseCandidates,
-  assessSimilarCandidates,
   embedForSearch,
   interpretQuery,
   recommendDescribeTitles,
@@ -9,30 +7,13 @@ import {
 import { buildKeywordExpressions, canonicalConceptPhrase, cosineSimilarity, mergeFilters, normalize, passesHardFilters, rankCandidates } from './ranking';
 import { ParsedRecommendationRequest } from './schemas';
 import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
-import { Candidate, DescribeRecommendation, InterpretedIntent, MediaType, PremiseAssessment, PremiseCandidateDocument, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, SimilarAnchorDocument, TmdbGenre, TmdbListItem } from './types';
+import { Candidate, DescribeRecommendation, InterpretedIntent, MediaType, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, SimilarAnchorDocument, TmdbGenre, TmdbListItem } from './types';
 
 export interface EngineDependencies {
   interpret?: typeof interpretQuery;
   recommendDescribe?: typeof recommendDescribeTitles;
   recommendSimilar?: typeof recommendSimilarTitles;
   embed?: typeof embedForSearch;
-  verifyPremises?: (
-    env: RecommendationEnv,
-    query: string,
-    mediaType: MediaType,
-    groups: InterpretedIntent['requiredConceptGroups'],
-    candidates: Array<{
-      index: number; title: string; originalTitle?: string; releaseYear?: number; overview: string;
-      genres: string[]; keywords: string[]; geminiReason: string; geminiConfidence: number;
-    }>,
-  ) => Promise<PremiseAssessment[]>;
-  verifySimilarity?: (
-    env: RecommendationEnv,
-    anchors: SimilarAnchorDocument[],
-    refinement: string,
-    mediaType: MediaType,
-    candidates: PremiseCandidateDocument[],
-  ) => Promise<PremiseAssessment[]>;
   tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchPerson' | 'searchCompany' | 'discover' | 'details'> &
     Partial<Pick<TmdbClient, 'searchTitle'>>;
 }
@@ -40,8 +21,8 @@ export interface EngineDependencies {
 const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
-const MAX_GENERATED_CANDIDATES = 24;
-const MAX_GENERATED_RESULTS = 20;
+const MAX_GENERATED_RESULTS = 12;
+const MIN_GENERATED_CONFIDENCE = .70;
 const TMDB_DETAIL_RESERVE = 24;
 // Cloudflare permits six simultaneous outbound connections per invocation.
 // Filling all six lanes keeps Gemini-grounded requests interactive without
@@ -193,24 +174,23 @@ function resolveTmdbIdentity(
     : undefined;
 }
 
-async function expandedGeneratedRecommendations(
+async function generatedRecommendations(
   limit: number,
   generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>,
 ): Promise<DescribeRecommendation[]> {
   const recommendations = new Map<string, DescribeRecommendation>();
-  for (let pass = 0; pass < 2 && recommendations.size < limit; pass++) {
-    const excludedTitles = [...recommendations.values()].map(item => `${item.title} (${item.releaseYear})`);
-    const generated = await generate(excludedTitles);
-    for (const item of generated) {
-      // Candidate confidence is only a recall hint. The independent medium-
-      // thinking Gemini judge below remains the precision gate, so retaining
-      // uncertain but plausible titles improves narrow-premise recall without
-      // allowing them into results merely because they were generated.
-      if (item.confidence < .50) continue;
-      const key = `${normalize(item.title)}:${item.releaseYear}`;
-      const existing = recommendations.get(key);
-      if (!existing || item.confidence > existing.confidence) recommendations.set(key, item);
-    }
+  // One explicit generation request keeps Describe/Similar predictable under
+  // low daily Gemini quotas. The model is already asked for the full target
+  // count; a hidden expansion request could double quota use for one tap.
+  const generated = await generate([]);
+  for (const item of generated) {
+    // The single medium-thinking pass is instructed to self-audit the complete
+    // premise. Keep a strict relevance floor; TMDB independently verifies the
+    // returned identity and every authoritative metadata filter afterward.
+    if (item.confidence < MIN_GENERATED_CONFIDENCE) continue;
+    const key = `${normalize(item.title)}:${item.releaseYear}`;
+    const existing = recommendations.get(key);
+    if (!existing || item.confidence > existing.confidence) recommendations.set(key, item);
   }
   return [...recommendations.values()]
     .sort((left, right) => right.confidence - left.confidence || left.title.localeCompare(right.title))
@@ -222,9 +202,7 @@ interface GeneratedRecommendationContext {
   candidateLimit: number;
   excludedCandidateKeys: Set<string>;
   recommendationSource: string;
-  verificationSource: string;
   generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>;
-  verify: (documents: PremiseCandidateDocument[]) => Promise<PremiseAssessment[]>;
 }
 
 async function processGeneratedRecommendations(
@@ -236,7 +214,7 @@ async function processGeneratedRecommendations(
   if (!tmdb.searchTitle) {
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB title verification is unavailable', 503, true);
   }
-  const recommendations = await expandedGeneratedRecommendations(context.candidateLimit, context.generate);
+  const recommendations = await generatedRecommendations(context.candidateLimit, context.generate);
   if (!recommendations.length) return [];
 
   const candidates = new Map<string, Candidate>();
@@ -266,46 +244,17 @@ async function processGeneratedRecommendations(
 
   const resolved = [...candidates.values()];
   if (!resolved.length) return [];
-  const documents = resolved.map((candidate, index) => ({
-    index,
-    title: candidate.title,
-    originalTitle: candidate.originalTitle,
-    releaseYear: tmdbItemYear({
-      id: candidate.tmdbId,
-      release_date: request.mediaType === 'movie' ? candidate.releaseDate : undefined,
-      first_air_date: request.mediaType === 'tv' ? candidate.releaseDate : undefined,
-    }, request.mediaType),
-    overview: candidate.overview || '',
-    genres: candidate.genres,
-    keywords: candidate.keywords.map(keyword => keyword.name),
-    geminiReason: candidate.geminiRecommendationReason || '',
-    geminiConfidence: candidate.geminiRecommendationConfidence || 0,
-  }));
-  const assessments = await context.verify(documents);
-  const byIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
-  if (byIndex.size !== documents.length) {
-    throw new ServiceError(
-      'GEMINI_UNAVAILABLE',
-      `Gemini returned an incomplete premise assessment (${byIndex.size}/${documents.length})`,
-      502,
-      true,
-    );
-  }
-
-  const scored = resolved.flatMap((candidate, index) => {
-    const assessment = byIndex.get(index);
-    if (!assessment || assessment.relevanceScore < .70) return [];
-    const score = assessment.relevanceScore * .72 + (candidate.geminiRecommendationConfidence || 0) * .28;
-    candidate.premiseScore = assessment.relevanceScore;
-    candidate.premiseReason = assessment.reason;
+  const scored = resolved.map(candidate => {
+    const score = candidate.geminiRecommendationConfidence || 0;
+    candidate.premiseScore = score;
+    candidate.premiseReason = candidate.geminiRecommendationReason;
     candidate.finalScore = score;
-    candidate.retrievalSources.add(context.verificationSource);
-    return [{ candidate, assessment, score }];
+    return { candidate, score };
   }).sort((left, right) => right.score - left.score || left.candidate.title.localeCompare(right.candidate.title));
 
-  // Gemini precision scoring happens before detail hydration so the finite TMDB
-  // budget is spent only on the strongest candidates. TMDB then authoritatively
-  // verifies every hard filter, including Returning/Ended, without affecting score.
+  // Gemini self-audits premise relevance in one medium-thinking generation.
+  // TMDB then authoritatively verifies identity and every hard filter, including
+  // Returning/Ended, without adding a second sequential AI request.
   const hydrated: typeof scored = [];
   const detailPool = scored.slice(0, MAX_GENERATED_RESULTS);
   for (let start = 0; start < detailPool.length; start += DETAIL_CONCURRENCY) {
@@ -324,14 +273,14 @@ async function processGeneratedRecommendations(
   }
 
   const collectionCounts = new Map<number, number>();
-  return hydrated.flatMap(({ candidate, assessment, score }): RecommendationResult[] => {
+  return hydrated.flatMap(({ candidate, score }): RecommendationResult[] => {
     if (candidate.collectionId) {
       const count = collectionCounts.get(candidate.collectionId) || 0;
       if (count >= 2) return [];
       collectionCounts.set(candidate.collectionId, count + 1);
     }
     const matchLevel = score >= .88 ? 'Exceptional' : score >= .76 ? 'Strong' : 'Relevant';
-    const reasons = [assessment.reason, candidate.geminiRecommendationReason]
+    const reasons = [candidate.geminiRecommendationReason]
       .filter((value): value is string => Boolean(value?.trim()))
       .filter((value, reasonIndex, values) => values.findIndex(other => normalize(other) === normalize(value)) === reasonIndex)
       .slice(0, 2);
@@ -370,17 +319,21 @@ async function processDescribeRecommendation(
     : (request.query || request.refinementQuery || '').trim();
   const filters = mergeFilters(request.filters, emptyIntent().hardFilters);
   applyQueryDateConstraints(query, filters);
+  const candidateLimit = Math.min(MAX_GENERATED_RESULTS, request.pageSize);
   return processGeneratedRecommendations(env, request, tmdb, {
     filters,
-    candidateLimit: MAX_GENERATED_CANDIDATES,
-    excludedCandidateKeys: new Set(),
-    recommendationSource: 'gemini:describe-recommendation',
-    verificationSource: 'gemini:premise-verification',
-    generate: excludedTitles => (dependencies.recommendDescribe || recommendDescribeTitles)(
-      env, query, request.mediaType, filters, excludedTitles,
+    candidateLimit,
+    excludedCandidateKeys: new Set(
+      filters.excludedTmdbIds.map(tmdbId => `${request.mediaType}:${tmdbId}`),
     ),
-    verify: documents => (dependencies.verifyPremises || assessPremiseCandidates)(
-      env, query, request.mediaType, [], documents,
+    recommendationSource: 'gemini:describe-recommendation',
+    generate: excludedTitles => (dependencies.recommendDescribe || recommendDescribeTitles)(
+      env,
+      query,
+      request.mediaType,
+      filters,
+      [...new Set([...filters.excludedTitles, ...excludedTitles])],
+      candidateLimit,
     ),
   });
 }
@@ -420,27 +373,31 @@ async function processSimilarRecommendation(
   const filters = mergeFilters(request.filters, emptyIntent().hardFilters);
   applyQueryDateConstraints(refinement, filters);
   const excludedCandidateKeys = new Set(
-    requestedAnchors
-      .filter(anchor => anchor.mediaType === request.mediaType)
-      .map(anchor => `${request.mediaType}:${anchor.tmdbId}`),
+    [
+      ...filters.excludedTmdbIds.map(tmdbId => `${request.mediaType}:${tmdbId}`),
+      ...requestedAnchors
+        .filter(anchor => anchor.mediaType === request.mediaType)
+        .map(anchor => `${request.mediaType}:${anchor.tmdbId}`),
+    ],
   );
-  const candidateLimit = Math.max(18, MAX_GENERATED_CANDIDATES - anchors.length);
+  const candidateLimit = Math.min(MAX_GENERATED_RESULTS, request.pageSize);
   return processGeneratedRecommendations(env, request, tmdb, {
     filters,
     candidateLimit,
     excludedCandidateKeys,
     recommendationSource: 'gemini:similar-recommendation',
-    verificationSource: 'gemini:similarity-verification',
     generate: excludedTitles => (dependencies.recommendSimilar || recommendSimilarTitles)(
       env,
       anchors,
       request.mediaType,
       refinement,
       filters,
-      [...anchors.map(anchor => `${anchor.title} (${anchor.releaseYear || 'unknown'})`), ...excludedTitles],
-    ),
-    verify: documents => (dependencies.verifySimilarity || assessSimilarCandidates)(
-      env, anchors, refinement, request.mediaType, documents,
+      [...new Set([
+        ...anchors.map(anchor => `${anchor.title} (${anchor.releaseYear || 'unknown'})`),
+        ...filters.excludedTitles,
+        ...excludedTitles,
+      ])],
+      candidateLimit,
     ),
   });
 }
@@ -864,22 +821,26 @@ function applyQueryDateConstraints(query: string, filters: RecommendationFilters
 }
 
 export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
-  // Generated modes can make three Gemini calls with up to three provider
-  // attempts each. Forty actual TMDB attempts keeps the absolute worst case
-  // at 49 external subrequests, below Cloudflare Free's limit of 50.
+  // Generated modes make exactly one single-attempt Gemini call. Forty actual
+  // TMDB attempts keeps the worst case at 41 external subrequests on Free.
   const tmdb = dependencies.tmdb || new TmdbClient(env, request.mode === 'filters' ? 38 : 40);
+  // The request can select one allow-listed model. It remains a single provider
+  // attempt and never falls back to a second model behind the user's back.
+  const recommendationEnv = request.geminiModel
+    ? { ...env, GEMINI_GENERATION_MODEL: request.geminiModel }
+    : env;
   if (request.mode === 'describe') {
-    return processDescribeRecommendation(env, request, tmdb, dependencies);
+    return processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies);
   }
   if (request.mode === 'similar') {
-    return processSimilarRecommendation(env, request, tmdb, dependencies);
+    return processSimilarRecommendation(recommendationEnv, request, tmdb, dependencies);
   }
   const interpret = dependencies.interpret || interpretQuery;
   const queryToInterpret = request.previousQuery && request.refinementQuery
     ? `${request.previousQuery} [Refinement adjustment: ${request.refinementQuery}]`
     : (request.query || request.refinementQuery || '');
   let intent = queryToInterpret.trim()
-    ? await interpret(env, queryToInterpret, request.mediaType)
+    ? await interpret(recommendationEnv, queryToInterpret, request.mediaType)
     : emptyIntent();
   intent = cleanInterpretedIntent(intent);
   applyQueryDateConstraints(queryToInterpret, intent.hardFilters);

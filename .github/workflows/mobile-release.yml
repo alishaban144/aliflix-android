@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.17"
+      - "release/v3.1.18"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.17"
+        description: "Release tag, for example v3.1.18"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "107"
-  RELEASE_VERSION_NAME: "3.1.17"
+  RELEASE_VERSION_CODE: "108"
+  RELEASE_VERSION_NAME: "3.1.18"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -74,7 +74,7 @@ jobs:
           VERSION_TAG="release-${GITHUB_SHA}"
           npx wrangler versions upload \
             --tag "$VERSION_TAG" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} standard sort options release"
+            --message "Aliflix ${RELEASE_VERSION_NAME} Gemini model selection and Show more release"
           CANDIDATE_ID="$(
             npx wrangler versions list --json |
               jq -r --arg tag "$VERSION_TAG" \
@@ -85,7 +85,7 @@ jobs:
           test "$CANDIDATE_ID" != "null"
           npx wrangler versions deploy \
             "${CANDIDATE_ID}@100%" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} sort options release" \
+            --message "Aliflix ${RELEASE_VERSION_NAME} Gemini model selection and Show more release" \
             --yes
 
   release:
@@ -121,7 +121,7 @@ jobs:
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
           else
             test "${GITHUB_REF_TYPE}" = "branch"
-            test "${GITHUB_REF_NAME}" = "release/v3.1.17"
+            test "${GITHUB_REF_NAME}" = "release/v3.1.18"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then
@@ -217,7 +217,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Removes the runtime sort option, keeping the five standard Discover sort orders (Most Popular, Highest Rated, Most Voted, Newest First, Oldest First)."
+            "releaseNotes": "Adds a persistent Gemini 3.5 Flash or 3.7 Flash selector and a quota-explicit Show more action that requests fresh, TMDB-verified results without repeating displayed titles."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -228,7 +228,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Removes the runtime sort option, keeping the five standard Discover sort orders (Most Popular, Highest Rated, Most Voted, Newest First, Oldest First)."
+          body: "Adds a persistent Gemini 3.5 Flash or 3.7 Flash selector and a quota-explicit Show more action that requests fresh, TMDB-verified results without repeating displayed titles."
           files: |
             aliflix-mobile.apk
             update-mobile.json

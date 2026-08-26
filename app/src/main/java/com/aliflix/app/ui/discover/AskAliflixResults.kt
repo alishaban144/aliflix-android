@@ -293,7 +293,7 @@ private fun ResultsList(
                             border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.55f)),
                             contentPadding = PaddingValues(vertical = 14.dp),
                         ) {
-                            Text("Show more matches", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Show more", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
