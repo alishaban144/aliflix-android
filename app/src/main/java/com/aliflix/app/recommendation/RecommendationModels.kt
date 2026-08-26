@@ -45,6 +45,28 @@ enum class RecommendationSort(val label: String, val workerValue: String) {
     OLDEST_FIRST("Oldest First", "oldest_first"),
 }
 
+enum class GeminiRecommendationModel(
+    val label: String,
+    val workerValue: String,
+    val supportingText: String,
+) {
+    GEMINI_3_5_FLASH(
+        label = "Gemini 3.5 Flash",
+        workerValue = "gemini-3.5-flash",
+        supportingText = "Reliable default",
+    ),
+    GEMINI_3_7_FLASH(
+        label = "Gemini 3.7 Flash",
+        workerValue = "gemini-3.7-flash",
+        supportingText = "Primary when selected",
+    );
+
+    companion object {
+        fun fromWorkerValue(value: String?): GeminiRecommendationModel =
+            entries.firstOrNull { it.workerValue == value } ?: GEMINI_3_5_FLASH
+    }
+}
+
 /** The filter state shared by the Ask Aliflix editor and Worker request mapper. */
 data class CatalogDiscoverySpec(
     val mediaKind: RecommendationMediaKind,

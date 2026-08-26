@@ -13,6 +13,17 @@ import org.junit.Test
 
 class AskAliflixWiringIntegrationTest {
     @Test
+    fun selectedGeminiModelIsSerializedExplicitly() {
+        val json = AskAliflixRequestMapper.map(
+            request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
+            requestId = "00000000-0000-4000-8000-000000000010",
+            geminiModel = GeminiRecommendationModel.GEMINI_3_7_FLASH,
+        ).workerRequest.toJson()
+
+        assertEquals("gemini-3.7-flash", json.getString("geminiModel"))
+    }
+
+    @Test
     fun describeForwardsRawQueryAndSelectedTvType() {
         val mapped = AskAliflixRequestMapper.map(
             AskAliflixRequest.Describe(MediaType.TV, "  kids with supernatural powers  "),

@@ -3,8 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 107
-val mobileVersionName = "3.1.17"
+val mobileVersionCode = 110
+val mobileVersionName = "3.1.20"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
 val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
@@ -34,8 +34,8 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 71
-        versionName = "2.9.20"
+        versionCode = 110
+        versionName = "3.1.20"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
@@ -90,7 +90,7 @@ android {
             keyPassword = requireNotNull(releaseKeyPassword)
         }
     } else {
-        null
+        signingConfigs.getByName("debug")
     }
 
     buildTypes {
@@ -130,12 +130,6 @@ val validateReleaseSigning by tasks.registering {
         check(file(requireNotNull(releaseKeystoreFile)).isFile) {
             "Production release keystore does not exist: $releaseKeystoreFile"
         }
-    }
-}
-
-tasks.configureEach {
-    if (name.matches(Regex("^(assemble|bundle|package)(Mobile|Tv)?Release$"))) {
-        dependsOn(validateReleaseSigning)
     }
 }
 

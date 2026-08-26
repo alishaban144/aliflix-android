@@ -27,6 +27,8 @@ export interface TmdbDetails extends TmdbListItem {
   imdb_id?: string | null;
   external_ids?: { imdb_id?: string | null; tvdb_id?: number | null };
   reviews?: { results?: TmdbReviewItem[] };
+  recommendations?: TmdbPage;
+  similar?: TmdbPage;
   belongs_to_collection?: { id: number; name: string; poster_path?: string | null; backdrop_path?: string | null } | null;
   release_dates?: { results?: Array<{ iso_3166_1: string; release_dates?: Array<{ certification?: string }> }> };
   content_ratings?: { results?: Array<{ iso_3166_1: string; rating?: string }> };
@@ -103,7 +105,11 @@ export class TmdbClient {
     return this.request(`/discover/${type}`, { include_adult: false, ...params });
   }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
-    return this.request(`/${type}/${id}`, { append_to_response: type === 'tv' ? 'keywords,aggregate_credits,external_ids,reviews,content_ratings' : 'keywords,credits,external_ids,reviews,release_dates' });
+    return this.request(`/${type}/${id}`, {
+      append_to_response: type === 'tv'
+        ? 'keywords,aggregate_credits,external_ids,reviews,content_ratings,recommendations,similar'
+        : 'keywords,credits,external_ids,reviews,release_dates,recommendations,similar',
+    });
   }
   personCombinedCredits(id: number): Promise<TmdbCombinedCredits> {
     return this.request(`/person/${id}/combined_credits`, { language: 'en-US' });

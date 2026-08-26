@@ -33,12 +33,18 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
   if (contentLength > 131_072) return json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Payload exceeds 128 KiB', retryable: false } }, 413);
   const raw = await request.text();
   if (raw.length > 131_072) return json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Payload exceeds 128 KiB', retryable: false } }, 413);
-  const parsed = RecommendationRequestSchema.parse(JSON.parse(raw));
+  let rawJson: unknown;
+  try {
+    rawJson = JSON.parse(raw);
+  } catch {
+    throw new ServiceError('INVALID_JSON', 'The request body is not valid JSON', 400, false);
+  }
+  const parsed = RecommendationRequestSchema.parse(rawJson);
   const fingerprintInput = {
     requestId: parsed.requestId,
     mode: parsed.mode,
+    geminiModel: parsed.geminiModel,
     query: parsed.query,
-    mediaType: parsed.mediaType,
     anchor: parsed.anchor,
     anchors: parsed.anchors,
     previousQuery: parsed.previousQuery,

@@ -42,6 +42,7 @@ export interface CatalogTitleDetails extends CatalogMediaSummary {
   creators: CatalogPerson[];
   cast: CatalogPerson[];
   reviews: CatalogReview[];
+  recommendations: CatalogMediaSummary[];
 }
 
 export interface CatalogHomeRail {
@@ -140,6 +141,41 @@ function detailsSummary(details: TmdbDetails, mediaType: MediaType): CatalogTitl
         person.job === 'Director' || person.job === 'Writer' || person.job === 'Screenplay' || person.job === 'Story',
       );
   const cast = mediaType === 'tv' ? details.aggregate_credits?.cast || [] : details.credits?.cast || [];
+
+  const rawRecommendations = [
+    ...(details.recommendations?.results || []).map(item => ({ item, priority: 2 })),
+    ...(details.similar?.results || []).map(item => ({ item, priority: 1 })),
+  ];
+
+  const sourceGenreIds = new Set((details.genres || []).map(g => g.id));
+  const seenIds = new Set<number>([details.id]);
+  const candidateScores: Array<{ candidate: CatalogMediaSummary; score: number }> = [];
+
+  for (const { item, priority } of rawRecommendations) {
+    if (!item.id || seenIds.has(item.id)) continue;
+    seenIds.add(item.id);
+    const itemPoster = present(item.poster_path);
+    if (!itemPoster) continue;
+    const voteCount = item.vote_count || 0;
+    const voteAverage = item.vote_average || 0;
+    if (voteCount < 3 && voteAverage === 0) continue;
+
+    const itemGenreIds = item.genre_ids || [];
+    const sharedGenres = itemGenreIds.filter(id => sourceGenreIds.has(id)).length;
+    const genreScore = sourceGenreIds.size > 0 ? (sharedGenres / sourceGenreIds.size) * 30 : 10;
+    const score = (priority * 25) + (voteAverage * 4) + genreScore + Math.log10(Math.max(1, voteCount));
+
+    candidateScores.push({
+      candidate: summary(item, mediaType, new Map(), []),
+      score,
+    });
+  }
+
+  const recommendations = candidateScores
+    .sort((a, b) => b.score - a.score)
+    .map(entry => entry.candidate)
+    .slice(0, 24);
+
   return {
     ...summary(details, mediaType, new Map(), details.genres || []),
     imdbId: present(details.external_ids?.imdb_id || details.imdb_id),
@@ -171,6 +207,7 @@ function detailsSummary(details: TmdbDetails, mediaType: MediaType): CatalogTitl
         createdAt: present(review.created_at),
         url: present(review.url),
       })),
+    recommendations,
   };
 }
 

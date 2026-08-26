@@ -84,10 +84,10 @@ class RecommendationAiClient(
             connection = URL(url).openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.connectTimeout = 8_000
-            // A narrow premise can require two bounded Gemini recall passes,
-            // followed by the independent relevance judge and TMDB hydration.
-            // Keep the mobile socket above that complete Worker pipeline.
-            connection.readTimeout = 180_000
+            // The Worker makes one quota-bounded Gemini attempt, then verifies
+            // identities and metadata through TMDB. Keep the mobile deadline
+            // just above that bounded pipeline so failures return promptly.
+            connection.readTimeout = 40_000
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             continuation.invokeOnCancellation { connection.disconnect() }
@@ -149,6 +149,7 @@ data class V3RecommendationFilters(
 data class V3RecommendationRequest(
     val requestId: String,
     val mode: String = "describe",
+    val geminiModel: String = GeminiRecommendationModel.GEMINI_3_5_FLASH.workerValue,
     val query: String,
     val mediaType: String,
     val anchor: V3RecommendationAnchor? = null,
@@ -162,6 +163,7 @@ data class V3RecommendationRequest(
     fun toJson(): JSONObject = JSONObject().apply {
         put("requestId", requestId)
         put("mode", mode)
+        put("geminiModel", geminiModel)
         put("query", query)
         put("mediaType", mediaType)
         anchor?.let { put("anchor", it.toJson()) }
@@ -331,6 +333,7 @@ data class V3TitleDetails(
     val creators: List<V3CatalogPerson>,
     val cast: List<V3CatalogPerson>,
     val reviews: List<V3Review> = emptyList(),
+    val recommendations: List<V3CatalogMedia> = emptyList(),
 ) {
     companion object {
         fun fromJson(json: JSONObject) = V3TitleDetails(
@@ -340,6 +343,7 @@ data class V3TitleDetails(
             creators = json.optJSONArray("creators").toStringList { V3CatalogPerson.fromJson(it) },
             cast = json.optJSONArray("cast").toStringList { V3CatalogPerson.fromJson(it) },
             reviews = json.optJSONArray("reviews").toStringList { V3Review.fromJson(it) },
+            recommendations = json.optJSONArray("recommendations").toStringList { V3CatalogMedia.fromJson(it) },
         )
     }
 }

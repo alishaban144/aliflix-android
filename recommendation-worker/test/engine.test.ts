@@ -45,6 +45,36 @@ function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean
 }
 
 describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
+  it('accepts only the two user-selectable Gemini models', () => {
+    expect(RecommendationRequestSchema.parse({
+      ...request,
+      geminiModel: 'gemini-3.7-flash',
+    }).geminiModel).toBe('gemini-3.7-flash');
+    expect(RecommendationRequestSchema.parse({
+      ...request,
+      geminiModel: 'gemini-3.5-flash',
+    }).geminiModel).toBe('gemini-3.5-flash');
+    expect(() => RecommendationRequestSchema.parse({
+      ...request,
+      geminiModel: 'gemini-unapproved',
+    })).toThrow();
+  });
+
+  it('routes one request through the explicitly selected model', async () => {
+    let routedModel: string | undefined;
+    await processRecommendation({ GEMINI_GENERATION_MODEL: 'gemini-3.5-flash' } as any, {
+      ...request,
+      geminiModel: 'gemini-3.7-flash',
+    }, {
+      tmdb: fakeTmdb({ empty: true }),
+      interpret: async env => {
+        routedModel = env.GEMINI_GENERATION_MODEL;
+        return interpreted;
+      },
+    });
+    expect(routedModel).toBe('gemini-3.7-flash');
+  });
+
   it('requires a canonical TMDB ID for similar requests', () => {
     expect(() => RecommendationRequestSchema.parse({
       ...request,
@@ -154,23 +184,15 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
       recommendSimilar: async () => [
         { title: 'Better Call Saul', releaseYear: 2015, confidence: .97, reason: 'A morally compromised Albuquerque protagonist descends into crime.' },
         { title: 'Breaking Bad', releaseYear: 2008, confidence: .99, reason: 'The anchor itself.' },
-        { title: 'Unrelated Anime', releaseYear: 2020, confidence: .70, reason: 'It is also dramatic.' },
+        { title: 'Unrelated Anime', releaseYear: 2020, confidence: .69, reason: 'It is also dramatic.' },
       ],
-      verifySimilarity: async (_env, _anchors, _refinement, _type, documents) => documents.map(document => ({
-        index: document.index,
-        relevanceScore: document.title === 'Better Call Saul' ? .96 : .12,
-        matchedGroupIndexes: [],
-        reason: document.title === 'Better Call Saul'
-          ? 'Both center on moral decline inside the Albuquerque criminal world.'
-          : 'Only a broad genre overlaps.',
-      })),
     });
     expect(results[0]?.title).toBe('Better Call Saul');
     expect(results.some(item => item.tmdbId === 1396)).toBe(false);
     expect(results.every(item => item.mediaType === 'tv')).toBe(true);
     expect(results.slice(0, 1).some(item => item.title === 'Unrelated Anime')).toBe(false);
     expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
-      'gemini:similar-recommendation', 'gemini:similarity-verification', 'tmdb:identity-search', 'tmdb:details',
+      'gemini:similar-recommendation', 'tmdb:identity-search', 'tmdb:details',
     ]));
     expect({ recommendationCalls, similarCalls, discoverCalls }).toEqual({ recommendationCalls: 0, similarCalls: 0, discoverCalls: 0 });
   });
@@ -305,9 +327,6 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
         expect(type).toBe('movie');
         return [{ title: 'Movie Counterpart', releaseYear: 2019, confidence: .92, reason: 'A crime-world moral collapse centered on a cartel lawyer.' }];
       },
-      verifySimilarity: async (_env, _anchors, _refinement, _type, documents) => documents.map(document => ({
-        index: document.index, relevanceScore: .91, matchedGroupIndexes: [], reason: 'Both trace moral collapse inside a cartel-driven crime story.',
-      })),
     });
 
     expect(recommendationCalls).toBe(0);
@@ -331,7 +350,7 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     expect(results).toEqual([]);
   });
 
-  it('uses only Gemini recommendations for Describe, then exact-resolves and premise-verifies TMDB metadata', async () => {
+  it('uses one self-audited Gemini list for Describe, then exact-resolves and hydrates TMDB metadata', async () => {
     const seedTmdb = {
       callsRemaining: 120,
       genres: async () => ({ genres: [{ id: 878, name: 'Science Fiction' }] }),
@@ -362,28 +381,21 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
       tmdb: seedTmdb,
       recommendDescribe: async () => [
         { title: 'Fire in the Sky', releaseYear: 1993, confidence: .96, reason: 'A logger is abducted by extraterrestrials.' },
-        { title: 'Alien Abduction', releaseYear: 2014, confidence: .80, reason: 'The title appears related.' },
+        { title: 'Alien Abduction', releaseYear: 2014, confidence: .69, reason: 'The title appears related.' },
       ],
-      verifyPremises: async (_env, _query, _type, _groups, documents) => {
-        expect(documents.map(document => document.title)).toEqual(['Fire in the Sky', 'Alien Abduction']);
-        return documents.map(document => document.overview.includes('extraterrestrial craft')
-          ? { index: document.index, relevanceScore: .96, matchedGroupIndexes: [0, 1], reason: 'Extraterrestrial abduction is central to the synopsis' }
-          : { index: document.index, relevanceScore: .08, matchedGroupIndexes: [], reason: 'No abduction premise is supported' });
-      },
     });
 
     expect(results.map(result => result.title)).toEqual(['Fire in the Sky']);
-    expect(results[0].matchReasons[0]).toContain('Extraterrestrial abduction');
+    expect(results[0].matchReasons[0]).toContain('logger is abducted');
     expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
-      'gemini:describe-recommendation', 'gemini:premise-verification', 'tmdb:identity-search', 'tmdb:details',
+      'gemini:describe-recommendation', 'tmdb:identity-search', 'tmdb:details',
     ]));
   });
 
-  it('expands Describe recall and returns up to twenty fully verified strong matches', async () => {
+  it('uses one quota-bounded Describe generation pass and fully verifies its strong matches', async () => {
     let generationPasses = 0;
     let titleSearches = 0;
     let detailCalls = 0;
-    let assessedDocuments = 0;
     const expandedTmdb = {
       ...fakeTmdb(),
       callsRemaining: 100,
@@ -413,8 +425,9 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
       tmdb: expandedTmdb as any,
       recommendDescribe: async (_env, _query, _type, _filters, excludedTitles) => {
         generationPasses++;
-        const start = excludedTitles?.length ? 13 : 1;
-        const end = excludedTitles?.length ? 24 : 12;
+        expect(excludedTitles).toEqual([]);
+        const start = 1;
+        const end = 12;
         return Array.from({ length: end - start + 1 }, (_, offset) => {
           const id = start + offset;
           return {
@@ -425,23 +438,58 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
           };
         });
       },
-      verifyPremises: async (_env, _query, _type, _groups, documents) => {
-        assessedDocuments = documents.length;
-        return documents.map(document => ({
-          index: document.index,
-          relevanceScore: .94,
-          matchedGroupIndexes: [],
-          reason: 'The complete premise is the central narrative.',
-        }));
-      },
     });
 
-    expect(generationPasses).toBe(2);
-    expect(titleSearches).toBe(24);
-    expect(assessedDocuments).toBe(24);
-    expect(detailCalls).toBe(20);
-    expect(results).toHaveLength(20);
+    expect(generationPasses).toBe(1);
+    expect(titleSearches).toBe(12);
+    expect(detailCalls).toBe(12);
+    expect(results).toHaveLength(12);
     expect(results.every(result => result.retrievalSources.includes('tmdb:details'))).toBe(true);
+  });
+
+  it('forwards displayed-title exclusions and rejects their TMDB identities', async () => {
+    const exclusionTmdb = {
+      callsRemaining: 40,
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1,
+        total_pages: 1,
+        total_results: 1,
+        results: [{
+          id: title === 'Already Shown' ? 7 : 8,
+          title,
+          release_date: '2020-01-01',
+          overview: 'The requested premise is central.',
+        }],
+      }),
+      details: async (_type: string, id: number) => ({
+        id,
+        title: id === 7 ? 'Already Shown' : 'Fresh Match',
+        release_date: '2020-01-01',
+        overview: 'The requested premise is central.',
+        genres: [],
+        keywords: { keywords: [] },
+      }),
+    };
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'describe',
+      query: 'a precise premise',
+      filters: {
+        ...request.filters,
+        excludedTmdbIds: [7],
+        excludedTitles: ['Already Shown'],
+      },
+    }, {
+      tmdb: exclusionTmdb as any,
+      recommendDescribe: async (_env, _query, _type, _filters, excludedTitles) => {
+        expect(excludedTitles).toEqual(['Already Shown']);
+        return [
+          { title: 'Already Shown', releaseYear: 2020, confidence: .98, reason: 'Duplicate.' },
+          { title: 'Fresh Match', releaseYear: 2020, confidence: .97, reason: 'Fresh genuine match.' },
+        ];
+      },
+    });
+    expect(results.map(result => result.tmdbId)).toEqual([8]);
   });
 
   it('uses TMDB series status only for eligibility and never changes premise relevance', async () => {
@@ -470,19 +518,11 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
       { title: 'Still Running', releaseYear: 2022, confidence: .98, reason: 'The characters cannot leave the mysterious location.' },
       { title: 'Completed Mystery', releaseYear: 2018, confidence: .82, reason: 'The characters cannot leave the mysterious location.' },
     ];
-    const verifyPremises = async (_env: unknown, _query: string, _type: string, _groups: unknown[], documents: Array<{ index: number }>) =>
-      documents.map(document => ({
-        index: document.index,
-        relevanceScore: .91,
-        matchedGroupIndexes: [],
-        reason: 'Being trapped in the inescapable location is the central premise.',
-      }));
     const tvDescribe = { ...request, mode: 'describe' as const, mediaType: 'tv' as const };
 
     const unrestricted = await processRecommendation({} as any, tvDescribe, {
       tmdb: statusTmdb,
       recommendDescribe: async () => generated,
-      verifyPremises: verifyPremises as any,
     });
     const endedOnly = await processRecommendation({} as any, {
       ...tvDescribe,
@@ -490,7 +530,6 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     }, {
       tmdb: statusTmdb,
       recommendDescribe: async () => generated,
-      verifyPremises: verifyPremises as any,
     });
 
     expect(endedOnly.map(result => result.title)).toEqual(['Completed Mystery']);
@@ -815,15 +854,6 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
           title: 'Arrival', releaseYear: 2016, confidence: .96,
           reason: 'It blends cerebral science fiction, nonlinear time, identity, and intimate human stakes.',
         }];
-      },
-      verifySimilarity: async (_env, anchors, _refinement, _type, documents) => {
-        expect(anchors).toHaveLength(2);
-        return documents.map(document => ({
-          index: document.index,
-          relevanceScore: .95,
-          matchedGroupIndexes: [],
-          reason: 'It substantively combines the temporal, philosophical, identity, and emotional concerns of both anchors.',
-        }));
       },
     });
 

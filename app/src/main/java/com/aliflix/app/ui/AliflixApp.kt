@@ -192,11 +192,15 @@ import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.player.WebPlayerScreen
 import com.aliflix.app.recommendation.PersonalMatch
 import com.aliflix.app.recommendation.PersonalizationEngine
+import com.aliflix.app.recommendation.GeminiRecommendationModel
 import com.aliflix.app.update.AppUpdateManager
 import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
 import com.aliflix.app.update.UpdateInfo
+import com.aliflix.app.ui.common.AliflixLogoMark
 import com.aliflix.app.ui.discover.DiscoverScreen
+import com.aliflix.app.ui.home.HomeSkeleton
+import com.aliflix.app.ui.launch.AliflixLaunchOverlay
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixAccentPrimary as AliflixRed
@@ -458,6 +462,7 @@ fun AliflixApp(
     val recent by viewModel.recent.collectAsState()
     val likes by viewModel.likes.collectAsState()
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
+    val geminiRecommendationModel by viewModel.geminiRecommendationModel.collectAsState()
     val askUiState by viewModel.askUiState.collectAsState()
     val askEditorState by viewModel.askEditorState.collectAsState()
 
@@ -500,11 +505,8 @@ fun AliflixApp(
     var discoverFocusRequestId by remember { mutableIntStateOf(0) }
     var consumedDiscoverFocusRequestId by remember { mutableIntStateOf(0) }
     var libraryPage by rememberSaveable { mutableIntStateOf(0) }
-    val launchVisible =
-        currentDestination is MobileDestination.Root &&
-            selectedTab == AppTab.HOME &&
-            home.loading &&
-            home.content == null
+    var launchCompleted by rememberSaveable { mutableStateOf(false) }
+    val isHomeReady = home.content != null || (!home.loading && home.error != null)
     val requestedDetailProvider = PlaybackProviderId.fromStoredValue(detailProviderName)
     val detailProvider = requestedDetailProvider?.takeIf { provider ->
         detail.item?.let(provider::isAvailableFor) == true
@@ -820,29 +822,33 @@ fun AliflixApp(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .aliflixScreenBackground()
-            .semantics { testTagsAsResourceId = true },
+    AliflixLaunchOverlay(
+        isHomeReady = isHomeReady,
+        onLaunchComplete = { launchCompleted = true },
     ) {
-        Scaffold(
-            containerColor = AliflixBlack,
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            bottomBar = {
-                if (currentDestination is MobileDestination.Root && !launchVisible) {
-                    AliflixBottomBar(
-                        selected = selectedTab,
-                        onSelect = { tab ->
-                            if (tab == AppTab.SEARCH) {
-                                discoverFocusRequestId += 1
-                            }
-                            showRoot(tab)
-                        },
-                    )
-                }
-            },
-        ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .aliflixScreenBackground()
+                .semantics { testTagsAsResourceId = true },
+        ) {
+            Scaffold(
+                containerColor = AliflixBlack,
+                contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                bottomBar = {
+                    if (currentDestination is MobileDestination.Root) {
+                        AliflixBottomBar(
+                            selected = selectedTab,
+                            onSelect = { tab ->
+                                if (tab == AppTab.SEARCH) {
+                                    discoverFocusRequestId += 1
+                                }
+                                showRoot(tab)
+                            },
+                        )
+                    }
+                },
+            ) { padding ->
             val screen = when (currentDestination) {
                 is MobileDestination.Detail -> AppScreen.DETAIL
                 is MobileDestination.Genre -> AppScreen.GENRE_EXPLORE
@@ -1107,6 +1113,8 @@ fun AliflixApp(
                         aiRecommendationsEnabled = aiRecommendationsEnabled,
                         onSetAiRecommendationsEnabled =
                             viewModel::setAiRecommendationsEnabled,
+                        geminiRecommendationModel = geminiRecommendationModel,
+                        onSetGeminiRecommendationModel = viewModel::setGeminiRecommendationModel,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
                 }
@@ -1169,6 +1177,7 @@ fun AliflixApp(
             )
         }
     }
+}
 }
 
 @Composable
@@ -1304,13 +1313,7 @@ private fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     when {
-        state.loading -> LoadingScreen(modifier)
-        state.error != null || state.content == null -> ConfigurationError(
-            message = state.error ?: "Unable to load Aliflix.",
-            onRetry = onRetry,
-            modifier = modifier,
-        )
-        else -> HomeFeed(
+        state.content != null -> HomeFeed(
             content = state.content,
             editorialPicks = state.editorialPicks,
             recent = recent,
@@ -1321,6 +1324,12 @@ private fun HomeScreen(
             listState = listState,
             selectedFilter = selectedFilter,
             onSelectFilter = onSelectFilter,
+            modifier = modifier,
+        )
+        state.loading -> HomeSkeleton(modifier = modifier)
+        else -> ConfigurationError(
+            message = state.error ?: "Unable to load Aliflix.",
+            onRetry = onRetry,
             modifier = modifier,
         )
     }
@@ -1556,54 +1565,6 @@ private fun HomeHeader(
                 modifier = Modifier.size(22.dp),
             )
         }
-    }
-}
-
-@Composable
-private fun AliflixLogoMark(
-    modifier: Modifier = Modifier,
-) {
-    val primary = AliflixAccentPrimary
-    val highlight = AliflixAccentSecondary
-    Canvas(modifier = modifier) {
-        val unit = minOf(size.width, size.height)
-        val left = (size.width - unit) / 2f
-        val top = (size.height - unit) / 2f
-        fun point(x: Float, y: Float) = Offset(
-            x = left + unit * x,
-            y = top + unit * y,
-        )
-
-        drawCircle(
-            color = highlight,
-            radius = unit * 0.115f,
-            center = point(0.25f, 0.66f),
-        )
-
-        val shadowBlade = Path().apply {
-            moveTo(point(0.59f, 0.19f).x, point(0.59f, 0.19f).y)
-            lineTo(point(0.80f, 0.84f).x, point(0.80f, 0.84f).y)
-            lineTo(point(0.68f, 0.84f).x, point(0.68f, 0.84f).y)
-            lineTo(point(0.56f, 0.47f).x, point(0.56f, 0.47f).y)
-            close()
-        }
-        drawPath(path = shadowBlade, color = primary)
-
-        val lightBlade = Path().apply {
-            moveTo(point(0.43f, 0.19f).x, point(0.43f, 0.19f).y)
-            lineTo(point(0.59f, 0.19f).x, point(0.59f, 0.19f).y)
-            lineTo(point(0.68f, 0.84f).x, point(0.68f, 0.84f).y)
-            lineTo(point(0.55f, 0.84f).x, point(0.55f, 0.84f).y)
-            close()
-        }
-        drawPath(
-            path = lightBlade,
-            brush = Brush.linearGradient(
-                colors = listOf(AliflixContentPrimary, highlight),
-                start = point(0.43f, 0.19f),
-                end = point(0.68f, 0.84f),
-            ),
-        )
     }
 }
 
@@ -2874,6 +2835,8 @@ private fun MobileSettingsDialog(
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
+    geminiRecommendationModel: GeminiRecommendationModel,
+    onSetGeminiRecommendationModel: (GeminiRecommendationModel) -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3140,6 +3103,92 @@ private fun MobileSettingsDialog(
                             )
                         }
 
+                        var geminiModelExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = aiRecommendationsEnabled) {
+                                        geminiModelExpanded = true
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 9.dp)
+                                    .alpha(if (aiRecommendationsEnabled) 1f else 0.55f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    Text(
+                                        text = "Recommendation model",
+                                        color = AliflixMuted,
+                                        fontSize = 10.sp,
+                                    )
+                                    Text(
+                                        text = geminiRecommendationModel.label,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                    Text(
+                                        text = geminiRecommendationModel.supportingText,
+                                        color = AliflixContentTertiary,
+                                        fontSize = 9.sp,
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDropDown,
+                                    contentDescription = "Choose Gemini recommendation model",
+                                    tint = AliflixContentSecondary,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = geminiModelExpanded,
+                                onDismissRequest = { geminiModelExpanded = false },
+                                modifier = Modifier.background(AliflixSurfaceRaised),
+                            ) {
+                                GeminiRecommendationModel.entries.forEach { model ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                Text(
+                                                    text = model.label,
+                                                    color = AliflixContentPrimary,
+                                                    fontWeight = if (model == geminiRecommendationModel) {
+                                                        FontWeight.Bold
+                                                    } else {
+                                                        FontWeight.Normal
+                                                    },
+                                                )
+                                                Text(
+                                                    text = model.supportingText,
+                                                    color = AliflixContentSecondary,
+                                                    fontSize = 10.sp,
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            geminiModelExpanded = false
+                                            onSetGeminiRecommendationModel(model)
+                                        },
+                                        trailingIcon = if (model == geminiRecommendationModel) {
+                                            {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = AliflixAccentSecondary,
+                                                )
+                                            }
+                                        } else {
+                                            null
+                                        },
+                                    )
+                                }
+                            }
+                        }
+
                     }
                 }
 
@@ -3218,6 +3267,8 @@ private fun MySpaceScreen(
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
+    geminiRecommendationModel: GeminiRecommendationModel,
+    onSetGeminiRecommendationModel: (GeminiRecommendationModel) -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3281,6 +3332,8 @@ private fun MySpaceScreen(
             onEditProviderUrl = onEditProviderUrl,
             aiRecommendationsEnabled = aiRecommendationsEnabled,
             onSetAiRecommendationsEnabled = onSetAiRecommendationsEnabled,
+            geminiRecommendationModel = geminiRecommendationModel,
+            onSetGeminiRecommendationModel = onSetGeminiRecommendationModel,
             updateUi = updateUi,
             onCheckForUpdates = onCheckForUpdates,
             onDownloadUpdate = onDownloadUpdate,
@@ -4683,7 +4736,15 @@ private fun DetailScreen(
             }
         }
 
-        if (state.loading) {
+        if (state.recommendations.isNotEmpty()) {
+            item(key = "recommendations") {
+                MediaRail(
+                    rail = ContentRail("More Like This", state.recommendations),
+                    onOpen = onOpen,
+                    compact = true,
+                )
+            }
+        } else if (state.loading) {
             item(key = "detail-loading") {
                 Box(
                     modifier = Modifier
@@ -4693,14 +4754,6 @@ private fun DetailScreen(
                 ) {
                     CircularProgressIndicator(color = AliflixRed)
                 }
-            }
-        } else if (state.recommendations.isNotEmpty()) {
-            item(key = "recommendations") {
-                MediaRail(
-                    rail = ContentRail("More Like This", state.recommendations),
-                    onOpen = onOpen,
-                    compact = true,
-                )
             }
         }
     }
@@ -5467,116 +5520,6 @@ private fun ArtworkPlaceholder(
                 letterSpacing = 1.2.sp,
             )
         }
-    }
-}
-
-@Composable
-private fun LoadingScreen(modifier: Modifier = Modifier) {
-    val animation = rememberInfiniteTransition(label = "launch")
-    val pulse by animation.animateFloat(
-        initialValue = 0.98f,
-        targetValue = 1.02f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1_200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "logo-pulse",
-    )
-    val glow by animation.animateFloat(
-        initialValue = 0.10f,
-        targetValue = 0.28f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1_200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "logo-glow",
-    )
-    val progress by animation.animateFloat(
-        initialValue = 0.08f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1_650, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "launch-progress",
-    )
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(
-                        AliflixAccentPrimary.copy(alpha = 0.22f),
-                        AliflixBackgroundImmersive,
-                        AliflixBlack,
-                    ),
-                    radius = 1_050f,
-                ),
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                    .size(180.dp)
-                    .scale(pulse)
-                    .alpha(glow)
-                .clip(CircleShape)
-                .background(
-                        Brush.radialGradient(
-                            listOf(AliflixAccentPrimary.copy(alpha = 0.42f), Color.Transparent),
-                        ),
-                ),
-        )
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            AliflixLogoMark(
-                modifier = Modifier
-                    .width(132.dp)
-                    .height(96.dp)
-                    .scale(pulse),
-            )
-            Spacer(Modifier.height(24.dp))
-            Text(
-                text = "ALIFLIX",
-                color = Color.White,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 5.5.sp,
-            )
-            Spacer(Modifier.height(27.dp))
-            Box(
-                modifier = Modifier
-                    .width(156.dp)
-                    .height(3.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.10f)),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress)
-                        .fillMaxHeight()
-                        .clip(CircleShape)
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(AliflixAccentSecondary, AliflixAccentPrimary),
-                            ),
-                        ),
-                )
-            }
-        }
-        Text(
-            text = "MOVIES  •  SERIES  •  STORIES",
-            color = Color.White.copy(alpha = 0.32f),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.4.sp,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(bottom = 26.dp),
-        )
     }
 }
 

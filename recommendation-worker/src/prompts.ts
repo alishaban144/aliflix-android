@@ -11,9 +11,10 @@ Rules:
 - Never invent a title. Use the official English TMDB display title when one exists and the original first release/premiere year.
 - confidence measures premise relevance only. Ratings, popularity, release year, Returning/Ended status, and metadata completeness must not increase it.
 - reason must state the concrete story relationship that makes the title match.
+- Keep reason to one concrete sentence of at most 20 words.
 - Respect every explicit user constraint and explicitFilters. A requested Returning/Ended status is eligibility only: never lower the premise standard to fill the list. TMDB will authoritatively verify current status afterward.
 - Do not include sequels, remakes, or franchise entries merely because another installment matches.
-- Silently check the list for hallucinations, media-type mistakes, duplicate identities, and weak matches before returning it.
+- Before emitting JSON, internally draft a broad candidate list and critically verify every title against the complete premise. Remove hallucinations, media-type mistakes, duplicate identities, title-word guesses, partial matches, and weak matches. This self-audit is the final semantic precision gate, so confidence must be below 0.70 whenever the complete premise is not clearly central.
 - Never return anything listed in excludedTitles. When expansionPass is true, find additional genuine matches rather than repeating or rephrasing the first list.
 
 Return only JSON matching the supplied schema.`;
@@ -32,12 +33,13 @@ Rules:
 - Use your knowledge of each actual work. Never invent a title; use its official English TMDB display title when available and original first release/premiere year.
 - confidence measures substantive similarity only. Ratings, popularity, status, and metadata completeness must not increase it.
 - reason must name the concrete story, character, theme, setting, or tone connections.
+- Keep reason to one concrete sentence of at most 20 words.
 - Never return an anchor itself or anything in excludedTitles. When expansionPass is true, find additional genuine matches rather than repeating the first list.
-- Silently reject hallucinations, media-type mistakes, duplicates, and superficial genre-only matches before returning.
+- Before emitting JSON, internally draft broadly and critically verify every title against every anchor and refinement. Remove hallucinations, media-type mistakes, duplicates, anchor-only repeats, and superficial genre-only matches. This self-audit is the final semantic precision gate, so confidence must be below 0.70 unless all required substantive connections are supported.
 
 Return only JSON matching the supplied schema.`;
 
-export const INTERPRET_V3_PROMPT = `You interpret Similar-mode refinements and catalogue filters using Gemini 3.7 Flash.
+export const INTERPRET_V3_PROMPT = `You interpret Similar-mode refinements and catalogue filters using Gemini Flash.
 
 Rules:
 - Output premise concepts and filters. Do not recommend titles.

@@ -4,6 +4,7 @@ import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.CatalogDiscoverySpec
 import com.aliflix.app.recommendation.AnimationFilter
 import com.aliflix.app.recommendation.RecommendationMediaKind
+import com.aliflix.app.recommendation.GeminiRecommendationModel
 import com.aliflix.app.recommendation.V3RecommendationAnchor
 import com.aliflix.app.recommendation.V3RecommendationFilters
 import com.aliflix.app.recommendation.V3RecommendationRequest
@@ -16,7 +17,11 @@ data class MappedAskAliflixRequest(
 )
 
 object AskAliflixRequestMapper {
-    fun map(request: AskAliflixRequest, requestId: String = UUID.randomUUID().toString()): MappedAskAliflixRequest {
+    fun map(
+        request: AskAliflixRequest,
+        requestId: String = UUID.randomUUID().toString(),
+        geminiModel: GeminiRecommendationModel = GeminiRecommendationModel.GEMINI_3_5_FLASH,
+    ): MappedAskAliflixRequest {
         val outputType = when (request) {
             is AskAliflixRequest.Describe -> request.mediaType
             is AskAliflixRequest.Similar -> request.outputMediaType
@@ -43,11 +48,16 @@ object AskAliflixRequestMapper {
             }
             is AskAliflixRequest.Similar -> {
                 val titles = request.anchors.map { it.title }
-                when (titles.size) {
+                val base = when (titles.size) {
                     0 -> "${outputType.label()} — similar titles"
                     1 -> "${outputType.label()} — similar to ${titles[0]}"
                     2 -> "${outputType.label()} — blending ${titles[0]} & ${titles[1]}"
                     else -> "${outputType.label()} — blending ${titles.size} titles"
+                }
+                if (!request.refinementText.isNullOrBlank()) {
+                    "$base — “${request.refinementText.trim()}”"
+                } else {
+                    base
                 }
             }
             is AskAliflixRequest.Filters -> "${outputType.label()} — your selected filters"
@@ -66,12 +76,14 @@ object AskAliflixRequestMapper {
         return MappedAskAliflixRequest(summary, spec, V3RecommendationRequest(
             requestId = requestId,
             mode = when (request) { is AskAliflixRequest.Describe -> "describe"; is AskAliflixRequest.Similar -> "similar"; is AskAliflixRequest.Filters -> "filters" },
+            geminiModel = geminiModel.workerValue,
             query = rawQuery,
             mediaType = outputType.routeName,
             anchor = anchorList.firstOrNull(),
             anchors = anchorList,
             previousQuery = (request as? AskAliflixRequest.Describe)?.previousText,
-            refinementQuery = (request as? AskAliflixRequest.Describe)?.refinementText,
+            refinementQuery = (request as? AskAliflixRequest.Describe)?.refinementText
+                ?: (request as? AskAliflixRequest.Similar)?.refinementText,
             filters = spec.toWorkerFilters(),
             pageSize = 24,
         ))
