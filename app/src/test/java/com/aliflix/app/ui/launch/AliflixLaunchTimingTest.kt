@@ -7,6 +7,22 @@ import org.junit.Test
 class AliflixLaunchTimingTest {
 
     @Test
+    fun testWordmarkUsesTheRequestedSubtleTopAnchoredCurve() {
+        assertEquals("ALIFLIX", ALIFLIX_WORDMARK)
+        assertEquals(
+            listOf(1.055f, 1.035f, 1.017f, 1f, 1.017f, 1.035f, 1.055f),
+            ALIFLIX_WORDMARK_HEIGHT_SCALES,
+        )
+        ALIFLIX_WORDMARK_HEIGHT_SCALES.indices.forEach { index ->
+            assertEquals(
+                ALIFLIX_WORDMARK_HEIGHT_SCALES[index],
+                ALIFLIX_WORDMARK_HEIGHT_SCALES[ALIFLIX_WORDMARK_HEIGHT_SCALES.lastIndex - index],
+                0.001f,
+            )
+        }
+    }
+
+    @Test
     fun testWordCycleTimingAndSlotDuration() {
         val word0BeforeStart = calculateWordState(seq = 0.8f, wordIndex = 0, isReducedMotion = false)
         assertEquals(0f, word0BeforeStart.first, 0.001f)

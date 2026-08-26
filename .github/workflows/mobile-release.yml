@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.24"
+      - "release/v3.1.25"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.24"
+        description: "Release tag, for example v3.1.25"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "114"
-  RELEASE_VERSION_NAME: "3.1.24"
+  RELEASE_VERSION_CODE: "115"
+  RELEASE_VERSION_NAME: "3.1.25"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -217,7 +217,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Makes the entire launch animation faster. Describe now uses a compact low-effort Gemini request and automatically falls back to strict TMDB-grounded matching on temporary provider failures without extra Gemini calls."
+            "releaseNotes": "Keeps the Ask Aliflix orb limited to its Discover entry, page header, and match-loading state; uses the launch heatmap identity elsewhere; and gives the ALIFLIX launch wordmark a subtle top-aligned lower curve."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -228,7 +228,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Makes the entire launch animation faster. Describe now uses a compact low-effort Gemini request and automatically falls back to strict TMDB-grounded matching on temporary provider failures without extra Gemini calls."
+          body: "Keeps the Ask Aliflix orb limited to its Discover entry, page header, and match-loading state; uses the launch heatmap identity elsewhere; and gives the ALIFLIX launch wordmark a subtle top-aligned lower curve."
           files: |
             aliflix-mobile.apk
             update-mobile.json

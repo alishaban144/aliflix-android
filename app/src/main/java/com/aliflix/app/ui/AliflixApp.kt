@@ -197,9 +197,9 @@ import com.aliflix.app.update.AppUpdateManager
 import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
 import com.aliflix.app.update.UpdateInfo
-import com.aliflix.app.ui.common.AliflixLogoMark
 import com.aliflix.app.ui.discover.DiscoverScreen
 import com.aliflix.app.ui.home.HomeSkeleton
+import com.aliflix.app.ui.launch.AliflixHeatmapLogo
 import com.aliflix.app.ui.launch.AliflixLaunchOverlay
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
@@ -5545,7 +5545,8 @@ private fun ConfigurationError(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        AliflixLogoMark(
+        AliflixHeatmapLogo(
+            timeSeconds = 2f,
             modifier = Modifier
                 .width(84.dp)
                 .height(68.dp),
@@ -5592,7 +5593,8 @@ private fun EmptyMessage(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        AliflixLogoMark(
+        AliflixHeatmapLogo(
+            timeSeconds = 2f,
             modifier = Modifier
                 .width(64.dp)
                 .height(50.dp),

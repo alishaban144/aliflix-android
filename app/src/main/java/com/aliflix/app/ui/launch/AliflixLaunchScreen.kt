@@ -6,8 +6,10 @@ import android.os.SystemClock
 import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -44,6 +46,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -65,6 +71,8 @@ internal const val LAUNCH_WORD_COUNT = 3
 internal const val LAUNCH_REDUCED_MOTION_MIN_SECONDS = 0.65f
 internal const val LAUNCH_EXIT_DURATION_SECONDS = 0.3f
 internal const val LAUNCH_LOGO_MOTION_RATE = 1.15f
+internal const val ALIFLIX_WORDMARK = "ALIFLIX"
+internal val ALIFLIX_WORDMARK_HEIGHT_SCALES = listOf(1.055f, 1.035f, 1.017f, 1f, 1.017f, 1.035f, 1.055f)
 
 internal fun isLaunchSequenceComplete(
     elapsedSeconds: Float,
@@ -267,21 +275,11 @@ private fun AliflixLaunchStage(
 
         Spacer(Modifier.height((-8).dp))
 
-        // ALIFLIX Wordmark
-        Text(
-            text = "ALIFLIX",
-            color = AliflixLaunchTheme.WhiteTitle,
-            fontSize = 32.sp,
-            fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 0.34.em,
-            textAlign = TextAlign.Center,
+        AliflixLaunchWordmark(
+            opacity = titleOpacity,
+            translationY = titleTranslateY,
             modifier = Modifier
-                .graphicsLayer {
-                    alpha = titleOpacity
-                    translationY = titleTranslateY.toPx()
-                    // Visual compensation for trailing letter spacing
-                    translationX = (0.17f * 32.sp.value).dp.toPx()
-                },
+                .clearAndSetSemantics { contentDescription = ALIFLIX_WORDMARK },
         )
 
         Spacer(Modifier.height(13.dp))
@@ -316,6 +314,36 @@ private fun AliflixLaunchStage(
                         },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun AliflixLaunchWordmark(
+    opacity: Float,
+    translationY: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+) {
+    val tracking = with(LocalDensity.current) { (32.sp * 0.34f).toDp() }
+    Row(
+        modifier = modifier.graphicsLayer {
+            alpha = opacity
+            this.translationY = translationY.toPx()
+        },
+        horizontalArrangement = Arrangement.spacedBy(tracking),
+        verticalAlignment = Alignment.Top,
+    ) {
+        ALIFLIX_WORDMARK.forEachIndexed { index, letter ->
+            Text(
+                text = letter.toString(),
+                color = AliflixLaunchTheme.WhiteTitle,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.graphicsLayer {
+                    scaleY = ALIFLIX_WORDMARK_HEIGHT_SCALES[index]
+                    transformOrigin = TransformOrigin(0.5f, 0f)
+                },
+            )
         }
     }
 }
