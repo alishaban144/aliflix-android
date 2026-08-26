@@ -197,7 +197,10 @@ import com.aliflix.app.update.AppUpdateManager
 import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
 import com.aliflix.app.update.UpdateInfo
+import com.aliflix.app.ui.common.AliflixLogoMark
 import com.aliflix.app.ui.discover.DiscoverScreen
+import com.aliflix.app.ui.home.HomeSkeleton
+import com.aliflix.app.ui.launch.AliflixLaunchOverlay
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixAccentPrimary as AliflixRed
@@ -502,11 +505,8 @@ fun AliflixApp(
     var discoverFocusRequestId by remember { mutableIntStateOf(0) }
     var consumedDiscoverFocusRequestId by remember { mutableIntStateOf(0) }
     var libraryPage by rememberSaveable { mutableIntStateOf(0) }
-    val launchVisible =
-        currentDestination is MobileDestination.Root &&
-            selectedTab == AppTab.HOME &&
-            home.loading &&
-            home.content == null
+    var launchCompleted by rememberSaveable { mutableStateOf(false) }
+    val isHomeReady = home.content != null || (!home.loading && home.error != null)
     val requestedDetailProvider = PlaybackProviderId.fromStoredValue(detailProviderName)
     val detailProvider = requestedDetailProvider?.takeIf { provider ->
         detail.item?.let(provider::isAvailableFor) == true
@@ -822,29 +822,33 @@ fun AliflixApp(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .aliflixScreenBackground()
-            .semantics { testTagsAsResourceId = true },
+    AliflixLaunchOverlay(
+        isHomeReady = isHomeReady,
+        onLaunchComplete = { launchCompleted = true },
     ) {
-        Scaffold(
-            containerColor = AliflixBlack,
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            bottomBar = {
-                if (currentDestination is MobileDestination.Root && !launchVisible) {
-                    AliflixBottomBar(
-                        selected = selectedTab,
-                        onSelect = { tab ->
-                            if (tab == AppTab.SEARCH) {
-                                discoverFocusRequestId += 1
-                            }
-                            showRoot(tab)
-                        },
-                    )
-                }
-            },
-        ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .aliflixScreenBackground()
+                .semantics { testTagsAsResourceId = true },
+        ) {
+            Scaffold(
+                containerColor = AliflixBlack,
+                contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                bottomBar = {
+                    if (currentDestination is MobileDestination.Root) {
+                        AliflixBottomBar(
+                            selected = selectedTab,
+                            onSelect = { tab ->
+                                if (tab == AppTab.SEARCH) {
+                                    discoverFocusRequestId += 1
+                                }
+                                showRoot(tab)
+                            },
+                        )
+                    }
+                },
+            ) { padding ->
             val screen = when (currentDestination) {
                 is MobileDestination.Detail -> AppScreen.DETAIL
                 is MobileDestination.Genre -> AppScreen.GENRE_EXPLORE
@@ -1174,6 +1178,7 @@ fun AliflixApp(
         }
     }
 }
+}
 
 @Composable
 private fun AliflixBottomBar(
@@ -1308,13 +1313,7 @@ private fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     when {
-        state.loading -> LoadingScreen(modifier)
-        state.error != null || state.content == null -> ConfigurationError(
-            message = state.error ?: "Unable to load Aliflix.",
-            onRetry = onRetry,
-            modifier = modifier,
-        )
-        else -> HomeFeed(
+        state.content != null -> HomeFeed(
             content = state.content,
             editorialPicks = state.editorialPicks,
             recent = recent,
@@ -1325,6 +1324,12 @@ private fun HomeScreen(
             listState = listState,
             selectedFilter = selectedFilter,
             onSelectFilter = onSelectFilter,
+            modifier = modifier,
+        )
+        state.loading -> HomeSkeleton(modifier = modifier)
+        else -> ConfigurationError(
+            message = state.error ?: "Unable to load Aliflix.",
+            onRetry = onRetry,
             modifier = modifier,
         )
     }
@@ -1560,54 +1565,6 @@ private fun HomeHeader(
                 modifier = Modifier.size(22.dp),
             )
         }
-    }
-}
-
-@Composable
-private fun AliflixLogoMark(
-    modifier: Modifier = Modifier,
-) {
-    val primary = AliflixAccentPrimary
-    val highlight = AliflixAccentSecondary
-    Canvas(modifier = modifier) {
-        val unit = minOf(size.width, size.height)
-        val left = (size.width - unit) / 2f
-        val top = (size.height - unit) / 2f
-        fun point(x: Float, y: Float) = Offset(
-            x = left + unit * x,
-            y = top + unit * y,
-        )
-
-        drawCircle(
-            color = highlight,
-            radius = unit * 0.115f,
-            center = point(0.25f, 0.66f),
-        )
-
-        val shadowBlade = Path().apply {
-            moveTo(point(0.59f, 0.19f).x, point(0.59f, 0.19f).y)
-            lineTo(point(0.80f, 0.84f).x, point(0.80f, 0.84f).y)
-            lineTo(point(0.68f, 0.84f).x, point(0.68f, 0.84f).y)
-            lineTo(point(0.56f, 0.47f).x, point(0.56f, 0.47f).y)
-            close()
-        }
-        drawPath(path = shadowBlade, color = primary)
-
-        val lightBlade = Path().apply {
-            moveTo(point(0.43f, 0.19f).x, point(0.43f, 0.19f).y)
-            lineTo(point(0.59f, 0.19f).x, point(0.59f, 0.19f).y)
-            lineTo(point(0.68f, 0.84f).x, point(0.68f, 0.84f).y)
-            lineTo(point(0.55f, 0.84f).x, point(0.55f, 0.84f).y)
-            close()
-        }
-        drawPath(
-            path = lightBlade,
-            brush = Brush.linearGradient(
-                colors = listOf(AliflixContentPrimary, highlight),
-                start = point(0.43f, 0.19f),
-                end = point(0.68f, 0.84f),
-            ),
-        )
     }
 }
 
@@ -5563,116 +5520,6 @@ private fun ArtworkPlaceholder(
                 letterSpacing = 1.2.sp,
             )
         }
-    }
-}
-
-@Composable
-private fun LoadingScreen(modifier: Modifier = Modifier) {
-    val animation = rememberInfiniteTransition(label = "launch")
-    val pulse by animation.animateFloat(
-        initialValue = 0.98f,
-        targetValue = 1.02f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1_200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "logo-pulse",
-    )
-    val glow by animation.animateFloat(
-        initialValue = 0.10f,
-        targetValue = 0.28f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1_200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "logo-glow",
-    )
-    val progress by animation.animateFloat(
-        initialValue = 0.08f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1_650, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "launch-progress",
-    )
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(
-                        AliflixAccentPrimary.copy(alpha = 0.22f),
-                        AliflixBackgroundImmersive,
-                        AliflixBlack,
-                    ),
-                    radius = 1_050f,
-                ),
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                    .size(180.dp)
-                    .scale(pulse)
-                    .alpha(glow)
-                .clip(CircleShape)
-                .background(
-                        Brush.radialGradient(
-                            listOf(AliflixAccentPrimary.copy(alpha = 0.42f), Color.Transparent),
-                        ),
-                ),
-        )
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            AliflixLogoMark(
-                modifier = Modifier
-                    .width(132.dp)
-                    .height(96.dp)
-                    .scale(pulse),
-            )
-            Spacer(Modifier.height(24.dp))
-            Text(
-                text = "ALIFLIX",
-                color = Color.White,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 5.5.sp,
-            )
-            Spacer(Modifier.height(27.dp))
-            Box(
-                modifier = Modifier
-                    .width(156.dp)
-                    .height(3.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.10f)),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress)
-                        .fillMaxHeight()
-                        .clip(CircleShape)
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(AliflixAccentSecondary, AliflixAccentPrimary),
-                            ),
-                        ),
-                )
-            }
-        }
-        Text(
-            text = "MOVIES  •  SERIES  •  STORIES",
-            color = Color.White.copy(alpha = 0.32f),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.4.sp,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(bottom = 26.dp),
-        )
     }
 }
 

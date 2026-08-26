@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.19"
+      - "release/v3.1.20"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.19"
+        description: "Release tag, for example v3.1.20"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "109"
-  RELEASE_VERSION_NAME: "3.1.19"
+  RELEASE_VERSION_CODE: "110"
+  RELEASE_VERSION_NAME: "3.1.20"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -121,7 +121,7 @@ jobs:
             test "${GITHUB_REF_NAME}" = "$EXPECTED_TAG"
           else
             test "${GITHUB_REF_TYPE}" = "branch"
-            test "${GITHUB_REF_NAME}" = "release/v3.1.19"
+            test "${GITHUB_REF_NAME}" = "release/${EXPECTED_TAG}"
           fi
 
           if git rev-parse --verify --quiet "refs/tags/${EXPECTED_TAG}" >/dev/null; then

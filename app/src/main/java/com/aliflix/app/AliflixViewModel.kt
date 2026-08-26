@@ -5,6 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aliflix.app.data.CatalogClient
 import com.aliflix.app.data.AndroidCatalogCacheStore
+import com.aliflix.app.data.HomeSnapshotStore
+import com.aliflix.app.data.AndroidHomeSnapshotStore
+import com.aliflix.app.data.PersistedHomeSnapshot
 import com.aliflix.app.data.LibraryStore
 import com.aliflix.app.data.PlaybackProviderRepository
 import com.aliflix.app.model.Episode
@@ -163,6 +166,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private val aiClient = com.aliflix.app.recommendation.RecommendationAiClient(
         baseUrl = BuildConfig.RECOMMENDATION_AI_BASE_URL,
         ioDispatcher = recommendationDispatchers.io
+    )
+    private val homeSnapshotStore: HomeSnapshotStore = AndroidHomeSnapshotStore(
+        context = application,
+        ioDispatcher = recommendationDispatchers.io,
+        computationDispatcher = recommendationDispatchers.computation,
     )
     private var searchJob: Job? = null
     private var detailJob: Job? = null
@@ -484,6 +492,19 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun resetDorabyUrl() = playbackProviderRepository.resetDorabyUrl()
 
     init {
+        if (!BuildConfig.IS_TV) {
+            viewModelScope.launch {
+                val cached = homeSnapshotStore.loadSnapshot()
+                if (cached != null && _home.value.content == null) {
+                    _home.value = HomeUiState(
+                        loading = false,
+                        content = cached.content,
+                        editorialPicks = cached.editorialPicks,
+                        error = null,
+                    )
+                }
+            }
+        }
         refreshHome()
         val connectivityManager = application.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
         val networkRequest = android.net.NetworkRequest.Builder()
@@ -526,6 +547,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 }.fold(
                     onSuccess = { snapshot ->
                         lastHomeRefreshAt = System.currentTimeMillis()
+                        viewModelScope.launch {
+                            homeSnapshotStore.saveSnapshot(
+                                PersistedHomeSnapshot(
+                                    content = snapshot.content,
+                                    editorialPicks = snapshot.editorialPicks,
+                                )
+                            )
+                        }
                         HomeUiState(
                             loading = false,
                             content = snapshot.content,
