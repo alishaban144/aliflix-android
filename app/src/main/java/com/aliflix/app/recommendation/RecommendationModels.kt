@@ -45,7 +45,7 @@ enum class RecommendationSort(val label: String, val workerValue: String) {
     OLDEST_FIRST("Oldest First", "oldest_first"),
 }
 
-enum class GeminiRecommendationModel(
+enum class RecommendationAiModel(
     val label: String,
     val workerValue: String,
     val supportingText: String,
@@ -59,10 +59,15 @@ enum class GeminiRecommendationModel(
         label = "Gemini 3.7 Flash",
         workerValue = "gemini-3.7-flash",
         supportingText = "Newest",
+    ),
+    GROQ_QWEN_3_8_27B(
+        label = "Groq",
+        workerValue = "groq-qwen-3.8-27b",
+        supportingText = "Qwen 3.8 27B",
     );
 
     companion object {
-        fun fromWorkerValue(value: String?): GeminiRecommendationModel =
+        fun fromWorkerValue(value: String?): RecommendationAiModel =
             entries.firstOrNull { it.workerValue == value } ?: GEMINI_3_5_FLASH
     }
 }

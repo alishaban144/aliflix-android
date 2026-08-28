@@ -13,14 +13,27 @@ import org.junit.Test
 
 class AskAliflixWiringIntegrationTest {
     @Test
-    fun selectedGeminiModelIsSerializedExplicitly() {
+    fun selectedAiModelIsSerializedExplicitly() {
         val json = AskAliflixRequestMapper.map(
             request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
             requestId = "00000000-0000-4000-8000-000000000010",
-            geminiModel = GeminiRecommendationModel.GEMINI_3_7_FLASH,
+            aiModel = RecommendationAiModel.GEMINI_3_7_FLASH,
         ).workerRequest.toJson()
 
+        assertEquals("gemini-3.7-flash", json.getString("aiModel"))
         assertEquals("gemini-3.7-flash", json.getString("geminiModel"))
+    }
+
+    @Test
+    fun selectedGroqModelIsSerializedForTheWorker() {
+        val json = AskAliflixRequestMapper.map(
+            request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
+            requestId = "00000000-0000-4000-8000-000000000012",
+            aiModel = RecommendationAiModel.GROQ_QWEN_3_8_27B,
+        ).workerRequest.toJson()
+
+        assertEquals("groq-qwen-3.8-27b", json.getString("aiModel"))
+        assertEquals("groq-qwen-3.8-27b", json.getString("geminiModel"))
     }
 
     @Test

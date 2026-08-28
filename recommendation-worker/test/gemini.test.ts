@@ -267,8 +267,8 @@ describe('Gemini Describe contract', () => {
         overview: 'A logger disappears after encountering a UFO.',
         genres: ['Science Fiction'],
         keywords: ['alien abduction'],
-        geminiReason: 'A logger is abducted by extraterrestrials.',
-        geminiConfidence: .97,
+        aiReason: 'A logger is abducted by extraterrestrials.',
+        aiConfidence: .97,
       }],
     );
 

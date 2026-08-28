@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.26"
+      - "release/v3.1.27"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.26"
+        description: "Release tag, for example v3.1.27"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "116"
-  RELEASE_VERSION_NAME: "3.1.26"
+  RELEASE_VERSION_CODE: "117"
+  RELEASE_VERSION_NAME: "3.1.27"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Uses the animated Aliflix launch identity beside Ask Aliflix on Discover and in its page header, while keeping the floating orb for the shared Finding matches state."
+            "releaseNotes": "Adds Groq Qwen 3.8 27B with TMDB-grounded candidate expansion and independent verification for broader, genuine matches. The Show Ask Aliflix setting now immediately hides or restores the Discover entry point."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Uses the animated Aliflix launch identity beside Ask Aliflix on Discover and in its page header, while keeping the floating orb for the shared Finding matches state."
+          body: "Adds Groq Qwen 3.8 27B with TMDB-grounded candidate expansion and independent verification for broader, genuine matches. The Show Ask Aliflix setting now immediately hides or restores the Discover entry point."
           files: |
             aliflix-mobile.apk
             update-mobile.json

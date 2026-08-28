@@ -10,12 +10,15 @@ import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.dp
+import androidx.test.espresso.Espresso.pressBack
 import org.junit.Rule
 import org.junit.Test
 
@@ -84,6 +87,34 @@ class SearchRecommendationUiTest {
         composeRule.onNodeWithTag("discover-mode-recommend").assertIsDisplayed()
         composeRule.onAllNodesWithTag("search-mode-plot").assertCountEquals(0)
         composeRule.onAllNodesWithTag("search-mode-pager").assertCountEquals(0)
+    }
+
+    @Test
+    fun settingsToggleHidesAndRestoresAskAliflixInDiscover() {
+        openDiscover()
+        composeRule.onNodeWithTag("discover-ask-aliflix-card").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("bottom-tab-my-space").performClick()
+        composeRule.onNodeWithContentDescription("Open Settings").performClick()
+        composeRule.onNodeWithTag("settings-ask-aliflix-switch")
+            .performScrollTo()
+            .performClick()
+        pressBack()
+        composeRule.onNodeWithTag("bottom-tab-discover").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag("discover-ask-aliflix-card")
+                .fetchSemanticsNodes(atLeastOneRootRequired = false)
+                .isEmpty()
+        }
+
+        composeRule.onNodeWithTag("bottom-tab-my-space").performClick()
+        composeRule.onNodeWithContentDescription("Open Settings").performClick()
+        composeRule.onNodeWithTag("settings-ask-aliflix-switch")
+            .performScrollTo()
+            .performClick()
+        pressBack()
+        composeRule.onNodeWithTag("bottom-tab-discover").performClick()
+        composeRule.onNodeWithTag("discover-ask-aliflix-card").assertIsDisplayed()
     }
 
     @Test

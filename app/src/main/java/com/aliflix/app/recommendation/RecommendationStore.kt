@@ -14,24 +14,31 @@ class RecommendationStore(context: Context) {
     )
     private val _enabled = MutableStateFlow(preferences.getBoolean(KEY_ENABLED, true))
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
-    private val _geminiModel = MutableStateFlow(
-        GeminiRecommendationModel.fromWorkerValue(preferences.getString(KEY_GEMINI_MODEL, null)),
+    private val _aiModel = MutableStateFlow(
+        RecommendationAiModel.fromWorkerValue(
+            preferences.getString(KEY_AI_MODEL, null)
+                ?: preferences.getString(LEGACY_KEY_GEMINI_MODEL, null),
+        ),
     )
-    val geminiModel: StateFlow<GeminiRecommendationModel> = _geminiModel.asStateFlow()
+    val aiModel: StateFlow<RecommendationAiModel> = _aiModel.asStateFlow()
 
     fun setEnabled(enabled: Boolean) {
         _enabled.value = enabled
         preferences.edit { putBoolean(KEY_ENABLED, enabled) }
     }
 
-    fun setGeminiModel(model: GeminiRecommendationModel) {
-        _geminiModel.value = model
-        preferences.edit { putString(KEY_GEMINI_MODEL, model.workerValue) }
+    fun setAiModel(model: RecommendationAiModel) {
+        _aiModel.value = model
+        preferences.edit {
+            putString(KEY_AI_MODEL, model.workerValue)
+            remove(LEGACY_KEY_GEMINI_MODEL)
+        }
     }
 
     private companion object {
         const val PREFERENCES_NAME = "aliflix_ai_recommendations"
         const val KEY_ENABLED = "enabled"
-        const val KEY_GEMINI_MODEL = "gemini_model"
+        const val KEY_AI_MODEL = "ai_model"
+        const val LEGACY_KEY_GEMINI_MODEL = "gemini_model"
     }
 }

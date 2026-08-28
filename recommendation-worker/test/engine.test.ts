@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { processRecommendation } from '../src/engine';
 import { ParsedRecommendationRequest, RecommendationRequestSchema } from '../src/schemas';
-import { InterpretedIntent, ServiceError } from '../src/types';
+import { InterpretedIntent, PremiseCandidateDocument, ServiceError } from '../src/types';
 import { applyTmdbAuthentication } from '../src/tmdb';
 
 const request: ParsedRecommendationRequest = {
@@ -18,6 +18,15 @@ const interpreted: InterpretedIntent = {
   excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
   genreHints: ['Comedy'], toneAndMood: ['funny'], broadSearchPhrases: [],
 };
+
+function acceptedAssessments(candidates: PremiseCandidateDocument[]) {
+  return candidates.map(candidate => ({
+    index: candidate.index,
+    relevanceScore: candidate.aiConfidence,
+    matchedGroupIndexes: [],
+    reason: candidate.aiReason,
+  }));
+}
 
 function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean } = {}) {
   let remaining = 40;
@@ -44,35 +53,47 @@ function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean
   };
 }
 
-describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
-  it('accepts only the two user-selectable Gemini models', () => {
+describe('AI-generated, TMDB-grounded recommendation engine', () => {
+  it('accepts the three user-selectable AI models', () => {
     expect(RecommendationRequestSchema.parse({
       ...request,
       geminiModel: 'gemini-3.7-flash',
     }).geminiModel).toBe('gemini-3.7-flash');
     expect(RecommendationRequestSchema.parse({
       ...request,
-      geminiModel: 'gemini-3.5-flash',
-    }).geminiModel).toBe('gemini-3.5-flash');
+      aiModel: 'gemini-3.5-flash',
+    }).aiModel).toBe('gemini-3.5-flash');
+    expect(RecommendationRequestSchema.parse({
+      ...request,
+      aiModel: 'groq-qwen-3.8-27b',
+    }).aiModel).toBe('groq-qwen-3.8-27b');
     expect(() => RecommendationRequestSchema.parse({
       ...request,
-      geminiModel: 'gemini-unapproved',
+      aiModel: 'groq-unapproved',
     })).toThrow();
+  });
+
+  it('rejects conflicting current and legacy model fields', () => {
+    expect(() => RecommendationRequestSchema.parse({
+      ...request,
+      aiModel: 'groq-qwen-3.8-27b',
+      geminiModel: 'gemini-3.5-flash',
+    })).toThrow('aiModel and legacy geminiModel must match');
   });
 
   it('routes one request through the explicitly selected model', async () => {
     let routedModel: string | undefined;
     await processRecommendation({ GEMINI_GENERATION_MODEL: 'gemini-3.5-flash' } as any, {
       ...request,
-      geminiModel: 'gemini-3.7-flash',
+      aiModel: 'groq-qwen-3.8-27b',
     }, {
       tmdb: fakeTmdb({ empty: true }),
       interpret: async env => {
-        routedModel = env.GEMINI_GENERATION_MODEL;
+        routedModel = env.AI_GENERATION_MODEL;
         return interpreted;
       },
     });
-    expect(routedModel).toBe('gemini-3.7-flash');
+    expect(routedModel).toBe('groq-qwen-3.8-27b');
   });
 
   it('requires a canonical TMDB ID for similar requests', () => {
@@ -144,7 +165,7 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     expect(results).toEqual([]);
   });
 
-  it('uses Gemini to retrieve Similar candidates, excludes the canonical anchor, and rejects superficial matches', async () => {
+  it('uses AI to retrieve and independently verify Similar candidates, excluding the canonical anchor', async () => {
     let recommendationCalls = 0;
     let similarCalls = 0;
     let discoverCalls = 0;
@@ -186,13 +207,14 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
         { title: 'Breaking Bad', releaseYear: 2008, confidence: .99, reason: 'The anchor itself.' },
         { title: 'Unrelated Anime', releaseYear: 2020, confidence: .69, reason: 'It is also dramatic.' },
       ],
+      assessSimilarity: async (_env, _anchors, _refinement, _type, candidates) => acceptedAssessments(candidates),
     });
     expect(results[0]?.title).toBe('Better Call Saul');
     expect(results.some(item => item.tmdbId === 1396)).toBe(false);
     expect(results.every(item => item.mediaType === 'tv')).toBe(true);
     expect(results.slice(0, 1).some(item => item.title === 'Unrelated Anime')).toBe(false);
     expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
-      'gemini:similar-recommendation', 'tmdb:identity-search', 'tmdb:details',
+      'gemini:similar-recommendation', 'gemini:similarity-verification', 'tmdb:identity-search', 'tmdb:details',
     ]));
     expect({ recommendationCalls, similarCalls, discoverCalls }).toEqual({ recommendationCalls: 0, similarCalls: 0, discoverCalls: 0 });
   });
@@ -293,7 +315,7 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     expect(discoverCalls.some(params => String(params.with_keywords).split(',').length === 2)).toBe(true);
   });
 
-  it('uses the same Gemini similarity standard for cross-media anchors without incompatible TMDB endpoints', async () => {
+  it('uses the same AI similarity standard for cross-media anchors without incompatible TMDB endpoints', async () => {
     let recommendationCalls = 0;
     let similarCalls = 0;
     let discoverCalls = 0;
@@ -327,6 +349,7 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
         expect(type).toBe('movie');
         return [{ title: 'Movie Counterpart', releaseYear: 2019, confidence: .92, reason: 'A crime-world moral collapse centered on a cartel lawyer.' }];
       },
+      assessSimilarity: async (_env, _anchors, _refinement, _type, candidates) => acceptedAssessments(candidates),
     });
 
     expect(recommendationCalls).toBe(0);
@@ -350,50 +373,84 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     expect(results).toEqual([]);
   });
 
-  it('uses one self-audited Gemini list for Describe, then exact-resolves and hydrates TMDB metadata', async () => {
+  it('rejects the unrelated title-word match Abduction after inspecting authoritative TMDB plot evidence', async () => {
     const seedTmdb = {
       callsRemaining: 120,
       genres: async () => ({ genres: [{ id: 878, name: 'Science Fiction' }] }),
       searchTitle: async (_type: string, title: string) => ({
         page: 1, total_pages: 1, total_results: 1,
         results: [{
-          id: title === 'Fire in the Sky' ? 1 : 2,
+          id: title === 'Fire in the Sky' ? 1 : title === 'The Fourth Kind' ? 3 : 2,
           title,
-           release_date: title === 'Fire in the Sky' ? '1993-03-12' : '2014-04-04',
+           release_date: title === 'Fire in the Sky' ? '1993-03-12' : title === 'The Fourth Kind' ? '2009-11-06' : '2011-09-22',
            overview: title === 'Fire in the Sky'
             ? 'A logger disappears after an encounter with an extraterrestrial craft and returns with memories of abduction.'
-            : 'Friends meet for an ordinary cooking competition.',
+            : title === 'The Fourth Kind'
+              ? 'A psychologist investigates patients whose hypnosis sessions reveal recurring extraterrestrial abductions.'
+              : 'A teenager discovers his childhood photo on a missing persons website and uncovers a spy conspiracy.',
           genre_ids: [878], vote_average: 7, vote_count: 500,
         }],
       }),
-      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchKeyword: async (term: string) => term === 'alien abduction'
+        ? { page: 1, total_pages: 1, total_results: 1, results: [{ id: 99, name: 'alien abduction' }] }
+        : { page: 1, total_pages: 0, total_results: 0, results: [] },
       searchPerson: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       searchCompany: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       recommendations: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       similar: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
-      discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({
+        page: 1,
+        total_pages: 1,
+        total_results: 3,
+        results: [
+          { id: 1, title: 'Fire in the Sky', release_date: '1993-03-12', overview: 'A logger recounts an extraterrestrial abduction.', genre_ids: [878] },
+          { id: 3, title: 'The Fourth Kind', release_date: '2009-11-06', overview: 'Hypnosis reveals extraterrestrial abductions.', genre_ids: [878] },
+          { id: 4, title: 'Communion', release_date: '1989-11-10', overview: 'A writer experiences recurring apparent alien abductions.', genre_ids: [878] },
+        ],
+      }),
       details: async (_type: string, id: number) => id === 1
         ? { id, title: 'Fire in the Sky', release_date: '1993-03-12', overview: 'A logger disappears after an encounter with an extraterrestrial craft and returns with memories of abduction.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [{ id: 10, name: 'alien' }, { id: 11, name: 'abduction' }] }, vote_average: 7, vote_count: 500 }
-        : { id, title: 'Alien Abduction', release_date: '2014-04-04', overview: 'Friends meet for an ordinary cooking competition.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [] }, vote_average: 7, vote_count: 500 },
+        : id === 3
+          ? { id, title: 'The Fourth Kind', release_date: '2009-11-06', overview: 'A psychologist investigates patients whose hypnosis sessions reveal recurring extraterrestrial abductions.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [{ id: 10, name: 'alien' }, { id: 11, name: 'abduction' }] }, vote_average: 6.3, vote_count: 1800 }
+          : id === 4
+            ? { id, title: 'Communion', release_date: '1989-11-10', overview: 'A writer experiences recurring apparent alien abductions.', genres: [{ id: 878, name: 'Science Fiction' }], keywords: { keywords: [{ id: 10, name: 'alien' }, { id: 11, name: 'abduction' }] }, vote_average: 5.7, vote_count: 500 }
+            : { id, title: 'Abduction', release_date: '2011-09-22', overview: 'A teenager discovers his childhood photo on a missing persons website and uncovers a spy conspiracy.', genres: [{ id: 28, name: 'Action' }], keywords: { keywords: [{ id: 12, name: 'spy' }] }, vote_average: 5.9, vote_count: 500 },
     };
 
-    const results = await processRecommendation({} as any, { ...request, mode: 'describe', query: 'visitors from space take a logger' }, {
+    let verifiedDocuments: PremiseCandidateDocument[] = [];
+    const results = await processRecommendation({} as any, { ...request, mode: 'describe', query: 'movies about alien abduction' }, {
       tmdb: seedTmdb,
       recommendDescribe: async () => [
         { title: 'Fire in the Sky', releaseYear: 1993, confidence: .96, reason: 'A logger is abducted by extraterrestrials.' },
-        { title: 'Alien Abduction', releaseYear: 2014, confidence: .69, reason: 'The title appears related.' },
+        { title: 'The Fourth Kind', releaseYear: 2009, confidence: .58, reason: 'Hypnosis reveals recurring extraterrestrial abductions.' },
+        { title: 'Abduction', releaseYear: 2011, confidence: .99, reason: 'The title appears to match alien abduction.' },
       ],
+      assessPremise: async (_env, query, _type, groups, candidates) => {
+        expect(query).toBe('movies about alien abduction');
+        expect(groups.map(group => group.label)).toEqual(expect.arrayContaining(['alien', 'abduction']));
+        verifiedDocuments = candidates;
+        return candidates.map(candidate => candidate.title === 'Abduction'
+          ? { index: candidate.index, relevanceScore: .04, matchedGroupIndexes: [], reason: 'Its abduction is a spy conspiracy, not extraterrestrial kidnapping.' }
+          : candidate.title === 'The Fourth Kind'
+            ? { index: candidate.index, relevanceScore: .94, matchedGroupIndexes: [0, 1], reason: 'Hypnosis evidence of repeated extraterrestrial abductions drives the investigation.' }
+            : candidate.title === 'Communion'
+              ? { index: candidate.index, relevanceScore: .93, matchedGroupIndexes: [0, 1], reason: 'A writer repeatedly experiences apparent extraterrestrial abductions.' }
+              : { index: candidate.index, relevanceScore: .97, matchedGroupIndexes: [0, 1], reason: 'Extraterrestrials abduct a logger and his account drives the story.' });
+      },
     });
 
-    expect(results.map(result => result.title)).toEqual(['Fire in the Sky']);
-    expect(results[0].matchReasons[0]).toContain('logger is abducted');
+    expect(results.map(result => result.title)).toEqual(['Fire in the Sky', 'The Fourth Kind', 'Communion']);
+    expect(results.find(result => result.title === 'Communion')?.retrievalSources).toContain('tmdb:keyword-supplement');
+    expect(verifiedDocuments.find(candidate => candidate.title === 'Abduction')?.overview).toContain('spy conspiracy');
+    expect(results[0].matchReasons[0]).toContain('Extraterrestrials abduct a logger');
     expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
-      'gemini:describe-recommendation', 'tmdb:identity-search', 'tmdb:details',
+      'gemini:describe-recommendation', 'gemini:premise-verification', 'tmdb:identity-search', 'tmdb:details',
     ]));
   });
 
-  it('uses one quota-bounded Describe generation pass and fully verifies its strong matches', async () => {
+  it('uses one quota-bounded generation pass and one batched verification pass for twelve genuine matches', async () => {
     let generationPasses = 0;
+    let verificationPasses = 0;
     let titleSearches = 0;
     let detailCalls = 0;
     const expandedTmdb = {
@@ -438,9 +495,14 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
           };
         });
       },
+      assessPremise: async (_env, _query, _type, _groups, candidates) => {
+        verificationPasses++;
+        return acceptedAssessments(candidates);
+      },
     });
 
     expect(generationPasses).toBe(1);
+    expect(verificationPasses).toBe(1);
     expect(titleSearches).toBe(12);
     expect(detailCalls).toBe(12);
     expect(results).toHaveLength(12);
@@ -488,6 +550,7 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
           { title: 'Fresh Match', releaseYear: 2020, confidence: .97, reason: 'Fresh genuine match.' },
         ];
       },
+      assessPremise: async (_env, _query, _type, _groups, candidates) => acceptedAssessments(candidates),
     });
     expect(results.map(result => result.tmdbId)).toEqual([8]);
   });
@@ -523,6 +586,7 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     const unrestricted = await processRecommendation({} as any, tvDescribe, {
       tmdb: statusTmdb,
       recommendDescribe: async () => generated,
+      assessPremise: async (_env, _query, _type, _groups, candidates) => acceptedAssessments(candidates),
     });
     const endedOnly = await processRecommendation({} as any, {
       ...tvDescribe,
@@ -530,6 +594,7 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     }, {
       tmdb: statusTmdb,
       recommendDescribe: async () => generated,
+      assessPremise: async (_env, _query, _type, _groups, candidates) => acceptedAssessments(candidates),
     });
 
     expect(endedOnly.map(result => result.title)).toEqual(['Completed Mystery']);
@@ -579,6 +644,48 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     expect(embeddingCalls).toBe(0);
     expect(results.map(result => result.title)).toEqual(['Funny Fixture']);
     expect(results[0].retrievalSources.some(source => source.startsWith('discover:genre-hints'))).toBe(true);
+  });
+
+  it('returns a retryable error instead of disguising an unavailable final verifier as an empty result', async () => {
+    let discoverCalls = 0;
+    const verificationTmdb = {
+      ...fakeTmdb(),
+      searchTitle: async (_type: string, title: string) => ({
+        page: 1,
+        total_pages: 1,
+        total_results: 1,
+        results: [{ id: 44, title, release_date: '1993-03-12', overview: 'A logger is abducted by extraterrestrials.' }],
+      }),
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => {
+        discoverCalls++;
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
+      details: async () => ({
+        id: 44,
+        title: 'Fire in the Sky',
+        release_date: '1993-03-12',
+        overview: 'A logger is abducted by extraterrestrials.',
+        genres: [{ id: 878, name: 'Science Fiction' }],
+        keywords: { keywords: [{ id: 1, name: 'alien abduction' }] },
+      }),
+    };
+
+    await expect(processRecommendation({} as any, {
+      ...request,
+      mode: 'describe',
+      query: 'movies about alien abduction',
+    }, {
+      tmdb: verificationTmdb,
+      recommendDescribe: async () => [{
+        title: 'Fire in the Sky', releaseYear: 1993, confidence: .96,
+        reason: 'A logger is abducted by extraterrestrials.',
+      }],
+      assessPremise: async () => {
+        throw new ServiceError('GROQ_UNAVAILABLE', 'TPM limit reached', 503, true);
+      },
+    })).rejects.toMatchObject({ code: 'AI_VERIFICATION_UNAVAILABLE', status: 503, retryable: true });
+    expect(discoverCalls).toBe(0);
   });
 
   it('does not hide a non-retryable Describe configuration failure behind fallback results', async () => {
@@ -838,7 +945,7 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
     expect(maximumDates.every(date => date <= new Date().toISOString().slice(0, 10))).toBe(true);
   });
 
-  it('requires Gemini Similar fusion across every canonical anchor', async () => {
+  it('requires AI Similar fusion across every canonical anchor', async () => {
     const multiAnchorTmdb = {
       callsRemaining: 50,
       genres: async () => ({ genres: [] }),
@@ -880,6 +987,10 @@ describe('Gemini-generated, TMDB-grounded recommendation engine', () => {
           title: 'Arrival', releaseYear: 2016, confidence: .96,
           reason: 'It blends cerebral science fiction, nonlinear time, identity, and intimate human stakes.',
         }];
+      },
+      assessSimilarity: async (_env, anchors, _refinement, _type, candidates) => {
+        expect(anchors).toHaveLength(2);
+        return acceptedAssessments(candidates);
       },
     });
 

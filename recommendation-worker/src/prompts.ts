@@ -4,7 +4,7 @@ Given a natural-language premise, return real movies or TV series whose central 
 
 Rules:
 - The caller's authoritativeMediaType is absolute. Return only that media type.
-- Aim for the requested targetCount, up to 24 distinct titles, when that many genuinely close matches exist. Search your knowledge broadly before returning fewer: include older, international, independent, made-for-TV, streaming, and lesser-known works where the central premise truly matches. Return fewer instead of padding with genre-only, mood-only, incidental, or loosely thematic titles.
+- Aim for the requested targetCount, up to 24 distinct titles. Search your knowledge broadly before returning fewer: include older, international, independent, made-for-TV, streaming, and lesser-known works where the central premise may genuinely match. A separate evidence judge will inspect every candidate, so include plausible real lower-confidence candidates instead of stopping after the obvious titles; mark partial or uncertain candidates below 0.70. Return fewer instead of padding with genre-only, mood-only, incidental, or loosely thematic titles.
 - Cover obvious classics, modern titles, international works, TV movies where appropriate, and lesser-known genuine matches. Do not default to popularity.
 - Every result must satisfy the conjunction of the essential premise facets. Sharing two or three generic words is not sufficient.
 - Use your knowledge of the actual story, not similarity between title words and query words.
@@ -71,7 +71,7 @@ Rules:
 
 Return only JSON matching the supplied schema.`;
 
-export const INTERPRET_V3_PROMPT = `You interpret Similar-mode refinements and catalogue filters using Gemini Flash.
+export const INTERPRET_V3_PROMPT = `You interpret Similar-mode refinements and catalogue filters for Ask Aliflix.
 
 Rules:
 - Output premise concepts and filters. Do not recommend titles.
@@ -123,9 +123,9 @@ Rules:
 
 Return only JSON matching the supplied schema.`;
 
-export const VERIFY_PREMISE_PROMPT = `You are the final precision judge for Gemini-generated movie and TV recommendations.
+export const VERIFY_PREMISE_PROMPT = `You are the final precision judge for AI-generated movie and TV recommendations.
 
-The title, original title, release year, Gemini rationale, and TMDB metadata identify each work. Use your knowledge of the actual work plus the supplied metadata to judge whether its central premise matches the complete request. Never infer relevance merely from words in a title.
+The title, original title, release year, first-pass AI rationale, and TMDB metadata identify each work. Use your knowledge of the actual work plus the supplied metadata to judge whether its central premise matches the complete request. Never infer relevance merely from words in a title.
 
 Scoring:
 - 0.85-1.00: the complete requested premise is central to the story.
@@ -135,12 +135,14 @@ Scoring:
 
 Rules:
 - Require conjunction across the complete premise. Two generic shared keywords are not enough.
+- Treat the supplied TMDB overview and keywords as primary evidence. Never invent a character's age, role, power, event, or story relationship that they do not support.
+- For a compound request, identify evidence for every essential facet. If the candidate document omits or contradicts a facet, score below 0.70 even if the title is otherwise familiar.
 - A broad category request such as natural disasters may match any genuine subtype such as earthquake, tornado, tsunami, volcanic eruption, hurricane, flood, wildfire, or extreme storm.
 - Do not reward popularity, ratings, release year, title wording, or mere genre overlap.
 - Treat Returning/Ended status, popularity, ratings, and year as eligibility or metadata only; none can increase relevance.
 - If the supplied title/year and TMDB metadata appear to identify different works, reject the candidate.
 - Use matched group indexes when required concept groups are supplied; otherwise return an empty matchedGroupIndexes array.
-- Return exactly one assessment for every supplied candidate index. Keep each reason concise and evidence-based.
+- Return exactly one assessment for every supplied candidate index. Keep each reason to one evidence-based sentence of at most 20 words.
 
 Return only JSON matching the supplied schema.`;
 
@@ -163,6 +165,6 @@ Rules:
 - Treat Returning/Ended and every explicit filter solely as eligibility; none can increase similarity.
 - Never infer similarity from candidate or anchor title wording.
 - If identity metadata conflicts, reject the candidate.
-- Return exactly one assessment for every candidate index, with an empty matchedGroupIndexes array and a concise concrete reason.
+- Return exactly one assessment for every candidate index, with an empty matchedGroupIndexes array and one concrete reason of at most 20 words.
 
 Return only JSON matching the supplied schema.`;

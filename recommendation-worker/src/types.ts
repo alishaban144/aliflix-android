@@ -1,6 +1,9 @@
 export type MediaType = 'movie' | 'tv';
 export type RequestMode = 'describe' | 'similar' | 'filters';
 export type RecommendationSort = 'most_popular' | 'highest_rated' | 'most_voted' | 'newest_first' | 'oldest_first' | 'runtime_short_to_long';
+export type GeminiAiModel = 'gemini-3.5-flash' | 'gemini-3.7-flash';
+export type GroqAiModel = 'groq-qwen-3.8-27b';
+export type RecommendationAiModel = GeminiAiModel | GroqAiModel;
 
 export interface RecommendationFilters {
   minimumYear?: number;
@@ -27,7 +30,9 @@ export interface RecommendationAnchor {
 export interface RecommendationRequest {
   requestId: string;
   mode: RequestMode;
-  geminiModel?: 'gemini-3.5-flash' | 'gemini-3.7-flash';
+  aiModel?: RecommendationAiModel;
+  /** @deprecated Kept while older Android clients migrate to aiModel. */
+  geminiModel?: RecommendationAiModel;
   query: string;
   mediaType: MediaType;
   anchor?: RecommendationAnchor;
@@ -133,8 +138,8 @@ export interface Candidate {
   premiseScore?: number;
   premiseMatchedGroupIndexes?: Set<number>;
   premiseReason?: string;
-  geminiRecommendationConfidence?: number;
-  geminiRecommendationReason?: string;
+  aiRecommendationConfidence?: number;
+  aiRecommendationReason?: string;
   finalScore?: number;
   matchLevel?: MatchLevel;
   matchReasons: string[];
@@ -172,8 +177,8 @@ export interface PremiseCandidateDocument {
   overview: string;
   genres: string[];
   keywords: string[];
-  geminiReason: string;
-  geminiConfidence: number;
+  aiReason: string;
+  aiConfidence: number;
 }
 
 export interface PremiseAssessment {
@@ -192,14 +197,16 @@ export interface RecommendationResponse {
 }
 
 export interface SecretBindings {
-  GEMINI_API_KEY: string;
+  GEMINI_API_KEY?: string;
+  GROQ_API_KEY?: string;
   TMDB_API_KEY?: string;
   TMDB_READ_ACCESS_TOKEN?: string;
   CURSOR_SIGNING_SECRET: string;
 }
 
-export type RecommendationEnv = Omit<Env, 'GEMINI_GENERATION_MODEL'> & {
-  GEMINI_GENERATION_MODEL?: 'gemini-3.5-flash' | 'gemini-3.7-flash';
+export type RecommendationEnv = Omit<Env, 'GEMINI_GENERATION_MODEL' | 'AI_GENERATION_MODEL'> & {
+  GEMINI_GENERATION_MODEL?: GeminiAiModel;
+  AI_GENERATION_MODEL?: RecommendationAiModel;
 } & SecretBindings;
 
 export class ServiceError extends Error {

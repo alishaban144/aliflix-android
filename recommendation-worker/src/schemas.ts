@@ -2,6 +2,11 @@ import { z } from 'zod';
 
 const mediaType = z.enum(['movie', 'tv']);
 const trimmed = z.string().trim();
+export const RecommendationAiModelSchema = z.enum([
+  'gemini-3.5-flash',
+  'gemini-3.7-flash',
+  'groq-qwen-3.8-27b',
+]);
 
 const RecommendationFiltersObjectSchema = z.object({
   minimumYear: z.number().int().min(1870).max(2200).nullish().transform(value => value ?? undefined),
@@ -39,7 +44,8 @@ const AnchorSchema = z.object({
 export const RecommendationRequestSchema = z.object({
   requestId: z.string().uuid(),
   mode: z.enum(['describe', 'similar', 'filters']).default('describe'),
-  geminiModel: z.enum(['gemini-3.5-flash', 'gemini-3.7-flash']).optional(),
+  aiModel: RecommendationAiModelSchema.optional(),
+  geminiModel: RecommendationAiModelSchema.optional(),
   query: z.string().trim().max(2000).default(''),
   mediaType,
   anchor: AnchorSchema.optional(),
@@ -54,6 +60,9 @@ export const RecommendationRequestSchema = z.object({
   pageSize: z.number().int().min(1).max(40).default(20),
   cursor: z.string().min(1).max(2048).optional(),
 }).superRefine((value, ctx) => {
+  if (value.aiModel && value.geminiModel && value.aiModel !== value.geminiModel) {
+    ctx.addIssue({ code: 'custom', path: ['aiModel'], message: 'aiModel and legacy geminiModel must match' });
+  }
   if (value.mode === 'similar' && !value.anchor && (!value.anchors || value.anchors.length === 0)) {
     ctx.addIssue({ code: 'custom', path: ['anchors'], message: 'Similar requests require at least one anchor' });
   }
@@ -185,7 +194,7 @@ export const GeminiPremiseAssessmentJsonSchema = {
           index: { type: 'INTEGER' },
           relevanceScore: { type: 'NUMBER' },
           matchedGroupIndexes: { type: 'ARRAY', items: { type: 'INTEGER' } },
-          reason: { type: 'STRING' },
+          reason: { type: 'STRING', minLength: 1, maxLength: 180 },
         },
         required: ['index', 'relevanceScore', 'matchedGroupIndexes', 'reason'],
       },

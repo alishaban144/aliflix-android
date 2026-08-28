@@ -201,6 +201,7 @@ npm run deploy
 The worker expects these Cloudflare secrets:
 
 - `GEMINI_API_KEY`
+- `GROQ_API_KEY` (required when the Groq setting is selected)
 - `TMDB_API_KEY` or `TMDB_READ_ACCESS_TOKEN`
 - `CURSOR_SIGNING_SECRET`
 
@@ -208,17 +209,28 @@ Set them without writing secrets into the repository:
 
 ```powershell
 npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put GROQ_API_KEY
 npx wrangler secret put TMDB_READ_ACCESS_TOKEN
 npx wrangler secret put CURSOR_SIGNING_SECRET
 ```
+
+Create the Groq secret without exposing it to Android or Git:
+
+1. Sign in at [GroqCloud API Keys](https://console.groq.com/keys). Create or select a project, then choose **Create API Key**.
+2. Give the key a purpose-specific name such as `aliflix-recommendations-production` and copy it once.
+3. In PowerShell, run `cd recommendation-worker` and then `npx wrangler secret put GROQ_API_KEY`.
+4. Paste the key only into Wrangler's hidden prompt. Do not put it in `wrangler.jsonc`, Gradle files, Android resources, or a `.env` file committed to Git.
+5. Confirm only the secret name with `npx wrangler secret list`, run the checks above, then deploy the Worker before distributing the Android build.
+
+The Groq option uses the preview `qwen/qwen3.8-27b` model with strict JSON-schema output, low hidden reasoning effort, and a 3,072-token completion ceiling. Describe and Similar each make exactly one provider call; deterministic tests mock the provider and consume no Groq tokens. A live quality check still needs one real request after the secret is installed. Because Qwen 3.8 is a preview model, re-check Groq's model/deprecation page before each release.
 
 The worker includes:
 
 - Zod request validation.
 - TMDB request authentication, retry, timeout, and bounded-call handling.
-- Low-effort Gemini Describe generation with a strict zero-extra-Gemini TMDB fallback.
-- Medium-effort Similar generation from authoritative TMDB anchors.
-- Gemini intent interpretation and semantic embeddings for filter queries with text.
+- One-call Gemini or Groq Describe generation with a strict zero-extra-provider TMDB fallback.
+- One-call Gemini or Groq Similar generation from authoritative TMDB anchors.
+- Provider-aware intent interpretation; Gemini semantic embeddings remain optional for filter queries with text.
 - Deterministic hard-filter enforcement.
 - Deduplication and relevance ranking.
 - Durable Object recommendation sessions.
@@ -298,8 +310,8 @@ https://github.com/alishaban144/aliflix-android/releases/latest/download/update-
 
 ## Current release
 
-- Version: **3.1.26**
-- Version code: **116**
+- Version: **3.1.27**
+- Version code: **117**
 - Minimum Android version: **Android 10 / API 29**
-- Release page: [Aliflix 3.1.26](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.26)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.26/aliflix-mobile.apk)
+- Release page: [Aliflix 3.1.27](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.27)
+- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.27/aliflix-mobile.apk)

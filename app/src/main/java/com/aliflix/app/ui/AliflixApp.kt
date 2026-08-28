@@ -192,7 +192,7 @@ import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.player.WebPlayerScreen
 import com.aliflix.app.recommendation.PersonalMatch
 import com.aliflix.app.recommendation.PersonalizationEngine
-import com.aliflix.app.recommendation.GeminiRecommendationModel
+import com.aliflix.app.recommendation.RecommendationAiModel
 import com.aliflix.app.update.AppUpdateManager
 import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
@@ -462,7 +462,7 @@ fun AliflixApp(
     val recent by viewModel.recent.collectAsState()
     val likes by viewModel.likes.collectAsState()
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
-    val geminiRecommendationModel by viewModel.geminiRecommendationModel.collectAsState()
+    val recommendationAiModel by viewModel.recommendationAiModel.collectAsState()
     val askUiState by viewModel.askUiState.collectAsState()
     val askEditorState by viewModel.askEditorState.collectAsState()
 
@@ -1113,8 +1113,8 @@ fun AliflixApp(
                         aiRecommendationsEnabled = aiRecommendationsEnabled,
                         onSetAiRecommendationsEnabled =
                             viewModel::setAiRecommendationsEnabled,
-                        geminiRecommendationModel = geminiRecommendationModel,
-                        onSetGeminiRecommendationModel = viewModel::setGeminiRecommendationModel,
+                        recommendationAiModel = recommendationAiModel,
+                        onSetRecommendationAiModel = viewModel::setRecommendationAiModel,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
                 }
@@ -2835,8 +2835,8 @@ private fun MobileSettingsDialog(
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
-    geminiRecommendationModel: GeminiRecommendationModel,
-    onSetGeminiRecommendationModel: (GeminiRecommendationModel) -> Unit,
+    recommendationAiModel: RecommendationAiModel,
+    onSetRecommendationAiModel: (RecommendationAiModel) -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3093,6 +3093,7 @@ private fun MobileSettingsDialog(
                             Switch(
                                 checked = aiRecommendationsEnabled,
                                 onCheckedChange = onSetAiRecommendationsEnabled,
+                                modifier = Modifier.testTag("settings-ask-aliflix-switch"),
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = Color.White,
                                     checkedTrackColor = AliflixAccentPrimary,
@@ -3103,14 +3104,14 @@ private fun MobileSettingsDialog(
                             )
                         }
 
-                        var geminiModelExpanded by remember { mutableStateOf(false) }
+                        var aiModelExpanded by remember { mutableStateOf(false) }
                         Box {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(12.dp))
                                     .clickable(enabled = aiRecommendationsEnabled) {
-                                        geminiModelExpanded = true
+                                        aiModelExpanded = true
                                     }
                                     .padding(horizontal = 10.dp, vertical = 9.dp)
                                     .alpha(if (aiRecommendationsEnabled) 1f else 0.55f),
@@ -3127,36 +3128,36 @@ private fun MobileSettingsDialog(
                                         fontSize = 10.sp,
                                     )
                                     Text(
-                                        text = geminiRecommendationModel.label,
+                                        text = recommendationAiModel.label,
                                         color = Color.White,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                     )
                                     Text(
-                                        text = geminiRecommendationModel.supportingText,
+                                        text = recommendationAiModel.supportingText,
                                         color = AliflixContentTertiary,
                                         fontSize = 9.sp,
                                     )
                                 }
                                 Icon(
                                     imageVector = Icons.Filled.ArrowDropDown,
-                                    contentDescription = "Choose Gemini recommendation model",
+                                    contentDescription = "Choose AI recommendation model",
                                     tint = AliflixContentSecondary,
                                 )
                             }
                             DropdownMenu(
-                                expanded = geminiModelExpanded,
-                                onDismissRequest = { geminiModelExpanded = false },
+                                expanded = aiModelExpanded,
+                                onDismissRequest = { aiModelExpanded = false },
                                 modifier = Modifier.background(AliflixSurfaceRaised),
                             ) {
-                                GeminiRecommendationModel.entries.forEach { model ->
+                                RecommendationAiModel.entries.forEach { model ->
                                     DropdownMenuItem(
                                         text = {
                                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                                 Text(
                                                     text = model.label,
                                                     color = AliflixContentPrimary,
-                                                    fontWeight = if (model == geminiRecommendationModel) {
+                                                    fontWeight = if (model == recommendationAiModel) {
                                                         FontWeight.Bold
                                                     } else {
                                                         FontWeight.Normal
@@ -3170,10 +3171,10 @@ private fun MobileSettingsDialog(
                                             }
                                         },
                                         onClick = {
-                                            geminiModelExpanded = false
-                                            onSetGeminiRecommendationModel(model)
+                                            aiModelExpanded = false
+                                            onSetRecommendationAiModel(model)
                                         },
-                                        trailingIcon = if (model == geminiRecommendationModel) {
+                                        trailingIcon = if (model == recommendationAiModel) {
                                             {
                                                 Icon(
                                                     imageVector = Icons.Filled.Check,
@@ -3267,8 +3268,8 @@ private fun MySpaceScreen(
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
-    geminiRecommendationModel: GeminiRecommendationModel,
-    onSetGeminiRecommendationModel: (GeminiRecommendationModel) -> Unit,
+    recommendationAiModel: RecommendationAiModel,
+    onSetRecommendationAiModel: (RecommendationAiModel) -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3332,8 +3333,8 @@ private fun MySpaceScreen(
             onEditProviderUrl = onEditProviderUrl,
             aiRecommendationsEnabled = aiRecommendationsEnabled,
             onSetAiRecommendationsEnabled = onSetAiRecommendationsEnabled,
-            geminiRecommendationModel = geminiRecommendationModel,
-            onSetGeminiRecommendationModel = onSetGeminiRecommendationModel,
+            recommendationAiModel = recommendationAiModel,
+            onSetRecommendationAiModel = onSetRecommendationAiModel,
             updateUi = updateUi,
             onCheckForUpdates = onCheckForUpdates,
             onDownloadUpdate = onDownloadUpdate,

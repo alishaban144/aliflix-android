@@ -4,6 +4,7 @@ import worker from '../src/index';
 describe('Cloudflare Worker', () => {
   const env: any = {
     GEMINI_API_KEY: 'test-key',
+    GROQ_API_KEY: 'groq-test-key',
     TMDB_API_KEY: 'test-key',
     CURSOR_SIGNING_SECRET: 'cursor-secret',
     RECOMMENDATION_RATE_LIMITER: { limit: async () => ({ success: true }) },
@@ -23,6 +24,7 @@ describe('Cloudflare Worker', () => {
       status: 'ok',
       service: 'aliflix-recommendations',
       geminiConfigured: true,
+      groqConfigured: true,
       tmdbConfigured: true,
     });
   });

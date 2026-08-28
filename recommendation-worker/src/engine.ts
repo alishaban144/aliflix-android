@@ -1,19 +1,27 @@
 import {
+  assessRecommendationPremise,
+  assessRecommendationSimilarity,
+  aiProviderName,
   embedForSearch,
   fallbackIntentFromQuery,
+  isGroqAiModel,
+  isRetryableAiProviderError,
   interpretQuery,
   recommendDescribeTitles,
   recommendSimilarTitles,
-} from './gemini';
+  selectedAiModel,
+} from './ai';
 import { buildKeywordExpressions, canonicalConceptPhrase, cosineSimilarity, mergeFilters, normalize, passesHardFilters, rankCandidates } from './ranking';
 import { ParsedRecommendationRequest } from './schemas';
 import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
-import { Candidate, DescribeRecommendation, InterpretedIntent, MediaType, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, SimilarAnchorDocument, TmdbGenre, TmdbListItem } from './types';
+import { Candidate, DescribeRecommendation, InterpretedIntent, MediaType, PremiseAssessment, PremiseCandidateDocument, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, SimilarAnchorDocument, TmdbGenre, TmdbListItem } from './types';
 
 export interface EngineDependencies {
   interpret?: typeof interpretQuery;
   recommendDescribe?: typeof recommendDescribeTitles;
   recommendSimilar?: typeof recommendSimilarTitles;
+  assessPremise?: typeof assessRecommendationPremise;
+  assessSimilarity?: typeof assessRecommendationSimilarity;
   embed?: typeof embedForSearch;
   tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchPerson' | 'searchCompany' | 'discover' | 'details'> &
     Partial<Pick<TmdbClient, 'searchTitle'>>;
@@ -22,11 +30,13 @@ export interface EngineDependencies {
 const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
-const MAX_GENERATED_RESULTS = 12;
-const MIN_GENERATED_CONFIDENCE = .70;
+const MAX_GENERATED_CANDIDATES = 28;
+const MAX_GENERATED_RESULTS = 16;
+const MIN_GENERATED_CANDIDATE_CONFIDENCE = .45;
+const MIN_VERIFIED_RELEVANCE = .70;
 const TMDB_DETAIL_RESERVE = 24;
 // Cloudflare permits six simultaneous outbound connections per invocation.
-// Filling all six lanes keeps Gemini-grounded requests interactive without
+// Filling all six lanes keeps AI-grounded requests interactive without
 // increasing the total subrequest budget.
 const DISCOVERY_CONCURRENCY = 6;
 const DETAIL_CONCURRENCY = 6;
@@ -185,9 +195,9 @@ async function generatedRecommendations(
   // count; a hidden expansion request could double quota use for one tap.
   const generated = await generate([]);
   for (const item of generated) {
-    // Keep a strict relevance floor from the single generation pass; TMDB
-    // independently verifies identity and every authoritative metadata filter.
-    if (item.confidence < MIN_GENERATED_CONFIDENCE) continue;
+    // Keep plausible real candidates for the independent evidence judge.
+    // First-pass self-confidence must not become the final relevance gate.
+    if (item.confidence < MIN_GENERATED_CANDIDATE_CONFIDENCE) continue;
     const key = `${normalize(item.title)}:${item.releaseYear}`;
     const existing = recommendations.get(key);
     if (!existing || item.confidence > existing.confidence) recommendations.set(key, item);
@@ -202,7 +212,77 @@ interface GeneratedRecommendationContext {
   candidateLimit: number;
   excludedCandidateKeys: Set<string>;
   recommendationSource: string;
+  verificationSource: string;
+  supplementKeywordTerms?: string[];
   generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>;
+  verify: (candidates: PremiseCandidateDocument[]) => Promise<PremiseAssessment[]>;
+}
+
+async function supplementGeneratedCandidatesFromTmdb(
+  request: ParsedRecommendationRequest,
+  tmdb: NonNullable<EngineDependencies['tmdb']>,
+  context: GeneratedRecommendationContext,
+  candidates: Map<string, Candidate>,
+): Promise<void> {
+  if (!context.supplementKeywordTerms?.length || candidates.size >= MAX_GENERATED_CANDIDATES) return;
+  if (typeof tmdb.searchKeyword !== 'function' || typeof tmdb.discover !== 'function') return;
+
+  const terms = [...new Set(context.supplementKeywordTerms.map(canonicalConceptPhrase).filter(Boolean))]
+    .slice(0, 6);
+  for (const term of terms) {
+    if (candidates.size >= MAX_GENERATED_CANDIDATES || tmdb.callsRemaining <= MAX_GENERATED_RESULTS + 1) break;
+    const keywordResponse = await optionalTmdbCall(
+      `generated-keyword:${term}`,
+      () => tmdb.searchKeyword(term),
+    );
+    const keywordIds = (keywordResponse?.results || [])
+      .filter(keyword => keywordMatchesSearchTerm(keyword.name, term))
+      .map(keyword => keyword.id)
+      .filter((id, index, values) => values.indexOf(id) === index)
+      .slice(0, 2);
+    if (!keywordIds.length || tmdb.callsRemaining <= MAX_GENERATED_RESULTS) continue;
+
+    const page = await optionalTmdbCall(
+      `generated-keyword-discover:${term}`,
+      () => tmdb.discover(request.mediaType, { with_keywords: keywordIds.join('|'), page: 1 }),
+    );
+    for (const item of page?.results || []) {
+      if (candidates.size >= MAX_GENERATED_CANDIDATES) break;
+      const candidate = toCandidate(item, request.mediaType, new Map());
+      if (!candidate || context.excludedCandidateKeys.has(candidate.key)) continue;
+      const existing = candidates.get(candidate.key);
+      if (existing) {
+        keywordIds.forEach(id => existing.matchedKeywordIds.add(id));
+        existing.retrievalSources.add('tmdb:keyword-supplement');
+        existing.aiRecommendationConfidence = Math.max(existing.aiRecommendationConfidence || 0, .55);
+        continue;
+      }
+      candidate.aiRecommendationConfidence = MIN_GENERATED_CANDIDATE_CONFIDENCE;
+      candidate.aiRecommendationReason = `TMDB keyword evidence for ${term}.`;
+      candidate.matchedKeywordIds = new Set(keywordIds);
+      candidate.retrievalSources.add('tmdb:keyword-supplement');
+      candidates.set(candidate.key, candidate);
+    }
+  }
+}
+
+function candidateReleaseYear(candidate: Candidate): number | undefined {
+  const year = candidate.releaseDate ? Number(candidate.releaseDate.slice(0, 4)) : NaN;
+  return Number.isInteger(year) ? year : undefined;
+}
+
+function premiseDocument(candidate: Candidate, index: number): PremiseCandidateDocument {
+  return {
+    index,
+    title: candidate.title,
+    originalTitle: candidate.originalTitle,
+    releaseYear: candidateReleaseYear(candidate),
+    overview: candidate.overview || '',
+    genres: candidate.genres,
+    keywords: candidate.keywords.map(keyword => keyword.name),
+    aiReason: candidate.aiRecommendationReason || '',
+    aiConfidence: candidate.aiRecommendationConfidence || 0,
+  };
 }
 
 async function processGeneratedRecommendations(
@@ -215,7 +295,19 @@ async function processGeneratedRecommendations(
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB title verification is unavailable', 503, true);
   }
   const recommendations = await generatedRecommendations(context.candidateLimit, context.generate);
-  if (!recommendations.length) return [];
+  if (!recommendations.length) {
+    console.log(JSON.stringify({
+      event: 'generated_recommendation_pipeline',
+      mode: request.mode,
+      model: selectedAiModel(env),
+      generated: 0,
+      resolved: 0,
+      hydrated: 0,
+      assessed: 0,
+      verified: 0,
+    }));
+    return [];
+  }
 
   const candidates = new Map<string, Candidate>();
   for (let start = 0; start < recommendations.length; start += DISCOVERY_CONCURRENCY) {
@@ -233,53 +325,120 @@ async function processGeneratedRecommendations(
       if (!candidate || context.excludedCandidateKeys.has(candidate.key)) return;
       candidate.retrievalSources.add(context.recommendationSource);
       candidate.retrievalSources.add('tmdb:identity-search');
-      candidate.geminiRecommendationConfidence = recommendation.confidence;
-      candidate.geminiRecommendationReason = recommendation.reason;
+      candidate.aiRecommendationConfidence = recommendation.confidence;
+      candidate.aiRecommendationReason = recommendation.reason;
       const existing = candidates.get(candidate.key);
-      if (!existing || (existing.geminiRecommendationConfidence || 0) < recommendation.confidence) {
+      if (!existing || (existing.aiRecommendationConfidence || 0) < recommendation.confidence) {
         candidates.set(candidate.key, candidate);
       }
     });
   }
 
-  const resolved = [...candidates.values()];
-  if (!resolved.length) return [];
-  const scored = resolved.map(candidate => {
-    const score = candidate.geminiRecommendationConfidence || 0;
-    candidate.premiseScore = score;
-    candidate.premiseReason = candidate.geminiRecommendationReason;
-    candidate.finalScore = score;
-    return { candidate, score };
-  }).sort((left, right) => right.score - left.score || left.candidate.title.localeCompare(right.candidate.title));
+  await supplementGeneratedCandidatesFromTmdb(request, tmdb, context, candidates);
 
-  // TMDB authoritatively verifies Gemini's title identity and every hard filter,
-  // including Returning/Ended, without adding a second sequential AI request.
-  const hydrated: typeof scored = [];
-  const detailPool = scored.slice(0, MAX_GENERATED_RESULTS);
+  const resolved = [...candidates.values()]
+    .sort((left, right) => (right.aiRecommendationConfidence || 0) - (left.aiRecommendationConfidence || 0)
+      || left.title.localeCompare(right.title));
+  if (!resolved.length) {
+    console.log(JSON.stringify({
+      event: 'generated_recommendation_pipeline',
+      mode: request.mode,
+      model: selectedAiModel(env),
+      generated: recommendations.length,
+      resolved: 0,
+      hydrated: 0,
+      assessed: 0,
+      verified: 0,
+    }));
+    return [];
+  }
+
+  // TMDB authoritatively verifies identity, plot metadata, and every hard
+  // filter before the independent premise judge sees a candidate.
+  const hydrated: Candidate[] = [];
+  const detailPool = resolved.slice(0, MAX_GENERATED_RESULTS);
   for (let start = 0; start < detailPool.length; start += DETAIL_CONCURRENCY) {
     const batch = detailPool.slice(start, start + DETAIL_CONCURRENCY);
-    const details = await Promise.all(batch.map(({ candidate }) => optionalTmdbCall(
+    const details = await Promise.all(batch.map(candidate => optionalTmdbCall(
       `details:${request.mediaType}:${candidate.tmdbId}`,
       () => tmdb.details(request.mediaType, candidate.tmdbId),
     )));
     details.forEach((detail, index) => {
       if (!detail) return;
-      const item = batch[index];
-      mergeDetails(item.candidate, detail);
-      item.candidate.retrievalSources.add('tmdb:details');
-      if (passesHardFilters(item.candidate, context.filters)) hydrated.push(item);
+      const candidate = batch[index];
+      mergeDetails(candidate, detail);
+      candidate.retrievalSources.add('tmdb:details');
+      if (passesHardFilters(candidate, context.filters)) hydrated.push(candidate);
     });
   }
 
+  if (!hydrated.length) {
+    console.log(JSON.stringify({
+      event: 'generated_recommendation_pipeline',
+      mode: request.mode,
+      model: selectedAiModel(env),
+      generated: recommendations.length,
+      resolved: resolved.length,
+      hydrated: 0,
+      assessed: 0,
+      verified: 0,
+    }));
+    return [];
+  }
+  let assessments: PremiseAssessment[];
+  try {
+    assessments = await context.verify(hydrated.map(premiseDocument));
+  } catch (error) {
+    // A failed final judge must not be disguised as a genuine empty result by
+    // the broader deterministic Describe fallback.
+    if (isRetryableAiProviderError(error)) {
+      throw new ServiceError(
+        'AI_VERIFICATION_UNAVAILABLE',
+        'The final recommendation quality check is temporarily unavailable. Please try again.',
+        error.status,
+        true,
+      );
+    }
+    throw error;
+  }
+  const assessmentByIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
+  const verified = hydrated.flatMap((candidate, index) => {
+    const assessment = assessmentByIndex.get(index);
+    // Verification is deliberately fail-closed: a missing assessment, title
+    // overlap, or a merely adjacent premise must never reach the UI.
+    if (!assessment || assessment.relevanceScore < MIN_VERIFIED_RELEVANCE) return [];
+    candidate.retrievalSources.add(context.verificationSource);
+    candidate.premiseScore = assessment.relevanceScore;
+    candidate.premiseReason = assessment.reason;
+    candidate.premiseMatchedGroupIndexes = new Set(assessment.matchedGroupIndexes);
+    candidate.finalScore = assessment.relevanceScore;
+    return [{ candidate, score: assessment.relevanceScore }];
+  }).sort((left, right) => right.score - left.score || left.candidate.title.localeCompare(right.candidate.title));
+
+  console.log(JSON.stringify({
+    event: 'generated_recommendation_pipeline',
+    mode: request.mode,
+    model: selectedAiModel(env),
+    generated: recommendations.length,
+    resolved: resolved.length,
+    hydrated: hydrated.length,
+    assessed: assessments.length,
+    verified: verified.length,
+    assessmentSummary: hydrated.map((candidate, index) => ({
+      title: candidate.title,
+      score: assessmentByIndex.get(index)?.relevanceScore,
+    })),
+  }));
+
   const collectionCounts = new Map<number, number>();
-  return hydrated.flatMap(({ candidate, score }): RecommendationResult[] => {
+  return verified.flatMap(({ candidate, score }): RecommendationResult[] => {
     if (candidate.collectionId) {
       const count = collectionCounts.get(candidate.collectionId) || 0;
       if (count >= 2) return [];
       collectionCounts.set(candidate.collectionId, count + 1);
     }
     const matchLevel = score >= .88 ? 'Exceptional' : score >= .76 ? 'Strong' : 'Relevant';
-    const reasons = [candidate.geminiRecommendationReason]
+    const reasons = [candidate.premiseReason]
       .filter((value): value is string => Boolean(value?.trim()))
       .filter((value, reasonIndex, values) => values.findIndex(other => normalize(other) === normalize(value)) === reasonIndex)
       .slice(0, 2);
@@ -317,6 +476,8 @@ async function processDescribeRecommendation(
     ? `${request.previousQuery}. Additional requirement: ${request.refinementQuery}`
     : (request.query || request.refinementQuery || '').trim();
   const filters = mergeFilters(request.filters, emptyIntent().hardFilters);
+  const premiseIntent = cleanInterpretedIntent(fallbackIntentFromQuery(query));
+  const premiseLabels = premiseIntent.requiredConceptGroups.map(group => group.label);
   applyQueryDateConstraints(query, filters);
   const candidateLimit = Math.min(MAX_GENERATED_RESULTS, request.pageSize);
   return processGeneratedRecommendations(env, request, tmdb, {
@@ -325,7 +486,15 @@ async function processDescribeRecommendation(
     excludedCandidateKeys: new Set(
       filters.excludedTmdbIds.map(tmdbId => `${request.mediaType}:${tmdbId}`),
     ),
-    recommendationSource: 'gemini:describe-recommendation',
+    recommendationSource: `${aiProviderName(selectedAiModel(env))}:describe-recommendation`,
+    verificationSource: `${aiProviderName(selectedAiModel(env))}:premise-verification`,
+    supplementKeywordTerms: [
+      ...(premiseLabels.length === 2 && premiseLabels.every(label => !label.includes(' ')) ? [premiseLabels.join(' ')] : []),
+      ...premiseLabels,
+      ...premiseIntent.requiredConceptGroups.map(group => (
+        group.synonyms.find(value => canonicalConceptPhrase(value) !== canonicalConceptPhrase(group.label)) || group.label
+      )),
+    ],
     generate: excludedTitles => (dependencies.recommendDescribe || recommendDescribeTitles)(
       env,
       query,
@@ -333,6 +502,13 @@ async function processDescribeRecommendation(
       filters,
       [...new Set([...filters.excludedTitles, ...excludedTitles])],
       candidateLimit,
+    ),
+    verify: candidates => (dependencies.assessPremise || assessRecommendationPremise)(
+      env,
+      query,
+      request.mediaType,
+      premiseIntent.requiredConceptGroups,
+      candidates,
     ),
   });
 }
@@ -384,7 +560,8 @@ async function processSimilarRecommendation(
     filters,
     candidateLimit,
     excludedCandidateKeys,
-    recommendationSource: 'gemini:similar-recommendation',
+    recommendationSource: `${aiProviderName(selectedAiModel(env))}:similar-recommendation`,
+    verificationSource: `${aiProviderName(selectedAiModel(env))}:similarity-verification`,
     generate: excludedTitles => (dependencies.recommendSimilar || recommendSimilarTitles)(
       env,
       anchors,
@@ -397,6 +574,13 @@ async function processSimilarRecommendation(
         ...excludedTitles,
       ])],
       candidateLimit,
+    ),
+    verify: candidates => (dependencies.assessSimilarity || assessRecommendationSimilarity)(
+      env,
+      anchors,
+      refinement,
+      request.mediaType,
+      candidates,
     ),
   });
 }
@@ -820,27 +1004,29 @@ function applyQueryDateConstraints(query: string, filters: RecommendationFilters
 }
 
 export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
-  // Generated modes make exactly one single-attempt Gemini call. Forty actual
-  // TMDB attempts keeps the worst case at 41 external subrequests on Free.
+  // Generated modes make one candidate call and one evidence-grounded
+  // verification call. Forty TMDB attempts keep the worst case below the
+  // Cloudflare Free plan's 50 external-subrequest limit.
   const tmdb = dependencies.tmdb || new TmdbClient(env, request.mode === 'filters' ? 38 : 40);
-  // The request can select one allow-listed model. It remains a single provider
-  // attempt and never falls back to a second model behind the user's back.
-  const recommendationEnv = request.geminiModel
-    ? { ...env, GEMINI_GENERATION_MODEL: request.geminiModel }
+  // The request can select one allow-listed model. Both AI stages use that same
+  // provider and never fall back to another model behind the user's back.
+  const requestedAiModel = request.aiModel || request.geminiModel;
+  const recommendationEnv = requestedAiModel
+    ? { ...env, AI_GENERATION_MODEL: requestedAiModel }
     : env;
   let providerFallbackIntent: InterpretedIntent | undefined;
-  let disableGeminiEmbeddings = false;
+  let disableGeminiEmbeddings = isGroqAiModel(selectedAiModel(recommendationEnv));
   if (request.mode === 'describe') {
     try {
       return await processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies);
     } catch (error) {
-      if (!(error instanceof ServiceError && error.code === 'GEMINI_UNAVAILABLE' && error.retryable)) throw error;
+      if (!isRetryableAiProviderError(error)) throw error;
       const fallbackQuery = request.query || request.refinementQuery || '';
       providerFallbackIntent = fallbackIntentFromQuery(fallbackQuery);
       disableGeminiEmbeddings = true;
       console.warn(JSON.stringify({
         event: 'describe_tmdb_fallback',
-        model: recommendationEnv.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash',
+        model: selectedAiModel(recommendationEnv),
         reason: error.message,
       }));
     }

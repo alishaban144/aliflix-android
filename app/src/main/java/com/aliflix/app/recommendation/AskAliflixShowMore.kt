@@ -5,7 +5,7 @@ import java.util.UUID
 internal fun buildAskAliflixShowMoreRequest(
     original: V3RecommendationRequest,
     displayed: List<RecommendationCandidate>,
-    selectedModel: GeminiRecommendationModel,
+    selectedModel: RecommendationAiModel,
     requestId: String = UUID.randomUUID().toString(),
 ): V3RecommendationRequest {
     require(original.mode == "describe" || original.mode == "similar") {
@@ -23,7 +23,7 @@ internal fun buildAskAliflixShowMoreRequest(
     )
     return original.copy(
         requestId = requestId,
-        geminiModel = selectedModel.workerValue,
+        aiModel = selectedModel.workerValue,
         filters = filters,
         cursor = null,
     )

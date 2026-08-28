@@ -84,7 +84,7 @@ class RecommendationAiClient(
             connection = URL(url).openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.connectTimeout = 8_000
-            // The Worker makes one quota-bounded Gemini attempt, then verifies
+            // The Worker makes one quota-bounded provider attempt, then verifies
             // identities and metadata through TMDB. Keep the mobile deadline
             // just above that bounded pipeline so failures return promptly.
             connection.readTimeout = 40_000
@@ -149,7 +149,7 @@ data class V3RecommendationFilters(
 data class V3RecommendationRequest(
     val requestId: String,
     val mode: String = "describe",
-    val geminiModel: String = GeminiRecommendationModel.GEMINI_3_5_FLASH.workerValue,
+    val aiModel: String = RecommendationAiModel.GEMINI_3_5_FLASH.workerValue,
     val query: String,
     val mediaType: String,
     val anchor: V3RecommendationAnchor? = null,
@@ -163,7 +163,10 @@ data class V3RecommendationRequest(
     fun toJson(): JSONObject = JSONObject().apply {
         put("requestId", requestId)
         put("mode", mode)
-        put("geminiModel", geminiModel)
+        put("aiModel", aiModel)
+        // Keep the legacy field during the Worker rollout. Older Workers fail
+        // closed for Groq instead of silently running a different model.
+        put("geminiModel", aiModel)
         put("query", query)
         put("mediaType", mediaType)
         anchor?.let { put("anchor", it.toJson()) }

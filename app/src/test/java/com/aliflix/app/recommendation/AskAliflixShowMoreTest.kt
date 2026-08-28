@@ -28,19 +28,19 @@ class AskAliflixShowMoreTest {
         val next = buildAskAliflixShowMoreRequest(
             original = original,
             displayed = displayed,
-            selectedModel = GeminiRecommendationModel.GEMINI_3_7_FLASH,
+            selectedModel = RecommendationAiModel.GROQ_QWEN_3_8_27B,
             requestId = "00000000-0000-4000-8000-000000000002",
         )
 
         assertEquals("00000000-0000-4000-8000-000000000002", next.requestId)
-        assertEquals("gemini-3.7-flash", next.geminiModel)
+        assertEquals("groq-qwen-3.8-27b", next.aiModel)
         assertEquals(listOf(99, 11, 12), next.filters.excludedTmdbIds)
         assertEquals(listOf("Previously excluded", "First Match", "Second Match"), next.filters.excludedTitles)
         assertNull(next.cursor)
     }
 
     @Test
-    fun filterPaginationCannotAccidentallyBecomeAGeminiGeneration() {
+    fun filterPaginationCannotAccidentallyBecomeAnAiGeneration() {
         val request = V3RecommendationRequest(
             requestId = "00000000-0000-4000-8000-000000000003",
             mode = "filters",
@@ -52,7 +52,7 @@ class AskAliflixShowMoreTest {
             buildAskAliflixShowMoreRequest(
                 original = request,
                 displayed = emptyList(),
-                selectedModel = GeminiRecommendationModel.GEMINI_3_5_FLASH,
+                selectedModel = RecommendationAiModel.GEMINI_3_5_FLASH,
             )
         }
     }

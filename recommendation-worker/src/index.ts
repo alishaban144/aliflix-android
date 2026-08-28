@@ -43,7 +43,7 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
   const fingerprintInput = {
     requestId: parsed.requestId,
     mode: parsed.mode,
-    geminiModel: parsed.geminiModel,
+    aiModel: parsed.aiModel || parsed.geminiModel,
     query: parsed.query,
     anchor: parsed.anchor,
     anchors: parsed.anchors,
@@ -100,7 +100,13 @@ export default {
   async fetch(request: Request, env: RecommendationEnv): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health' && request.method === 'GET') {
-      return json({ status: 'ok', service: 'aliflix-recommendations', geminiConfigured: Boolean(env.GEMINI_API_KEY), tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN) });
+      return json({
+        status: 'ok',
+        service: 'aliflix-recommendations',
+        geminiConfigured: Boolean(env.GEMINI_API_KEY),
+        groqConfigured: Boolean(env.GROQ_API_KEY),
+        tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN),
+      });
     }
     const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);
     const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);

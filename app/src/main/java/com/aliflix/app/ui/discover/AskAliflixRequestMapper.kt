@@ -4,7 +4,7 @@ import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.CatalogDiscoverySpec
 import com.aliflix.app.recommendation.AnimationFilter
 import com.aliflix.app.recommendation.RecommendationMediaKind
-import com.aliflix.app.recommendation.GeminiRecommendationModel
+import com.aliflix.app.recommendation.RecommendationAiModel
 import com.aliflix.app.recommendation.V3RecommendationAnchor
 import com.aliflix.app.recommendation.V3RecommendationFilters
 import com.aliflix.app.recommendation.V3RecommendationRequest
@@ -20,7 +20,7 @@ object AskAliflixRequestMapper {
     fun map(
         request: AskAliflixRequest,
         requestId: String = UUID.randomUUID().toString(),
-        geminiModel: GeminiRecommendationModel = GeminiRecommendationModel.GEMINI_3_5_FLASH,
+        aiModel: RecommendationAiModel = RecommendationAiModel.GEMINI_3_5_FLASH,
     ): MappedAskAliflixRequest {
         val outputType = when (request) {
             is AskAliflixRequest.Describe -> request.mediaType
@@ -76,7 +76,7 @@ object AskAliflixRequestMapper {
         return MappedAskAliflixRequest(summary, spec, V3RecommendationRequest(
             requestId = requestId,
             mode = when (request) { is AskAliflixRequest.Describe -> "describe"; is AskAliflixRequest.Similar -> "similar"; is AskAliflixRequest.Filters -> "filters" },
-            geminiModel = geminiModel.workerValue,
+            aiModel = aiModel.workerValue,
             query = rawQuery,
             mediaType = outputType.routeName,
             anchor = anchorList.firstOrNull(),

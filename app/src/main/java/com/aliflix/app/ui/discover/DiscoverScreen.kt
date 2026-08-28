@@ -185,6 +185,13 @@ internal fun DiscoverScreen(
     }
     var recommendModeActive by rememberSaveable { mutableStateOf(false) }
 
+    LaunchedEffect(aiEnabled) {
+        if (!aiEnabled && recommendModeActive) {
+            recommendModeActive = false
+            onModeChange(SearchMode.TITLE)
+        }
+    }
+
     LaunchedEffect(focusRequestId) {
         if (focusRequestId != null) {
             recommendModeActive = false
@@ -197,10 +204,12 @@ internal fun DiscoverScreen(
         }
     }
 
-    LaunchedEffect(askOpenRequestId) {
+    LaunchedEffect(askOpenRequestId, aiEnabled) {
         if (askOpenRequestId != null) {
-            recommendModeActive = true
-            onModeChange(SearchMode.AI)
+            if (aiEnabled) {
+                recommendModeActive = true
+                onModeChange(SearchMode.AI)
+            }
             onAskOpenRequestConsumed(askOpenRequestId)
         }
     }
@@ -419,56 +428,63 @@ internal fun DiscoverScreen(
                             }
                         }
 
-                        Surface(
-                            onClick = {
-                                recommendModeActive = true
-                                onModeChange(SearchMode.AI)
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 6.dp),
-                            shape = RoundedCornerShape(22.dp),
-                            color = Color.Transparent,
-                            contentColor = AliflixContentPrimary,
-                            tonalElevation = 0.dp,
+                        AnimatedVisibility(
+                            visible = aiEnabled,
+                            enter = fadeIn(DiscoverMotion.standard()),
+                            exit = fadeOut(DiscoverMotion.standard()),
                         ) {
-                            Row(
+                            Surface(
+                                onClick = {
+                                    recommendModeActive = true
+                                    onModeChange(SearchMode.AI)
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(
-                                        Brush.linearGradient(
-                                            listOf(
-                                                AliflixAccentPrimary.copy(alpha = 0.32f),
-                                                AliflixSurfaceElevated,
-                                                AliflixSurfacePrimary,
+                                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                                    .testTag("discover-ask-aliflix-card"),
+                                shape = RoundedCornerShape(22.dp),
+                                color = Color.Transparent,
+                                contentColor = AliflixContentPrimary,
+                                tonalElevation = 0.dp,
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(
+                                                    AliflixAccentPrimary.copy(alpha = 0.32f),
+                                                    AliflixSurfaceElevated,
+                                                    AliflixSurfacePrimary,
+                                                )
                                             )
                                         )
-                                    )
-                                    .border(1.dp, AliflixAccentPrimary.copy(alpha = 0.34f), RoundedCornerShape(22.dp))
-                                    .padding(horizontal = 16.dp, vertical = 15.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                AnimatedAliflixHeatmapLogo(
-                                    modifier = Modifier.size(46.dp),
-                                )
-                                Spacer(modifier = Modifier.width(13.dp))
-                                Row(
-                                    modifier = Modifier.weight(1f),
-                                    verticalAlignment = Alignment.CenterVertically,
+                                        .border(1.dp, AliflixAccentPrimary.copy(alpha = 0.34f), RoundedCornerShape(22.dp))
+                                        .padding(horizontal = 16.dp, vertical = 15.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = "Ask Aliflix",
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 17.sp,
-                                        color = AliflixContentPrimary,
+                                    AnimatedAliflixHeatmapLogo(
+                                        modifier = Modifier.size(46.dp),
+                                    )
+                                    Spacer(modifier = Modifier.width(13.dp))
+                                    Row(
+                                        modifier = Modifier.weight(1f),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            text = "Ask Aliflix",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 17.sp,
+                                            color = AliflixContentPrimary,
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                                        contentDescription = "Open Ask Aliflix recommendations",
+                                        tint = AliflixAccentSecondary,
+                                        modifier = Modifier.size(21.dp)
                                     )
                                 }
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                                    contentDescription = "Open Ask Aliflix recommendations",
-                                    tint = AliflixAccentSecondary,
-                                    modifier = Modifier.size(21.dp)
-                                )
                             }
                         }
 

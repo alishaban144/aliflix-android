@@ -21,7 +21,7 @@ import com.aliflix.app.model.Season
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationDispatchers
 import com.aliflix.app.recommendation.RecommendationStore
-import com.aliflix.app.recommendation.GeminiRecommendationModel
+import com.aliflix.app.recommendation.RecommendationAiModel
 import com.aliflix.app.recommendation.buildAskAliflixShowMoreRequest
 import com.aliflix.app.recommendation.V3CatalogMedia
 import com.aliflix.app.recommendation.V3TitleDetails
@@ -217,7 +217,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         
         val mapped = com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(
             request = request,
-            geminiModel = recommendationStore.geminiModel.value,
+            aiModel = recommendationStore.aiModel.value,
         )
         val summary = mapped.summary
         val hideWatched = _askEditorState.value.hideWatched
@@ -368,7 +368,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             buildAskAliflixShowMoreRequest(
                 original = original,
                 displayed = currentResults.items,
-                selectedModel = recommendationStore.geminiModel.value,
+                selectedModel = recommendationStore.aiModel.value,
             )
         }
 
@@ -416,7 +416,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 val response = aiClient.getRecommendations(
                     original.copy(
                         cursor = null,
-                        geminiModel = recommendationStore.geminiModel.value.workerValue,
+                        aiModel = recommendationStore.aiModel.value.workerValue,
                     ),
                 )
                 if (token != askSessionToken) return@launch
@@ -470,8 +470,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         playbackProviderRepository.preferences
     val aiRecommendationsEnabled: StateFlow<Boolean> =
         recommendationStore.enabled
-    val geminiRecommendationModel: StateFlow<GeminiRecommendationModel> =
-        recommendationStore.geminiModel
+    val recommendationAiModel: StateFlow<RecommendationAiModel> =
+        recommendationStore.aiModel
 
     fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
         playbackProviderRepository.selectGeneralProvider(provider)
@@ -1012,8 +1012,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun setGeminiRecommendationModel(model: GeminiRecommendationModel) {
-        recommendationStore.setGeminiModel(model)
+    fun setRecommendationAiModel(model: RecommendationAiModel) {
+        recommendationStore.setAiModel(model)
     }
 
     private fun pauseBackgroundHomeRefresh() {
