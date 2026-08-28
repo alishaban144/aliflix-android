@@ -29,7 +29,7 @@ const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 export const GROQ_MODEL = 'qwen/qwen3.8-27b';
 export const GROQ_TIMEOUT_MS = 24_000;
 export const GROQ_MAX_OUTPUT_TOKENS = 3_072;
-export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 1_536;
+export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 1_024;
 
 const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
@@ -99,6 +99,28 @@ function boundAssessmentReasons(data: unknown): unknown {
       return { ...item, reason: (lastSpace >= 120 ? bounded.slice(0, lastSpace) : bounded).trim() };
     }),
   };
+}
+
+function compactVerificationCandidates(candidates: PremiseCandidateDocument[]): Array<{
+  index: number;
+  title: string;
+  originalTitle?: string;
+  releaseYear?: number;
+  overview: string;
+  genres: string[];
+  keywords: string[];
+}> {
+  return candidates.map(candidate => ({
+    index: candidate.index,
+    title: candidate.title,
+    ...(candidate.originalTitle && candidate.originalTitle !== candidate.title
+      ? { originalTitle: candidate.originalTitle }
+      : {}),
+    ...(candidate.releaseYear ? { releaseYear: candidate.releaseYear } : {}),
+    overview: candidate.overview.slice(0, 650),
+    genres: candidate.genres,
+    keywords: candidate.keywords.slice(0, 12),
+  }));
 }
 
 async function groqStructuredContent<T>(
@@ -330,7 +352,7 @@ export async function assessPremiseCandidatesWithGroq(
       requiredConceptGroups: requiredConceptGroups.map((group, index) => ({
         index, label: group.label, synonyms: group.synonyms,
       })),
-      candidates,
+      candidates: compactVerificationCandidates(candidates),
     },
     GeminiPremiseAssessmentJsonSchema,
     'premise_assessments',
@@ -358,7 +380,12 @@ export async function assessSimilarCandidatesWithGroq(
   const data = await groqStructuredContent<unknown>(
     env,
     VERIFY_SIMILARITY_PROMPT,
-    { anchors, refinement, authoritativeMediaType: mediaType, candidates },
+    {
+      anchors,
+      refinement,
+      authoritativeMediaType: mediaType,
+      candidates: compactVerificationCandidates(candidates),
+    },
     GeminiPremiseAssessmentJsonSchema,
     'similarity_assessments',
     'similarity verification',

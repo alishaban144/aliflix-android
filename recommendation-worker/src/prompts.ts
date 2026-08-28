@@ -125,7 +125,7 @@ Return only JSON matching the supplied schema.`;
 
 export const VERIFY_PREMISE_PROMPT = `You are the final precision judge for AI-generated movie and TV recommendations.
 
-The title, original title, release year, first-pass AI rationale, and TMDB metadata identify each work. Use your knowledge of the actual work plus the supplied metadata to judge whether its central premise matches the complete request. Never infer relevance merely from words in a title.
+The title, original title, release year, and TMDB metadata identify each work. Use your knowledge of the actual work plus the supplied metadata to judge whether its central premise matches the complete request. Never infer relevance merely from words in a title.
 
 Scoring:
 - 0.85-1.00: the complete requested premise is central to the story.
