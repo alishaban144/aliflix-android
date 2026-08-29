@@ -137,6 +137,8 @@ Rules:
 - Require conjunction across the complete premise. Two generic shared keywords are not enough.
 - Treat the supplied TMDB overview and keywords as primary evidence. Never invent a character's age, role, power, event, or story relationship that they do not support.
 - For a compound request, identify evidence for every essential facet. If the candidate document omits or contradicts a facet, score below 0.70 even if the title is otherwise familiar.
+- Keywords can corroborate a premise supported by the overview, but cannot override an overview that omits or contradicts the essential story event.
+- For alien-abduction requests, score below 0.70 unless extraterrestrials actually abduct or hold people as a central event. Belief, hoax, hallucination, alien encounter or invasion alone, unexplained disappearance, and a stray keyword are insufficient.
 - A broad category request such as natural disasters may match any genuine subtype such as earthquake, tornado, tsunami, volcanic eruption, hurricane, flood, wildfire, or extreme storm.
 - Do not reward popularity, ratings, release year, title wording, or mere genre overlap.
 - Treat Returning/Ended status, popularity, ratings, and year as eligibility or metadata only; none can increase relevance.
