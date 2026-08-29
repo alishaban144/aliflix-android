@@ -32,6 +32,7 @@ const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
 const MAX_GENERATED_CANDIDATES = 28;
 const MAX_GENERATED_RESULTS = 16;
+const MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD = 8;
 const MIN_GENERATED_CANDIDATE_CONFIDENCE = .45;
 const MIN_VERIFIED_RELEVANCE = .70;
 const TMDB_DETAIL_RESERVE = 24;
@@ -246,8 +247,12 @@ async function supplementGeneratedCandidatesFromTmdb(
       `generated-keyword-discover:${term}`,
       () => tmdb.discover(request.mediaType, { with_keywords: keywordIds.join('|'), page: 1 }),
     );
+    let newCandidatesForTerm = 0;
     for (const item of page?.results || []) {
-      if (candidates.size >= MAX_GENERATED_CANDIDATES) break;
+      if (
+        candidates.size >= MAX_GENERATED_CANDIDATES ||
+        newCandidatesForTerm >= MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD
+      ) break;
       const candidate = toCandidate(item, request.mediaType, new Map());
       if (!candidate || context.excludedCandidateKeys.has(candidate.key)) continue;
       const existing = candidates.get(candidate.key);
@@ -262,6 +267,7 @@ async function supplementGeneratedCandidatesFromTmdb(
       candidate.matchedKeywordIds = new Set(keywordIds);
       candidate.retrievalSources.add('tmdb:keyword-supplement');
       candidates.set(candidate.key, candidate);
+      newCandidatesForTerm += 1;
     }
   }
 }
