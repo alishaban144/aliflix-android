@@ -33,6 +33,9 @@ const MAX_DETAIL_CANDIDATES = 64;
 const MAX_GENERATED_CANDIDATES = 40;
 const MAX_AI_GENERATED_CANDIDATES = 12;
 const MAX_GENERATED_RESULTS = 24;
+const MAX_AI_VERIFICATION_CANDIDATES = 20;
+const MAX_GENERATED_DETAIL_CANDIDATES = 8;
+const MAX_GENERATED_VERIFICATION_CANDIDATES = 4;
 const MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD = 8;
 const MIN_GENERATED_CANDIDATE_CONFIDENCE = .45;
 const MIN_VERIFIED_RELEVANCE = .70;
@@ -215,9 +218,11 @@ interface GeneratedRecommendationContext {
   excludedCandidateKeys: Set<string>;
   recommendationSource: string;
   verificationSource: string;
+  fallbackVerificationSource: string;
   supplementKeywordTerms?: Array<{ term: string; maxNewCandidates: number }>;
   generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>;
   verify: (candidates: PremiseCandidateDocument[]) => Promise<PremiseAssessment[]>;
+  fallbackVerify: (candidates: PremiseCandidateDocument[]) => PremiseAssessment[];
 }
 
 async function supplementGeneratedCandidatesFromTmdb(
@@ -236,7 +241,7 @@ async function supplementGeneratedCandidatesFromTmdb(
     uniqueTerms.set(term, Math.max(uniqueTerms.get(term) || 0, item.maxNewCandidates));
   }
   const terms = [...uniqueTerms.entries()].slice(0, 6);
-  for (const [term, maxNewCandidates] of terms) {
+  for (const [termIndex, [term, maxNewCandidates]] of terms.entries()) {
     if (candidates.size >= MAX_GENERATED_CANDIDATES || tmdb.callsRemaining <= MAX_GENERATED_RESULTS + 1) break;
     const keywordResponse = await optionalTmdbCall(
       `generated-keyword:${term}`,
@@ -249,31 +254,44 @@ async function supplementGeneratedCandidatesFromTmdb(
       .slice(0, 2);
     if (!keywordIds.length || tmdb.callsRemaining <= MAX_GENERATED_RESULTS) continue;
 
-    const page = await optionalTmdbCall(
-      `generated-keyword-discover:${term}`,
-      () => tmdb.discover(request.mediaType, { with_keywords: keywordIds.join('|'), page: 1 }),
-    );
+    const discoverVariants = [
+      { with_keywords: keywordIds.join('|'), page: 1 },
+      ...(termIndex === 0
+        ? [{ with_keywords: keywordIds.join('|'), sort_by: 'vote_count.desc', page: 1 }]
+        : []),
+    ];
     let newCandidatesForTerm = 0;
-    for (const item of page?.results || []) {
+    for (const [variantIndex, params] of discoverVariants.entries()) {
       if (
         candidates.size >= MAX_GENERATED_CANDIDATES ||
-        newCandidatesForTerm >= maxNewCandidates
+        newCandidatesForTerm >= maxNewCandidates ||
+        tmdb.callsRemaining <= MAX_GENERATED_RESULTS
       ) break;
-      const candidate = toCandidate(item, request.mediaType, new Map());
-      if (!candidate || context.excludedCandidateKeys.has(candidate.key)) continue;
-      const existing = candidates.get(candidate.key);
-      if (existing) {
-        keywordIds.forEach(id => existing.matchedKeywordIds.add(id));
-        existing.retrievalSources.add('tmdb:keyword-supplement');
-        existing.aiRecommendationConfidence = Math.max(existing.aiRecommendationConfidence || 0, .55);
-        continue;
+      const page = await optionalTmdbCall(
+        `generated-keyword-discover:${term}:${variantIndex}`,
+        () => tmdb.discover(request.mediaType, params),
+      );
+      for (const item of page?.results || []) {
+        if (
+          candidates.size >= MAX_GENERATED_CANDIDATES ||
+          newCandidatesForTerm >= maxNewCandidates
+        ) break;
+        const candidate = toCandidate(item, request.mediaType, new Map());
+        if (!candidate || context.excludedCandidateKeys.has(candidate.key)) continue;
+        const existing = candidates.get(candidate.key);
+        if (existing) {
+          keywordIds.forEach(id => existing.matchedKeywordIds.add(id));
+          existing.retrievalSources.add('tmdb:keyword-supplement');
+          existing.aiRecommendationConfidence = Math.max(existing.aiRecommendationConfidence || 0, .55);
+          continue;
+        }
+        candidate.aiRecommendationConfidence = MIN_GENERATED_CANDIDATE_CONFIDENCE;
+        candidate.aiRecommendationReason = `TMDB keyword evidence for ${term}.`;
+        candidate.matchedKeywordIds = new Set(keywordIds);
+        candidate.retrievalSources.add('tmdb:keyword-supplement');
+        candidates.set(candidate.key, candidate);
+        newCandidatesForTerm += 1;
       }
-      candidate.aiRecommendationConfidence = MIN_GENERATED_CANDIDATE_CONFIDENCE;
-      candidate.aiRecommendationReason = `TMDB keyword evidence for ${term}.`;
-      candidate.matchedKeywordIds = new Set(keywordIds);
-      candidate.retrievalSources.add('tmdb:keyword-supplement');
-      candidates.set(candidate.key, candidate);
-      newCandidatesForTerm += 1;
     }
   }
 }
@@ -311,6 +329,147 @@ function premiseDocument(candidate: Candidate, index: number): PremiseCandidateD
     aiReason: candidate.aiRecommendationReason || '',
     aiConfidence: candidate.aiRecommendationConfidence || 0,
   };
+}
+
+function metadataContains(haystack: string, value: string): boolean {
+  const canonicalHaystack = canonicalConceptPhrase(haystack);
+  const canonicalValue = canonicalConceptPhrase(value);
+  return canonicalValue.length > 1 && ` ${canonicalHaystack} `.includes(` ${canonicalValue} `);
+}
+
+function deterministicPremiseAssessments(
+  groups: InterpretedIntent['requiredConceptGroups'],
+  candidates: PremiseCandidateDocument[],
+): PremiseAssessment[] {
+  return candidates.flatMap(candidate => {
+    if (!groups.length) {
+      if (candidate.aiConfidence < .82) return [];
+      return [{
+        index: candidate.index,
+        relevanceScore: Math.min(.82, Math.max(.72, candidate.aiConfidence - .08)),
+        matchedGroupIndexes: [],
+        reason: candidate.aiReason || 'Groq match retained with TMDB-verified identity and metadata.',
+      }];
+    }
+
+    // Keyword-only supplements are useful discovery seeds, but they are not a
+    // safe substitute for the independent verifier. Only a high-confidence
+    // generated match may survive a verifier outage.
+    if (candidate.aiConfidence < .70) return [];
+
+    const overview = candidate.overview;
+    const keywords = candidate.keywords.join(' ');
+    const genres = candidate.genres.join(' ');
+    const matches = groups.map((group, index) => {
+      const terms = [group.label, ...group.synonyms];
+      return {
+        index,
+        overview: terms.some(term => metadataContains(overview, term)),
+        keyword: terms.some(term => metadataContains(keywords, term)),
+        genre: terms.some(term => metadataContains(genres, term)),
+      };
+    });
+    if (matches.some(match => !match.overview && !match.keyword && !match.genre)) return [];
+
+    const overviewMatches = matches.filter(match => match.overview).length;
+    const keywordMatches = matches.filter(match => match.keyword).length;
+    // Exact coverage across every requested concept is mandatory. Require
+    // either plot evidence or complete keyword corroboration, and never use a
+    // title as evidence (the unrelated movie "Abduction" therefore fails).
+    if (overviewMatches === 0 && keywordMatches !== groups.length) return [];
+    const evidenceCoverage = (overviewMatches + keywordMatches) / (groups.length * 2);
+    return [{
+      index: candidate.index,
+      relevanceScore: Math.min(.86, .74 + evidenceCoverage * .12),
+      matchedGroupIndexes: matches.map(match => match.index),
+      reason: candidate.aiReason || 'TMDB metadata supports every requested premise facet.',
+    }];
+  });
+}
+
+function deterministicSimilarityAssessments(
+  anchors: SimilarAnchorDocument[],
+  candidates: PremiseCandidateDocument[],
+): PremiseAssessment[] {
+  return candidates.flatMap(candidate => {
+    if (candidate.aiConfidence < .82) return [];
+    const candidateKeywords = new Set(candidate.keywords.map(canonicalConceptPhrase).filter(Boolean));
+    const candidateGenres = new Set(candidate.genres.map(normalize).filter(Boolean));
+    const anchorEvidence = anchors.map(anchor => {
+      const sharedKeywords = anchor.keywords
+        .map(canonicalConceptPhrase)
+        .filter(keyword => keyword && candidateKeywords.has(keyword)).length;
+      const sharedGenres = anchor.genres
+        .map(normalize)
+        .filter(genre => genre && candidateGenres.has(genre)).length;
+      return { sharedKeywords, sharedGenres };
+    });
+    const groundedForEveryAnchor = anchorEvidence.every(evidence => (
+      evidence.sharedKeywords >= 1 || evidence.sharedGenres >= 2
+    ));
+    const highConfidenceGenreFallback = candidate.aiConfidence >= .90 &&
+      anchorEvidence.every(evidence => evidence.sharedGenres >= 1);
+    if (!groundedForEveryAnchor && !highConfidenceGenreFallback) return [];
+    const evidenceCount = anchorEvidence.reduce(
+      (total, evidence) => total + evidence.sharedKeywords + Math.min(2, evidence.sharedGenres),
+      0,
+    );
+    return [{
+      index: candidate.index,
+      relevanceScore: Math.min(.84, .72 + evidenceCount * .025),
+      matchedGroupIndexes: [],
+      reason: candidate.aiReason || 'TMDB metadata corroborates the generated similarity.',
+    }];
+  });
+}
+
+function selectVerificationDocuments(
+  hydrated: Candidate[],
+  documents: PremiseCandidateDocument[],
+): PremiseCandidateDocument[] {
+  const generated: PremiseCandidateDocument[] = [];
+  const keywordOnly: PremiseCandidateDocument[] = [];
+  for (const document of documents) {
+    const candidate = hydrated[document.index];
+    if (!candidate) continue;
+    if (hasGeneratedRecommendationEvidence(candidate)) generated.push(document);
+    else if (candidate.retrievalSources.has('tmdb:keyword-supplement')) keywordOnly.push(document);
+  }
+
+  const selected: PremiseCandidateDocument[] = [];
+  const selectedIndexes = new Set<number>();
+  const add = (document: PremiseCandidateDocument): void => {
+    if (selected.length >= MAX_AI_VERIFICATION_CANDIDATES || selectedIndexes.has(document.index)) return;
+    selected.push(document);
+    selectedIndexes.add(document.index);
+  };
+  generated.slice(0, MAX_GENERATED_VERIFICATION_CANDIDATES).forEach(add);
+  keywordOnly
+    .slice(0, MAX_AI_VERIFICATION_CANDIDATES - MAX_GENERATED_VERIFICATION_CANDIDATES)
+    .forEach(add);
+  documents.forEach(add);
+  return selected;
+}
+
+function selectGeneratedDetailPool(resolved: Candidate[]): Candidate[] {
+  const generated = resolved.filter(hasGeneratedRecommendationEvidence);
+  const keywordOnly = resolved.filter(candidate => (
+    !hasGeneratedRecommendationEvidence(candidate) &&
+    candidate.retrievalSources.has('tmdb:keyword-supplement')
+  ));
+  const selected: Candidate[] = [];
+  const selectedKeys = new Set<string>();
+  const add = (candidate: Candidate): void => {
+    if (selected.length >= MAX_GENERATED_RESULTS || selectedKeys.has(candidate.key)) return;
+    selected.push(candidate);
+    selectedKeys.add(candidate.key);
+  };
+  generated.slice(0, MAX_GENERATED_DETAIL_CANDIDATES).forEach(add);
+  keywordOnly
+    .slice(0, MAX_GENERATED_RESULTS - MAX_GENERATED_DETAIL_CANDIDATES)
+    .forEach(add);
+  resolved.forEach(add);
+  return selected;
 }
 
 async function processGeneratedRecommendations(
@@ -366,6 +525,8 @@ async function processGeneratedRecommendations(
 
   const resolved = [...candidates.values()]
     .sort((left, right) => generatedCandidatePriority(right) - generatedCandidatePriority(left)
+      || (right.tmdbVoteCount || 0) - (left.tmdbVoteCount || 0)
+      || (right.popularity || 0) - (left.popularity || 0)
       || left.title.localeCompare(right.title));
   if (!resolved.length) {
     console.log(JSON.stringify({
@@ -384,7 +545,7 @@ async function processGeneratedRecommendations(
   // TMDB authoritatively verifies identity, plot metadata, and every hard
   // filter before the independent premise judge sees a candidate.
   const hydrated: Candidate[] = [];
-  const detailPool = resolved.slice(0, MAX_GENERATED_RESULTS);
+  const detailPool = selectGeneratedDetailPool(resolved);
   for (let start = 0; start < detailPool.length; start += DETAIL_CONCURRENCY) {
     const batch = detailPool.slice(start, start + DETAIL_CONCURRENCY);
     const details = await Promise.all(batch.map(candidate => optionalTmdbCall(
@@ -413,29 +574,45 @@ async function processGeneratedRecommendations(
     }));
     return [];
   }
-  let assessments: PremiseAssessment[];
+  const candidateDocuments = hydrated.map(premiseDocument);
+  const verificationDocuments = selectVerificationDocuments(hydrated, candidateDocuments);
+  let providerAssessments: PremiseAssessment[] = [];
+  let verifierUnavailable = false;
   try {
-    assessments = await context.verify(hydrated.map(premiseDocument));
+    providerAssessments = await context.verify(verificationDocuments);
   } catch (error) {
-    // A failed final judge must not be disguised as a genuine empty result by
-    // the broader deterministic Describe fallback.
     if (isRetryableAiProviderError(error)) {
-      throw new ServiceError(
-        'AI_VERIFICATION_UNAVAILABLE',
-        'The final recommendation quality check is temporarily unavailable. Please try again.',
-        error.status,
-        true,
-      );
+      verifierUnavailable = true;
+      console.warn(JSON.stringify({
+        event: 'generated_verification_fallback',
+        mode: request.mode,
+        model: selectedAiModel(env),
+        reason: error.message,
+        candidates: candidateDocuments.length,
+      }));
+    } else {
+      throw error;
     }
-    throw error;
   }
+  const providerAssessmentByIndex = new Map(providerAssessments.map(assessment => [assessment.index, assessment]));
+  const documentsNeedingFallback = verifierUnavailable
+    ? candidateDocuments
+    : verificationDocuments.filter(candidate => !providerAssessmentByIndex.has(candidate.index));
+  const fallbackAssessments = context.fallbackVerify(documentsNeedingFallback);
+  const fallbackIndexes = new Set(fallbackAssessments.map(assessment => assessment.index));
+  const assessments = [
+    ...providerAssessments,
+    ...fallbackAssessments.filter(assessment => !providerAssessmentByIndex.has(assessment.index)),
+  ];
   const assessmentByIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
   const verified = hydrated.flatMap((candidate, index) => {
     const assessment = assessmentByIndex.get(index);
     // Verification is deliberately fail-closed: a missing assessment, title
     // overlap, or a merely adjacent premise must never reach the UI.
     if (!assessment || assessment.relevanceScore < MIN_VERIFIED_RELEVANCE) return [];
-    candidate.retrievalSources.add(context.verificationSource);
+    candidate.retrievalSources.add(
+      fallbackIndexes.has(index) ? context.fallbackVerificationSource : context.verificationSource,
+    );
     candidate.premiseScore = assessment.relevanceScore;
     candidate.premiseReason = assessment.reason;
     candidate.premiseMatchedGroupIndexes = new Set(assessment.matchedGroupIndexes);
@@ -455,6 +632,9 @@ async function processGeneratedRecommendations(
     hydrated: hydrated.length,
     assessed: assessments.length,
     verified: verified.length,
+    providerAssessed: providerAssessments.length,
+    fallbackAssessed: fallbackAssessments.length,
+    verifierUnavailable,
     assessmentSummary: hydrated.map((candidate, index) => ({
       title: candidate.title,
       score: assessmentByIndex.get(index)?.relevanceScore,
@@ -518,9 +698,10 @@ async function processDescribeRecommendation(
     ),
     recommendationSource: `${aiProviderName(selectedAiModel(env))}:describe-recommendation`,
     verificationSource: `${aiProviderName(selectedAiModel(env))}:premise-verification`,
+    fallbackVerificationSource: 'tmdb:premise-evidence-fallback',
     supplementKeywordTerms: [
       ...(premiseLabels.length === 2 && premiseLabels.every(label => !label.includes(' '))
-        ? [{ term: premiseLabels.join(' '), maxNewCandidates: MAX_GENERATED_RESULTS }]
+        ? [{ term: premiseLabels.join(' '), maxNewCandidates: MAX_GENERATED_CANDIDATES }]
         : []),
       ...premiseLabels.map(term => ({ term, maxNewCandidates: MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD })),
       ...premiseIntent.requiredConceptGroups.map(group => ({
@@ -540,6 +721,10 @@ async function processDescribeRecommendation(
       env,
       query,
       request.mediaType,
+      premiseIntent.requiredConceptGroups,
+      candidates,
+    ),
+    fallbackVerify: candidates => deterministicPremiseAssessments(
       premiseIntent.requiredConceptGroups,
       candidates,
     ),
@@ -594,6 +779,7 @@ async function processSimilarRecommendation(
     excludedCandidateKeys,
     recommendationSource: `${aiProviderName(selectedAiModel(env))}:similar-recommendation`,
     verificationSource: `${aiProviderName(selectedAiModel(env))}:similarity-verification`,
+    fallbackVerificationSource: 'tmdb:similarity-evidence-fallback',
     generate: excludedTitles => (dependencies.recommendSimilar || recommendSimilarTitles)(
       env,
       anchors,
@@ -614,6 +800,7 @@ async function processSimilarRecommendation(
       request.mediaType,
       candidates,
     ),
+    fallbackVerify: candidates => deterministicSimilarityAssessments(anchors, candidates),
   });
 }
 

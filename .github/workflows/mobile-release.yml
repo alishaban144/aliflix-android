@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.28"
+      - "release/v3.1.29"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.28"
+        description: "Release tag, for example v3.1.29"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "118"
-  RELEASE_VERSION_NAME: "3.1.28"
+  RELEASE_VERSION_CODE: "119"
+  RELEASE_VERSION_NAME: "3.1.29"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Fixes Ask Aliflix Show more so it instantly loads the next stored, verified page without another AI request. Expands and ranks TMDB-grounded Groq candidates for more numerous, premise-accurate matches."
+          body: "Prevents Groq verification failures or malformed candidate indexes from blanking Ask Aliflix. Broadens source-balanced TMDB recall and keeps Show more on the stored verified result set without another AI request."
           files: |
             aliflix-mobile.apk
             update-mobile.json

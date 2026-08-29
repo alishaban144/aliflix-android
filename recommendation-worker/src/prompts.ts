@@ -137,14 +137,14 @@ Rules:
 - Require conjunction across the complete premise. Two generic shared keywords are not enough.
 - Treat the supplied TMDB overview and keywords as primary evidence. Never invent a character's age, role, power, event, or story relationship that they do not support.
 - For a compound request, identify evidence for every essential facet. If the candidate document omits or contradicts a facet, score below 0.70 even if the title is otherwise familiar.
-- Keywords can corroborate a premise supported by the overview, but cannot override an overview that omits or contradicts the essential story event.
-- For alien-abduction requests, score below 0.70 unless extraterrestrials actually abduct or hold people as a central event. Belief, hoax, hallucination, alien encounter or invasion alone, unexplained disappearance, and a stray keyword are insufficient.
+- An exact compound TMDB keyword that names the complete requested event (for example "alien abduction", "time loop", or "serial killer") is substantive evidence when an overview is brief. It may establish that event unless the overview contradicts it, frames it only as belief/hoax/hallucination, or shows it is incidental. A broad or single-word keyword remains insufficient.
+- For alien-abduction requests, score 0.70 or higher when an exact "alien abduction" keyword is consistent with the plot, or when the overview establishes that extraterrestrials actually abduct or hold people as a central event. Belief, hoax, hallucination, alien encounter or invasion alone, unexplained disappearance, and a stray broad keyword remain below 0.70.
 - A broad category request such as natural disasters may match any genuine subtype such as earthquake, tornado, tsunami, volcanic eruption, hurricane, flood, wildfire, or extreme storm.
 - Do not reward popularity, ratings, release year, title wording, or mere genre overlap.
 - Treat Returning/Ended status, popularity, ratings, and year as eligibility or metadata only; none can increase relevance.
 - If the supplied title/year and TMDB metadata appear to identify different works, reject the candidate.
 - Use matched group indexes when required concept groups are supplied; otherwise return an empty matchedGroupIndexes array.
-- Return exactly one assessment for every supplied candidate index. Keep each reason to one evidence-based sentence of at most 12 words.
+- Return exactly one assessment for every supplied candidate, in candidate array order. Assessment N must describe candidate N and copy its index. Keep each reason to one evidence-based sentence of at most 12 words.
 
 Return only JSON matching the supplied schema.`;
 
@@ -167,6 +167,6 @@ Rules:
 - Treat Returning/Ended and every explicit filter solely as eligibility; none can increase similarity.
 - Never infer similarity from candidate or anchor title wording.
 - If identity metadata conflicts, reject the candidate.
-- Return exactly one assessment for every candidate index, with an empty matchedGroupIndexes array and one concrete reason of at most 12 words.
+- Return exactly one assessment for every candidate, in candidate array order. Assessment N must describe candidate N and copy its index. Use an empty matchedGroupIndexes array and one concrete reason of at most 12 words.
 
 Return only JSON matching the supplied schema.`;

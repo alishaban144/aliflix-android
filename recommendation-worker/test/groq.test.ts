@@ -91,7 +91,7 @@ describe('Groq structured recommendation provider', () => {
         { label: 'abduction', synonyms: ['abduction'], weight: 1 },
       ],
       [{
-        index: 0,
+        index: 37,
         title: 'Fire in the Sky',
         releaseYear: 1993,
         overview: 'A logger disappears after an encounter with an extraterrestrial craft. '.repeat(20),
@@ -103,13 +103,20 @@ describe('Groq structured recommendation provider', () => {
     );
 
     expect(assessments).toHaveLength(1);
+    expect(assessments[0].index).toBe(37);
     expect(assessments[0].relevanceScore).toBe(.96);
     expect(assessments[0].reason.length).toBeLessThanOrEqual(180);
-    expect(requestBody.reasoning_effort).toBe('none');
-    expect(requestBody.temperature).toBe(.2);
+    expect(requestBody.reasoning_effort).toBe('low');
+    expect(requestBody.temperature).toBe(0);
     expect(requestBody.max_completion_tokens).toBe(GROQ_VERIFICATION_MAX_OUTPUT_TOKENS);
+    expect(requestBody.messages[0].content).toContain('exact compound TMDB keyword');
+    expect(requestBody.messages[0].content).toContain('belief/hoax/hallucination');
+    expect(requestBody.messages[0].content).toContain('in candidate array order');
+    expect(requestBody.response_format.json_schema.schema.properties.assessments.minItems).toBe(1);
+    expect(requestBody.response_format.json_schema.schema.properties.assessments.maxItems).toBe(1);
     const verificationInput = JSON.parse(String(requestBody.messages[0].content).split('Input JSON:\n')[1]);
     expect(verificationInput.candidates[0].overview.length).toBe(400);
+    expect(verificationInput.candidates[0].genres).toHaveLength(1);
     expect(verificationInput.candidates[0].keywords).toHaveLength(6);
     expect(verificationInput.candidates[0]).not.toHaveProperty('aiReason');
   });

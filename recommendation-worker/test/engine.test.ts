@@ -510,6 +510,85 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(results.every(result => result.retrievalSources.includes('tmdb:details'))).toBe(true);
   });
 
+  it('reserves verifier capacity for both generated and TMDB-grounded candidates', async () => {
+    const keywordSorts = new Set<string>();
+    const tmdb = {
+      ...fakeTmdb(),
+      callsRemaining: 100,
+      searchTitle: async (_type: string, title: string) => {
+        const id = Number(title.replace('Generated ', ''));
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{
+            id,
+            title,
+            release_date: `${2000 + id}-01-01`,
+            overview: 'Aliens abduct people as the central story.',
+            vote_count: 100 + id,
+          }],
+        };
+      },
+      searchKeyword: async (term: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 99, name: term }],
+      }),
+      discover: async (_type: string, params: Record<string, string | number>) => {
+        keywordSorts.add(String(params.sort_by || 'default'));
+        return ({
+          page: 1, total_pages: 1, total_results: 16,
+          results: Array.from({ length: 16 }, (_, offset) => ({
+            id: 101 + offset,
+            title: `Keyword ${offset + 1}`,
+            release_date: `${1990 + offset}-01-01`,
+            overview: 'Aliens abduct people as the central story.',
+            genre_ids: [878],
+            vote_count: 2_000 - offset,
+          })),
+        });
+      },
+      details: async (_type: string, id: number) => ({
+        id,
+        title: id >= 101 ? `Keyword ${id - 100}` : `Generated ${id}`,
+        release_date: id >= 101 ? `${1989 + id - 100}-01-01` : `${2000 + id}-01-01`,
+        overview: 'Aliens abduct people as the central story.',
+        genres: [{ id: 878, name: 'Science Fiction' }],
+        keywords: { keywords: [{ id: 99, name: 'alien abduction' }] },
+        vote_count: id >= 101 ? 2_000 - (id - 101) : 100 + id,
+      }),
+    };
+    let verifiedTitles: string[] = [];
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'describe',
+      query: 'movies about alien abduction',
+      pageSize: 8,
+    }, {
+      tmdb: tmdb as any,
+      recommendDescribe: async () => Array.from({ length: 12 }, (_, offset) => ({
+        title: `Generated ${offset + 1}`,
+        releaseYear: 2001 + offset,
+        confidence: .95,
+        reason: 'Aliens abduct people as the central story.',
+      })),
+      assessPremise: async (_env, _query, _type, _groups, candidates) => {
+        verifiedTitles = candidates.map(candidate => candidate.title);
+        return candidates.map(candidate => ({
+          index: candidate.index,
+          relevanceScore: .90,
+          matchedGroupIndexes: [0, 1],
+          reason: 'The complete premise is supported by authoritative metadata.',
+        }));
+      },
+    });
+
+    expect(verifiedTitles).toHaveLength(20);
+    expect(verifiedTitles.filter(title => title.startsWith('Generated '))).toHaveLength(4);
+    expect(verifiedTitles.filter(title => title.startsWith('Keyword '))).toHaveLength(16);
+    expect(keywordSorts).toEqual(new Set(['default', 'vote_count.desc']));
+    expect(results).toHaveLength(20);
+    expect(results.every(result => !result.retrievalSources.includes('tmdb:premise-evidence-fallback'))).toBe(true);
+  });
+
   it('forwards displayed-title exclusions and rejects their TMDB identities', async () => {
     const exclusionTmdb = {
       callsRemaining: 40,
@@ -647,7 +726,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(results[0].retrievalSources.some(source => source.startsWith('discover:genre-hints'))).toBe(true);
   });
 
-  it('returns a retryable error instead of disguising an unavailable final verifier as an empty result', async () => {
+  it('returns only TMDB-grounded fallback matches when the final verifier is unavailable', async () => {
     let discoverCalls = 0;
     const verificationTmdb = {
       ...fakeTmdb(),
@@ -655,24 +734,40 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
         page: 1,
         total_pages: 1,
         total_results: 1,
-        results: [{ id: 44, title, release_date: '1993-03-12', overview: 'A logger is abducted by extraterrestrials.' }],
+        results: [{
+          id: title === 'Fire in the Sky' ? 44 : 45,
+          title,
+          release_date: title === 'Fire in the Sky' ? '1993-03-12' : '2011-09-22',
+          overview: title === 'Fire in the Sky'
+            ? 'A logger is abducted by extraterrestrials.'
+            : 'A teenager uncovers a spy conspiracy after seeing his childhood photo.',
+        }],
       }),
       searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       discover: async () => {
         discoverCalls++;
         return { page: 1, total_pages: 0, total_results: 0, results: [] };
       },
-      details: async () => ({
-        id: 44,
-        title: 'Fire in the Sky',
-        release_date: '1993-03-12',
-        overview: 'A logger is abducted by extraterrestrials.',
-        genres: [{ id: 878, name: 'Science Fiction' }],
-        keywords: { keywords: [{ id: 1, name: 'alien abduction' }] },
-      }),
+      details: async (_type: string, id: number) => id === 44
+        ? {
+            id,
+            title: 'Fire in the Sky',
+            release_date: '1993-03-12',
+            overview: 'A logger is abducted by extraterrestrials.',
+            genres: [{ id: 878, name: 'Science Fiction' }],
+            keywords: { keywords: [{ id: 1, name: 'alien abduction' }] },
+          }
+        : {
+            id,
+            title: 'Abduction',
+            release_date: '2011-09-22',
+            overview: 'A teenager uncovers a spy conspiracy after seeing his childhood photo.',
+            genres: [{ id: 28, name: 'Action' }],
+            keywords: { keywords: [{ id: 2, name: 'spy' }] },
+          },
     };
 
-    await expect(processRecommendation({} as any, {
+    const results = await processRecommendation({} as any, {
       ...request,
       mode: 'describe',
       query: 'movies about alien abduction',
@@ -681,12 +776,71 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
       recommendDescribe: async () => [{
         title: 'Fire in the Sky', releaseYear: 1993, confidence: .96,
         reason: 'A logger is abducted by extraterrestrials.',
+      }, {
+        title: 'Abduction', releaseYear: 2011, confidence: .99,
+        reason: 'The title appears to match alien abduction.',
       }],
       assessPremise: async () => {
         throw new ServiceError('GROQ_UNAVAILABLE', 'TPM limit reached', 503, true);
       },
-    })).rejects.toMatchObject({ code: 'AI_VERIFICATION_UNAVAILABLE', status: 503, retryable: true });
+    });
+    expect(results.map(result => result.title)).toEqual(['Fire in the Sky']);
+    expect(results[0].retrievalSources).toContain('tmdb:premise-evidence-fallback');
+    expect(results[0].retrievalSources).not.toContain('groq:premise-verification');
     expect(discoverCalls).toBe(0);
+  });
+
+  it('returns a corroborated Similar match when the final verifier is unavailable', async () => {
+    const tmdb = {
+      ...fakeTmdb(),
+      searchTitle: async () => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{
+          id: 56,
+          name: 'Looped Again',
+          first_air_date: '2022-01-01',
+          overview: 'A detective repeatedly relives the same day while solving a murder.',
+        }],
+      }),
+      details: async (_type: string, id: number) => id === 55
+        ? {
+            id,
+            name: 'Canonical Anchor',
+            first_air_date: '2020-01-01',
+            overview: 'A detective relives one day while investigating a murder.',
+            genres: [{ id: 18, name: 'Drama' }, { id: 9648, name: 'Mystery' }],
+            keywords: { results: [{ id: 9, name: 'time loop' }] },
+          }
+        : {
+            id,
+            name: 'Looped Again',
+            first_air_date: '2022-01-01',
+            overview: 'A detective repeatedly relives the same day while solving a murder.',
+            genres: [{ id: 18, name: 'Drama' }, { id: 9648, name: 'Mystery' }],
+            keywords: { results: [{ id: 9, name: 'time loop' }] },
+          },
+    };
+
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'similar',
+      mediaType: 'tv',
+      anchor: { tmdbId: 55, title: 'Canonical Anchor', mediaType: 'tv' },
+    }, {
+      tmdb: tmdb as any,
+      recommendSimilar: async () => [{
+        title: 'Looped Again',
+        releaseYear: 2022,
+        confidence: .94,
+        reason: 'Both center time-loop detectives solving murders.',
+      }],
+      assessSimilarity: async () => {
+        throw new ServiceError('GROQ_UNAVAILABLE', 'temporary verifier outage', 503, true);
+      },
+    });
+
+    expect(results.map(result => result.title)).toEqual(['Looped Again']);
+    expect(results[0].retrievalSources).toContain('tmdb:similarity-evidence-fallback');
   });
 
   it('does not hide a non-retryable Describe configuration failure behind fallback results', async () => {

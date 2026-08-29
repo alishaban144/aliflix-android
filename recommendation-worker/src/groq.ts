@@ -28,8 +28,11 @@ import { ZodError } from 'zod';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 export const GROQ_MODEL = 'qwen/qwen3.8-27b';
 export const GROQ_TIMEOUT_MS = 24_000;
-export const GROQ_MAX_OUTPUT_TOKENS = 2_560;
-export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 1_280;
+// Qwen 3.8 27B's free-plan budget is shared across the generation and
+// verification calls in one interactive search. These ceilings are ample for
+// the compact JSON contracts while leaving room for both prompts and inputs.
+export const GROQ_MAX_OUTPUT_TOKENS = 1_536;
+export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 2_048;
 
 const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
@@ -123,6 +126,33 @@ function compactVerificationCandidates(candidates: PremiseCandidateDocument[]): 
   }));
 }
 
+function assessmentJsonSchema(candidateCount: number): unknown {
+  return {
+    ...GeminiPremiseAssessmentJsonSchema,
+    properties: {
+      ...GeminiPremiseAssessmentJsonSchema.properties,
+      assessments: {
+        ...GeminiPremiseAssessmentJsonSchema.properties.assessments,
+        minItems: candidateCount,
+        maxItems: candidateCount,
+      },
+    },
+  };
+}
+
+function alignAssessmentsToCandidateOrder(
+  assessments: PremiseAssessment[],
+  candidates: PremiseCandidateDocument[],
+): PremiseAssessment[] {
+  return assessments.slice(0, candidates.length).map((assessment, position) => ({
+    ...assessment,
+    // Qwen can satisfy the fixed-size schema while repeating or inventing
+    // index values. The response contract is positional, so restore the
+    // authoritative index from the candidate array before the engine joins it.
+    index: candidates[position].index,
+  }));
+}
+
 async function groqStructuredContent<T>(
   env: RecommendationEnv,
   systemInstruction: string,
@@ -189,6 +219,9 @@ async function groqStructuredContent<T>(
         providerCode: providerError?.error?.code,
         providerType: providerError?.error?.type,
         providerMessage: providerError?.error?.message?.slice(0, 300),
+        retryAfter: response.headers.get('retry-after'),
+        remainingTokens: response.headers.get('x-ratelimit-remaining-tokens'),
+        resetTokens: response.headers.get('x-ratelimit-reset-tokens'),
         retryable,
         elapsedMs: Date.now() - startedAt,
       }));
@@ -200,6 +233,13 @@ async function groqStructuredContent<T>(
       );
     }
 
+    console.log(JSON.stringify({
+      event: 'groq_request_completed',
+      operation,
+      elapsedMs: Date.now() - startedAt,
+      remainingTokens: response.headers.get('x-ratelimit-remaining-tokens'),
+      resetTokens: response.headers.get('x-ratelimit-reset-tokens'),
+    }));
     const data = await response.json() as GroqChatCompletionResponse;
     const choice = data.choices?.[0];
     const text = choice?.message?.content;
@@ -354,18 +394,19 @@ export async function assessPremiseCandidatesWithGroq(
       })),
       candidates: compactVerificationCandidates(candidates),
     },
-    GeminiPremiseAssessmentJsonSchema,
+    assessmentJsonSchema(candidates.length),
     'premise_assessments',
     'premise verification',
     GROQ_VERIFICATION_MAX_OUTPUT_TOKENS,
-    'none',
-    0.2,
+    'low',
+    0,
   );
   const validIndexes = new Set(candidates.map(candidate => candidate.index));
-  return parseGroqOutput(
+  const assessments = parseGroqOutput(
     'premise verification',
     () => GeminiPremiseAssessmentResponseSchema.parse(boundAssessmentReasons(data)),
-  ).assessments
+  ).assessments;
+  return alignAssessmentsToCandidateOrder(assessments, candidates)
     .filter(assessment => validIndexes.has(assessment.index));
 }
 
@@ -386,17 +427,18 @@ export async function assessSimilarCandidatesWithGroq(
       authoritativeMediaType: mediaType,
       candidates: compactVerificationCandidates(candidates),
     },
-    GeminiPremiseAssessmentJsonSchema,
+    assessmentJsonSchema(candidates.length),
     'similarity_assessments',
     'similarity verification',
     GROQ_VERIFICATION_MAX_OUTPUT_TOKENS,
-    'none',
-    0.2,
+    'low',
+    0,
   );
   const validIndexes = new Set(candidates.map(candidate => candidate.index));
-  return parseGroqOutput(
+  const assessments = parseGroqOutput(
     'similarity verification',
     () => GeminiPremiseAssessmentResponseSchema.parse(boundAssessmentReasons(data)),
-  ).assessments
+  ).assessments;
+  return alignAssessmentsToCandidateOrder(assessments, candidates)
     .filter(assessment => validIndexes.has(assessment.index));
 }
