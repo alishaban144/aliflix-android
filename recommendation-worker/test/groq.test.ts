@@ -94,9 +94,9 @@ describe('Groq structured recommendation provider', () => {
         index: 0,
         title: 'Fire in the Sky',
         releaseYear: 1993,
-        overview: 'A logger disappears after an encounter with an extraterrestrial craft.',
+        overview: 'A logger disappears after an encounter with an extraterrestrial craft. '.repeat(20),
         genres: ['Science Fiction'],
-        keywords: ['alien', 'abduction'],
+        keywords: Array.from({ length: 12 }, (_, index) => `keyword-${index}`),
         aiReason: 'A logger is abducted by extraterrestrials.',
         aiConfidence: .97,
       }],
@@ -108,6 +108,10 @@ describe('Groq structured recommendation provider', () => {
     expect(requestBody.reasoning_effort).toBe('none');
     expect(requestBody.temperature).toBe(.2);
     expect(requestBody.max_completion_tokens).toBe(GROQ_VERIFICATION_MAX_OUTPUT_TOKENS);
+    const verificationInput = JSON.parse(String(requestBody.messages[0].content).split('Input JSON:\n')[1]);
+    expect(verificationInput.candidates[0].overview.length).toBe(400);
+    expect(verificationInput.candidates[0].keywords).toHaveLength(6);
+    expect(verificationInput.candidates[0]).not.toHaveProperty('aiReason');
   });
 
   it('does not spend a second request after a rate-limit response', async () => {

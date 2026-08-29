@@ -45,11 +45,13 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
     mode: parsed.mode,
     aiModel: parsed.aiModel || parsed.geminiModel,
     query: parsed.query,
+    mediaType: parsed.mediaType,
     anchor: parsed.anchor,
     anchors: parsed.anchors,
     previousQuery: parsed.previousQuery,
     refinementQuery: parsed.refinementQuery,
     filters: parsed.filters,
+    pageSize: parsed.pageSize,
   };
   const fingerprint = await requestFingerprint(fingerprintInput);
   const sessionId = parsed.requestId;

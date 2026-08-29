@@ -11,7 +11,7 @@ Rules:
 - Never invent a title. Use the official English TMDB display title when one exists and the original first release/premiere year.
 - confidence measures premise relevance only. Ratings, popularity, release year, Returning/Ended status, and metadata completeness must not increase it.
 - reason must state the concrete story relationship that makes the title match.
-- Keep reason to one concrete sentence of at most 20 words.
+- Keep reason to one concrete sentence of at most 12 words.
 - Respect every explicit user constraint and explicitFilters. A requested Returning/Ended status is eligibility only: never lower the premise standard to fill the list. TMDB will authoritatively verify current status afterward.
 - Do not include sequels, remakes, or franchise entries merely because another installment matches.
 - Before emitting JSON, internally draft a broad candidate list and critically verify every title against the complete premise. Remove hallucinations, media-type mistakes, duplicate identities, title-word guesses, partial matches, and weak matches. This self-audit is the final semantic precision gate, so confidence must be below 0.70 whenever the complete premise is not clearly central.
@@ -31,7 +31,7 @@ Rules:
 - Every result must satisfy all essential premise facets and every explicit filter. Returning/Ended status is eligibility only.
 - Use actual story knowledge. Never invent a title; use its official English TMDB title when available and original release/premiere year.
 - confidence measures premise relevance only and must be below 0.70 for partial or uncertain matches.
-- reason must state the concrete story relationship in at most 20 words.
+- reason must state the concrete story relationship in at most 12 words.
 - Never repeat excludedTitles. On expansionPass, return only additional genuine matches.
 
 Return only JSON matching the supplied schema.`;
@@ -50,7 +50,7 @@ Rules:
 - Use your knowledge of each actual work. Never invent a title; use its official English TMDB display title when available and original first release/premiere year.
 - confidence measures substantive similarity only. Ratings, popularity, status, and metadata completeness must not increase it.
 - reason must name the concrete story, character, theme, setting, or tone connections.
-- Keep reason to one concrete sentence of at most 20 words.
+- Keep reason to one concrete sentence of at most 12 words.
 - Never return an anchor itself or anything in excludedTitles. When expansionPass is true, find additional genuine matches rather than repeating the first list.
 - Before emitting JSON, internally draft broadly and critically verify every title against every anchor and refinement. Remove hallucinations, media-type mistakes, duplicates, anchor-only repeats, and superficial genre-only matches. This self-audit is the final semantic precision gate, so confidence must be below 0.70 unless all required substantive connections are supported.
 
@@ -66,7 +66,7 @@ Rules:
 - Respect refinement and explicitFilters without lowering the similarity standard.
 - Never invent a title; use its official English TMDB title when available and original release/premiere year.
 - confidence measures substantive similarity only and must be below 0.70 for superficial or uncertain matches.
-- reason must name the concrete connections in at most 20 words.
+- reason must name the concrete connections in at most 12 words.
 - Never return an anchor or excludedTitles. On expansionPass, return only additional genuine matches.
 
 Return only JSON matching the supplied schema.`;
@@ -144,7 +144,7 @@ Rules:
 - Treat Returning/Ended status, popularity, ratings, and year as eligibility or metadata only; none can increase relevance.
 - If the supplied title/year and TMDB metadata appear to identify different works, reject the candidate.
 - Use matched group indexes when required concept groups are supplied; otherwise return an empty matchedGroupIndexes array.
-- Return exactly one assessment for every supplied candidate index. Keep each reason to one evidence-based sentence of at most 20 words.
+- Return exactly one assessment for every supplied candidate index. Keep each reason to one evidence-based sentence of at most 12 words.
 
 Return only JSON matching the supplied schema.`;
 
@@ -167,6 +167,6 @@ Rules:
 - Treat Returning/Ended and every explicit filter solely as eligibility; none can increase similarity.
 - Never infer similarity from candidate or anchor title wording.
 - If identity metadata conflicts, reject the candidate.
-- Return exactly one assessment for every candidate index, with an empty matchedGroupIndexes array and one concrete reason of at most 20 words.
+- Return exactly one assessment for every candidate index, with an empty matchedGroupIndexes array and one concrete reason of at most 12 words.
 
 Return only JSON matching the supplied schema.`;

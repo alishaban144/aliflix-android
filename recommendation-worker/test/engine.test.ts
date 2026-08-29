@@ -477,12 +477,13 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
       },
     };
     const results = await processRecommendation({} as any, {
-      ...request, mode: 'describe', query: 'a precise premise with many genuine films', pageSize: 24,
+      ...request, mode: 'describe', query: 'a precise premise with many genuine films', pageSize: 8,
     }, {
       tmdb: expandedTmdb as any,
-      recommendDescribe: async (_env, _query, _type, _filters, excludedTitles) => {
+      recommendDescribe: async (_env, _query, _type, _filters, excludedTitles, targetCount) => {
         generationPasses++;
         expect(excludedTitles).toEqual([]);
+        expect(targetCount).toBe(12);
         const start = 1;
         const end = 12;
         return Array.from({ length: end - start + 1 }, (_, offset) => {

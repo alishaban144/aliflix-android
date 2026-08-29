@@ -265,7 +265,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         spec = mapped.spec,
                         items = candidates,
                         totalAvailable = response.totalResults,
-                        hasMore = response.hasMore || requestWithLibraryFilters.mode != "filters",
+                        hasMore = response.hasMore,
                         nextCursor = response.nextCursor,
                         activeRequest = request,
                     )
@@ -361,16 +361,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results ?: return
         val original = activeAskRequest ?: return
         if (currentResults.loadingMore || !currentResults.hasMore) return
-        val nextRequest = if (original.mode == "filters") {
-            val cursor = currentResults.nextCursor ?: return
-            original.copy(cursor = cursor)
-        } else {
-            buildAskAliflixShowMoreRequest(
-                original = original,
-                displayed = currentResults.items,
-                selectedModel = recommendationStore.aiModel.value,
-            )
-        }
+        val cursor = currentResults.nextCursor ?: return
+        val nextRequest = buildAskAliflixShowMoreRequest(original, cursor)
 
         val token = askSessionToken
         _askUiState.value = currentResults.copy(loadingMore = true, loadMoreError = null)
@@ -382,7 +374,6 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 val additional = response.results.map(::mapAskResult)
                 val appended = (currentResults.items + additional)
                     .distinctBy { it.media.key }
-                val addedCount = appended.size - currentResults.items.size
                 _askUiState.value = currentResults.copy(
                     items = appended,
                     totalAvailable = maxOf(
@@ -391,7 +382,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         appended.size,
                     ),
                     loadingMore = false,
-                    hasMore = if (original.mode == "filters") response.hasMore else addedCount > 0,
+                    hasMore = response.hasMore,
                     nextCursor = response.nextCursor,
                     loadMoreError = null,
                 )
@@ -429,7 +420,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         spec = spec,
                         items = candidates,
                         totalAvailable = response.totalResults,
-                        hasMore = response.hasMore || original.mode != "filters",
+                        hasMore = response.hasMore,
                         nextCursor = response.nextCursor,
                     )
                 }

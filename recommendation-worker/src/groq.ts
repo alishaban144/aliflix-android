@@ -28,8 +28,8 @@ import { ZodError } from 'zod';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 export const GROQ_MODEL = 'qwen/qwen3.8-27b';
 export const GROQ_TIMEOUT_MS = 24_000;
-export const GROQ_MAX_OUTPUT_TOKENS = 3_072;
-export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 1_024;
+export const GROQ_MAX_OUTPUT_TOKENS = 2_560;
+export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 1_280;
 
 const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
@@ -117,9 +117,9 @@ function compactVerificationCandidates(candidates: PremiseCandidateDocument[]): 
       ? { originalTitle: candidate.originalTitle }
       : {}),
     ...(candidate.releaseYear ? { releaseYear: candidate.releaseYear } : {}),
-    overview: candidate.overview.slice(0, 650),
+    overview: candidate.overview.slice(0, 400),
     genres: candidate.genres,
-    keywords: candidate.keywords.slice(0, 12),
+    keywords: candidate.keywords.slice(0, 6),
   }));
 }
 
@@ -280,7 +280,7 @@ export async function recommendDescribeTitlesWithGroq(
       query,
       authoritativeMediaType: mediaType,
       explicitFilters,
-      targetCount: Math.min(16, Math.max(1, targetCount)),
+      targetCount: Math.min(20, Math.max(1, targetCount)),
       expansionPass: excludedTitles.length > 0,
       excludedTitles,
     },
@@ -311,7 +311,7 @@ export async function recommendSimilarTitlesWithGroq(
       authoritativeMediaType: mediaType,
       refinement,
       explicitFilters,
-      targetCount: Math.min(16, Math.max(1, targetCount)),
+      targetCount: Math.min(20, Math.max(1, targetCount)),
       expansionPass: excludedTitles.length > 0,
       excludedTitles,
     },

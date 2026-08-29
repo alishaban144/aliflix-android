@@ -310,8 +310,8 @@ https://github.com/alishaban144/aliflix-android/releases/latest/download/update-
 
 ## Current release
 
-- Version: **3.1.27**
-- Version code: **117**
+- Version: **3.1.28**
+- Version code: **118**
 - Minimum Android version: **Android 10 / API 29**
-- Release page: [Aliflix 3.1.27](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.27)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.27/aliflix-mobile.apk)
+- Release page: [Aliflix 3.1.28](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.28)
+- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.28/aliflix-mobile.apk)

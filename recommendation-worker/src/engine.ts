@@ -30,8 +30,9 @@ export interface EngineDependencies {
 const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
-const MAX_GENERATED_CANDIDATES = 28;
-const MAX_GENERATED_RESULTS = 16;
+const MAX_GENERATED_CANDIDATES = 40;
+const MAX_AI_GENERATED_CANDIDATES = 12;
+const MAX_GENERATED_RESULTS = 24;
 const MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD = 8;
 const MIN_GENERATED_CANDIDATE_CONFIDENCE = .45;
 const MIN_VERIFIED_RELEVANCE = .70;
@@ -210,7 +211,7 @@ async function generatedRecommendations(
 
 interface GeneratedRecommendationContext {
   filters: RecommendationFilters;
-  candidateLimit: number;
+  generationLimit: number;
   excludedCandidateKeys: Set<string>;
   recommendationSource: string;
   verificationSource: string;
@@ -282,6 +283,22 @@ function candidateReleaseYear(candidate: Candidate): number | undefined {
   return Number.isInteger(year) ? year : undefined;
 }
 
+function generatedCandidatePriority(candidate: Candidate): number {
+  const sources = candidate.retrievalSources;
+  const hasKeywordEvidence = sources.has('tmdb:keyword-supplement');
+  const hasAiEvidence = hasGeneratedRecommendationEvidence(candidate);
+  return (candidate.aiRecommendationConfidence || 0) +
+    (hasKeywordEvidence ? .16 : 0) +
+    (hasKeywordEvidence && hasAiEvidence ? .12 : 0) +
+    Math.min(candidate.matchedKeywordIds.size, 3) * .01;
+}
+
+function hasGeneratedRecommendationEvidence(candidate: Candidate): boolean {
+  return [...candidate.retrievalSources].some(source => (
+    source.endsWith(':describe-recommendation') || source.endsWith(':similar-recommendation')
+  ));
+}
+
 function premiseDocument(candidate: Candidate, index: number): PremiseCandidateDocument {
   return {
     index,
@@ -305,7 +322,7 @@ async function processGeneratedRecommendations(
   if (!tmdb.searchTitle) {
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB title verification is unavailable', 503, true);
   }
-  const recommendations = await generatedRecommendations(context.candidateLimit, context.generate);
+  const recommendations = await generatedRecommendations(context.generationLimit, context.generate);
   if (!recommendations.length) {
     console.log(JSON.stringify({
       event: 'generated_recommendation_pipeline',
@@ -348,7 +365,7 @@ async function processGeneratedRecommendations(
   await supplementGeneratedCandidatesFromTmdb(request, tmdb, context, candidates);
 
   const resolved = [...candidates.values()]
-    .sort((left, right) => (right.aiRecommendationConfidence || 0) - (left.aiRecommendationConfidence || 0)
+    .sort((left, right) => generatedCandidatePriority(right) - generatedCandidatePriority(left)
       || left.title.localeCompare(right.title));
   if (!resolved.length) {
     console.log(JSON.stringify({
@@ -424,7 +441,10 @@ async function processGeneratedRecommendations(
     candidate.premiseMatchedGroupIndexes = new Set(assessment.matchedGroupIndexes);
     candidate.finalScore = assessment.relevanceScore;
     return [{ candidate, score: assessment.relevanceScore }];
-  }).sort((left, right) => right.score - left.score || left.candidate.title.localeCompare(right.candidate.title));
+  }).sort((left, right) => right.score - left.score ||
+    Number(hasGeneratedRecommendationEvidence(right.candidate)) - Number(hasGeneratedRecommendationEvidence(left.candidate)) ||
+    (right.candidate.tmdbVoteCount || 0) - (left.candidate.tmdbVoteCount || 0) ||
+    left.candidate.title.localeCompare(right.candidate.title));
 
   console.log(JSON.stringify({
     event: 'generated_recommendation_pipeline',
@@ -490,10 +510,9 @@ async function processDescribeRecommendation(
   const premiseIntent = cleanInterpretedIntent(fallbackIntentFromQuery(query));
   const premiseLabels = premiseIntent.requiredConceptGroups.map(group => group.label);
   applyQueryDateConstraints(query, filters);
-  const candidateLimit = Math.min(MAX_GENERATED_RESULTS, request.pageSize);
   return processGeneratedRecommendations(env, request, tmdb, {
     filters,
-    candidateLimit,
+    generationLimit: MAX_AI_GENERATED_CANDIDATES,
     excludedCandidateKeys: new Set(
       filters.excludedTmdbIds.map(tmdbId => `${request.mediaType}:${tmdbId}`),
     ),
@@ -515,7 +534,7 @@ async function processDescribeRecommendation(
       request.mediaType,
       filters,
       [...new Set([...filters.excludedTitles, ...excludedTitles])],
-      candidateLimit,
+      MAX_AI_GENERATED_CANDIDATES,
     ),
     verify: candidates => (dependencies.assessPremise || assessRecommendationPremise)(
       env,
@@ -569,10 +588,9 @@ async function processSimilarRecommendation(
         .map(anchor => `${request.mediaType}:${anchor.tmdbId}`),
     ],
   );
-  const candidateLimit = Math.min(MAX_GENERATED_RESULTS, request.pageSize);
   return processGeneratedRecommendations(env, request, tmdb, {
     filters,
-    candidateLimit,
+    generationLimit: MAX_AI_GENERATED_CANDIDATES,
     excludedCandidateKeys,
     recommendationSource: `${aiProviderName(selectedAiModel(env))}:similar-recommendation`,
     verificationSource: `${aiProviderName(selectedAiModel(env))}:similarity-verification`,
@@ -587,7 +605,7 @@ async function processSimilarRecommendation(
         ...filters.excludedTitles,
         ...excludedTitles,
       ])],
-      candidateLimit,
+      MAX_AI_GENERATED_CANDIDATES,
     ),
     verify: candidates => (dependencies.assessSimilarity || assessRecommendationSimilarity)(
       env,

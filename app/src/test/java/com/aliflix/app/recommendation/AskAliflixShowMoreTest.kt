@@ -1,15 +1,12 @@
 package com.aliflix.app.recommendation
 
-import com.aliflix.app.model.Media
-import com.aliflix.app.model.MediaType
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class AskAliflixShowMoreTest {
     @Test
-    fun freshBatchUsesSelectedModelAndExcludesEveryDisplayedResult() {
+    fun showMoreKeepsTheSameAiSessionAndUsesItsSignedCursor() {
         val original = V3RecommendationRequest(
             requestId = "00000000-0000-4000-8000-000000000001",
             mode = "describe",
@@ -20,27 +17,19 @@ class AskAliflixShowMoreTest {
                 excludedTitles = listOf("Previously excluded"),
             ),
         )
-        val displayed = listOf(
-            RecommendationCandidate(Media(id = 11, type = MediaType.MOVIE, title = "First Match")),
-            RecommendationCandidate(Media(id = 12, type = MediaType.MOVIE, title = "Second Match")),
-        )
-
         val next = buildAskAliflixShowMoreRequest(
             original = original,
-            displayed = displayed,
-            selectedModel = RecommendationAiModel.GROQ_QWEN_3_8_27B,
-            requestId = "00000000-0000-4000-8000-000000000002",
+            nextCursor = "signed-next-page",
         )
 
-        assertEquals("00000000-0000-4000-8000-000000000002", next.requestId)
-        assertEquals("groq-qwen-3.8-27b", next.aiModel)
-        assertEquals(listOf(99, 11, 12), next.filters.excludedTmdbIds)
-        assertEquals(listOf("Previously excluded", "First Match", "Second Match"), next.filters.excludedTitles)
-        assertNull(next.cursor)
+        assertEquals(original.requestId, next.requestId)
+        assertEquals(original.aiModel, next.aiModel)
+        assertEquals(original.filters, next.filters)
+        assertEquals("signed-next-page", next.cursor)
     }
 
     @Test
-    fun filterPaginationCannotAccidentallyBecomeAnAiGeneration() {
+    fun blankCursorCannotStartAReplacementAiGeneration() {
         val request = V3RecommendationRequest(
             requestId = "00000000-0000-4000-8000-000000000003",
             mode = "filters",
@@ -51,8 +40,7 @@ class AskAliflixShowMoreTest {
         assertThrows(IllegalArgumentException::class.java) {
             buildAskAliflixShowMoreRequest(
                 original = request,
-                displayed = emptyList(),
-                selectedModel = RecommendationAiModel.GEMINI_3_5_FLASH,
+                nextCursor = "",
             )
         }
     }

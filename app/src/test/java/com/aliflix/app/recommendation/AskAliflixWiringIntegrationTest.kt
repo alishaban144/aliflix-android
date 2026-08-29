@@ -34,6 +34,17 @@ class AskAliflixWiringIntegrationTest {
 
         assertEquals("groq-qwen-3.8-27b", json.getString("aiModel"))
         assertEquals("groq-qwen-3.8-27b", json.getString("geminiModel"))
+        assertEquals(8, json.getInt("pageSize"))
+    }
+
+    @Test
+    fun filterModeKeepsItsLargerCataloguePage() {
+        val json = AskAliflixRequestMapper.map(
+            request = AskAliflixRequest.Filters(CatalogDiscoverySpec(RecommendationMediaKind.MOVIE)),
+            requestId = "00000000-0000-4000-8000-000000000013",
+        ).workerRequest.toJson()
+
+        assertEquals(24, json.getInt("pageSize"))
     }
 
     @Test
