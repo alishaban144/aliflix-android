@@ -511,7 +511,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
   });
 
   it('reserves verifier capacity for both generated and TMDB-grounded candidates', async () => {
-    const keywordSorts = new Set<string>();
+    const keywordDiscoverVariants = new Set<string>();
     const tmdb = {
       ...fakeTmdb(),
       callsRemaining: 100,
@@ -533,10 +533,10 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
         results: [{ id: 99, name: term }],
       }),
       discover: async (_type: string, params: Record<string, string | number>) => {
-        keywordSorts.add(String(params.sort_by || 'default'));
+        keywordDiscoverVariants.add(`${params.sort_by || 'default'}:${params.page}`);
         return ({
-          page: 1, total_pages: 1, total_results: 16,
-          results: Array.from({ length: 16 }, (_, offset) => ({
+          page: 1, total_pages: 1, total_results: 24,
+          results: Array.from({ length: 24 }, (_, offset) => ({
             id: 101 + offset,
             title: `Keyword ${offset + 1}`,
             release_date: `${1990 + offset}-01-01`,
@@ -582,11 +582,111 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     });
 
     expect(verifiedTitles).toHaveLength(20);
-    expect(verifiedTitles.filter(title => title.startsWith('Generated '))).toHaveLength(4);
-    expect(verifiedTitles.filter(title => title.startsWith('Keyword '))).toHaveLength(16);
-    expect(keywordSorts).toEqual(new Set(['default', 'vote_count.desc']));
+    expect(verifiedTitles.filter(title => title.startsWith('Generated '))).toHaveLength(0);
+    expect(verifiedTitles.filter(title => title.startsWith('Keyword '))).toHaveLength(20);
+    expect(keywordDiscoverVariants).toEqual(new Set([
+      'default:1',
+      'vote_count.desc:1',
+      'default:2',
+    ]));
     expect(results).toHaveLength(20);
     expect(results.every(result => !result.retrievalSources.includes('tmdb:premise-evidence-fallback'))).toBe(true);
+  });
+
+  it('promotes only borderline verifier matches corroborated by exact compound metadata', async () => {
+    const works = [
+      {
+        id: 201,
+        title: 'Grounded Encounter',
+        overview: 'Extraterrestrials abduct a family and hold them aboard a spacecraft.',
+        keywords: [{ id: 99, name: 'alien abduction' }],
+      },
+      {
+        id: 202,
+        title: 'False Memory Story',
+        overview: 'A teenager obsessed with alien abductions confronts a false memory of childhood abuse.',
+        keywords: [{ id: 99, name: 'alien abduction' }],
+      },
+      {
+        id: 203,
+        title: 'Abduction',
+        overview: 'A teenager uncovers a spy conspiracy after seeing his childhood photo.',
+        keywords: [{ id: 12, name: 'spy' }],
+      },
+      {
+        id: 204,
+        title: 'Misapplied Tag',
+        overview: 'Fantasy musicians tour different kingdoms to reunite feuding tribes.',
+        keywords: [{ id: 99, name: 'alien abduction' }],
+      },
+      {
+        id: 728526,
+        title: 'Encounter',
+        overview: 'A father takes his sons on the road to escape an unhuman threat.',
+        keywords: [{ id: 99, name: 'alien abduction' }],
+      },
+    ];
+    const tmdb = {
+      ...fakeTmdb(),
+      callsRemaining: 100,
+      searchTitle: async (_type: string, title: string) => {
+        const work = works.find(item => item.title === title)!;
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{
+            id: work.id,
+            title: work.title,
+            release_date: '2020-01-01',
+            overview: work.overview,
+          }],
+        };
+      },
+      searchKeyword: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      details: async (_type: string, id: number) => {
+        const work = works.find(item => item.id === id)!;
+        return {
+          id: work.id,
+          title: work.title,
+          release_date: '2020-01-01',
+          overview: work.overview,
+          genres: [{ id: 878, name: 'Science Fiction' }],
+          keywords: { keywords: work.keywords },
+        };
+      },
+    };
+
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'describe',
+      query: 'movies about alien abduction',
+      pageSize: 5,
+    }, {
+      tmdb: tmdb as any,
+      recommendDescribe: async () => works.map(work => ({
+        title: work.title,
+        releaseYear: 2020,
+        confidence: .95,
+        reason: 'Possible match requiring independent verification.',
+      })),
+      assessPremise: async (_env, _query, _type, _groups, candidates) => candidates.map(candidate => ({
+        index: candidate.index,
+        relevanceScore: candidate.title === 'Encounter' ? .95 : .12,
+        matchedGroupIndexes: [0, 1],
+        reason: candidate.title === 'Grounded Encounter'
+          ? 'Exact alien abduction metadata confirms the central event.'
+          : candidate.title === 'False Memory Story'
+            ? 'Alien abduction is framed as a false memory.'
+            : candidate.title === 'Abduction'
+              ? 'No actual alien abduction occurs.'
+              : 'The supplied keyword is the only apparent connection.',
+      })),
+    });
+
+    expect(results.map(result => result.title)).toEqual(['Grounded Encounter']);
+    expect(results[0].finalScore).toBe(.70);
+    expect(results[0].retrievalSources).toContain('tmdb:exact-keyword-corroboration');
+    expect(results[0].retrievalSources).toContain('gemini:premise-verification');
   });
 
   it('forwards displayed-title exclusions and rejects their TMDB identities', async () => {

@@ -87,7 +87,7 @@ object AskAliflixRequestMapper {
             filters = spec.toWorkerFilters(),
             // Generated modes precompute one verified set and page through it.
             // Keeping pages compact makes Show more instant without another AI call.
-            pageSize = if (request is AskAliflixRequest.Filters) 24 else 8,
+            pageSize = if (request is AskAliflixRequest.Filters) 24 else 5,
         ))
     }
 

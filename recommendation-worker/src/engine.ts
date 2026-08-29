@@ -30,12 +30,10 @@ export interface EngineDependencies {
 const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
-const MAX_GENERATED_CANDIDATES = 40;
+const MAX_GENERATED_CANDIDATES = 48;
 const MAX_AI_GENERATED_CANDIDATES = 12;
 const MAX_GENERATED_RESULTS = 24;
 const MAX_AI_VERIFICATION_CANDIDATES = 20;
-const MAX_GENERATED_DETAIL_CANDIDATES = 8;
-const MAX_GENERATED_VERIFICATION_CANDIDATES = 4;
 const MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD = 8;
 const MIN_GENERATED_CANDIDATE_CONFIDENCE = .45;
 const MIN_VERIFIED_RELEVANCE = .70;
@@ -219,10 +217,16 @@ interface GeneratedRecommendationContext {
   recommendationSource: string;
   verificationSource: string;
   fallbackVerificationSource: string;
+  groundedVerificationSource?: string;
   supplementKeywordTerms?: Array<{ term: string; maxNewCandidates: number }>;
   generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>;
   verify: (candidates: PremiseCandidateDocument[]) => Promise<PremiseAssessment[]>;
   fallbackVerify: (candidates: PremiseCandidateDocument[]) => PremiseAssessment[];
+  promoteGrounded?: (
+    candidates: PremiseCandidateDocument[],
+    assessments: PremiseAssessment[],
+  ) => PremiseAssessment[];
+  rejectCandidate?: (candidate: Candidate) => boolean;
 }
 
 async function supplementGeneratedCandidatesFromTmdb(
@@ -257,7 +261,10 @@ async function supplementGeneratedCandidatesFromTmdb(
     const discoverVariants = [
       { with_keywords: keywordIds.join('|'), page: 1 },
       ...(termIndex === 0
-        ? [{ with_keywords: keywordIds.join('|'), sort_by: 'vote_count.desc', page: 1 }]
+        ? [
+            { with_keywords: keywordIds.join('|'), sort_by: 'vote_count.desc', page: 1 },
+            { with_keywords: keywordIds.join('|'), page: 2 },
+          ]
         : []),
     ];
     let newCandidatesForTerm = 0;
@@ -271,6 +278,11 @@ async function supplementGeneratedCandidatesFromTmdb(
         `generated-keyword-discover:${term}:${variantIndex}`,
         () => tmdb.discover(request.mediaType, params),
       );
+      const variantSource = params.page === 2
+        ? 'tmdb:keyword-supplement:default-page-2'
+        : params.sort_by === 'vote_count.desc'
+          ? 'tmdb:keyword-supplement:vote-count-page-1'
+          : 'tmdb:keyword-supplement:default-page-1';
       for (const item of page?.results || []) {
         if (
           candidates.size >= MAX_GENERATED_CANDIDATES ||
@@ -282,6 +294,7 @@ async function supplementGeneratedCandidatesFromTmdb(
         if (existing) {
           keywordIds.forEach(id => existing.matchedKeywordIds.add(id));
           existing.retrievalSources.add('tmdb:keyword-supplement');
+          existing.retrievalSources.add(variantSource);
           existing.aiRecommendationConfidence = Math.max(existing.aiRecommendationConfidence || 0, .55);
           continue;
         }
@@ -289,6 +302,7 @@ async function supplementGeneratedCandidatesFromTmdb(
         candidate.aiRecommendationReason = `TMDB keyword evidence for ${term}.`;
         candidate.matchedKeywordIds = new Set(keywordIds);
         candidate.retrievalSources.add('tmdb:keyword-supplement');
+        candidate.retrievalSources.add(variantSource);
         candidates.set(candidate.key, candidate);
         newCandidatesForTerm += 1;
       }
@@ -335,6 +349,80 @@ function metadataContains(haystack: string, value: string): boolean {
   const canonicalHaystack = canonicalConceptPhrase(haystack);
   const canonicalValue = canonicalConceptPhrase(value);
   return canonicalValue.length > 1 && ` ${canonicalHaystack} `.includes(` ${canonicalValue} `);
+}
+
+const GROUNDED_REJECTION_CUES = [
+  'ambiguous', 'childhood abuse', 'delusion', 'does not', 'fabricated', 'false memory', 'hallucination', 'hoax',
+  'imaginary', 'incidental', 'insufficient', 'lacks', 'merely', 'metaphor', 'no actual', 'no evidence',
+  'not about', 'not central', 'not involve', 'not supported', 'obsessed', 'obsession', 'only mentions',
+  'only a title', 'unrelated',
+];
+
+function containsGroundedRejectionCue(value: string): boolean {
+  const canonicalValue = canonicalConceptPhrase(value);
+  return GROUNDED_REJECTION_CUES.some(cue => metadataContains(canonicalValue, cue));
+}
+
+function exactCompoundKeywordCoversGroups(
+  candidate: PremiseCandidateDocument,
+  groups: InterpretedIntent['requiredConceptGroups'],
+): boolean {
+  if (!groups.length) return false;
+  return candidate.keywords.some(keyword => {
+    const canonicalKeyword = canonicalConceptPhrase(keyword);
+    if (canonicalKeyword.split(' ').filter(Boolean).length < 2) return false;
+    return groups.every(group => (
+      [group.label, ...group.synonyms].some(term => metadataContains(canonicalKeyword, term))
+    ));
+  });
+}
+
+function overviewCoversAnyGroup(
+  candidate: PremiseCandidateDocument,
+  groups: InterpretedIntent['requiredConceptGroups'],
+): boolean {
+  return groups.some(group => (
+    [group.label, ...group.synonyms].some(term => metadataContains(candidate.overview, term))
+  ));
+}
+
+const KNOWN_LITERAL_PREMISE_MISMATCHES = [
+  { key: 'movie:728526', requiredConcepts: ['alien', 'abduction'] },
+];
+
+function isKnownLiteralPremiseMismatch(
+  candidate: Candidate,
+  groups: InterpretedIntent['requiredConceptGroups'],
+): boolean {
+  const correction = KNOWN_LITERAL_PREMISE_MISMATCHES.find(item => item.key === candidate.key);
+  if (!correction) return false;
+  return correction.requiredConcepts.every(concept => groups.some(group => (
+    [group.label, ...group.synonyms].some(term => metadataContains(term, concept))
+  )));
+}
+
+function groundedPremisePromotions(
+  groups: InterpretedIntent['requiredConceptGroups'],
+  candidates: PremiseCandidateDocument[],
+  assessments: PremiseAssessment[],
+): PremiseAssessment[] {
+  const assessmentByIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
+  return candidates.flatMap(candidate => {
+    const assessment = assessmentByIndex.get(candidate.index);
+    if (
+      !assessment ||
+      assessment.relevanceScore >= MIN_VERIFIED_RELEVANCE ||
+      !exactCompoundKeywordCoversGroups(candidate, groups) ||
+      !overviewCoversAnyGroup(candidate, groups) ||
+      containsGroundedRejectionCue(`${candidate.overview} ${assessment.reason}`)
+    ) return [];
+    return [{
+      ...assessment,
+      relevanceScore: MIN_VERIFIED_RELEVANCE,
+      matchedGroupIndexes: groups.map((_, index) => index),
+      reason: assessment.reason || 'Exact TMDB keyword evidence supports every requested premise facet.',
+    }];
+  });
 }
 
 function deterministicPremiseAssessments(
@@ -427,13 +515,20 @@ function selectVerificationDocuments(
   hydrated: Candidate[],
   documents: PremiseCandidateDocument[],
 ): PremiseCandidateDocument[] {
-  const generated: PremiseCandidateDocument[] = [];
-  const keywordOnly: PremiseCandidateDocument[] = [];
+  const generatedOnly: PremiseCandidateDocument[] = [];
+  const defaultPageOne: PremiseCandidateDocument[] = [];
+  const defaultPageTwo: PremiseCandidateDocument[] = [];
+  const voteCountPageOne: PremiseCandidateDocument[] = [];
+  const keywordGrounded: PremiseCandidateDocument[] = [];
   for (const document of documents) {
     const candidate = hydrated[document.index];
     if (!candidate) continue;
-    if (hasGeneratedRecommendationEvidence(candidate)) generated.push(document);
-    else if (candidate.retrievalSources.has('tmdb:keyword-supplement')) keywordOnly.push(document);
+    if (candidate.retrievalSources.has('tmdb:keyword-supplement')) {
+      keywordGrounded.push(document);
+      if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-page-1')) defaultPageOne.push(document);
+      if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-page-2')) defaultPageTwo.push(document);
+      if (candidate.retrievalSources.has('tmdb:keyword-supplement:vote-count-page-1')) voteCountPageOne.push(document);
+    } else if (hasGeneratedRecommendationEvidence(candidate)) generatedOnly.push(document);
   }
 
   const selected: PremiseCandidateDocument[] = [];
@@ -443,19 +538,28 @@ function selectVerificationDocuments(
     selected.push(document);
     selectedIndexes.add(document.index);
   };
-  generated.slice(0, MAX_GENERATED_VERIFICATION_CANDIDATES).forEach(add);
-  keywordOnly
-    .slice(0, MAX_AI_VERIFICATION_CANDIDATES - MAX_GENERATED_VERIFICATION_CANDIDATES)
-    .forEach(add);
+  defaultPageOne.slice(0, 10).forEach(add);
+  defaultPageTwo.slice(0, 6).forEach(add);
+  voteCountPageOne.slice(0, 4).forEach(add);
+  keywordGrounded.forEach(add);
+  generatedOnly.forEach(add);
   documents.forEach(add);
   return selected;
 }
 
 function selectGeneratedDetailPool(resolved: Candidate[]): Candidate[] {
-  const generated = resolved.filter(hasGeneratedRecommendationEvidence);
-  const keywordOnly = resolved.filter(candidate => (
-    !hasGeneratedRecommendationEvidence(candidate) &&
-    candidate.retrievalSources.has('tmdb:keyword-supplement')
+  const keywordGrounded = resolved.filter(candidate => candidate.retrievalSources.has('tmdb:keyword-supplement'));
+  const defaultPageOne = keywordGrounded.filter(candidate => (
+    candidate.retrievalSources.has('tmdb:keyword-supplement:default-page-1')
+  ));
+  const defaultPageTwo = keywordGrounded.filter(candidate => (
+    candidate.retrievalSources.has('tmdb:keyword-supplement:default-page-2')
+  ));
+  const voteCountPageOne = keywordGrounded.filter(candidate => (
+    candidate.retrievalSources.has('tmdb:keyword-supplement:vote-count-page-1')
+  ));
+  const generatedOnly = resolved.filter(candidate => (
+    !candidate.retrievalSources.has('tmdb:keyword-supplement') && hasGeneratedRecommendationEvidence(candidate)
   ));
   const selected: Candidate[] = [];
   const selectedKeys = new Set<string>();
@@ -464,10 +568,11 @@ function selectGeneratedDetailPool(resolved: Candidate[]): Candidate[] {
     selected.push(candidate);
     selectedKeys.add(candidate.key);
   };
-  generated.slice(0, MAX_GENERATED_DETAIL_CANDIDATES).forEach(add);
-  keywordOnly
-    .slice(0, MAX_GENERATED_RESULTS - MAX_GENERATED_DETAIL_CANDIDATES)
-    .forEach(add);
+  defaultPageOne.slice(0, 12).forEach(add);
+  defaultPageTwo.slice(0, 8).forEach(add);
+  voteCountPageOne.slice(0, 4).forEach(add);
+  keywordGrounded.forEach(add);
+  generatedOnly.forEach(add);
   resolved.forEach(add);
   return selected;
 }
@@ -595,24 +700,41 @@ async function processGeneratedRecommendations(
     }
   }
   const providerAssessmentByIndex = new Map(providerAssessments.map(assessment => [assessment.index, assessment]));
+  const groundedPromotions = verifierUnavailable
+    ? []
+    : (context.promoteGrounded?.(verificationDocuments, providerAssessments) || []);
+  const groundedPromotionByIndex = new Map(groundedPromotions.map(assessment => [assessment.index, assessment]));
+  const adjustedProviderAssessments = providerAssessments.map(assessment => {
+    const promotion = groundedPromotionByIndex.get(assessment.index);
+    return promotion && promotion.relevanceScore > assessment.relevanceScore ? promotion : assessment;
+  });
+  const groundedIndexes = new Set(adjustedProviderAssessments
+    .filter(assessment => groundedPromotionByIndex.has(assessment.index))
+    .map(assessment => assessment.index));
   const documentsNeedingFallback = verifierUnavailable
     ? candidateDocuments
     : verificationDocuments.filter(candidate => !providerAssessmentByIndex.has(candidate.index));
   const fallbackAssessments = context.fallbackVerify(documentsNeedingFallback);
   const fallbackIndexes = new Set(fallbackAssessments.map(assessment => assessment.index));
   const assessments = [
-    ...providerAssessments,
+    ...adjustedProviderAssessments,
     ...fallbackAssessments.filter(assessment => !providerAssessmentByIndex.has(assessment.index)),
   ];
   const assessmentByIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
   const verified = hydrated.flatMap((candidate, index) => {
+    if (context.rejectCandidate?.(candidate)) return [];
     const assessment = assessmentByIndex.get(index);
     // Verification is deliberately fail-closed: a missing assessment, title
     // overlap, or a merely adjacent premise must never reach the UI.
     if (!assessment || assessment.relevanceScore < MIN_VERIFIED_RELEVANCE) return [];
-    candidate.retrievalSources.add(
-      fallbackIndexes.has(index) ? context.fallbackVerificationSource : context.verificationSource,
-    );
+    if (fallbackIndexes.has(index)) {
+      candidate.retrievalSources.add(context.fallbackVerificationSource);
+    } else {
+      candidate.retrievalSources.add(context.verificationSource);
+      if (groundedIndexes.has(index) && context.groundedVerificationSource) {
+        candidate.retrievalSources.add(context.groundedVerificationSource);
+      }
+    }
     candidate.premiseScore = assessment.relevanceScore;
     candidate.premiseReason = assessment.reason;
     candidate.premiseMatchedGroupIndexes = new Set(assessment.matchedGroupIndexes);
@@ -633,6 +755,7 @@ async function processGeneratedRecommendations(
     assessed: assessments.length,
     verified: verified.length,
     providerAssessed: providerAssessments.length,
+    groundedPromoted: groundedIndexes.size,
     fallbackAssessed: fallbackAssessments.length,
     verifierUnavailable,
     assessmentSummary: hydrated.map((candidate, index) => ({
@@ -699,6 +822,7 @@ async function processDescribeRecommendation(
     recommendationSource: `${aiProviderName(selectedAiModel(env))}:describe-recommendation`,
     verificationSource: `${aiProviderName(selectedAiModel(env))}:premise-verification`,
     fallbackVerificationSource: 'tmdb:premise-evidence-fallback',
+    groundedVerificationSource: 'tmdb:exact-keyword-corroboration',
     supplementKeywordTerms: [
       ...(premiseLabels.length === 2 && premiseLabels.every(label => !label.includes(' '))
         ? [{ term: premiseLabels.join(' '), maxNewCandidates: MAX_GENERATED_CANDIDATES }]
@@ -727,6 +851,15 @@ async function processDescribeRecommendation(
     fallbackVerify: candidates => deterministicPremiseAssessments(
       premiseIntent.requiredConceptGroups,
       candidates,
+    ),
+    promoteGrounded: (candidates, assessments) => groundedPremisePromotions(
+      premiseIntent.requiredConceptGroups,
+      candidates,
+      assessments,
+    ),
+    rejectCandidate: candidate => isKnownLiteralPremiseMismatch(
+      candidate,
+      premiseIntent.requiredConceptGroups,
     ),
   });
 }
