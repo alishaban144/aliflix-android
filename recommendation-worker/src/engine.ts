@@ -214,7 +214,7 @@ interface GeneratedRecommendationContext {
   excludedCandidateKeys: Set<string>;
   recommendationSource: string;
   verificationSource: string;
-  supplementKeywordTerms?: string[];
+  supplementKeywordTerms?: Array<{ term: string; maxNewCandidates: number }>;
   generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>;
   verify: (candidates: PremiseCandidateDocument[]) => Promise<PremiseAssessment[]>;
 }
@@ -228,9 +228,14 @@ async function supplementGeneratedCandidatesFromTmdb(
   if (!context.supplementKeywordTerms?.length || candidates.size >= MAX_GENERATED_CANDIDATES) return;
   if (typeof tmdb.searchKeyword !== 'function' || typeof tmdb.discover !== 'function') return;
 
-  const terms = [...new Set(context.supplementKeywordTerms.map(canonicalConceptPhrase).filter(Boolean))]
-    .slice(0, 6);
-  for (const term of terms) {
+  const uniqueTerms = new Map<string, number>();
+  for (const item of context.supplementKeywordTerms) {
+    const term = canonicalConceptPhrase(item.term);
+    if (!term) continue;
+    uniqueTerms.set(term, Math.max(uniqueTerms.get(term) || 0, item.maxNewCandidates));
+  }
+  const terms = [...uniqueTerms.entries()].slice(0, 6);
+  for (const [term, maxNewCandidates] of terms) {
     if (candidates.size >= MAX_GENERATED_CANDIDATES || tmdb.callsRemaining <= MAX_GENERATED_RESULTS + 1) break;
     const keywordResponse = await optionalTmdbCall(
       `generated-keyword:${term}`,
@@ -251,7 +256,7 @@ async function supplementGeneratedCandidatesFromTmdb(
     for (const item of page?.results || []) {
       if (
         candidates.size >= MAX_GENERATED_CANDIDATES ||
-        newCandidatesForTerm >= MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD
+        newCandidatesForTerm >= maxNewCandidates
       ) break;
       const candidate = toCandidate(item, request.mediaType, new Map());
       if (!candidate || context.excludedCandidateKeys.has(candidate.key)) continue;
@@ -495,11 +500,14 @@ async function processDescribeRecommendation(
     recommendationSource: `${aiProviderName(selectedAiModel(env))}:describe-recommendation`,
     verificationSource: `${aiProviderName(selectedAiModel(env))}:premise-verification`,
     supplementKeywordTerms: [
-      ...(premiseLabels.length === 2 && premiseLabels.every(label => !label.includes(' ')) ? [premiseLabels.join(' ')] : []),
-      ...premiseLabels,
-      ...premiseIntent.requiredConceptGroups.map(group => (
-        group.synonyms.find(value => canonicalConceptPhrase(value) !== canonicalConceptPhrase(group.label)) || group.label
-      )),
+      ...(premiseLabels.length === 2 && premiseLabels.every(label => !label.includes(' '))
+        ? [{ term: premiseLabels.join(' '), maxNewCandidates: MAX_GENERATED_RESULTS }]
+        : []),
+      ...premiseLabels.map(term => ({ term, maxNewCandidates: MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD })),
+      ...premiseIntent.requiredConceptGroups.map(group => ({
+        term: group.synonyms.find(value => canonicalConceptPhrase(value) !== canonicalConceptPhrase(group.label)) || group.label,
+        maxNewCandidates: MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD,
+      })),
     ],
     generate: excludedTitles => (dependencies.recommendDescribe || recommendDescribeTitles)(
       env,
