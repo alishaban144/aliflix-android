@@ -34,7 +34,7 @@ class AskAliflixWiringIntegrationTest {
 
         assertEquals("groq-qwen-3.8-27b", json.getString("aiModel"))
         assertEquals("groq-qwen-3.8-27b", json.getString("geminiModel"))
-        assertEquals(5, json.getInt("pageSize"))
+        assertEquals(20, json.getInt("pageSize"))
     }
 
     @Test

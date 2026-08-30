@@ -26,6 +26,41 @@ describe('recommendation sessions', () => {
     expect(last.nextOffset).toBeNull();
   });
 
+  it('reserves fresh continuation passes and appends only unseen TMDB identities', async () => {
+    const namespace = (env as any).RECOMMENDATION_SESSIONS as DurableObjectNamespace<RecommendationSession>;
+    const stub = namespace.get(namespace.idFromName(crypto.randomUUID())) as DurableObjectStub<RecommendationSession>;
+    await stub.store('expandable-fingerprint', Array.from({ length: 12 }, (_, index) => result(index + 1)), true);
+
+    const first = await stub.getPage('expandable-fingerprint', 0, 12);
+    expect(first.results).toHaveLength(12);
+    expect(first.nextOffset).toBe(12);
+
+    const reservation = await stub.reserveContinuation('expandable-fingerprint');
+    expect(reservation).toMatchObject({ canExpand: true, pass: 1 });
+    expect(reservation.excludedTmdbIds).toEqual(Array.from({ length: 12 }, (_, index) => index + 1));
+    expect(reservation.excludedTitles).toContain('Movie 12');
+
+    const completion = await stub.completeContinuation(
+      'expandable-fingerprint',
+      reservation.pass!,
+      [result(12), ...Array.from({ length: 12 }, (_, index) => result(index + 13))],
+    );
+    expect(completion).toEqual({ added: 12, count: 24, exhausted: false });
+
+    const second = await stub.getPage('expandable-fingerprint', first.nextOffset!, 12);
+    expect(second.results.map(item => item.tmdbId)).toEqual(Array.from({ length: 12 }, (_, index) => index + 13));
+    expect(second.nextOffset).toBe(24);
+
+    const emptySecondPass = await stub.reserveContinuation('expandable-fingerprint');
+    await stub.releaseContinuation('expandable-fingerprint', emptySecondPass.pass!);
+    expect((await stub.reserveContinuation('expandable-fingerprint')).pass).toBe(emptySecondPass.pass);
+    await stub.completeContinuation('expandable-fingerprint', emptySecondPass.pass!, []);
+    const emptyThirdPass = await stub.reserveContinuation('expandable-fingerprint');
+    const exhausted = await stub.completeContinuation('expandable-fingerprint', emptyThirdPass.pass!, []);
+    expect(exhausted.exhausted).toBe(true);
+    expect((await stub.getPage('expandable-fingerprint', 24, 12)).nextOffset).toBeNull();
+  });
+
   it('signs cursors and rejects tampering', async () => {
     const cursor = await createCursor('secret', { v: 1, sessionId: 's', requestId: 'r', fingerprint: 'f', offset: 20 });
     expect((await parseCursor('secret', cursor)).offset).toBe(20);

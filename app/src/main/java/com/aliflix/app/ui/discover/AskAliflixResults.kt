@@ -284,7 +284,7 @@ private fun ResultsList(
                     if (state.loadingMore) {
                         CircularProgressIndicator(color = AliflixAccentSecondary, strokeWidth = 2.dp, modifier = Modifier.size(25.dp))
                         Spacer(Modifier.height(8.dp))
-                        Text("Loading…", color = AliflixContentSecondary, fontSize = 11.sp)
+                        Text("Finding new matches…", color = AliflixContentSecondary, fontSize = 11.sp)
                     } else {
                         OutlinedButton(
                             onClick = onLoadMore,
@@ -293,7 +293,7 @@ private fun ResultsList(
                             border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.55f)),
                             contentPadding = PaddingValues(vertical = 14.dp),
                         ) {
-                            Text("Show more", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Find more matches", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -530,7 +530,9 @@ private fun ResultCountPill(label: String) {
 }
 
 private fun resultCountLabel(state: AskAliflixUiState.Results): String =
-    if (state.totalAvailable > state.items.size) {
+    if (state.hasMore) {
+        "${state.items.size}+ found"
+    } else if (state.totalAvailable > state.items.size) {
         "${state.items.size} of ${state.totalAvailable}"
     } else {
         "${state.items.size} found"

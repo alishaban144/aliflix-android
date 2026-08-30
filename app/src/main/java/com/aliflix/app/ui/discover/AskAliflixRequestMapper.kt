@@ -85,9 +85,9 @@ object AskAliflixRequestMapper {
             refinementQuery = (request as? AskAliflixRequest.Describe)?.refinementText
                 ?: (request as? AskAliflixRequest.Similar)?.refinementText,
             filters = spec.toWorkerFilters(),
-            // Generated modes precompute one verified set and page through it.
-            // Keeping pages compact makes Show more instant without another AI call.
-            pageSize = if (request is AskAliflixRequest.Filters) 24 else 5,
+            // Generated modes return a substantial verified batch. Each signed
+            // continuation asks the Worker to find and verify new matches.
+            pageSize = if (request is AskAliflixRequest.Filters) 24 else 20,
         ))
     }
 

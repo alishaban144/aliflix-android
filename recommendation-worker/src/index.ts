@@ -1,8 +1,8 @@
 import { ZodError } from 'zod';
 import { processFilterDiscoveryPage, processRecommendation, supportsDirectFilterPagination } from './engine';
-import { RecommendationRequestSchema } from './schemas';
-import { createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
-import { RecommendationEnv, RecommendationResponse, ServiceError } from './types';
+import { ParsedRecommendationRequest, RecommendationRequestSchema } from './schemas';
+import { ContinuationReservation, createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
+import { RecommendationEnv, RecommendationResponse, RecommendationResult, ServiceError } from './types';
 import { editorialPicks, homeFeed, personCredits, titleDetails } from './catalog';
 
 export { RecommendationSession };
@@ -13,6 +13,30 @@ const catalogJson = (body: unknown): Response => new Response(JSON.stringify(bod
   status: 200,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' },
 });
+// One fresh engine pass per tap keeps the complete AI + TMDB request within the
+// same bounded subrequest budget as an initial search.
+const MAX_CONTINUATION_ATTEMPTS_PER_CLICK = 1;
+
+function continuationRequest(
+  parsed: ParsedRecommendationRequest,
+  reservation: ContinuationReservation,
+): ParsedRecommendationRequest {
+  return {
+    ...parsed,
+    cursor: undefined,
+    filters: {
+      ...parsed.filters,
+      excludedTmdbIds: [...new Set([
+        ...parsed.filters.excludedTmdbIds,
+        ...reservation.excludedTmdbIds,
+      ])].slice(0, 1_000),
+      excludedTitles: [...new Set([
+        ...parsed.filters.excludedTitles,
+        ...reservation.excludedTitles,
+      ])].slice(0, 100),
+    },
+  };
+}
 
 async function enforceRateLimit(request: Request, env: RecommendationEnv): Promise<void> {
   const key = request.headers.get('cf-connecting-ip') || 'unknown';
@@ -82,7 +106,41 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
   const stub = env.RECOMMENDATION_SESSIONS.getByName(sessionId);
   if (!parsed.cursor) {
     const status = await stub.getStatus(fingerprint);
-    if (!status.exists) await stub.store(fingerprint, await processRecommendation(env, parsed));
+    if (!status.exists) {
+      await stub.store(
+        fingerprint,
+        await processRecommendation(env, parsed),
+        parsed.mode !== 'filters',
+      );
+    }
+  } else if (parsed.mode !== 'filters') {
+    for (let attempt = 0; attempt < MAX_CONTINUATION_ATTEMPTS_PER_CLICK; attempt++) {
+      const reservation = await stub.reserveContinuation(fingerprint);
+      if (!reservation.canExpand || reservation.pass === null) break;
+      let expanded: RecommendationResult[];
+      try {
+        expanded = await processRecommendation(
+          env,
+          continuationRequest(parsed, reservation),
+          {},
+          { continuationPass: reservation.pass },
+        );
+      } catch (error) {
+        await stub.releaseContinuation(fingerprint, reservation.pass);
+        throw error;
+      }
+      const completed = await stub.completeContinuation(fingerprint, reservation.pass, expanded);
+      console.log(JSON.stringify({
+        event: 'generated_continuation_completed',
+        requestId: parsed.requestId,
+        mode: parsed.mode,
+        pass: reservation.pass,
+        added: completed.added,
+        total: completed.count,
+        exhausted: completed.exhausted,
+      }));
+      if (completed.added > 0) break;
+    }
   }
   const page = await stub.getPage(fingerprint, offset, parsed.pageSize);
   const nextCursor = page.nextOffset === null ? null : await createCursor(env.CURSOR_SIGNING_SECRET, {

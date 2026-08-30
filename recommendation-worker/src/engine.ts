@@ -27,6 +27,10 @@ export interface EngineDependencies {
     Partial<Pick<TmdbClient, 'searchTitle'>>;
 }
 
+export interface RecommendationExecutionOptions {
+  continuationPass?: number;
+}
+
 const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
@@ -34,6 +38,8 @@ const MAX_GENERATED_CANDIDATES = 48;
 const MAX_AI_GENERATED_CANDIDATES = 12;
 const MAX_GENERATED_RESULTS = 24;
 const MAX_AI_VERIFICATION_CANDIDATES = 20;
+const GENERATED_DETAIL_RESERVE = 4;
+const GENERATED_VERIFICATION_RESERVE = 4;
 const MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD = 8;
 const MIN_GENERATED_CANDIDATE_CONFIDENCE = .45;
 const MIN_VERIFIED_RELEVANCE = .70;
@@ -193,9 +199,8 @@ async function generatedRecommendations(
   generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>,
 ): Promise<DescribeRecommendation[]> {
   const recommendations = new Map<string, DescribeRecommendation>();
-  // One explicit generation request keeps Describe/Similar predictable under
-  // low daily Gemini quotas. The model is already asked for the full target
-  // count; a hidden expansion request could double quota use for one tap.
+  // Each initial or user-requested continuation pass performs exactly one
+  // candidate-generation call. Continuations are never hidden background work.
   const generated = await generate([]);
   for (const item of generated) {
     // Keep plausible real candidates for the independent evidence judge.
@@ -213,6 +218,7 @@ async function generatedRecommendations(
 interface GeneratedRecommendationContext {
   filters: RecommendationFilters;
   generationLimit: number;
+  continuationPass: number;
   excludedCandidateKeys: Set<string>;
   recommendationSource: string;
   verificationSource: string;
@@ -258,12 +264,18 @@ async function supplementGeneratedCandidatesFromTmdb(
       .slice(0, 2);
     if (!keywordIds.length || tmdb.callsRemaining <= MAX_GENERATED_RESULTS) continue;
 
+    const primaryDefaultPage = context.continuationPass * 2 + 1;
+    const secondaryDefaultPage = primaryDefaultPage + 1;
+    const voteCountPage = context.continuationPass + 1;
     const discoverVariants = [
-      { with_keywords: keywordIds.join('|'), page: 1 },
+      {
+        with_keywords: keywordIds.join('|'),
+        page: termIndex === 0 ? primaryDefaultPage : context.continuationPass + 1,
+      },
       ...(termIndex === 0
         ? [
-            { with_keywords: keywordIds.join('|'), sort_by: 'vote_count.desc', page: 1 },
-            { with_keywords: keywordIds.join('|'), page: 2 },
+            { with_keywords: keywordIds.join('|'), sort_by: 'vote_count.desc', page: voteCountPage },
+            { with_keywords: keywordIds.join('|'), page: secondaryDefaultPage },
           ]
         : []),
     ];
@@ -278,11 +290,14 @@ async function supplementGeneratedCandidatesFromTmdb(
         `generated-keyword-discover:${term}:${variantIndex}`,
         () => tmdb.discover(request.mediaType, params),
       );
-      const variantSource = params.page === 2
-        ? 'tmdb:keyword-supplement:default-page-2'
-        : params.sort_by === 'vote_count.desc'
-          ? 'tmdb:keyword-supplement:vote-count-page-1'
-          : 'tmdb:keyword-supplement:default-page-1';
+      const laneSource = params.sort_by === 'vote_count.desc'
+        ? 'tmdb:keyword-supplement:vote-count'
+        : params.page === secondaryDefaultPage
+          ? 'tmdb:keyword-supplement:default-secondary'
+          : 'tmdb:keyword-supplement:default-primary';
+      const variantSource = params.sort_by === 'vote_count.desc'
+        ? `tmdb:keyword-supplement:vote-count-page-${params.page}`
+        : `tmdb:keyword-supplement:default-page-${params.page}`;
       for (const item of page?.results || []) {
         if (
           candidates.size >= MAX_GENERATED_CANDIDATES ||
@@ -294,6 +309,7 @@ async function supplementGeneratedCandidatesFromTmdb(
         if (existing) {
           keywordIds.forEach(id => existing.matchedKeywordIds.add(id));
           existing.retrievalSources.add('tmdb:keyword-supplement');
+          existing.retrievalSources.add(laneSource);
           existing.retrievalSources.add(variantSource);
           existing.aiRecommendationConfidence = Math.max(existing.aiRecommendationConfidence || 0, .55);
           continue;
@@ -302,6 +318,7 @@ async function supplementGeneratedCandidatesFromTmdb(
         candidate.aiRecommendationReason = `TMDB keyword evidence for ${term}.`;
         candidate.matchedKeywordIds = new Set(keywordIds);
         candidate.retrievalSources.add('tmdb:keyword-supplement');
+        candidate.retrievalSources.add(laneSource);
         candidate.retrievalSources.add(variantSource);
         candidates.set(candidate.key, candidate);
         newCandidatesForTerm += 1;
@@ -516,18 +533,18 @@ function selectVerificationDocuments(
   documents: PremiseCandidateDocument[],
 ): PremiseCandidateDocument[] {
   const generatedOnly: PremiseCandidateDocument[] = [];
-  const defaultPageOne: PremiseCandidateDocument[] = [];
-  const defaultPageTwo: PremiseCandidateDocument[] = [];
-  const voteCountPageOne: PremiseCandidateDocument[] = [];
+  const defaultPrimary: PremiseCandidateDocument[] = [];
+  const defaultSecondary: PremiseCandidateDocument[] = [];
+  const voteCount: PremiseCandidateDocument[] = [];
   const keywordGrounded: PremiseCandidateDocument[] = [];
   for (const document of documents) {
     const candidate = hydrated[document.index];
     if (!candidate) continue;
     if (candidate.retrievalSources.has('tmdb:keyword-supplement')) {
       keywordGrounded.push(document);
-      if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-page-1')) defaultPageOne.push(document);
-      if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-page-2')) defaultPageTwo.push(document);
-      if (candidate.retrievalSources.has('tmdb:keyword-supplement:vote-count-page-1')) voteCountPageOne.push(document);
+      if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-primary')) defaultPrimary.push(document);
+      if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-secondary')) defaultSecondary.push(document);
+      if (candidate.retrievalSources.has('tmdb:keyword-supplement:vote-count')) voteCount.push(document);
     } else if (hasGeneratedRecommendationEvidence(candidate)) generatedOnly.push(document);
   }
 
@@ -538,9 +555,10 @@ function selectVerificationDocuments(
     selected.push(document);
     selectedIndexes.add(document.index);
   };
-  defaultPageOne.slice(0, 10).forEach(add);
-  defaultPageTwo.slice(0, 6).forEach(add);
-  voteCountPageOne.slice(0, 4).forEach(add);
+  generatedOnly.slice(0, GENERATED_VERIFICATION_RESERVE).forEach(add);
+  defaultPrimary.slice(0, 8).forEach(add);
+  defaultSecondary.slice(0, 5).forEach(add);
+  voteCount.slice(0, 3).forEach(add);
   keywordGrounded.forEach(add);
   generatedOnly.forEach(add);
   documents.forEach(add);
@@ -549,14 +567,14 @@ function selectVerificationDocuments(
 
 function selectGeneratedDetailPool(resolved: Candidate[]): Candidate[] {
   const keywordGrounded = resolved.filter(candidate => candidate.retrievalSources.has('tmdb:keyword-supplement'));
-  const defaultPageOne = keywordGrounded.filter(candidate => (
-    candidate.retrievalSources.has('tmdb:keyword-supplement:default-page-1')
+  const defaultPrimary = keywordGrounded.filter(candidate => (
+    candidate.retrievalSources.has('tmdb:keyword-supplement:default-primary')
   ));
-  const defaultPageTwo = keywordGrounded.filter(candidate => (
-    candidate.retrievalSources.has('tmdb:keyword-supplement:default-page-2')
+  const defaultSecondary = keywordGrounded.filter(candidate => (
+    candidate.retrievalSources.has('tmdb:keyword-supplement:default-secondary')
   ));
-  const voteCountPageOne = keywordGrounded.filter(candidate => (
-    candidate.retrievalSources.has('tmdb:keyword-supplement:vote-count-page-1')
+  const voteCount = keywordGrounded.filter(candidate => (
+    candidate.retrievalSources.has('tmdb:keyword-supplement:vote-count')
   ));
   const generatedOnly = resolved.filter(candidate => (
     !candidate.retrievalSources.has('tmdb:keyword-supplement') && hasGeneratedRecommendationEvidence(candidate)
@@ -568,9 +586,10 @@ function selectGeneratedDetailPool(resolved: Candidate[]): Candidate[] {
     selected.push(candidate);
     selectedKeys.add(candidate.key);
   };
-  defaultPageOne.slice(0, 12).forEach(add);
-  defaultPageTwo.slice(0, 8).forEach(add);
-  voteCountPageOne.slice(0, 4).forEach(add);
+  generatedOnly.slice(0, GENERATED_DETAIL_RESERVE).forEach(add);
+  defaultPrimary.slice(0, 10).forEach(add);
+  defaultSecondary.slice(0, 6).forEach(add);
+  voteCount.slice(0, 4).forEach(add);
   keywordGrounded.forEach(add);
   generatedOnly.forEach(add);
   resolved.forEach(add);
@@ -587,19 +606,6 @@ async function processGeneratedRecommendations(
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB title verification is unavailable', 503, true);
   }
   const recommendations = await generatedRecommendations(context.generationLimit, context.generate);
-  if (!recommendations.length) {
-    console.log(JSON.stringify({
-      event: 'generated_recommendation_pipeline',
-      mode: request.mode,
-      model: selectedAiModel(env),
-      generated: 0,
-      resolved: 0,
-      hydrated: 0,
-      assessed: 0,
-      verified: 0,
-    }));
-    return [];
-  }
 
   const candidates = new Map<string, Candidate>();
   for (let start = 0; start < recommendations.length; start += DISCOVERY_CONCURRENCY) {
@@ -765,7 +771,7 @@ async function processGeneratedRecommendations(
   }));
 
   const collectionCounts = new Map<number, number>();
-  return verified.flatMap(({ candidate, score }): RecommendationResult[] => {
+  const results = verified.flatMap(({ candidate, score }): RecommendationResult[] => {
     if (candidate.collectionId) {
       const count = collectionCounts.get(candidate.collectionId) || 0;
       if (count >= 2) return [];
@@ -798,6 +804,7 @@ async function processGeneratedRecommendations(
       retrievalSources: [...candidate.retrievalSources].sort(),
     }];
   });
+  return results.slice(0, request.pageSize);
 }
 
 async function processDescribeRecommendation(
@@ -805,6 +812,7 @@ async function processDescribeRecommendation(
   request: ParsedRecommendationRequest,
   tmdb: NonNullable<EngineDependencies['tmdb']>,
   dependencies: EngineDependencies,
+  continuationPass: number,
 ): Promise<RecommendationResult[]> {
   const query = request.previousQuery && request.refinementQuery
     ? `${request.previousQuery}. Additional requirement: ${request.refinementQuery}`
@@ -816,6 +824,7 @@ async function processDescribeRecommendation(
   return processGeneratedRecommendations(env, request, tmdb, {
     filters,
     generationLimit: MAX_AI_GENERATED_CANDIDATES,
+    continuationPass,
     excludedCandidateKeys: new Set(
       filters.excludedTmdbIds.map(tmdbId => `${request.mediaType}:${tmdbId}`),
     ),
@@ -828,10 +837,13 @@ async function processDescribeRecommendation(
         ? [{ term: premiseLabels.join(' '), maxNewCandidates: MAX_GENERATED_CANDIDATES }]
         : []),
       ...premiseLabels.map(term => ({ term, maxNewCandidates: MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD })),
-      ...premiseIntent.requiredConceptGroups.map(group => ({
-        term: group.synonyms.find(value => canonicalConceptPhrase(value) !== canonicalConceptPhrase(group.label)) || group.label,
-        maxNewCandidates: MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD,
-      })),
+      ...premiseIntent.requiredConceptGroups.flatMap(group => group.synonyms
+        .filter(value => canonicalConceptPhrase(value) !== canonicalConceptPhrase(group.label))
+        .filter((value, index, values) => values.findIndex(other => (
+          canonicalConceptPhrase(other) === canonicalConceptPhrase(value)
+        )) === index)
+        .slice(0, 3)
+        .map(term => ({ term, maxNewCandidates: MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD }))),
     ],
     generate: excludedTitles => (dependencies.recommendDescribe || recommendDescribeTitles)(
       env,
@@ -869,6 +881,7 @@ async function processSimilarRecommendation(
   request: ParsedRecommendationRequest,
   tmdb: NonNullable<EngineDependencies['tmdb']>,
   dependencies: EngineDependencies,
+  continuationPass: number,
 ): Promise<RecommendationResult[]> {
   const requestedAnchors = request.anchors?.length ? request.anchors : (request.anchor ? [request.anchor] : []);
   const anchorDetails = await Promise.all(requestedAnchors.map(anchor => optionalTmdbCall(
@@ -909,6 +922,7 @@ async function processSimilarRecommendation(
   return processGeneratedRecommendations(env, request, tmdb, {
     filters,
     generationLimit: MAX_AI_GENERATED_CANDIDATES,
+    continuationPass,
     excludedCandidateKeys,
     recommendationSource: `${aiProviderName(selectedAiModel(env))}:similar-recommendation`,
     verificationSource: `${aiProviderName(selectedAiModel(env))}:similarity-verification`,
@@ -1355,7 +1369,12 @@ function applyQueryDateConstraints(query: string, filters: RecommendationFilters
   }
 }
 
-export async function processRecommendation(env: RecommendationEnv, request: ParsedRecommendationRequest, dependencies: EngineDependencies = {}): Promise<RecommendationResult[]> {
+export async function processRecommendation(
+  env: RecommendationEnv,
+  request: ParsedRecommendationRequest,
+  dependencies: EngineDependencies = {},
+  options: RecommendationExecutionOptions = {},
+): Promise<RecommendationResult[]> {
   // Generated modes make one candidate call and one evidence-grounded
   // verification call. Forty TMDB attempts keep the worst case below the
   // Cloudflare Free plan's 50 external-subrequest limit.
@@ -1368,9 +1387,10 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     : env;
   let providerFallbackIntent: InterpretedIntent | undefined;
   let disableGeminiEmbeddings = isGroqAiModel(selectedAiModel(recommendationEnv));
+  const continuationPass = Math.max(0, Math.min(6, options.continuationPass || 0));
   if (request.mode === 'describe') {
     try {
-      return await processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies);
+      return await processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass);
     } catch (error) {
       if (!isRetryableAiProviderError(error)) throw error;
       const fallbackQuery = request.query || request.refinementQuery || '';
@@ -1384,7 +1404,7 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
   }
   if (request.mode === 'similar') {
-    return processSimilarRecommendation(recommendationEnv, request, tmdb, dependencies);
+    return processSimilarRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass);
   }
   const interpret = dependencies.interpret || interpretQuery;
   const queryToInterpret = request.previousQuery && request.refinementQuery
@@ -1642,11 +1662,12 @@ export async function processRecommendation(env: RecommendationEnv, request: Par
     }
   }
 
-  return rankCandidates(
+  const ranked = rankCandidates(
     hydrated,
     effectiveIntent,
     filters,
     embeddingsAvailable,
     false,
-  ).slice(0, MAX_CANDIDATES);
+  );
+  return ranked.slice(0, request.mode === 'describe' ? request.pageSize : MAX_CANDIDATES);
 }

@@ -6,7 +6,7 @@ import org.junit.Test
 
 class AskAliflixShowMoreTest {
     @Test
-    fun showMoreKeepsTheSameAiSessionAndUsesItsSignedCursor() {
+    fun showMoreRequestsFreshServerContinuationThroughTheSignedCursor() {
         val original = V3RecommendationRequest(
             requestId = "00000000-0000-4000-8000-000000000001",
             mode = "describe",

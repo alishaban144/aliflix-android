@@ -448,7 +448,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     ]));
   });
 
-  it('uses one quota-bounded generation pass and one batched verification pass for twelve genuine matches', async () => {
+  it('uses one quota-bounded generation pass and returns the requested verified page', async () => {
     let generationPasses = 0;
     let verificationPasses = 0;
     let titleSearches = 0;
@@ -506,7 +506,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(verificationPasses).toBe(1);
     expect(titleSearches).toBe(12);
     expect(detailCalls).toBe(12);
-    expect(results).toHaveLength(12);
+    expect(results).toHaveLength(8);
     expect(results.every(result => result.retrievalSources.includes('tmdb:details'))).toBe(true);
   });
 
@@ -582,15 +582,90 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     });
 
     expect(verifiedTitles).toHaveLength(20);
-    expect(verifiedTitles.filter(title => title.startsWith('Generated '))).toHaveLength(0);
-    expect(verifiedTitles.filter(title => title.startsWith('Keyword '))).toHaveLength(20);
+    expect(verifiedTitles.filter(title => title.startsWith('Generated '))).toHaveLength(4);
+    expect(verifiedTitles.filter(title => title.startsWith('Keyword '))).toHaveLength(16);
     expect(keywordDiscoverVariants).toEqual(new Set([
       'default:1',
       'vote_count.desc:1',
       'default:2',
     ]));
-    expect(results).toHaveLength(20);
+    expect(results).toHaveLength(8);
     expect(results.every(result => !result.retrievalSources.includes('tmdb:premise-evidence-fallback'))).toBe(true);
+  });
+
+  it('retrieves deeper TMDB lanes for a fresh broad-query continuation batch', async () => {
+    const discoverVariants: string[] = [];
+    const tmdb = {
+      ...fakeTmdb(),
+      callsRemaining: 100,
+      searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchKeyword: async (term: string) => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{ id: 99, name: term }],
+      }),
+      discover: async (_type: string, params: Record<string, string | number>) => {
+        const page = Number(params.page);
+        const ranked = params.sort_by === 'vote_count.desc';
+        discoverVariants.push(`${ranked ? 'vote' : 'default'}:${page}`);
+        const lane = ranked ? 50_000 : 10_000;
+        return {
+          page, total_pages: 20, total_results: 400,
+          results: Array.from({ length: 20 }, (_, index) => ({
+            id: lane + page * 100 + index,
+            title: `Alien UFO Match ${lane + page * 100 + index}`,
+            release_date: '2020-01-01',
+            overview: 'Aliens arrive in UFOs and drive the central story.',
+            genre_ids: [878],
+            vote_count: 2_000 - index,
+          })),
+        };
+      },
+      details: async (_type: string, id: number) => ({
+        id,
+        title: `Alien UFO Match ${id}`,
+        release_date: '2020-01-01',
+        overview: 'Aliens arrive in UFOs and drive the central story.',
+        genres: [{ id: 878, name: 'Science Fiction' }],
+        keywords: { keywords: [{ id: 99, name: 'alien' }, { id: 100, name: 'ufo' }] },
+        vote_count: 1_000,
+      }),
+    };
+    const broadRequest = {
+      ...request,
+      mode: 'describe' as const,
+      query: 'movies about aliens and ufos',
+      pageSize: 20,
+    };
+    const dependencies = {
+      tmdb: tmdb as any,
+      recommendDescribe: async () => [],
+      assessPremise: async (_env: any, _query: string, _type: string, _groups: any[], candidates: any[]) => (
+        candidates.map(candidate => ({
+          index: candidate.index,
+          relevanceScore: .91,
+          matchedGroupIndexes: [0],
+          reason: 'Aliens and UFO activity are central to the plot.',
+        }))
+      ),
+    };
+
+    const first = await processRecommendation({} as any, broadRequest, dependencies);
+    const second = await processRecommendation({} as any, {
+      ...broadRequest,
+      filters: {
+        ...broadRequest.filters,
+        excludedTmdbIds: first.map(item => item.tmdbId),
+        excludedTitles: first.map(item => item.title),
+      },
+    }, dependencies, { continuationPass: 1 });
+
+    expect(first).toHaveLength(20);
+    expect(second).toHaveLength(20);
+    expect(new Set([...first, ...second].map(item => item.tmdbId)).size).toBe(40);
+    expect(discoverVariants).toEqual(expect.arrayContaining([
+      'default:1', 'vote:1', 'default:2',
+      'default:3', 'vote:2', 'default:4',
+    ]));
   });
 
   it('promotes only borderline verifier matches corroborated by exact compound metadata', async () => {
@@ -798,18 +873,25 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
       discover: async () => {
         discoverCalls++;
         return {
-          page: 1, total_pages: 1, total_results: 1,
-          results: [{ id: 7, title: 'Funny Fixture', overview: 'A funny comedy', genre_ids: [35], vote_average: 7.2, vote_count: 500 }],
+          page: 1, total_pages: 1, total_results: 12,
+          results: Array.from({ length: 12 }, (_, offset) => ({
+            id: 7 + offset,
+            title: `Funny Fixture ${offset + 1}`,
+            overview: 'A funny comedy',
+            genre_ids: [35],
+            vote_average: 7.2,
+            vote_count: 500 - offset,
+          })),
         };
       },
       details: async (_type: string, id: number) => {
         detailCalls++;
-        return { id, title: 'Funny Fixture', overview: 'A funny comedy', genres: [{ id: 35, name: 'Comedy' }] };
+        return { id, title: `Funny Fixture ${id - 6}`, overview: 'A funny comedy', genres: [{ id: 35, name: 'Comedy' }] };
       },
     };
     const failure = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini timed out', 504, true);
 
-    const results = await processRecommendation({} as any, { ...request, mode: 'describe' }, {
+    const results = await processRecommendation({} as any, { ...request, mode: 'describe', pageSize: 5 }, {
       tmdb,
       recommendDescribe: async () => { throw failure; },
       embed: async () => {
@@ -822,7 +904,14 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(discoverCalls).toBeGreaterThan(0);
     expect(detailCalls).toBeGreaterThan(0);
     expect(embeddingCalls).toBe(0);
-    expect(results.map(result => result.title)).toEqual(['Funny Fixture']);
+    expect(results).toHaveLength(5);
+    expect(results.map(result => result.title)).toEqual([
+      'Funny Fixture 1',
+      'Funny Fixture 2',
+      'Funny Fixture 3',
+      'Funny Fixture 4',
+      'Funny Fixture 5',
+    ]);
     expect(results[0].retrievalSources.some(source => source.startsWith('discover:genre-hints'))).toBe(true);
   });
 
