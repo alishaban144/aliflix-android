@@ -17,6 +17,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -41,6 +42,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.rounded.AddCircle
+import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.BookmarkBorder
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.SearchOff
@@ -57,6 +60,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -65,8 +69,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.model.Media
@@ -103,45 +110,92 @@ fun AskAliflixResults(
     listState: LazyListState,
     onRefine: (String) -> Unit = {},
     onSortChanged: (RecommendationSort) -> Unit = {},
-    hideWatched: Boolean = false,
-    onToggleHideWatched: (Boolean) -> Unit = {},
+    hideMySpaceTitles: Boolean = false,
+    onToggleHideMySpaceTitles: (Boolean) -> Unit = {},
+    myListKeys: Set<String> = emptySet(),
+    mySpaceKeys: Set<String> = emptySet(),
+    onToggleMyList: (Media) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         val results = uiState as? AskAliflixUiState.Results
+        val visibleItems = visibleAskAliflixItems(
+            items = results?.items.orEmpty(),
+            hideMySpaceTitles = hideMySpaceTitles,
+            mySpaceKeys = mySpaceKeys,
+        )
+        val hiddenCount = (results?.items?.size ?: 0) - visibleItems.size
+
+        when (uiState) {
+            is AskAliflixUiState.Interpreting -> ResultContextBar(
+                title = uiState.requestSummary,
+                supportingText = null,
+                editContentDescription = "Edit request",
+                onEdit = onEdit,
+            )
+            is AskAliflixUiState.Searching -> ResultContextBar(
+                title = uiState.requestSummary,
+                supportingText = null,
+                editContentDescription = "Edit request",
+                onEdit = onEdit,
+            )
+            is AskAliflixUiState.Results -> ResultContextBar(
+                title = if (editorState.mode == 2) "Filters" else uiState.requestSummary,
+                supportingText = if (editorState.mode == 2) {
+                    uiState.spec.askFilterSummary()
+                } else {
+                    resultCountLabel(uiState, visibleItems.size, hiddenCount)
+                },
+                editContentDescription = if (editorState.mode == 2) "Edit filters" else "Edit request",
+                onEdit = onEdit,
+            )
+            is AskAliflixUiState.Empty -> ResultContextBar(
+                title = uiState.requestSummary,
+                supportingText = null,
+                editContentDescription = "Edit request",
+                onEdit = onEdit,
+            )
+            is AskAliflixUiState.SourceUnavailable -> ResultContextBar(
+                title = uiState.requestSummary,
+                supportingText = null,
+                editContentDescription = "Edit request",
+                onEdit = onEdit,
+            )
+            is AskAliflixUiState.Error -> ResultContextBar(
+                title = uiState.requestSummary,
+                supportingText = null,
+                editContentDescription = "Edit request",
+                onEdit = onEdit,
+            )
+            AskAliflixUiState.Editing -> Unit
+        }
+
         if (results != null) {
-            when (editorState.mode) {
-                1 -> ResultContextBar(
-                    title = editorState.resultsHeading(),
-                    supportingText = resultCountLabel(results),
-                    editContentDescription = "Edit similar title",
-                    onEdit = onEdit,
-                )
-
-                2 -> ResultContextBar(
-                    title = "Filters",
-                    supportingText = results.spec.askFilterSummary(),
-                    editContentDescription = "Edit filters",
-                    onEdit = onEdit,
-                )
-            }
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .toggleable(
+                        value = hideMySpaceTitles,
+                        role = Role.Switch,
+                        onValueChange = onToggleHideMySpaceTitles,
+                    )
+                    .semantics {
+                        stateDescription = if (hideMySpaceTitles) "My Space titles hidden" else "My Space titles shown"
+                    }
                     .padding(horizontal = 16.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = "Hide titles in My Space",
+                    text = "Hide titles already in My Space",
                     color = AliflixContentSecondary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                 )
                 Switch(
-                    checked = hideWatched,
-                    onCheckedChange = onToggleHideWatched,
+                    checked = hideMySpaceTitles,
+                    onCheckedChange = null,
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = AliflixAccentPrimary,
                         checkedTrackColor = AliflixAccentSecondary.copy(alpha = 0.35f),
@@ -168,12 +222,16 @@ fun AskAliflixResults(
 
                 is AskAliflixUiState.Results -> ResultsList(
                     state = state,
+                    visibleItems = visibleItems,
                     listState = listState,
                     onOpenMedia = onOpenMedia,
                     onLoadMore = onLoadMore,
-                    showMatchesHeader = editorState.mode != 1,
                     isFilterMode = editorState.mode == 2,
                     onSortChanged = onSortChanged,
+                    myListKeys = myListKeys,
+                    onToggleMyList = onToggleMyList,
+                    hiddenCount = hiddenCount,
+                    onShowHidden = { onToggleHideMySpaceTitles(false) },
                 )
 
                 is AskAliflixUiState.Empty -> AskStateMessage(
@@ -214,6 +272,8 @@ fun AskAliflixResults(
             RefineBottomBar(
                 onRefine = onRefine,
                 refining = results.refining,
+                refineError = results.refineError,
+                appliedRefinements = results.appliedRefinements,
             )
         }
     }
@@ -222,12 +282,16 @@ fun AskAliflixResults(
 @Composable
 private fun ResultsList(
     state: AskAliflixUiState.Results,
+    visibleItems: List<RecommendationCandidate>,
     listState: LazyListState,
     onOpenMedia: (Media) -> Unit,
     onLoadMore: () -> Unit,
-    showMatchesHeader: Boolean,
     isFilterMode: Boolean = false,
     onSortChanged: (RecommendationSort) -> Unit = {},
+    myListKeys: Set<String>,
+    onToggleMyList: (Media) -> Unit,
+    hiddenCount: Int,
+    onShowHidden: () -> Unit,
 ) {
     LazyColumn(
         state = listState,
@@ -235,80 +299,61 @@ private fun ResultsList(
         verticalArrangement = Arrangement.spacedBy(11.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        if (showMatchesHeader) {
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 3.dp, bottom = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "Matches",
-                        color = AliflixContentPrimary,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = (-0.25).sp,
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 3.dp, bottom = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Matches",
+                    color = AliflixContentPrimary,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.25).sp,
+                )
+                Spacer(Modifier.width(8.dp))
+                ResultCountPill(resultCountLabel(state, visibleItems.size, hiddenCount))
+                Spacer(Modifier.weight(1f))
+                if (isFilterMode) {
+                    AskAliflixSortDropdown(
+                        selectedSort = state.spec.sortBy,
+                        mediaKind = state.spec.mediaKind,
+                        onSortSelected = onSortChanged,
                     )
-                    Spacer(Modifier.width(8.dp))
-                    ResultCountPill(resultCountLabel(state))
-                    Spacer(Modifier.weight(1f))
-                    if (isFilterMode) {
-                        AskAliflixSortDropdown(
-                            selectedSort = state.spec.sortBy,
-                            mediaKind = state.spec.mediaKind,
-                            onSortSelected = onSortChanged,
-                        )
-                    }
                 }
             }
         }
 
-        itemsIndexed(state.items, key = { _, item -> item.media.key }) { index, item ->
-            ResultCard(
-                rank = index + 1,
-                item = item,
-                onClick = { onOpenMedia(item.media) },
-                modifier = Modifier.animateItem(),
-            )
-        }
-
-        if (state.hasMore || state.loadingMore) {
+        if (visibleItems.isEmpty() && hiddenCount > 0) {
             item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 7.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                Surface(
+                    color = AliflixSurfaceElevated.copy(alpha = 0.78f),
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, AliflixBorderSubtle),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    if (state.loadingMore) {
-                        CircularProgressIndicator(color = AliflixAccentSecondary, strokeWidth = 2.dp, modifier = Modifier.size(25.dp))
-                        Spacer(Modifier.height(8.dp))
-                        Text("Finding new matches…", color = AliflixContentSecondary, fontSize = 11.sp)
-                    } else {
-                        OutlinedButton(
-                            onClick = onLoadMore,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.55f)),
-                            contentPadding = PaddingValues(vertical = 14.dp),
-                        ) {
-                            Text("Find more matches", color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(18.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        OutlinedButton(onClick = onShowHidden, shape = RoundedCornerShape(14.dp)) {
+                            Text("Show hidden titles")
                         }
                     }
                 }
             }
-        } else {
-            item {
-                Text(
-                    text = "End of results",
-                    color = AliflixContentTertiary,
-                    fontSize = 11.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp),
-                )
-            }
+        }
+
+        itemsIndexed(visibleItems, key = { _, item -> item.media.key }) { _, item ->
+            ResultCard(
+                item = item,
+                onClick = { onOpenMedia(item.media) },
+                inMyList = item.media.key in myListKeys,
+                onToggleMyList = { onToggleMyList(item.media) },
+                modifier = Modifier.animateItem(),
+            )
         }
 
         state.loadMoreError?.let { message ->
@@ -323,8 +368,52 @@ private fun ResultsList(
                 ) {
                     Icon(Icons.Rounded.Warning, contentDescription = null, tint = AliflixError, modifier = Modifier.size(17.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(message, color = AliflixError, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    Text(message, color = AliflixError, fontSize = 12.sp, modifier = Modifier.weight(1f))
                 }
+            }
+        }
+
+        if (state.hasMore || state.loadingMore) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 7.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (state.loadingMore) {
+                        LoadingResultCard(alpha = 0.72f)
+                        Spacer(Modifier.height(9.dp))
+                        LoadingResultCard(alpha = 0.55f)
+                    } else {
+                        OutlinedButton(
+                            onClick = onLoadMore,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.55f)),
+                            contentPadding = PaddingValues(vertical = 14.dp),
+                        ) {
+                            Text(
+                                if (state.loadMoreError == null) "Find more matches" else "Try finding more again",
+                                color = AliflixContentPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            item {
+                Text(
+                    text = "End of results",
+                    color = AliflixContentTertiary,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    textAlign = TextAlign.Center,
+                )
             }
         }
     }
@@ -332,9 +421,10 @@ private fun ResultsList(
 
 @Composable
 private fun ResultCard(
-    rank: Int,
     item: RecommendationCandidate,
     onClick: () -> Unit,
+    inMyList: Boolean,
+    onToggleMyList: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -357,30 +447,22 @@ private fun ResultCard(
                 scaleX = scale
                 scaleY = scale
             }
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            ),
         color = AliflixSurfaceElevated.copy(alpha = 0.84f),
         shape = RoundedCornerShape(19.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, border),
     ) {
         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box {
-                AskAliflixPoster(
-                    media = item.media,
-                    modifier = Modifier.size(width = 92.dp, height = 136.dp),
-                    cornerRadius = 13.dp,
-                )
-                Box(
-                    modifier = Modifier
-                        .padding(6.dp)
-                        .size(25.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xE8060810))
-                        .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("$rank", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                }
-            }
+            AskAliflixPoster(
+                media = item.media,
+                modifier = Modifier.size(width = 82.dp, height = 122.dp),
+                cornerRadius = 12.dp,
+            )
 
             Spacer(Modifier.width(13.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -396,12 +478,17 @@ private fun ResultCard(
                         modifier = Modifier.weight(1f),
                     )
                     Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.AutoMirrored.Rounded.ArrowForward,
-                        contentDescription = "Open ${item.media.title}",
-                        tint = AliflixContentTertiary,
-                        modifier = Modifier.size(17.dp),
-                    )
+                    IconButton(
+                        onClick = onToggleMyList,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (inMyList) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+                            contentDescription = if (inMyList) "Remove ${item.media.title} from My List" else "Add ${item.media.title} to My List",
+                            tint = if (inMyList) AliflixAccentSecondary else AliflixContentTertiary,
+                            modifier = Modifier.size(21.dp),
+                        )
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
 
@@ -426,7 +513,7 @@ private fun ResultCard(
                             Text(
                                 text = genre,
                                 color = AliflixContentSecondary,
-                                fontSize = 9.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 modifier = Modifier
@@ -449,7 +536,7 @@ private fun ResultCard(
                     ) {
                         Icon(Icons.Rounded.Star, contentDescription = null, tint = Color(0xFFFFC857), modifier = Modifier.size(13.dp))
                         Spacer(Modifier.width(3.dp))
-                        Text("TMDB ${"%.1f".format(item.media.rating)}", color = AliflixContentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("TMDB ${"%.1f".format(item.media.rating)}", color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -460,7 +547,7 @@ private fun ResultCard(
 @Composable
 private fun ResultContextBar(
     title: String,
-    supportingText: String,
+    supportingText: String?,
     editContentDescription: String,
     onEdit: () -> Unit,
 ) {
@@ -478,7 +565,7 @@ private fun ResultContextBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 64.dp)
+                .heightIn(min = if (supportingText == null) 52.dp else 64.dp)
                 .clickable(role = Role.Button, onClick = onEdit)
                 .padding(start = 14.dp, end = 10.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -492,15 +579,17 @@ private fun ResultContextBar(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = supportingText,
-                    color = AliflixContentSecondary,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                supportingText?.let {
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = it,
+                        color = AliflixContentSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             Spacer(Modifier.width(10.dp))
             Icon(
@@ -522,21 +611,37 @@ private fun ResultCountPill(label: String) {
         Text(
             text = label,
             color = AliflixAccentSecondary,
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
         )
     }
 }
 
-private fun resultCountLabel(state: AskAliflixUiState.Results): String =
-    if (state.hasMore) {
-        "${state.items.size}+ found"
+internal fun resultCountLabel(
+    state: AskAliflixUiState.Results,
+    visibleCount: Int = state.items.size,
+    hiddenCount: Int = 0,
+): String =
+    if (hiddenCount > 0) {
+        "$visibleCount shown · $hiddenCount hidden"
+    } else if (state.hasMore) {
+        "$visibleCount+ found"
     } else if (state.totalAvailable > state.items.size) {
-        "${state.items.size} of ${state.totalAvailable}"
+        "$visibleCount of ${state.totalAvailable}"
     } else {
-        "${state.items.size} found"
+        "$visibleCount found"
     }
+
+internal fun visibleAskAliflixItems(
+    items: List<RecommendationCandidate>,
+    hideMySpaceTitles: Boolean,
+    mySpaceKeys: Set<String>,
+): List<RecommendationCandidate> = if (hideMySpaceTitles) {
+    items.filterNot { it.media.key in mySpaceKeys }
+} else {
+    items
+}
 
 
 @Composable
@@ -571,7 +676,7 @@ private fun LoadingResultCard(alpha: Float) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(112.dp)
+            .height(142.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(AliflixSurfaceElevated.copy(alpha = 0.72f))
             .border(1.dp, AliflixBorderSubtle.copy(alpha = 0.7f), RoundedCornerShape(18.dp))
@@ -649,25 +754,41 @@ private fun AskStateMessage(
 private fun RefineBottomBar(
     onRefine: (String) -> Unit,
     refining: Boolean,
+    refineError: String?,
+    appliedRefinements: List<String>,
     modifier: Modifier = Modifier,
 ) {
     var refineText by remember { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
     val canSubmit = refineText.isNotBlank() && !refining
 
-    fun submit() {
-        if (canSubmit) {
-            keyboard?.hide()
-            onRefine(refineText.trim())
+    LaunchedEffect(appliedRefinements.size) {
+        if (appliedRefinements.lastOrNull() == refineText.trim()) {
             refineText = ""
         }
     }
 
-    Box(
+    fun submit() {
+        if (canSubmit) {
+            keyboard?.hide()
+            onRefine(refineText.trim())
+        }
+    }
+
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
+        refineError?.let { message ->
+            Text(
+                text = message,
+                color = AliflixError,
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
+            )
+        }
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(28.dp),
@@ -693,10 +814,10 @@ private fun RefineBottomBar(
                 Spacer(Modifier.width(10.dp))
                 OutlinedTextField(
                     value = refineText,
-                    onValueChange = { refineText = it },
+                    onValueChange = { refineText = it.take(200) },
                     placeholder = {
                         Text(
-                            "Refine results...",
+                            "Refine results…",
                             color = AliflixContentTertiary,
                             fontSize = 13.sp,
                             maxLines = 1,
@@ -704,6 +825,7 @@ private fun RefineBottomBar(
                         )
                     },
                     singleLine = true,
+                    enabled = !refining,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                         imeAction = androidx.compose.ui.text.input.ImeAction.Done,
                     ),
@@ -724,18 +846,18 @@ private fun RefineBottomBar(
                 Spacer(Modifier.width(6.dp))
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
                         .background(
                             if (canSubmit) AliflixAccentPrimary
                             else AliflixSurfaceSecondary.copy(alpha = 0.5f)
                         )
-                        .clickable(enabled = canSubmit) { submit() },
+                        .clickable(enabled = canSubmit, role = Role.Button) { submit() },
                     contentAlignment = Alignment.Center,
                 ) {
                     if (refining) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
                             color = AliflixAccentSecondary,
                         )
@@ -744,7 +866,7 @@ private fun RefineBottomBar(
                             Icons.AutoMirrored.Rounded.ArrowForward,
                             contentDescription = "Submit refinement",
                             tint = if (canSubmit) Color.White else AliflixContentTertiary,
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }
@@ -772,7 +894,8 @@ private fun AskAliflixSortDropdown(
         ) {
             Row(
                 modifier = Modifier
-                    .clickable { expanded = true }
+                    .heightIn(min = 48.dp)
+                    .clickable(role = Role.Button) { expanded = true }
                     .padding(horizontal = 10.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),

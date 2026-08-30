@@ -5,9 +5,9 @@
 [![Android](https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white)](#requirements)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.3.21-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 
-Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by Gemini interpretation and authoritative TMDB metadata.
+Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by selectable Groq or Gemini interpretation and authoritative TMDB metadata.
 
-This source tree targets **Aliflix 3.1.31** (`versionCode 121`) for Android 10 and newer.
+This source tree targets **Aliflix 3.1.32** (`versionCode 122`) for Android 10 and newer.
 
 [Download the latest mobile APK](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk) | [View release notes](https://github.com/alishaban144/aliflix-android/releases/latest)
 
@@ -18,10 +18,10 @@ This source tree targets **Aliflix 3.1.31** (`versionCode 121`) for Android 10 a
 - **Native mobile UI** with Home, Discover, title details, genres, and My Space.
 - **No account required** for the published app; personal lists and playback preferences stay on the device.
 - **Ask Aliflix v3** with Describe, Similar, and Filters modes for movies or series.
-- **Grounded recommendations**: Describe and Similar use the selected Gemini model to propose real titles, then exact TMDB identity and hydrated metadata verify every result. Describe can recover from a temporary Gemini failure through strict TMDB concept retrieval without another Gemini call or popularity padding.
+- **Grounded recommendations**: Describe and Similar use the selected Groq or Gemini model to propose real titles, then exact TMDB identity and hydrated metadata verify every result. Describe can recover from a temporary provider failure through strict TMDB concept retrieval without another model call or popularity padding.
 - **Deterministic filtering** after metadata enrichment, including genre inclusion/exclusion, year, runtime, language, country, rating, title exclusions, and TMDB ID exclusions.
 - **Canonical Similar mode** that uses the selected TMDB identity directly, excludes the anchor, and preserves the requested output type.
-- **Useful result cards** with poster, title, year, genres, rating, and match tier.
+- **Useful result cards** with poster, title, year, genres, rating, and a quick My List action.
 - **Real pagination** backed by signed recommendation-session cursors.
 - **Personal library** with favorites, My List, recently played titles, and playback settings.
 - **Native details and navigation**; a WebView is created only after Play is selected.
@@ -35,7 +35,8 @@ flowchart LR
     UI[Jetpack Compose editor] --> VM[AliflixViewModel]
     VM --> Client[RecommendationAiClient]
     Client --> Worker[Cloudflare recommendation worker]
-    Worker --> Gemini[Gemini generation and optional embeddings]
+    Worker --> Models[Groq or Gemini structured generation]
+    Worker --> Embeddings[Optional Gemini embeddings]
     Worker --> TMDB[TMDB titles and metadata]
     Worker --> Session[Durable Object session]
     Session --> Client
@@ -51,7 +52,7 @@ AskAliflixScreen
   -> recommendation-worker
 ```
 
-Describe makes one compact, low-effort request to the selected Gemini model and asks for a bounded premise-specific title set. The Worker exact-resolves every title through TMDB, hydrates authoritative metadata, and applies hard filters such as Returning or Ended only as eligibility checks. Relevance never receives a popularity, rating, status, generic genre, or title-word boost. If Gemini has a retryable capacity, quota, timeout, or structured-output failure, Describe derives only the query's explicit concepts locally and uses exact TMDB keyword/genre retrieval with deterministic ranking; it does not make another Gemini or embedding request and returns fewer results instead of padding.
+Describe makes one compact request to the selected Groq or Gemini model and asks for a bounded premise-specific title set. The Worker exact-resolves every title through TMDB, hydrates authoritative metadata, and applies hard filters such as Returning or Ended only as eligibility checks. Relevance never receives a popularity, rating, status, generic genre, or title-word boost. If the provider has a retryable capacity, quota, timeout, or structured-output failure, Describe derives only the query's explicit concepts locally and uses exact TMDB keyword/genre retrieval with deterministic ranking; it does not make another model or embedding request and returns fewer results instead of padding.
 
 Similar uses authoritative TMDB anchor details and a dedicated medium-effort generation contract. Single-anchor, multi-anchor, and cross-media matches must share substantive story or narrative connections; broad genre overlap cannot pass. Filters retains its specialized deterministic TMDB retrieval path. Missing metadata cannot satisfy a filter that requires it.
 
@@ -310,8 +311,8 @@ https://github.com/alishaban144/aliflix-android/releases/latest/download/update-
 
 ## Current release
 
-- Version: **3.1.31**
-- Version code: **121**
+- Version: **3.1.32**
+- Version code: **122**
 - Minimum Android version: **Android 10 / API 29**
-- Release page: [Aliflix 3.1.31](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.31)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.31/aliflix-mobile.apk)
+- Release page: [Aliflix 3.1.32](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.32)
+- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.32/aliflix-mobile.apk)

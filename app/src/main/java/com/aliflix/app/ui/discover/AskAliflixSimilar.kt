@@ -32,7 +32,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,6 +65,8 @@ fun AskAliflixSimilar(
     onRemoveAnchor: (Media) -> Unit,
     suggestions: List<Media>,
     suggestionsLoading: Boolean,
+    suggestionsError: String?,
+    onRetrySuggestions: () -> Unit,
     outputMediaType: MediaType,
     onSubmit: () -> Unit,
     loading: Boolean,
@@ -71,6 +75,13 @@ fun AskAliflixSimilar(
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
+    LaunchedEffect(Unit) {
+        if (selectedAnchors.size < 4) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+    }
+
     Column(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -78,7 +89,7 @@ fun AskAliflixSimilar(
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
             Text(
-                text = if (selectedAnchors.size > 1) "Movie Fusion" else "Similar to",
+                text = if (selectedAnchors.size > 1) "Blend titles" else "Similar to",
                 color = AliflixContentPrimary,
                 fontSize = 24.sp,
                 lineHeight = 29.sp,
@@ -157,6 +168,10 @@ fun AskAliflixSimilar(
                             )
                         }
                     }
+                    suggestionsError != null -> SimilarEmptySearch(
+                        message = suggestionsError,
+                        onRetry = onRetrySuggestions,
+                    )
                     !suggestionsLoading && suggestions.isEmpty() -> SimilarEmptySearch()
                     else -> LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -245,16 +260,16 @@ private fun SelectedAnchorChip(
                         anchor.year.takeIf(String::isNotBlank),
                     ).joinToString(" · "),
                     color = AliflixContentSecondary,
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                 )
             }
             IconButton(
                 onClick = onRemove,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(48.dp),
             ) {
                 Icon(
                     Icons.Rounded.Close,
-                    contentDescription = "Remove title",
+                    contentDescription = "Remove ${anchor.title}",
                     tint = AliflixContentTertiary,
                     modifier = Modifier.size(16.dp),
                 )
@@ -301,7 +316,7 @@ private fun SimilarSuggestion(
             )
         }
         Text(
-            if (isSelected) "Added" else "Add +",
+            if (isSelected) "Added" else "Add",
             color = if (isSelected) AliflixContentTertiary else AliflixAccentSecondary,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
@@ -312,7 +327,11 @@ private fun SimilarSuggestion(
 
 @Composable
 private fun SimilarHint() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
         Box(
             modifier = Modifier.size(50.dp).clip(CircleShape).background(AliflixSurfaceElevated),
             contentAlignment = Alignment.Center,
@@ -323,8 +342,21 @@ private fun SimilarHint() {
 }
 
 @Composable
-private fun SimilarEmptySearch() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("No matching title found", color = AliflixContentSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+private fun SimilarEmptySearch(
+    message: String = "No matching title found",
+    onRetry: (() -> Unit)? = null,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(message, color = AliflixContentSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        onRetry?.let {
+            Spacer(Modifier.height(9.dp))
+            OutlinedButton(onClick = it, shape = RoundedCornerShape(13.dp)) {
+                Text("Try again")
+            }
+        }
     }
 }

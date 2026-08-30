@@ -24,12 +24,17 @@ fun AskAliflixScreen(
     onOpenMedia: (Media) -> Unit,
     suggestions: List<Media>,
     suggestionsLoading: Boolean,
+    suggestionsError: String? = null,
+    onRetrySuggestions: () -> Unit = {},
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
     listState: LazyListState,
     onRefineRequest: (String) -> Unit = {},
-    onToggleHideWatched: (Boolean) -> Unit = {},
+    onToggleHideMySpaceTitles: (Boolean) -> Unit = {},
+    myListKeys: Set<String> = emptySet(),
+    mySpaceKeys: Set<String> = emptySet(),
+    onToggleMyList: (Media) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -144,6 +149,8 @@ fun AskAliflixScreen(
                                         },
                                         suggestions = suggestions,
                                         suggestionsLoading = suggestionsLoading,
+                                        suggestionsError = suggestionsError,
+                                        onRetrySuggestions = onRetrySuggestions,
                                         outputMediaType = editorState.mediaType,
                                         onSubmit = {
                                             if (anchors.isNotEmpty()) {
@@ -184,8 +191,11 @@ fun AskAliflixScreen(
                             onEditorStateChanged(editorState.copy(spec = updatedSpec))
                             onSubmitRequest(AskAliflixRequest.Filters(updatedSpec))
                         },
-                        hideWatched = editorState.hideWatched,
-                        onToggleHideWatched = onToggleHideWatched,
+                        hideMySpaceTitles = editorState.hideMySpaceTitles,
+                        onToggleHideMySpaceTitles = onToggleHideMySpaceTitles,
+                        myListKeys = myListKeys,
+                        mySpaceKeys = mySpaceKeys,
+                        onToggleMyList = onToggleMyList,
                         listState = listState,
                     )
                 }

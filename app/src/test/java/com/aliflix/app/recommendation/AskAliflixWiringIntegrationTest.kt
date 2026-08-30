@@ -13,6 +13,43 @@ import org.junit.Test
 
 class AskAliflixWiringIntegrationTest {
     @Test
+    fun groqIsTheDefaultForFreshSettingsAndUnspecifiedRequests() {
+        assertEquals(
+            RecommendationAiModel.GROQ_QWEN_3_8_27B,
+            RecommendationAiModel.fromWorkerValue(null),
+        )
+        assertEquals(
+            RecommendationAiModel.GROQ_QWEN_3_8_27B,
+            RecommendationAiModel.fromWorkerValue("unknown-model"),
+        )
+
+        val mapped = AskAliflixRequestMapper.map(
+            request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
+            requestId = "00000000-0000-4000-8000-000000000014",
+        ).workerRequest
+        val direct = V3RecommendationRequest(
+            requestId = "00000000-0000-4000-8000-000000000015",
+            query = "space adventure",
+            mediaType = "movie",
+        )
+
+        assertEquals(RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue, mapped.aiModel)
+        assertEquals(RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue, direct.aiModel)
+    }
+
+    @Test
+    fun explicitSavedGeminiChoiceIsStillHonored() {
+        assertEquals(
+            RecommendationAiModel.GEMINI_3_5_FLASH,
+            RecommendationAiModel.fromWorkerValue("gemini-3.5-flash"),
+        )
+        assertEquals(
+            RecommendationAiModel.GEMINI_3_7_FLASH,
+            RecommendationAiModel.fromWorkerValue("gemini-3.7-flash"),
+        )
+    }
+
+    @Test
     fun selectedAiModelIsSerializedExplicitly() {
         val json = AskAliflixRequestMapper.map(
             request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
@@ -58,6 +95,24 @@ class AskAliflixWiringIntegrationTest {
         assertEquals("tv", json.getString("mediaType"))
         assertEquals("describe", json.getString("mode"))
         assertFalse(json.getString("query").contains("Series —"))
+    }
+
+    @Test
+    fun refinedDescribeSummaryKeepsTheCompleteActiveRequest() {
+        val mapped = AskAliflixRequestMapper.map(
+            AskAliflixRequest.Describe(
+                mediaType = MediaType.MOVIE,
+                text = "alien contact, less scary",
+                previousText = "alien contact",
+                refinementText = "less scary",
+            ),
+            "00000000-0000-4000-8000-000000000016",
+        )
+
+        assertEquals("Movies — “alien contact, less scary”", mapped.summary)
+        assertEquals("alien contact, less scary", mapped.workerRequest.query)
+        assertEquals("alien contact", mapped.workerRequest.previousQuery)
+        assertEquals("less scary", mapped.workerRequest.refinementQuery)
     }
 
     @Test

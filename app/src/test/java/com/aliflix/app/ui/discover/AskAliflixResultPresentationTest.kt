@@ -8,6 +8,8 @@ import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationSort
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.junit.Assert.assertNull
+import com.aliflix.app.recommendation.RecommendationCandidate
 
 class AskAliflixResultPresentationTest {
     @Test
@@ -99,5 +101,54 @@ class AskAliflixResultPresentationTest {
             listOf("most_popular", "highest_rated", "most_voted", "newest_first", "oldest_first"),
             sorts,
         )
+    }
+
+    @Test
+    fun exactYearAndRuntimeRangesAreValidatedBeforeSubmission() {
+        val valid = CatalogDiscoverySpec(
+            mediaKind = RecommendationMediaKind.MOVIE,
+            yearMinimum = 1995,
+            yearMaximum = 2024,
+            runtimeMinimumMinutes = 80,
+            runtimeMaximumMinutes = 145,
+        )
+
+        assertNull(valid.askRangeValidationMessage(currentYear = 2026))
+        assertEquals(
+            "The starting year must come before the ending year.",
+            valid.copy(yearMinimum = 2025, yearMaximum = 2020).askRangeValidationMessage(currentYear = 2026),
+        )
+        assertEquals(
+            "Minimum runtime must be shorter than maximum runtime.",
+            valid.copy(runtimeMinimumMinutes = 180, runtimeMaximumMinutes = 90).askRangeValidationMessage(currentYear = 2026),
+        )
+    }
+
+    @Test
+    fun mySpaceVisibilityIsLocalReversibleAndUsesFullMediaKeys() {
+        val movie = RecommendationCandidate(Media(id = 10, type = MediaType.MOVIE, title = "Movie"))
+        val seriesWithSameTmdbNumber = RecommendationCandidate(Media(id = 10, type = MediaType.TV, title = "Series"))
+        val items = listOf(movie, seriesWithSameTmdbNumber)
+
+        assertEquals(
+            listOf(seriesWithSameTmdbNumber),
+            visibleAskAliflixItems(items, hideMySpaceTitles = true, mySpaceKeys = setOf(movie.media.key)),
+        )
+        assertEquals(
+            items,
+            visibleAskAliflixItems(items, hideMySpaceTitles = false, mySpaceKeys = setOf(movie.media.key)),
+        )
+    }
+
+    @Test
+    fun resultCountExplainsLocallyHiddenMatches() {
+        val item = RecommendationCandidate(Media(id = 10, type = MediaType.MOVIE, title = "Movie"))
+        val state = AskAliflixUiState.Results(
+            requestSummary = "Movies",
+            spec = CatalogDiscoverySpec(RecommendationMediaKind.MOVIE),
+            items = listOf(item, item.copy(media = item.media.copy(id = 11))),
+        )
+
+        assertEquals("1 shown · 1 hidden", resultCountLabel(state, visibleCount = 1, hiddenCount = 1))
     }
 }

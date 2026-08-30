@@ -208,6 +208,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private var activeAskJob: Job? = null
     private var askSessionToken = 0L
     private var activeAskRequest: com.aliflix.app.recommendation.V3RecommendationRequest? = null
+    private var activeAskUiRequest: com.aliflix.app.ui.discover.AskAliflixRequest? = null
     private var activeAskSummary: String? = null
     private var activeAskSpec: com.aliflix.app.recommendation.CatalogDiscoverySpec? = null
 
@@ -220,23 +221,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             aiModel = recommendationStore.aiModel.value,
         )
         val summary = mapped.summary
-        val hideWatched = _askEditorState.value.hideWatched
-        val excludedLibraryIds = if (hideWatched) {
-            (library.recent.value.map { it.id } + library.myList.value.map { it.id }).distinct()
-        } else {
-            emptyList<Int>()
-        }
-        val requestWithLibraryFilters = if (excludedLibraryIds.isNotEmpty()) {
-            val baseFilters = mapped.workerRequest.filters
-            val updatedFilters = baseFilters.copy(
-                excludedTmdbIds = (baseFilters.excludedTmdbIds + excludedLibraryIds).distinct()
-            )
-            mapped.workerRequest.copy(filters = updatedFilters)
-        } else {
-            mapped.workerRequest
-        }
+        val workerRequest = mapped.workerRequest
 
-        activeAskRequest = requestWithLibraryFilters
+        activeAskRequest = workerRequest
+        activeAskUiRequest = request
         activeAskSummary = summary
         activeAskSpec = mapped.spec
 
@@ -244,18 +232,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskJob = viewModelScope.launch {
             try {
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    aiClient.getRecommendations(requestWithLibraryFilters)
+                    aiClient.getRecommendations(workerRequest)
                 }
                 
                 if (token != askSessionToken) return@launch
 
-                val candidates = response.results
-                    .map(::mapAskResult)
-                    .filter { candidate ->
-                        if (!hideWatched) true
-                        else !library.recent.value.any { it.key == candidate.media.key } &&
-                             !library.myList.value.any { it.key == candidate.media.key }
-                    }
+                val candidates = response.results.map(::mapAskResult)
 
                 if (candidates.isEmpty()) {
                     _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Empty(summary, "No titles found.")
@@ -278,54 +260,103 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     e is com.aliflix.app.recommendation.RecommendationAiClientException &&
                     e.code in setOf("TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED")
                 ) {
-                    com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(summary, e.message ?: "TMDB is unavailable")
+                    com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(
+                        summary,
+                        askAliflixErrorMessage(e, "Movie and series details are temporarily unavailable. Please try again."),
+                    )
                 } else {
-                    com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, e.message ?: "Failed to find titles")
+                    com.aliflix.app.ui.discover.AskAliflixUiState.Error(
+                        summary,
+                        askAliflixErrorMessage(e, "Ask Aliflix could not complete this search."),
+                    )
                 }
             }
         }
     }
 
     fun refineAskAliflix(refinement: String) {
-        val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results
-        val activeReq = currentResults?.activeRequest
-        if (activeReq is com.aliflix.app.ui.discover.AskAliflixRequest.Similar || _askEditorState.value.mode == 1) {
-            val anchors = (activeReq as? com.aliflix.app.ui.discover.AskAliflixRequest.Similar)?.anchors
-                ?: (_askEditorState.value.selectedAnchors.ifEmpty { listOfNotNull(_askEditorState.value.selectedAnchor) })
-            submitAskAliflix(
-                com.aliflix.app.ui.discover.AskAliflixRequest.Similar(
-                    outputMediaType = _askEditorState.value.mediaType,
-                    anchors = anchors,
-                    requiredStatus = _askEditorState.value.spec.requiredStatus,
-                    refinementText = refinement.trim(),
-                )
-            )
-        } else {
-            val currentQuery = activeAskRequest?.query ?: _askEditorState.value.describeText
-            val previousText = if (_askEditorState.value.describeText.isNotBlank()) _askEditorState.value.describeText else currentQuery
-            val newDescribeText = if (previousText.isNotBlank()) "$previousText, $refinement" else refinement
-            _askEditorState.value = _askEditorState.value.copy(describeText = newDescribeText)
-            submitAskAliflix(
-                com.aliflix.app.ui.discover.AskAliflixRequest.Describe(
-                    mediaType = _askEditorState.value.mediaType,
-                    text = newDescribeText,
-                    requiredStatus = _askEditorState.value.spec.requiredStatus,
+        val normalized = refinement.trim()
+        if (normalized.isBlank()) return
+        val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results ?: return
+        if (currentResults.refining) return
+        val currentRequest = currentResults.activeRequest ?: activeAskUiRequest ?: return
+        val refinedRequest = when (currentRequest) {
+            is com.aliflix.app.ui.discover.AskAliflixRequest.Describe -> {
+                val previousText = currentRequest.text.trim()
+                currentRequest.copy(
+                    text = listOf(previousText, normalized).filter(String::isNotBlank).joinToString(", "),
                     previousText = previousText,
-                    refinementText = refinement,
+                    refinementText = normalized,
                 )
+            }
+            is com.aliflix.app.ui.discover.AskAliflixRequest.Similar -> currentRequest.copy(
+                refinementText = listOfNotNull(
+                    currentRequest.refinementText?.trim()?.takeIf(String::isNotBlank),
+                    normalized,
+                ).joinToString(", "),
             )
+            is com.aliflix.app.ui.discover.AskAliflixRequest.Filters -> return
+        }
+        val mapped = com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(
+            request = refinedRequest,
+            aiModel = recommendationStore.aiModel.value,
+        )
+        activeAskJob?.cancel()
+        val token = ++askSessionToken
+        _askUiState.value = currentResults.copy(refining = true, refineError = null)
+        activeAskJob = viewModelScope.launch {
+            try {
+                val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    aiClient.getRecommendations(mapped.workerRequest)
+                }
+                if (token != askSessionToken) return@launch
+                val candidates = response.results.map(::mapAskResult)
+                if (candidates.isEmpty()) {
+                    _askUiState.value = currentResults.copy(
+                        refining = false,
+                        refineError = "No additional matches fit that refinement. Your current results are unchanged.",
+                    )
+                    return@launch
+                }
+
+                activeAskRequest = mapped.workerRequest
+                activeAskUiRequest = refinedRequest
+                activeAskSummary = mapped.summary
+                activeAskSpec = mapped.spec
+                if (refinedRequest is com.aliflix.app.ui.discover.AskAliflixRequest.Describe) {
+                    _askEditorState.value = _askEditorState.value.copy(describeText = refinedRequest.text)
+                }
+                _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Results(
+                    requestSummary = mapped.summary,
+                    spec = mapped.spec,
+                    items = candidates,
+                    totalAvailable = response.totalResults,
+                    hasMore = response.hasMore,
+                    nextCursor = response.nextCursor,
+                    appliedRefinements = currentResults.appliedRefinements + normalized,
+                    activeRequest = refinedRequest,
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (token == askSessionToken) {
+                    _askUiState.value = currentResults.copy(
+                        refining = false,
+                        refineError = askAliflixErrorMessage(error, "That refinement could not be applied. Your current results are unchanged."),
+                    )
+                }
+            }
         }
     }
 
-    fun toggleAskHideWatched(hide: Boolean) {
-        _askEditorState.value = _askEditorState.value.copy(hideWatched = hide)
-        val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results
-        if (currentResults != null) {
-            retryAskAliflix()
-        }
+    fun toggleAskHideMySpaceTitles(hide: Boolean) {
+        _askEditorState.value = _askEditorState.value.copy(hideMySpaceTitles = hide)
     }
 
     fun editAskAliflix() {
+        activeAskJob?.cancel()
+        activeAskJob = null
+        askSessionToken++
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Editing
     }
 
@@ -334,6 +365,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskJob = null
         askSessionToken++
         activeAskRequest = null
+        activeAskUiRequest = null
         activeAskSummary = null
         activeAskSpec = null
         val previous = _askEditorState.value
@@ -390,13 +422,17 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 throw cancelled
             } catch (error: Exception) {
                 if (token != askSessionToken) return@launch
-                _askUiState.value = currentResults.copy(loadingMore = false, loadMoreError = error.message ?: "Could not load more matches")
+                _askUiState.value = currentResults.copy(
+                    loadingMore = false,
+                    loadMoreError = askAliflixErrorMessage(error, "Could not find another batch right now."),
+                )
             }
         }
     }
 
     fun retryAskAliflix() {
         val original = activeAskRequest ?: return
+        val uiRequest = activeAskUiRequest
         val summary = activeAskSummary ?: return
         val spec = activeAskSpec ?: return
         activeAskJob?.cancel()
@@ -422,6 +458,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         totalAvailable = response.totalResults,
                         hasMore = response.hasMore,
                         nextCursor = response.nextCursor,
+                        activeRequest = uiRequest,
                     )
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -431,9 +468,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         error is com.aliflix.app.recommendation.RecommendationAiClientException &&
                         error.code in setOf("TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED")
                     ) {
-                        com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(summary, error.message ?: "TMDB is unavailable")
+                        com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(summary, askAliflixErrorMessage(error, "TMDB is temporarily unavailable."))
                     } else {
-                        com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, error.message ?: "Failed to find titles")
+                        com.aliflix.app.ui.discover.AskAliflixUiState.Error(summary, askAliflixErrorMessage(error, "Ask Aliflix could not complete this search."))
                     }
                 }
             }
@@ -453,9 +490,20 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 rating = result.tmdbRating ?: 0.0,
                 genres = result.genres,
                 status = result.status.orEmpty(),
-                runtime = result.runtimeMinutes?.let { "$it min" }.orEmpty(),
+                runtime = result.runtimeMinutes?.takeIf { it > 0 }?.let { "$it min" }.orEmpty(),
             ),
         )
+
+    private fun askAliflixErrorMessage(error: Exception, fallback: String): String {
+        val clientError = error as? com.aliflix.app.recommendation.RecommendationAiClientException
+        return when (clientError?.code) {
+            "NETWORK_ERROR" -> "Check your connection and try again."
+            "TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED" -> "Movie and series details are temporarily unavailable. Please try again."
+            "RATE_LIMITED", "RESOURCE_EXHAUSTED", "GROQ_RATE_LIMITED" -> "Ask Aliflix is busy right now. Please wait a moment and try again."
+            "GROQ_UNAVAILABLE", "GEMINI_UNAVAILABLE", "AI_UNAVAILABLE" -> "The selected recommendation model is temporarily unavailable. Please try again."
+            else -> fallback
+        }
+    }
 
     val playbackPreferences: StateFlow<PlaybackPreferences> =
         playbackProviderRepository.preferences

@@ -12,6 +12,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -78,8 +82,21 @@ fun AskAliflixDescribe(
                         lineHeight = 21.sp,
                     )
                 },
-                minLines = 7,
-                maxLines = 10,
+                trailingIcon = if (text.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { onTextChanged("") }) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "Clear description",
+                                tint = AliflixContentTertiary,
+                            )
+                        }
+                    }
+                } else {
+                    null
+                },
+                minLines = 6,
+                maxLines = 9,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) onSubmit() }),
                 modifier = Modifier
@@ -96,10 +113,17 @@ fun AskAliflixDescribe(
                     cursorColor = AliflixAccentSecondary,
                 ),
             )
+
         }
 
         AskAliflixStickyCta(
-            label = if (loading) "Creating matches…" else "Find matches",
+            label = if (loading) {
+                "Creating matches…"
+            } else if (mediaType == MediaType.MOVIE) {
+                "Find movies"
+            } else {
+                "Find series"
+            },
             enabled = text.isNotBlank(),
             loading = loading,
             onClick = onSubmit,

@@ -15,7 +15,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
@@ -58,7 +58,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -287,11 +286,15 @@ fun AskAliflixChip(
             .border(1.dp, border, RoundedCornerShape(14.dp))
             .heightIn(min = 48.dp)
             .semantics {
-                role = Role.Checkbox
-                selected = isSelected
                 stateDescription = if (isSelected) "Selected" else "Not selected"
             }
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .toggleable(
+                value = isSelected,
+                role = Role.Checkbox,
+                interactionSource = interactionSource,
+                indication = null,
+                onValueChange = { onClick() },
+            )
             .padding(horizontal = 11.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -413,7 +416,7 @@ fun AskAliflixPoster(
         )
         AsyncImage(
             model = media.posterUrl,
-            contentDescription = "${media.title} poster",
+            contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
         )

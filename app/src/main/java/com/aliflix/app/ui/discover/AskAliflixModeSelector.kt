@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -126,7 +127,7 @@ fun AskAliflixModeSelector(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             listOf(
-                AskModeTab("Describe", null),
+                AskModeTab("Describe", Icons.Rounded.Edit),
                 AskModeTab("Similar", Icons.Rounded.Search),
                 AskModeTab("Filters", Icons.Rounded.Tune),
             ).forEachIndexed { index, tab ->

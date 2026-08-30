@@ -68,20 +68,31 @@ fun AskAliflixHeader(
 
         if (showNewSearch) {
             Surface(
-                modifier = Modifier.size(52.dp),
-                shape = androidx.compose.foundation.shape.CircleShape,
+                onClick = onReset,
+                modifier = Modifier.heightIn(min = 48.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp),
                 color = AliflixAccentPrimary.copy(alpha = 0.2f),
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
                     AliflixBorderSubtle,
                 ),
             ) {
-                IconButton(onClick = onReset) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Icon(
                         imageVector = Icons.Rounded.AddCircle,
-                        contentDescription = "New search",
+                        contentDescription = null,
                         tint = AliflixContentPrimary,
-                        modifier = Modifier.size(27.dp),
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        text = "New",
+                        color = AliflixContentPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
                     )
                 }
             }

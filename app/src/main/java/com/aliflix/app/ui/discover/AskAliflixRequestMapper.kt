@@ -20,7 +20,7 @@ object AskAliflixRequestMapper {
     fun map(
         request: AskAliflixRequest,
         requestId: String = UUID.randomUUID().toString(),
-        aiModel: RecommendationAiModel = RecommendationAiModel.GEMINI_3_5_FLASH,
+        aiModel: RecommendationAiModel = RecommendationAiModel.GROQ_QWEN_3_8_27B,
     ): MappedAskAliflixRequest {
         val outputType = when (request) {
             is AskAliflixRequest.Describe -> request.mediaType
@@ -40,11 +40,7 @@ object AskAliflixRequestMapper {
         }
         val summary = when (request) {
             is AskAliflixRequest.Describe -> {
-                if (request.refinementText != null) {
-                    "${outputType.label()} — “${request.refinementText.trim()}”"
-                } else {
-                    "${outputType.label()} — “${request.text.trim()}”"
-                }
+                "${outputType.label()} — “${request.text.trim()}”"
             }
             is AskAliflixRequest.Similar -> {
                 val titles = request.anchors.map { it.title }

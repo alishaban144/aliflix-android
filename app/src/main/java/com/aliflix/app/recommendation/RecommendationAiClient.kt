@@ -149,7 +149,7 @@ data class V3RecommendationFilters(
 data class V3RecommendationRequest(
     val requestId: String,
     val mode: String = "describe",
-    val aiModel: String = RecommendationAiModel.GEMINI_3_5_FLASH.workerValue,
+    val aiModel: String = RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue,
     val query: String,
     val mediaType: String,
     val anchor: V3RecommendationAnchor? = null,

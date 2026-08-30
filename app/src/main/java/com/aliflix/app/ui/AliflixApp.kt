@@ -39,6 +39,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -158,6 +159,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -495,6 +498,7 @@ fun AliflixApp(
     val homeScrollState = rememberLazyListState()
     val searchScrollState = rememberLazyGridState()
     val recommendationScrollState = rememberLazyListState()
+    var askAliflixActive by remember { mutableStateOf(false) }
     val listScrollState = rememberLazyGridState()
     val favoritesScrollState = rememberLazyGridState()
     val historyScrollState = rememberLazyGridState()
@@ -836,7 +840,7 @@ fun AliflixApp(
                 containerColor = AliflixBlack,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 bottomBar = {
-                    if (currentDestination is MobileDestination.Root) {
+                    if (currentDestination is MobileDestination.Root && !askAliflixActive) {
                         AliflixBottomBar(
                             selected = selectedTab,
                             onSelect = { tab ->
@@ -1085,7 +1089,11 @@ fun AliflixApp(
                         onLoadMoreAskAliflix = viewModel::loadMoreAskAliflix,
                         onRetryAskAliflix = viewModel::retryAskAliflix,
                         onRefineAskAliflix = viewModel::refineAskAliflix,
-                        onToggleHideWatchedAskAliflix = viewModel::toggleAskHideWatched,
+                        onToggleHideMySpaceAskAliflix = viewModel::toggleAskHideMySpaceTitles,
+                        myListKeys = myList.mapTo(linkedSetOf(), Media::key),
+                        mySpaceKeys = (myList + recent + likes).mapTo(linkedSetOf(), Media::key),
+                        onToggleMyList = viewModel::toggleMyList,
+                        onAskVisibilityChanged = { askAliflixActive = it },
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
 
@@ -3068,7 +3076,15 @@ private fun MobileSettingsDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 48.dp),
+                                .heightIn(min = 52.dp)
+                                .toggleable(
+                                    value = aiRecommendationsEnabled,
+                                    role = Role.Switch,
+                                    onValueChange = onSetAiRecommendationsEnabled,
+                                )
+                                .semantics {
+                                    stateDescription = if (aiRecommendationsEnabled) "Ask Aliflix shown" else "Ask Aliflix hidden"
+                                },
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -3085,14 +3101,14 @@ private fun MobileSettingsDialog(
                                     )
                                 }
                                 Text(
-                                    text = "Show Aliflix in Discover",
+                                    text = "Show Ask Aliflix in Discover",
                                     color = AliflixMuted,
-                                    fontSize = 10.sp,
+                                    fontSize = 11.sp,
                                 )
                             }
                             Switch(
                                 checked = aiRecommendationsEnabled,
-                                onCheckedChange = onSetAiRecommendationsEnabled,
+                                onCheckedChange = null,
                                 modifier = Modifier.testTag("settings-ask-aliflix-switch"),
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = Color.White,
@@ -3125,7 +3141,7 @@ private fun MobileSettingsDialog(
                                     Text(
                                         text = "Recommendation model",
                                         color = AliflixMuted,
-                                        fontSize = 10.sp,
+                                        fontSize = 11.sp,
                                     )
                                     Text(
                                         text = recommendationAiModel.label,
@@ -3136,7 +3152,7 @@ private fun MobileSettingsDialog(
                                     Text(
                                         text = recommendationAiModel.supportingText,
                                         color = AliflixContentTertiary,
-                                        fontSize = 9.sp,
+                                        fontSize = 11.sp,
                                     )
                                 }
                                 Icon(
@@ -3166,7 +3182,7 @@ private fun MobileSettingsDialog(
                                                 Text(
                                                     text = model.supportingText,
                                                     color = AliflixContentSecondary,
-                                                    fontSize = 10.sp,
+                                                    fontSize = 11.sp,
                                                 )
                                             }
                                         },

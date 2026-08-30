@@ -58,6 +58,8 @@ sealed interface AskAliflixUiState {
         val nextCursor: String? = null,
         val loadMoreError: String? = null,
         val refining: Boolean = false,
+        val refineError: String? = null,
+        val appliedRefinements: List<String> = emptyList(),
         val activeRequest: AskAliflixRequest? = null,
     ) : AskAliflixUiState
 
@@ -84,7 +86,7 @@ data class AskAliflixEditorState(
     val similarQuery: String = "",
     val selectedAnchor: Media? = null,
     val selectedAnchors: List<Media> = emptyList(),
-    val hideWatched: Boolean = false,
+    val hideMySpaceTitles: Boolean = false,
     val spec: CatalogDiscoverySpec = CatalogDiscoverySpec(mediaKind = com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)
 )
 

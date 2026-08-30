@@ -170,7 +170,11 @@ internal fun DiscoverScreen(
     onLoadMoreAskAliflix: () -> Unit = {},
     onRetryAskAliflix: () -> Unit = {},
     onRefineAskAliflix: (String) -> Unit = {},
-    onToggleHideWatchedAskAliflix: (Boolean) -> Unit = {},
+    onToggleHideMySpaceAskAliflix: (Boolean) -> Unit = {},
+    myListKeys: Set<String> = emptySet(),
+    mySpaceKeys: Set<String> = emptySet(),
+    onToggleMyList: (Media) -> Unit = {},
+    onAskVisibilityChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -184,6 +188,10 @@ internal fun DiscoverScreen(
         )
     }
     var recommendModeActive by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(recommendModeActive) {
+        onAskVisibilityChanged(recommendModeActive)
+    }
 
     LaunchedEffect(aiEnabled) {
         if (!aiEnabled && recommendModeActive) {
@@ -258,23 +266,28 @@ internal fun DiscoverScreen(
             if (recommendMode) {
                 var similarSuggestions by remember { mutableStateOf<List<Media>>(emptyList()) }
                 var similarSuggestionsLoading by remember { mutableStateOf(false) }
+                var similarSuggestionsError by remember { mutableStateOf<String?>(null) }
+                var similarSuggestionsRetry by remember { mutableStateOf(0) }
 
-                LaunchedEffect(askEditorState.similarQuery, askEditorState.mode, askEditorState.selectedAnchors.size) {
+                LaunchedEffect(askEditorState.similarQuery, askEditorState.mode, askEditorState.selectedAnchors.size, similarSuggestionsRetry) {
                     val anchors = if (askEditorState.selectedAnchors.isNotEmpty()) askEditorState.selectedAnchors else listOfNotNull(askEditorState.selectedAnchor)
                     if (askEditorState.mode == 1 && askEditorState.similarQuery.trim().length >= 2 && anchors.size < 4) {
                         delay(280)
                         similarSuggestionsLoading = true
+                        similarSuggestionsError = null
                         similarSuggestions = try {
                             onSearchTitles(askEditorState.similarQuery.trim())
                         } catch (cancelled: kotlinx.coroutines.CancellationException) {
                             throw cancelled
                         } catch (_: Throwable) {
+                            similarSuggestionsError = "Title search is temporarily unavailable."
                             emptyList()
                         }
                         similarSuggestionsLoading = false
                     } else {
                         similarSuggestions = emptyList()
                         similarSuggestionsLoading = false
+                        similarSuggestionsError = null
                     }
                 }
 
@@ -291,10 +304,15 @@ internal fun DiscoverScreen(
                     onOpenMedia = onOpen,
                     suggestions = similarSuggestions,
                     suggestionsLoading = similarSuggestionsLoading,
+                    suggestionsError = similarSuggestionsError,
+                    onRetrySuggestions = { similarSuggestionsRetry += 1 },
                     onLoadMore = onLoadMoreAskAliflix,
                     onRetry = onRetryAskAliflix,
                     onRefineRequest = onRefineAskAliflix,
-                    onToggleHideWatched = onToggleHideWatchedAskAliflix,
+                    onToggleHideMySpaceTitles = onToggleHideMySpaceAskAliflix,
+                    myListKeys = myListKeys,
+                    mySpaceKeys = mySpaceKeys,
+                    onToggleMyList = onToggleMyList,
                     onBack = {
                         recommendModeActive = false
                         onModeChange(SearchMode.TITLE)

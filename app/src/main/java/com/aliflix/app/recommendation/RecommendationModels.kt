@@ -50,25 +50,25 @@ enum class RecommendationAiModel(
     val workerValue: String,
     val supportingText: String,
 ) {
+    GROQ_QWEN_3_8_27B(
+        label = "Groq",
+        workerValue = "groq-qwen-3.8-27b",
+        supportingText = "Recommended · Qwen 3.8 27B",
+    ),
     GEMINI_3_5_FLASH(
         label = "Gemini 3.5 Flash",
         workerValue = "gemini-3.5-flash",
-        supportingText = "Recommended",
+        supportingText = "Gemini alternative",
     ),
     GEMINI_3_7_FLASH(
         label = "Gemini 3.7 Flash",
         workerValue = "gemini-3.7-flash",
-        supportingText = "Newest",
-    ),
-    GROQ_QWEN_3_8_27B(
-        label = "Groq",
-        workerValue = "groq-qwen-3.8-27b",
-        supportingText = "Qwen 3.8 27B",
+        supportingText = "Latest Gemini",
     );
 
     companion object {
         fun fromWorkerValue(value: String?): RecommendationAiModel =
-            entries.firstOrNull { it.workerValue == value } ?: GEMINI_3_5_FLASH
+            entries.firstOrNull { it.workerValue == value } ?: GROQ_QWEN_3_8_27B
     }
 }
 

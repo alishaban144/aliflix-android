@@ -40,6 +40,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +55,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.recommendation.CatalogDiscoverySpec
@@ -67,6 +74,7 @@ import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
+import java.time.Year
 
 @Composable
 fun AskAliflixFilters(
@@ -88,6 +96,7 @@ fun AskAliflixFilters(
         listOfNotNull(spec.animationFilter?.label)
     val activeCount = selectedFilterCount(spec)
     val hasFilters = activeCount > 0
+    val rangeValidationMessage = spec.askRangeValidationMessage()
 
     Column(modifier = modifier.fillMaxSize()) {
         Row(
@@ -203,6 +212,16 @@ fun AskAliflixFilters(
                         selected = spec.yearMinimum to spec.yearMaximum,
                         onSelect = { (min, max) -> onSpecChanged(spec.copy(yearMinimum = min, yearMaximum = max)) },
                     )
+                    Spacer(Modifier.height(10.dp))
+                    NumericRangeFields(
+                        firstLabel = "From year",
+                        firstValue = spec.yearMinimum,
+                        onFirstChanged = { onSpecChanged(spec.copy(yearMinimum = it)) },
+                        secondLabel = "To year",
+                        secondValue = spec.yearMaximum,
+                        onSecondChanged = { onSpecChanged(spec.copy(yearMaximum = it)) },
+                        maxDigits = 4,
+                    )
                     Spacer(Modifier.height(13.dp))
                     FilterSubheading(if (spec.mediaKind == RecommendationMediaKind.SERIES) "EPISODE RUNTIME" else "RUNTIME")
                     val runtimePresets = if (spec.mediaKind == RecommendationMediaKind.SERIES) {
@@ -220,6 +239,16 @@ fun AskAliflixFilters(
                         presets = runtimePresets,
                         selected = spec.runtimeMinimumMinutes to spec.runtimeMaximumMinutes,
                         onSelect = { (min, max) -> onSpecChanged(spec.copy(runtimeMinimumMinutes = min, runtimeMaximumMinutes = max)) },
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    NumericRangeFields(
+                        firstLabel = "Minimum minutes",
+                        firstValue = spec.runtimeMinimumMinutes,
+                        onFirstChanged = { onSpecChanged(spec.copy(runtimeMinimumMinutes = it)) },
+                        secondLabel = "Maximum minutes",
+                        secondValue = spec.runtimeMaximumMinutes,
+                        onSecondChanged = { onSpecChanged(spec.copy(runtimeMaximumMinutes = it)) },
+                        maxDigits = 3,
                     )
                 }
             }
@@ -297,13 +326,84 @@ fun AskAliflixFilters(
             item { Spacer(Modifier.height(6.dp)) }
         }
 
+        rangeValidationMessage?.let { message ->
+            Text(
+                text = message,
+                color = com.aliflix.app.ui.theme.AliflixError,
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 5.dp),
+            )
+        }
+
         AskAliflixStickyCta(
-            label = if (loading) "Loading…" else "Show matches",
-            enabled = !loading,
+            label = if (loading) {
+                "Loading…"
+            } else if (!hasFilters) {
+                if (spec.mediaKind == RecommendationMediaKind.MOVIE) "Show popular movies" else "Show popular series"
+            } else {
+                "Show matches"
+            },
+            enabled = !loading && rangeValidationMessage == null,
             loading = loading,
             onClick = onSubmit,
         )
     }
+}
+
+@Composable
+private fun NumericRangeFields(
+    firstLabel: String,
+    firstValue: Int?,
+    onFirstChanged: (Int?) -> Unit,
+    secondLabel: String,
+    secondValue: Int?,
+    onSecondChanged: (Int?) -> Unit,
+    maxDigits: Int,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        listOf(
+            Triple(firstLabel, firstValue, onFirstChanged),
+            Triple(secondLabel, secondValue, onSecondChanged),
+        ).forEach { (label, value, onChanged) ->
+            OutlinedTextField(
+                value = value?.toString().orEmpty(),
+                onValueChange = { raw ->
+                    val digits = raw.filter(Char::isDigit).take(maxDigits)
+                    onChanged(digits.toIntOrNull())
+                },
+                label = { Text(label, fontSize = 11.sp) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                shape = RoundedCornerShape(13.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AliflixAccentPrimary,
+                    unfocusedBorderColor = AliflixBorderSubtle,
+                    focusedContainerColor = AliflixSurfaceSecondary,
+                    unfocusedContainerColor = AliflixSurfaceSecondary,
+                    focusedTextColor = AliflixContentPrimary,
+                    unfocusedTextColor = AliflixContentPrimary,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+internal fun CatalogDiscoverySpec.askRangeValidationMessage(currentYear: Int = Year.now().value): String? = when {
+    yearMinimum != null && yearMinimum < 1888 -> "The earliest supported year is 1888."
+    yearMinimum != null && yearMinimum > currentYear + 5 -> "Enter a valid starting year."
+    yearMaximum != null && yearMaximum < 1888 -> "The earliest supported year is 1888."
+    yearMaximum != null && yearMaximum > currentYear + 5 -> "Enter a valid ending year."
+    yearMinimum != null && yearMaximum != null && yearMinimum > yearMaximum -> "The starting year must come before the ending year."
+    runtimeMinimumMinutes != null && runtimeMinimumMinutes !in 1..600 -> "Runtime must be between 1 and 600 minutes."
+    runtimeMaximumMinutes != null && runtimeMaximumMinutes !in 1..600 -> "Runtime must be between 1 and 600 minutes."
+    runtimeMinimumMinutes != null && runtimeMaximumMinutes != null && runtimeMinimumMinutes > runtimeMaximumMinutes ->
+        "Minimum runtime must be shorter than maximum runtime."
+    else -> null
 }
 
 @Composable
@@ -336,7 +436,10 @@ private fun FilterSection(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
-                    .clickable(onClick = onToggle),
+                    .semantics {
+                        stateDescription = if (expanded) "Expanded" else "Collapsed"
+                    }
+                    .clickable(role = Role.Button, onClick = onToggle),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
@@ -368,7 +471,7 @@ private fun FilterSection(
                             .padding(horizontal = 7.dp, vertical = 3.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("$badgeCount", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                        Text("$badgeCount", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
                     }
                     Spacer(Modifier.width(8.dp))
                 }
@@ -416,7 +519,7 @@ private fun FilterSubheading(text: String) {
     Text(
         text = text,
         color = AliflixContentTertiary,
-        fontSize = 9.sp,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Black,
         letterSpacing = 0.9.sp,
         modifier = Modifier.padding(bottom = 7.dp),
