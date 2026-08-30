@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { createCursor, parseCursor, RecommendationSession } from '../src/session';
+import { createCursor, MAX_GENERATED_CONTINUATION_PASSES, parseCursor, RecommendationSession } from '../src/session';
 import { RecommendationResult } from '../src/types';
 
 const result = (id: number): RecommendationResult => ({
@@ -54,11 +54,18 @@ describe('recommendation sessions', () => {
     const emptySecondPass = await stub.reserveContinuation('expandable-fingerprint');
     await stub.releaseContinuation('expandable-fingerprint', emptySecondPass.pass!);
     expect((await stub.reserveContinuation('expandable-fingerprint')).pass).toBe(emptySecondPass.pass);
-    await stub.completeContinuation('expandable-fingerprint', emptySecondPass.pass!, []);
+    const firstEmpty = await stub.completeContinuation('expandable-fingerprint', emptySecondPass.pass!, []);
+    expect(firstEmpty.exhausted).toBe(false);
     const emptyThirdPass = await stub.reserveContinuation('expandable-fingerprint');
-    const exhausted = await stub.completeContinuation('expandable-fingerprint', emptyThirdPass.pass!, []);
-    expect(exhausted.exhausted).toBe(true);
-    expect((await stub.getPage('expandable-fingerprint', 24, 12)).nextOffset).toBeNull();
+    const secondEmpty = await stub.completeContinuation('expandable-fingerprint', emptyThirdPass.pass!, []);
+    expect(secondEmpty.exhausted).toBe(false);
+    expect((await stub.getPage('expandable-fingerprint', 24, 12)).nextOffset).toBe(24);
+
+    const recoveredPass = await stub.reserveContinuation('expandable-fingerprint');
+    const recovered = await stub.completeContinuation('expandable-fingerprint', recoveredPass.pass!, [result(25)]);
+    expect(recovered).toEqual({ added: 1, count: 25, exhausted: false });
+    expect((await stub.getPage('expandable-fingerprint', 24, 12)).results.map(item => item.tmdbId)).toEqual([25]);
+    expect(MAX_GENERATED_CONTINUATION_PASSES).toBeGreaterThanOrEqual(20);
   });
 
   it('signs cursors and rejects tampering', async () => {

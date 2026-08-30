@@ -13,12 +13,11 @@ const catalogJson = (body: unknown): Response => new Response(JSON.stringify(bod
   status: 200,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' },
 });
-// A continuation normally needs one fresh engine pass. If that pass is empty
-// or unusually small, one bounded retry explores the next deterministic TMDB
-// lanes instead of returning a blank "Find more matches" page. This spends no
-// extra provider request when the first pass already returns a useful batch.
+// A continuation normally needs one fresh engine pass. If that pass does not
+// fill the requested page, one bounded retry explores the next deterministic
+// TMDB lanes instead of stopping after an undersized batch. This spends no
+// extra provider request when the first pass already fills the page.
 const MAX_CONTINUATION_ATTEMPTS_PER_CLICK = 2;
-const MIN_CONTINUATION_RESULTS_PER_CLICK = 10;
 
 interface ContinuationSessionApi {
   reserveContinuation(fingerprint: string): Promise<ContinuationReservation>;
@@ -28,6 +27,25 @@ interface ContinuationSessionApi {
     results: RecommendationResult[],
   ): Promise<{ added: number; count: number; exhausted: boolean }>;
   releaseContinuation(fingerprint: string, pass: number): Promise<void>;
+}
+
+function boundedExcludedTitles(
+  explicitTitles: string[],
+  previouslyShownTitles: string[],
+  limit = 100,
+): string[] {
+  const explicit = [...new Set(explicitTitles)].slice(0, limit);
+  const explicitSet = new Set(explicit);
+  const history = [...new Set(previouslyShownTitles)].filter(title => !explicitSet.has(title));
+  const remaining = limit - explicit.length;
+  if (remaining <= 0 || history.length <= remaining) return [...explicit, ...history.slice(0, remaining)];
+  const earlyCount = Math.ceil(remaining / 2);
+  const recentCount = remaining - earlyCount;
+  return [
+    ...explicit,
+    ...history.slice(0, earlyCount),
+    ...history.slice(-recentCount),
+  ];
 }
 
 function continuationRequest(
@@ -43,10 +61,10 @@ function continuationRequest(
         ...parsed.filters.excludedTmdbIds,
         ...reservation.excludedTmdbIds,
       ])].slice(0, 1_000),
-      excludedTitles: [...new Set([
-        ...parsed.filters.excludedTitles,
-        ...reservation.excludedTitles,
-      ])].slice(0, 100),
+      excludedTitles: boundedExcludedTitles(
+        parsed.filters.excludedTitles,
+        reservation.excludedTitles,
+      ),
     },
   };
 }
@@ -59,7 +77,7 @@ export async function expandGeneratedContinuation(
   stub: ContinuationSessionApi,
   runRecommendation: typeof processRecommendation = processRecommendation,
 ): Promise<void> {
-  const target = Math.min(parsed.pageSize, MIN_CONTINUATION_RESULTS_PER_CLICK);
+  const target = parsed.pageSize;
   let availableAfterExpansion = 0;
   for (let attempt = 0; attempt < MAX_CONTINUATION_ATTEMPTS_PER_CLICK; attempt++) {
     const reservation = await stub.reserveContinuation(fingerprint);

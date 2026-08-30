@@ -62,9 +62,9 @@ describe('Cloudflare Worker', () => {
     expect(response.status).toBe(413);
   });
 
-  it('retries one sparse generated continuation and stops after ten fresh matches', async () => {
+  it('fills the requested continuation page when the first fresh batch is useful but sparse', async () => {
     const reservations = [1, 2];
-    let totalCount = 11;
+    let totalCount = 20;
     const stub = {
       reserveContinuation: vi.fn(async () => {
         const pass = reservations.shift();
@@ -78,15 +78,15 @@ describe('Cloudflare Worker', () => {
       }),
       releaseContinuation: vi.fn(async () => {}),
     };
-    const fresh = Array.from({ length: 10 }, (_, index) => ({
-      tmdbId: 100 + index,
+    const fresh = (start: number, count: number) => Array.from({ length: count }, (_, index) => ({
+      tmdbId: start + index,
       mediaType: 'movie',
-      title: `Fresh ${index + 1}`,
+      title: `Fresh ${start + index}`,
     }));
     const runRecommendation = vi.fn(async (_env, request: any, _dependencies, options: any) => {
       expect(request.filters.excludedTmdbIds).toContain(1);
       expect(request.filters.excludedTitles).toContain('Already shown');
-      return options.continuationPass === 1 ? [] : fresh;
+      return options.continuationPass === 1 ? fresh(100, 12) : fresh(112, 8);
     });
     const parsed: any = {
       requestId: '00000000-0000-4000-8000-000000000045',
@@ -106,7 +106,7 @@ describe('Cloudflare Worker', () => {
       env,
       parsed,
       'fingerprint',
-      11,
+      20,
       stub,
       runRecommendation as any,
     );
@@ -115,7 +115,55 @@ describe('Cloudflare Worker', () => {
     expect(stub.reserveContinuation).toHaveBeenCalledTimes(2);
     expect(stub.completeContinuation).toHaveBeenCalledTimes(2);
     expect(stub.releaseContinuation).not.toHaveBeenCalled();
-    expect(totalCount).toBe(21);
+    expect(totalCount).toBe(40);
+  });
+
+  it('keeps representative early and recent exclusions within the bounded model prompt', async () => {
+    const excludedTitles = Array.from({ length: 140 }, (_, index) => `Shown ${index + 1}`);
+    const stub = {
+      reserveContinuation: vi.fn(async () => ({
+        canExpand: true,
+        pass: 1,
+        excludedTmdbIds: [1],
+        excludedTitles,
+      })),
+      completeContinuation: vi.fn(async () => ({ added: 20, count: 40, exhausted: false })),
+      releaseContinuation: vi.fn(async () => {}),
+    };
+    const runRecommendation = vi.fn(async (_env, request: any) => {
+      expect(request.filters.excludedTitles).toHaveLength(100);
+      expect(request.filters.excludedTitles).toContain('Shown 1');
+      expect(request.filters.excludedTitles).toContain('Shown 50');
+      expect(request.filters.excludedTitles).toContain('Shown 91');
+      expect(request.filters.excludedTitles).toContain('Shown 140');
+      expect(request.filters.excludedTitles).not.toContain('Shown 70');
+      return Array.from({ length: 20 }, (_, index) => ({
+        tmdbId: 1_000 + index,
+        mediaType: 'movie',
+        title: `Fresh ${index + 1}`,
+      }));
+    });
+
+    await expandGeneratedContinuation(
+      env,
+      {
+        requestId: '00000000-0000-4000-8000-000000000047',
+        mode: 'describe',
+        query: 'movies about aliens and ufos',
+        mediaType: 'movie',
+        filters: {
+          originCountries: [], includedGenres: [], excludedGenres: [],
+          excludedTmdbIds: [], excludedTitles: [],
+        },
+        pageSize: 20,
+      } as any,
+      'fingerprint',
+      20,
+      stub,
+      runRecommendation as any,
+    );
+
+    expect(runRecommendation).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a useful first continuation batch when its optional sparse retry fails', async () => {

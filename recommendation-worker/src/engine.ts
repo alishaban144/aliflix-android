@@ -13,6 +13,7 @@ import {
 } from './ai';
 import { buildKeywordExpressions, canonicalConceptPhrase, cosineSimilarity, mergeFilters, normalize, passesHardFilters, rankCandidates } from './ranking';
 import { ParsedRecommendationRequest } from './schemas';
+import { MAX_GENERATED_CONTINUATION_PASSES } from './session';
 import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
 import { Candidate, DescribeRecommendation, InterpretedIntent, MediaType, PremiseAssessment, PremiseCandidateDocument, RecommendationEnv, RecommendationFilters, RecommendationResult, ServiceError, SimilarAnchorDocument, TmdbGenre, TmdbListItem } from './types';
 
@@ -35,11 +36,11 @@ const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
 const MAX_GENERATED_CANDIDATES = 48;
-const MAX_AI_GENERATED_CANDIDATES = 8;
+const MAX_AI_GENERATED_CANDIDATES = 12;
 const MAX_GENERATED_RESULTS = 24;
 const MAX_AI_VERIFICATION_CANDIDATES = 20;
-const GENERATED_DETAIL_RESERVE = 4;
-const GENERATED_VERIFICATION_RESERVE = 4;
+const GENERATED_DETAIL_RESERVE = 6;
+const GENERATED_VERIFICATION_RESERVE = 6;
 const MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD = 8;
 const MIN_GENERATED_CANDIDATE_CONFIDENCE = .45;
 const MIN_VERIFIED_RELEVANCE = .70;
@@ -251,8 +252,9 @@ async function supplementGeneratedCandidatesFromTmdb(
     uniqueTerms.set(term, Math.max(uniqueTerms.get(term) || 0, item.maxNewCandidates));
   }
   const terms = [...uniqueTerms.entries()].slice(0, 6);
+  const detailReserve = Math.min(MAX_GENERATED_RESULTS, Math.max(request.pageSize, 12));
   for (const [termIndex, [term, maxNewCandidates]] of terms.entries()) {
-    if (candidates.size >= MAX_GENERATED_CANDIDATES || tmdb.callsRemaining <= MAX_GENERATED_RESULTS + 1) break;
+    if (candidates.size >= MAX_GENERATED_CANDIDATES || tmdb.callsRemaining <= detailReserve + 1) break;
     const keywordResponse = await optionalTmdbCall(
       `generated-keyword:${term}`,
       () => tmdb.searchKeyword(term),
@@ -262,46 +264,68 @@ async function supplementGeneratedCandidatesFromTmdb(
       .map(keyword => keyword.id)
       .filter((id, index, values) => values.indexOf(id) === index)
       .slice(0, 2);
-    if (!keywordIds.length || tmdb.callsRemaining <= MAX_GENERATED_RESULTS) continue;
+    if (!keywordIds.length || tmdb.callsRemaining <= detailReserve) continue;
 
-    const primaryDefaultPage = context.continuationPass + 1;
+    // Default-result pages are consumed in disjoint pairs. The old +1 mapping
+    // made continuation N re-read the secondary page from continuation N-1,
+    // wasting a large fraction of every user-requested search.
+    const primaryDefaultPage = context.continuationPass * 2 + 1;
     const secondaryDefaultPage = primaryDefaultPage + 1;
-    const voteCountPage = context.continuationPass + 1;
-    const discoverVariants = [
+    const explorationPage = context.continuationPass + 1;
+    const releaseDateSort = request.mediaType === 'movie' ? 'primary_release_date' : 'first_air_date';
+    const discoverVariants: Array<{
+      lane: 'default-primary' | 'default-secondary' | 'vote-count' | 'newest' | 'oldest';
+      params: Record<string, string | number>;
+    }> = [
       {
-        with_keywords: keywordIds.join('|'),
-        page: termIndex === 0 ? primaryDefaultPage : context.continuationPass + 1,
+        lane: 'default-primary',
+        params: {
+          with_keywords: keywordIds.join('|'),
+          page: primaryDefaultPage,
+        },
       },
       ...(termIndex === 0
         ? [
-            { with_keywords: keywordIds.join('|'), sort_by: 'vote_count.desc', page: voteCountPage },
-            { with_keywords: keywordIds.join('|'), page: secondaryDefaultPage },
+            {
+              lane: 'vote-count' as const,
+              params: { with_keywords: keywordIds.join('|'), sort_by: 'vote_count.desc', page: explorationPage },
+            },
+            {
+              lane: 'newest' as const,
+              params: { with_keywords: keywordIds.join('|'), sort_by: `${releaseDateSort}.desc`, page: explorationPage },
+            },
+            {
+              lane: 'oldest' as const,
+              params: { with_keywords: keywordIds.join('|'), sort_by: `${releaseDateSort}.asc`, page: explorationPage },
+            },
+            {
+              lane: 'default-secondary' as const,
+              params: { with_keywords: keywordIds.join('|'), page: secondaryDefaultPage },
+            },
           ]
         : []),
     ];
     let newCandidatesForTerm = 0;
-    for (const [variantIndex, params] of discoverVariants.entries()) {
+    for (const [variantIndex, variant] of discoverVariants.entries()) {
       if (
         candidates.size >= MAX_GENERATED_CANDIDATES ||
         newCandidatesForTerm >= maxNewCandidates ||
-        tmdb.callsRemaining <= MAX_GENERATED_RESULTS
+        tmdb.callsRemaining <= detailReserve
       ) break;
+      const variantsRemaining = discoverVariants.length - variantIndex;
+      const laneTarget = Math.ceil((maxNewCandidates - newCandidatesForTerm) / variantsRemaining);
+      let newCandidatesForLane = 0;
       const page = await optionalTmdbCall(
-        `generated-keyword-discover:${term}:${variantIndex}`,
-        () => tmdb.discover(request.mediaType, params),
+        `generated-keyword-discover:${term}:${variant.lane}`,
+        () => tmdb.discover(request.mediaType, variant.params),
       );
-      const laneSource = params.sort_by === 'vote_count.desc'
-        ? 'tmdb:keyword-supplement:vote-count'
-        : params.page === secondaryDefaultPage
-          ? 'tmdb:keyword-supplement:default-secondary'
-          : 'tmdb:keyword-supplement:default-primary';
-      const variantSource = params.sort_by === 'vote_count.desc'
-        ? `tmdb:keyword-supplement:vote-count-page-${params.page}`
-        : `tmdb:keyword-supplement:default-page-${params.page}`;
+      const laneSource = `tmdb:keyword-supplement:${variant.lane}`;
+      const variantSource = `${laneSource}:page-${variant.params.page}`;
       for (const item of page?.results || []) {
         if (
           candidates.size >= MAX_GENERATED_CANDIDATES ||
-          newCandidatesForTerm >= maxNewCandidates
+          newCandidatesForTerm >= maxNewCandidates ||
+          newCandidatesForLane >= laneTarget
         ) break;
         const candidate = toCandidate(item, request.mediaType, new Map());
         if (!candidate || context.excludedCandidateKeys.has(candidate.key)) continue;
@@ -322,6 +346,7 @@ async function supplementGeneratedCandidatesFromTmdb(
         candidate.retrievalSources.add(variantSource);
         candidates.set(candidate.key, candidate);
         newCandidatesForTerm += 1;
+        newCandidatesForLane += 1;
       }
     }
   }
@@ -566,6 +591,8 @@ function selectVerificationDocuments(
   const defaultPrimary: PremiseCandidateDocument[] = [];
   const defaultSecondary: PremiseCandidateDocument[] = [];
   const voteCount: PremiseCandidateDocument[] = [];
+  const newest: PremiseCandidateDocument[] = [];
+  const oldest: PremiseCandidateDocument[] = [];
   const keywordGrounded: PremiseCandidateDocument[] = [];
   for (const document of documents) {
     const candidate = hydrated[document.index];
@@ -575,6 +602,8 @@ function selectVerificationDocuments(
       if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-primary')) defaultPrimary.push(document);
       if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-secondary')) defaultSecondary.push(document);
       if (candidate.retrievalSources.has('tmdb:keyword-supplement:vote-count')) voteCount.push(document);
+      if (candidate.retrievalSources.has('tmdb:keyword-supplement:newest')) newest.push(document);
+      if (candidate.retrievalSources.has('tmdb:keyword-supplement:oldest')) oldest.push(document);
     } else if (hasGeneratedRecommendationEvidence(candidate)) generatedOnly.push(document);
   }
 
@@ -586,9 +615,11 @@ function selectVerificationDocuments(
     selectedIndexes.add(document.index);
   };
   generatedOnly.slice(0, GENERATED_VERIFICATION_RESERVE).forEach(add);
-  defaultPrimary.slice(0, 8).forEach(add);
-  defaultSecondary.slice(0, 5).forEach(add);
+  defaultPrimary.slice(0, 4).forEach(add);
+  defaultSecondary.slice(0, 3).forEach(add);
   voteCount.slice(0, 3).forEach(add);
+  newest.slice(0, 2).forEach(add);
+  oldest.slice(0, 2).forEach(add);
   keywordGrounded.forEach(add);
   generatedOnly.forEach(add);
   documents.forEach(add);
@@ -606,6 +637,12 @@ function selectGeneratedDetailPool(resolved: Candidate[]): Candidate[] {
   const voteCount = keywordGrounded.filter(candidate => (
     candidate.retrievalSources.has('tmdb:keyword-supplement:vote-count')
   ));
+  const newest = keywordGrounded.filter(candidate => (
+    candidate.retrievalSources.has('tmdb:keyword-supplement:newest')
+  ));
+  const oldest = keywordGrounded.filter(candidate => (
+    candidate.retrievalSources.has('tmdb:keyword-supplement:oldest')
+  ));
   const generatedOnly = resolved.filter(candidate => (
     !candidate.retrievalSources.has('tmdb:keyword-supplement') && hasGeneratedRecommendationEvidence(candidate)
   ));
@@ -617,9 +654,11 @@ function selectGeneratedDetailPool(resolved: Candidate[]): Candidate[] {
     selectedKeys.add(candidate.key);
   };
   generatedOnly.slice(0, GENERATED_DETAIL_RESERVE).forEach(add);
-  defaultPrimary.slice(0, 10).forEach(add);
-  defaultSecondary.slice(0, 6).forEach(add);
-  voteCount.slice(0, 4).forEach(add);
+  defaultPrimary.slice(0, 5).forEach(add);
+  defaultSecondary.slice(0, 3).forEach(add);
+  voteCount.slice(0, 3).forEach(add);
+  newest.slice(0, 3).forEach(add);
+  oldest.slice(0, 3).forEach(add);
   keywordGrounded.forEach(add);
   generatedOnly.forEach(add);
   resolved.forEach(add);
@@ -855,7 +894,7 @@ async function processDescribeRecommendation(
   applyQueryDateConstraints(query, filters);
   return processGeneratedRecommendations(env, request, tmdb, {
     filters,
-    generationLimit: MAX_AI_GENERATED_CANDIDATES,
+    generationLimit: Math.min(MAX_AI_GENERATED_CANDIDATES, request.pageSize),
     continuationPass,
     excludedCandidateKeys: new Set(
       filters.excludedTmdbIds.map(tmdbId => `${request.mediaType}:${tmdbId}`),
@@ -884,7 +923,7 @@ async function processDescribeRecommendation(
       request.mediaType,
       filters,
       [...new Set([...filters.excludedTitles, ...excludedTitles])],
-      MAX_AI_GENERATED_CANDIDATES,
+      Math.min(MAX_AI_GENERATED_CANDIDATES, request.pageSize),
     ),
     verify: candidates => (dependencies.assessPremise || assessRecommendationPremise)(
       env,
@@ -954,7 +993,7 @@ async function processSimilarRecommendation(
   );
   return processGeneratedRecommendations(env, request, tmdb, {
     filters,
-    generationLimit: MAX_AI_GENERATED_CANDIDATES,
+    generationLimit: Math.min(MAX_AI_GENERATED_CANDIDATES, request.pageSize),
     continuationPass,
     excludedCandidateKeys,
     recommendationSource: `${aiProviderName(selectedAiModel(env))}:similar-recommendation`,
@@ -971,7 +1010,7 @@ async function processSimilarRecommendation(
         ...filters.excludedTitles,
         ...excludedTitles,
       ])],
-      MAX_AI_GENERATED_CANDIDATES,
+      Math.min(MAX_AI_GENERATED_CANDIDATES, request.pageSize),
     ),
     verify: candidates => (dependencies.assessSimilarity || assessRecommendationSimilarity)(
       env,
@@ -1420,7 +1459,7 @@ export async function processRecommendation(
     : env;
   let providerFallbackIntent: InterpretedIntent | undefined;
   let disableGeminiEmbeddings = isGroqAiModel(selectedAiModel(recommendationEnv));
-  const continuationPass = Math.max(0, Math.min(6, options.continuationPass || 0));
+  const continuationPass = Math.max(0, Math.min(MAX_GENERATED_CONTINUATION_PASSES, options.continuationPass || 0));
   if (request.mode === 'describe') {
     try {
       return await processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass);

@@ -2,7 +2,8 @@ import { DurableObject } from 'cloudflare:workers';
 import { RecommendationEnv, RecommendationResult, ServiceError } from './types';
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
-export const MAX_GENERATED_CONTINUATION_PASSES = 6;
+export const MAX_GENERATED_CONTINUATION_PASSES = 24;
+const MAX_CONSECUTIVE_EMPTY_CONTINUATION_PASSES = 4;
 
 interface CursorPayload { v: 1; sessionId: string; requestId: string; fingerprint: string; offset: number }
 interface SessionMeta { fingerprint: string; resultCount: number; expiresAt: number }
@@ -187,7 +188,7 @@ export class RecommendationSession extends DurableObject<RecommendationEnv> {
     const emptyPasses = fresh.length ? 0 : continuation.emptyPasses + 1;
     const exhausted = continuation.exhausted ||
       continuation.nextPass > MAX_GENERATED_CONTINUATION_PASSES ||
-      emptyPasses >= 2;
+      emptyPasses >= MAX_CONSECUTIVE_EMPTY_CONTINUATION_PASSES;
     const count = meta.resultCount + fresh.length;
 
     this.ctx.storage.transactionSync(() => {

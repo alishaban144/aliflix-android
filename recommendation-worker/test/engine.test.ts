@@ -510,6 +510,26 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(results.every(result => result.retrievalSources.includes('tmdb:details'))).toBe(true);
   });
 
+  it('asks the selected model for a broader seed set on a twenty-result Describe page', async () => {
+    let requestedTarget = 0;
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'describe',
+      query: 'movies about a broad genuine topic',
+      pageSize: 20,
+    }, {
+      tmdb: fakeTmdb({ empty: true }),
+      recommendDescribe: async (_env, _query, _type, _filters, _excludedTitles, targetCount) => {
+        requestedTarget = targetCount ?? 0;
+        return [];
+      },
+      assessPremise: async () => [],
+    });
+
+    expect(results).toEqual([]);
+    expect(requestedTarget).toBe(12);
+  });
+
   it('reserves verifier capacity for both generated and TMDB-grounded candidates', async () => {
     const keywordDiscoverVariants = new Set<string>();
     const tmdb = {
@@ -582,11 +602,101 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     });
 
     expect(verifiedTitles).toHaveLength(20);
-    expect(verifiedTitles.filter(title => title.startsWith('Generated '))).toHaveLength(4);
-    expect(verifiedTitles.filter(title => title.startsWith('Keyword '))).toHaveLength(16);
-    expect(keywordDiscoverVariants).toEqual(new Set(['default:1']));
+    expect(verifiedTitles.filter(title => title.startsWith('Generated '))).toHaveLength(6);
+    expect(verifiedTitles.filter(title => title.startsWith('Keyword '))).toHaveLength(14);
+    expect(keywordDiscoverVariants).toEqual(new Set([
+      'default:1',
+      'vote_count.desc:1',
+      'primary_release_date.desc:1',
+      'primary_release_date.asc:1',
+      'default:2',
+    ]));
     expect(results).toHaveLength(8);
     expect(results.every(result => !result.retrievalSources.includes('tmdb:premise-evidence-fallback'))).toBe(true);
+  });
+
+  it('fills a broad verified page within one forty-call TMDB budget', async () => {
+    let callsRemaining = 40;
+    let outboundCalls = 0;
+    const spendCall = (): void => {
+      if (callsRemaining <= 0) {
+        throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request budget exhausted', 503, true);
+      }
+      callsRemaining -= 1;
+      outboundCalls += 1;
+    };
+    const tmdb = {
+      ...fakeTmdb(),
+      get callsRemaining() { return callsRemaining; },
+      searchTitle: async (_type: string, title: string) => {
+        spendCall();
+        const id = Number(title.replace('Generated ', ''));
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{ id, title, release_date: `${2000 + id}-01-01`, overview: 'Alien abduction drives the complete story.' }],
+        };
+      },
+      searchKeyword: async (term: string) => {
+        spendCall();
+        return { page: 1, total_pages: 1, total_results: 1, results: [{ id: 99, name: term }] };
+      },
+      discover: async (_type: string, params: Record<string, string | number>) => {
+        spendCall();
+        const sort = String(params.sort_by || 'default');
+        const laneOffset = sort === 'vote_count.desc' ? 1_000
+          : sort.endsWith('.desc') ? 2_000
+            : sort.endsWith('.asc') ? 3_000
+              : Number(params.page) * 4_000;
+        return {
+          page: Number(params.page), total_pages: 50, total_results: 1_000,
+          results: Array.from({ length: 20 }, (_, offset) => ({
+            id: 10_000 + laneOffset + offset,
+            title: `Catalog ${laneOffset + offset}`,
+            release_date: `${1980 + (offset % 40)}-01-01`,
+            overview: 'Alien abduction and UFO encounters drive the complete story.',
+            vote_count: 5_000 - offset,
+          })),
+        };
+      },
+      details: async (_type: string, id: number) => {
+        spendCall();
+        const generated = id < 100;
+        return {
+          id,
+          title: generated ? `Generated ${id}` : `Catalog ${id - 10_000}`,
+          release_date: generated ? `${2000 + id}-01-01` : '1999-01-01',
+          overview: 'Alien abduction and UFO encounters drive the complete story.',
+          genres: [{ id: 878, name: 'Science Fiction' }],
+          keywords: { keywords: [{ id: 99, name: 'alien abduction' }, { id: 100, name: 'ufo' }] },
+          vote_count: 1_000,
+        };
+      },
+    };
+
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'describe',
+      query: 'movies about alien abduction and UFO encounters',
+      pageSize: 20,
+    }, {
+      tmdb: tmdb as any,
+      recommendDescribe: async () => Array.from({ length: 12 }, (_, offset) => ({
+        title: `Generated ${offset + 1}`,
+        releaseYear: 2001 + offset,
+        confidence: .95,
+        reason: 'Alien abduction and UFO encounters drive the complete story.',
+      })),
+      assessPremise: async (_env, _query, _type, _groups, candidates) => candidates.map(candidate => ({
+        index: candidate.index,
+        relevanceScore: .95,
+        matchedGroupIndexes: [0, 1],
+        reason: 'Alien abduction and UFO encounters drive the complete story.',
+      })),
+    });
+
+    expect(results).toHaveLength(20);
+    expect(outboundCalls).toBeLessThanOrEqual(40);
+    expect(callsRemaining).toBeGreaterThanOrEqual(0);
   });
 
   it('retrieves deeper TMDB lanes for a fresh broad-query continuation batch', async () => {
@@ -604,10 +714,18 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
       },
       discover: async (_type: string, params: Record<string, string | number>) => {
         const page = Number(params.page);
-        const ranked = params.sort_by === 'vote_count.desc';
+        const sort = String(params.sort_by || 'default');
         const keywordId = Number(params.with_keywords);
-        discoverVariants.push(`${keywordId}:${ranked ? 'vote' : 'default'}:${page}`);
-        const lane = keywordId * 100_000 + (ranked ? 50_000 : 0);
+        const laneName = sort === 'vote_count.desc' ? 'vote'
+          : sort.endsWith('.desc') ? 'newest'
+            : sort.endsWith('.asc') ? 'oldest'
+              : 'default';
+        discoverVariants.push(`${keywordId}:${laneName}:${page}`);
+        const laneOffset = laneName === 'vote' ? 50_000
+          : laneName === 'newest' ? 60_000
+            : laneName === 'oldest' ? 70_000
+              : 0;
+        const lane = keywordId * 100_000 + laneOffset;
         return {
           page, total_pages: 20, total_results: 400,
           results: Array.from({ length: 20 }, (_, index) => ({
@@ -650,6 +768,8 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     };
 
     const first = await processRecommendation({} as any, broadRequest, dependencies);
+    const firstVariants = [...discoverVariants];
+    discoverVariants.length = 0;
     const second = await processRecommendation({} as any, {
       ...broadRequest,
       filters: {
@@ -662,10 +782,14 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(first).toHaveLength(20);
     expect(second).toHaveLength(20);
     expect(new Set([...first, ...second].map(item => item.tmdbId)).size).toBe(40);
-    expect(discoverVariants).toEqual(expect.arrayContaining([
-      '99:default:1', '100:default:1', '101:default:1',
-      '99:default:2', '100:default:2', '101:default:2',
+    expect(firstVariants).toEqual(expect.arrayContaining([
+      '99:default:1', '99:default:2', '99:vote:1', '99:newest:1', '99:oldest:1',
     ]));
+    expect(discoverVariants).toEqual(expect.arrayContaining([
+      '99:default:3', '99:default:4', '99:vote:2', '99:newest:2', '99:oldest:2',
+      '100:default:3', '101:default:3',
+    ]));
+    expect(discoverVariants).not.toContain('99:default:2');
   });
 
   it('stabilizes a broad single-topic match with exact TMDB keyword and overview evidence', async () => {
