@@ -116,6 +116,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -175,6 +176,7 @@ internal fun DiscoverScreen(
     mySpaceKeys: Set<String> = emptySet(),
     onToggleMyList: (Media) -> Unit = {},
     onAskVisibilityChanged: (Boolean) -> Unit = {},
+    catalogBottomPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -188,6 +190,13 @@ internal fun DiscoverScreen(
         )
     }
     var recommendModeActive by rememberSaveable { mutableStateOf(false) }
+    var preservedCatalogBottomPadding by remember { mutableStateOf(catalogBottomPadding) }
+
+    LaunchedEffect(catalogBottomPadding) {
+        if (catalogBottomPadding > 0.dp) {
+            preservedCatalogBottomPadding = catalogBottomPadding
+        }
+    }
 
     LaunchedEffect(recommendModeActive) {
         onAskVisibilityChanged(recommendModeActive)
@@ -261,6 +270,10 @@ internal fun DiscoverScreen(
                     )
                 }
             },
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("discover-mode-container"),
+            contentAlignment = Alignment.TopStart,
             label = "discover-mode",
         ) { recommendMode ->
             if (recommendMode) {
@@ -321,7 +334,11 @@ internal fun DiscoverScreen(
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = preservedCatalogBottomPadding),
+                ) {
                     Column(modifier = Modifier.fillMaxSize()) {
                         MobileTopSafeArea()
 

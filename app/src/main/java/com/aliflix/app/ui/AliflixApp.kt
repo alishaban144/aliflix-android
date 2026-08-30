@@ -1094,7 +1094,7 @@ fun AliflixApp(
                         mySpaceKeys = (myList + recent + likes).mapTo(linkedSetOf(), Media::key),
                         onToggleMyList = viewModel::toggleMyList,
                         onAskVisibilityChanged = { askAliflixActive = it },
-                        modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
+                        catalogBottomPadding = padding.calculateBottomPadding(),
                     )
 
                     AppScreen.MY_SPACE -> MySpaceScreen(

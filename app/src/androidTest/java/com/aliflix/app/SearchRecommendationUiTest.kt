@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso.pressBack
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 
@@ -87,6 +88,37 @@ class SearchRecommendationUiTest {
         composeRule.onNodeWithTag("discover-mode-recommend").assertIsDisplayed()
         composeRule.onAllNodesWithTag("search-mode-plot").assertCountEquals(0)
         composeRule.onAllNodesWithTag("search-mode-pager").assertCountEquals(0)
+    }
+
+    @Test
+    fun askAliflixNavigationKeepsTheDiscoverViewportStable() {
+        openDiscover()
+        composeRule.waitForIdle()
+        val initialBounds = composeRule.onNodeWithTag("discover-mode-container")
+            .fetchSemanticsNode()
+            .boundsInRoot
+
+        composeRule.mainClock.autoAdvance = false
+        try {
+            composeRule.onNodeWithTag("discover-ask-aliflix-card").performClick()
+            composeRule.mainClock.advanceTimeBy(150)
+            val enteringBounds = composeRule.onNodeWithTag("discover-mode-container")
+                .fetchSemanticsNode()
+                .boundsInRoot
+            assertEquals(initialBounds.width, enteringBounds.width, 0.5f)
+            assertEquals(initialBounds.height, enteringBounds.height, 0.5f)
+
+            composeRule.mainClock.advanceTimeBy(300)
+            composeRule.onNodeWithContentDescription("Back to Search").performClick()
+            composeRule.mainClock.advanceTimeBy(150)
+            val leavingBounds = composeRule.onNodeWithTag("discover-mode-container")
+                .fetchSemanticsNode()
+                .boundsInRoot
+            assertEquals(initialBounds.width, leavingBounds.width, 0.5f)
+            assertEquals(initialBounds.height, leavingBounds.height, 0.5f)
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
     }
 
     @Test
