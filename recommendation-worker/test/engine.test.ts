@@ -483,7 +483,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
       recommendDescribe: async (_env, _query, _type, _filters, excludedTitles, targetCount) => {
         generationPasses++;
         expect(excludedTitles).toEqual([]);
-        expect(targetCount).toBe(12);
+        expect(targetCount).toBe(8);
         const start = 1;
         const end = 12;
         return Array.from({ length: end - start + 1 }, (_, offset) => {
@@ -504,8 +504,8 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
 
     expect(generationPasses).toBe(1);
     expect(verificationPasses).toBe(1);
-    expect(titleSearches).toBe(12);
-    expect(detailCalls).toBe(12);
+    expect(titleSearches).toBe(8);
+    expect(detailCalls).toBe(8);
     expect(results).toHaveLength(8);
     expect(results.every(result => result.retrievalSources.includes('tmdb:details'))).toBe(true);
   });
@@ -584,11 +584,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(verifiedTitles).toHaveLength(20);
     expect(verifiedTitles.filter(title => title.startsWith('Generated '))).toHaveLength(4);
     expect(verifiedTitles.filter(title => title.startsWith('Keyword '))).toHaveLength(16);
-    expect(keywordDiscoverVariants).toEqual(new Set([
-      'default:1',
-      'vote_count.desc:1',
-      'default:2',
-    ]));
+    expect(keywordDiscoverVariants).toEqual(new Set(['default:1']));
     expect(results).toHaveLength(8);
     expect(results.every(result => !result.retrievalSources.includes('tmdb:premise-evidence-fallback'))).toBe(true);
   });
@@ -599,15 +595,19 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
       ...fakeTmdb(),
       callsRemaining: 100,
       searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
-      searchKeyword: async (term: string) => ({
-        page: 1, total_pages: 1, total_results: 1,
-        results: [{ id: 99, name: term }],
-      }),
+      searchKeyword: async (term: string) => {
+        const id = term.includes('ufo') ? 100 : term.includes('extraterrestrial') ? 101 : 99;
+        return {
+          page: 1, total_pages: 1, total_results: 1,
+          results: [{ id, name: term }],
+        };
+      },
       discover: async (_type: string, params: Record<string, string | number>) => {
         const page = Number(params.page);
         const ranked = params.sort_by === 'vote_count.desc';
-        discoverVariants.push(`${ranked ? 'vote' : 'default'}:${page}`);
-        const lane = ranked ? 50_000 : 10_000;
+        const keywordId = Number(params.with_keywords);
+        discoverVariants.push(`${keywordId}:${ranked ? 'vote' : 'default'}:${page}`);
+        const lane = keywordId * 100_000 + (ranked ? 50_000 : 0);
         return {
           page, total_pages: 20, total_results: 400,
           results: Array.from({ length: 20 }, (_, index) => ({
@@ -663,9 +663,88 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(second).toHaveLength(20);
     expect(new Set([...first, ...second].map(item => item.tmdbId)).size).toBe(40);
     expect(discoverVariants).toEqual(expect.arrayContaining([
-      'default:1', 'vote:1', 'default:2',
-      'default:3', 'vote:2', 'default:4',
+      '99:default:1', '100:default:1', '101:default:1',
+      '99:default:2', '100:default:2', '101:default:2',
     ]));
+  });
+
+  it('stabilizes a broad single-topic match with exact TMDB keyword and overview evidence', async () => {
+    const works = [
+      {
+        id: 301,
+        title: 'Central Alien Story',
+        overview: 'An alien arrival changes humanity and drives the entire story.',
+        keywords: [{ id: 99, name: 'alien' }],
+      },
+      {
+        id: 302,
+        title: 'Incidental Tag',
+        overview: 'A family repairs its home after a severe winter storm.',
+        keywords: [{ id: 99, name: 'alien' }],
+      },
+    ];
+    const tmdb = {
+      ...fakeTmdb(),
+      callsRemaining: 100,
+      searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchKeyword: async (term: string) => ({
+        page: 1, total_pages: 1, total_results: 1, results: [{ id: 99, name: term }],
+      }),
+      discover: async () => ({
+        page: 1, total_pages: 1, total_results: works.length,
+        results: works.map(work => ({ ...work, release_date: '2020-01-01', genre_ids: [878] })),
+      }),
+      details: async (_type: string, id: number) => {
+        const work = works.find(item => item.id === id)!;
+        return {
+          ...work,
+          release_date: '2020-01-01',
+          genres: [{ id: 878, name: 'Science Fiction' }],
+          keywords: { keywords: work.keywords },
+        };
+      },
+    };
+
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'describe',
+      query: 'movies about aliens and ufos',
+      pageSize: 20,
+    }, {
+      tmdb: tmdb as any,
+      recommendDescribe: async () => [],
+      assessPremise: async (_env, _query, _type, groups, candidates) => {
+        expect(groups).toHaveLength(1);
+        return candidates.map(candidate => ({
+          index: candidate.index,
+          relevanceScore: .55,
+          matchedGroupIndexes: [],
+          reason: 'The candidate does not contain every word in the query.',
+        }));
+      },
+    });
+
+    expect(results.map(result => result.title)).toEqual(['Central Alien Story']);
+    expect(results[0].finalScore).toBe(.70);
+    expect(results[0].retrievalSources).toContain('tmdb:exact-keyword-corroboration');
+    expect(results[0].matchReasons).toEqual([
+      'TMDB keywords and overview support the requested central topic.',
+    ]);
+
+    const verifierUnavailable = await processRecommendation({} as any, {
+      ...request,
+      mode: 'describe',
+      query: 'movies about aliens and ufos',
+      pageSize: 20,
+    }, {
+      tmdb: tmdb as any,
+      recommendDescribe: async () => [],
+      assessPremise: async () => {
+        throw new ServiceError('GROQ_UNAVAILABLE', 'Verifier timed out', 504, true);
+      },
+    });
+    expect(verifierUnavailable.map(result => result.title)).toEqual(['Central Alien Story']);
+    expect(verifierUnavailable[0].retrievalSources).toContain('tmdb:premise-evidence-fallback');
   });
 
   it('promotes only borderline verifier matches corroborated by exact compound metadata', async () => {

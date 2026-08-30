@@ -35,7 +35,7 @@ const MAX_CANDIDATES = 220;
 const MAX_SEMANTIC_CANDIDATES = 64;
 const MAX_DETAIL_CANDIDATES = 64;
 const MAX_GENERATED_CANDIDATES = 48;
-const MAX_AI_GENERATED_CANDIDATES = 12;
+const MAX_AI_GENERATED_CANDIDATES = 8;
 const MAX_GENERATED_RESULTS = 24;
 const MAX_AI_VERIFICATION_CANDIDATES = 20;
 const GENERATED_DETAIL_RESERVE = 4;
@@ -264,7 +264,7 @@ async function supplementGeneratedCandidatesFromTmdb(
       .slice(0, 2);
     if (!keywordIds.length || tmdb.callsRemaining <= MAX_GENERATED_RESULTS) continue;
 
-    const primaryDefaultPage = context.continuationPass * 2 + 1;
+    const primaryDefaultPage = context.continuationPass + 1;
     const secondaryDefaultPage = primaryDefaultPage + 1;
     const voteCountPage = context.continuationPass + 1;
     const discoverVariants = [
@@ -394,6 +394,17 @@ function exactCompoundKeywordCoversGroups(
   });
 }
 
+function exactKeywordCoversSingleGroup(
+  candidate: PremiseCandidateDocument,
+  groups: InterpretedIntent['requiredConceptGroups'],
+): boolean {
+  if (groups.length !== 1) return false;
+  const acceptedTerms = new Set(
+    [groups[0].label, ...groups[0].synonyms].map(canonicalConceptPhrase).filter(Boolean),
+  );
+  return candidate.keywords.some(keyword => acceptedTerms.has(canonicalConceptPhrase(keyword)));
+}
+
 function overviewCoversAnyGroup(
   candidate: PremiseCandidateDocument,
   groups: InterpretedIntent['requiredConceptGroups'],
@@ -426,18 +437,24 @@ function groundedPremisePromotions(
   const assessmentByIndex = new Map(assessments.map(assessment => [assessment.index, assessment]));
   return candidates.flatMap(candidate => {
     const assessment = assessmentByIndex.get(candidate.index);
+    const singleGroupGrounded = exactKeywordCoversSingleGroup(candidate, groups) &&
+      overviewCoversAnyGroup(candidate, groups) &&
+      !containsGroundedRejectionCue(candidate.overview);
+    const compoundGrounded = exactCompoundKeywordCoversGroups(candidate, groups) &&
+      overviewCoversAnyGroup(candidate, groups) &&
+      !containsGroundedRejectionCue(`${candidate.overview} ${assessment?.reason || ''}`);
     if (
       !assessment ||
       assessment.relevanceScore >= MIN_VERIFIED_RELEVANCE ||
-      !exactCompoundKeywordCoversGroups(candidate, groups) ||
-      !overviewCoversAnyGroup(candidate, groups) ||
-      containsGroundedRejectionCue(`${candidate.overview} ${assessment.reason}`)
+      (!singleGroupGrounded && !compoundGrounded)
     ) return [];
     return [{
       ...assessment,
       relevanceScore: MIN_VERIFIED_RELEVANCE,
       matchedGroupIndexes: groups.map((_, index) => index),
-      reason: assessment.reason || 'Exact TMDB keyword evidence supports every requested premise facet.',
+      reason: singleGroupGrounded
+        ? 'TMDB keywords and overview support the requested central topic.'
+        : assessment.reason || 'Exact TMDB keyword evidence supports every requested premise facet.',
     }];
   });
 }
@@ -454,6 +471,19 @@ function deterministicPremiseAssessments(
         relevanceScore: Math.min(.82, Math.max(.72, candidate.aiConfidence - .08)),
         matchedGroupIndexes: [],
         reason: candidate.aiReason || 'Groq match retained with TMDB-verified identity and metadata.',
+      }];
+    }
+
+    if (
+      exactKeywordCoversSingleGroup(candidate, groups) &&
+      overviewCoversAnyGroup(candidate, groups) &&
+      !containsGroundedRejectionCue(candidate.overview)
+    ) {
+      return [{
+        index: candidate.index,
+        relevanceScore: .72,
+        matchedGroupIndexes: [0],
+        reason: 'TMDB keywords and overview support the requested central topic.',
       }];
     }
 
@@ -818,7 +848,9 @@ async function processDescribeRecommendation(
     ? `${request.previousQuery}. Additional requirement: ${request.refinementQuery}`
     : (request.query || request.refinementQuery || '').trim();
   const filters = mergeFilters(request.filters, emptyIntent().hardFilters);
-  const premiseIntent = cleanInterpretedIntent(fallbackIntentFromQuery(query));
+  const explicitPremiseIntent = fallbackIntentFromQuery(query);
+  const premiseIntent = cleanInterpretedIntent(explicitPremiseIntent);
+  const explicitPremiseLabels = explicitPremiseIntent.requiredConceptGroups.map(group => group.label);
   const premiseLabels = premiseIntent.requiredConceptGroups.map(group => group.label);
   applyQueryDateConstraints(query, filters);
   return processGeneratedRecommendations(env, request, tmdb, {
@@ -833,9 +865,10 @@ async function processDescribeRecommendation(
     fallbackVerificationSource: 'tmdb:premise-evidence-fallback',
     groundedVerificationSource: 'tmdb:exact-keyword-corroboration',
     supplementKeywordTerms: [
-      ...(premiseLabels.length === 2 && premiseLabels.every(label => !label.includes(' '))
-        ? [{ term: premiseLabels.join(' '), maxNewCandidates: MAX_GENERATED_CANDIDATES }]
-        : []),
+      ...explicitPremiseLabels.map(term => ({
+        term,
+        maxNewCandidates: term.includes(' ') ? 16 : MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD,
+      })),
       ...premiseLabels.map(term => ({ term, maxNewCandidates: MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD })),
       ...premiseIntent.requiredConceptGroups.flatMap(group => group.synonyms
         .filter(value => canonicalConceptPhrase(value) !== canonicalConceptPhrase(group.label))

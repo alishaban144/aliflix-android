@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildKeywordExpressions, mergeFilters, rankCandidates } from '../src/ranking';
+import { buildKeywordExpressions, canonicalConceptPhrase, mergeFilters, rankCandidates } from '../src/ranking';
 import { Candidate, InterpretedIntent, RecommendationFilters } from '../src/types';
 
 const filters = (overrides: Partial<RecommendationFilters> = {}): RecommendationFilters => ({
@@ -18,6 +18,10 @@ const candidate = (id: number, title: string, overview: string, overrides: Parti
 });
 
 describe('deterministic recommendation logic', () => {
+  it('normalizes the common plural UFO form to the authoritative keyword form', () => {
+    expect(canonicalConceptPhrase('UFOs')).toBe('ufo');
+  });
+
   it('preserves OR within concept groups and AND between groups', () => {
     const expressions = buildKeywordExpressions([[1, 2, 3], [10, 11]], 8);
     expect(expressions).toContain('1|2|3,10|11');

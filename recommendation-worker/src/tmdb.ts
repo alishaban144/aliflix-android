@@ -51,7 +51,7 @@ export type TmdbTrendingItem = TmdbListItem & { media_type?: MediaType | 'person
 export class TmdbClient {
   private used = 0;
   // Filters use the conservative default. Generated Describe/Similar requests
-  // explicitly raise this to 40 while capping their Gemini calls so even the
+  // explicitly raise this to 40 while capping their AI calls so even the
   // provider-retry path stays below Cloudflare Free's 50-subrequest ceiling.
   constructor(private readonly env: RecommendationEnv, private readonly budget = 38) {}
   get callsUsed(): number { return this.used; }

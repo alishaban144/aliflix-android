@@ -5,6 +5,7 @@ const unique = <T>(values: T[]): T[] => [...new Set(values)];
 
 export function canonicalConceptPhrase(value: string): string {
   const singularize = (word: string): string => {
+    if (word === 'ufos') return 'ufo';
     if (word.length > 4 && word.endsWith('ies')) return `${word.slice(0, -3)}y`;
     if (word.length > 5 && /(ches|shes|xes|zes)$/.test(word)) return word.slice(0, -2);
     if (word.length > 4 && word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1);
