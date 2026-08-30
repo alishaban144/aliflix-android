@@ -111,6 +111,7 @@ describe('Groq structured recommendation provider', () => {
     expect(requestBody.max_completion_tokens).toBe(GROQ_VERIFICATION_MAX_OUTPUT_TOKENS);
     expect(requestBody.messages[0].content).toContain('exact compound TMDB keyword');
     expect(requestBody.messages[0].content).toContain('belief/hoax/hallucination');
+    expect(requestBody.messages[0].content).toContain('labels and synonyms inside one group are alternatives');
     expect(requestBody.messages[0].content).toContain('in candidate array order');
     expect(requestBody.response_format.json_schema.schema.properties.assessments.minItems).toBe(1);
     expect(requestBody.response_format.json_schema.schema.properties.assessments.maxItems).toBe(1);

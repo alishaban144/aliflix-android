@@ -45,6 +45,7 @@ describe('Gemini Describe contract', () => {
     expect(DESCRIBE_RECOMMENDATIONS_PROMPT).toContain('Return fewer instead of padding');
     expect(DESCRIBE_RECOMMENDATIONS_PROMPT).toContain('Returning/Ended status is eligibility only');
     expect(DESCRIBE_RECOMMENDATIONS_PROMPT).toContain('Use your knowledge of the actual story');
+    expect(DESCRIBE_RECOMMENDATIONS_PROMPT).toContain('allows works centrally about aliens OR UFOs');
   });
 
   it('requires substantive Similar connections and multi-anchor fusion instead of broad genre overlap', () => {

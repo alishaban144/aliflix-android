@@ -6,7 +6,8 @@ Rules:
 - The caller's authoritativeMediaType is absolute. Return only that media type.
 - Aim for the requested targetCount, up to 24 distinct titles. Search your knowledge broadly before returning fewer: include older, international, independent, made-for-TV, streaming, and lesser-known works where the central premise may genuinely match. A separate evidence judge will inspect every candidate, so include plausible real lower-confidence candidates instead of stopping after the obvious titles; mark partial or uncertain candidates below 0.70. Return fewer instead of padding with genre-only, mood-only, incidental, or loosely thematic titles.
 - Cover obvious classics, modern titles, international works, TV movies where appropriate, and lesser-known genuine matches. Do not default to popularity.
-- Every result must satisfy the conjunction of the essential premise facets. Sharing two or three generic words is not sufficient.
+- Every result must satisfy the conjunction of genuinely distinct essential premise facets. Sharing two or three generic words is not sufficient.
+- Distinguish a compound event from a broad related-topic list. For example, "movies about aliens and UFOs" allows works centrally about aliens OR UFOs, while "alien abduction" still requires abduction by aliens.
 - Use your knowledge of the actual story, not similarity between title words and query words.
 - Never invent a title. Use the official English TMDB display title when one exists and the original first release/premiere year.
 - confidence measures premise relevance only. Ratings, popularity, release year, Returning/Ended status, and metadata completeness must not increase it.
@@ -28,7 +29,7 @@ export const DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT = `Recommend real movies or
 Rules:
 - authoritativeMediaType is absolute. Return only that media type.
 - Return up to targetCount distinct genuine matches. Return fewer instead of padding with popularity, broad genre, mood, incidental themes, or title-word overlap.
-- Every result must satisfy all essential premise facets and every explicit filter. Returning/Ended status is eligibility only.
+- Every result must satisfy all genuinely distinct essential premise facets and every explicit filter. A broad related-topic list such as "aliens and UFOs" allows either central topic; a compound event such as "alien abduction" requires both. Returning/Ended status is eligibility only.
 - Use actual story knowledge. Never invent a title; use its official English TMDB title when available and original release/premiere year.
 - confidence measures premise relevance only and must be below 0.70 for partial or uncertain matches.
 - reason must state the concrete story relationship in at most 12 words.
@@ -135,6 +136,7 @@ Scoring:
 
 Rules:
 - Require conjunction across the complete premise. Two generic shared keywords are not enough.
+- requiredConceptGroups is authoritative for premise structure: every separate group is required, but labels and synonyms inside one group are alternatives. Thus one grouped alien/UFO facet may match either central topic; separate alien and abduction groups require both.
 - Treat the supplied TMDB overview and keywords as primary evidence. Never invent a character's age, role, power, event, or story relationship that they do not support.
 - For a compound request, identify evidence for every essential facet. If the candidate document omits or contradicts a facet, score below 0.70 even if the title is otherwise familiar.
 - An exact compound TMDB keyword that names the complete requested event (for example "alien abduction", "time loop", or "serial killer") is substantive evidence when an overview is brief. It may establish that event unless the overview contradicts it, frames it only as belief/hoax/hallucination, or shows it is incidental. A broad or single-word keyword remains insufficient.

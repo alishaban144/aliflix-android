@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import worker from '../src/index';
+import worker, { expandGeneratedContinuation } from '../src/index';
 
 describe('Cloudflare Worker', () => {
   const env: any = {
@@ -60,6 +60,111 @@ describe('Cloudflare Worker', () => {
     });
     const response = await worker.fetch(request, env);
     expect(response.status).toBe(413);
+  });
+
+  it('retries one sparse generated continuation and stops after ten fresh matches', async () => {
+    const reservations = [1, 2];
+    let totalCount = 11;
+    const stub = {
+      reserveContinuation: vi.fn(async () => {
+        const pass = reservations.shift();
+        return pass === undefined
+          ? { canExpand: false, pass: null, excludedTmdbIds: [], excludedTitles: [] }
+          : { canExpand: true, pass, excludedTmdbIds: [1], excludedTitles: ['Already shown'] };
+      }),
+      completeContinuation: vi.fn(async (_fingerprint: string, _pass: number, results: any[]) => {
+        totalCount += results.length;
+        return { added: results.length, count: totalCount, exhausted: false };
+      }),
+      releaseContinuation: vi.fn(async () => {}),
+    };
+    const fresh = Array.from({ length: 10 }, (_, index) => ({
+      tmdbId: 100 + index,
+      mediaType: 'movie',
+      title: `Fresh ${index + 1}`,
+    }));
+    const runRecommendation = vi.fn(async (_env, request: any, _dependencies, options: any) => {
+      expect(request.filters.excludedTmdbIds).toContain(1);
+      expect(request.filters.excludedTitles).toContain('Already shown');
+      return options.continuationPass === 1 ? [] : fresh;
+    });
+    const parsed: any = {
+      requestId: '00000000-0000-4000-8000-000000000045',
+      mode: 'describe',
+      aiModel: 'groq-qwen-3.8-27b',
+      query: 'movies about aliens and ufos',
+      mediaType: 'movie',
+      filters: {
+        originCountries: [], includedGenres: [], excludedGenres: [],
+        excludedTmdbIds: [], excludedTitles: [],
+      },
+      pageSize: 20,
+      cursor: 'signed-cursor',
+    };
+
+    await expandGeneratedContinuation(
+      env,
+      parsed,
+      'fingerprint',
+      11,
+      stub,
+      runRecommendation as any,
+    );
+
+    expect(runRecommendation).toHaveBeenCalledTimes(2);
+    expect(stub.reserveContinuation).toHaveBeenCalledTimes(2);
+    expect(stub.completeContinuation).toHaveBeenCalledTimes(2);
+    expect(stub.releaseContinuation).not.toHaveBeenCalled();
+    expect(totalCount).toBe(21);
+  });
+
+  it('keeps a useful first continuation batch when its optional sparse retry fails', async () => {
+    let pass = 0;
+    let totalCount = 20;
+    const stub = {
+      reserveContinuation: vi.fn(async () => ({
+        canExpand: true,
+        pass: ++pass,
+        excludedTmdbIds: [],
+        excludedTitles: [],
+      })),
+      completeContinuation: vi.fn(async (_fingerprint: string, _pass: number, results: any[]) => {
+        totalCount += results.length;
+        return { added: results.length, count: totalCount, exhausted: false };
+      }),
+      releaseContinuation: vi.fn(async () => {}),
+    };
+    const runRecommendation = vi.fn(async (_env, _request, _dependencies, options: any) => {
+      if (options.continuationPass === 2) throw new Error('provider unavailable');
+      return Array.from({ length: 5 }, (_, index) => ({
+        tmdbId: 200 + index,
+        mediaType: 'movie',
+        title: `Fresh ${index + 1}`,
+      }));
+    });
+
+    await expect(expandGeneratedContinuation(
+      env,
+      {
+        requestId: '00000000-0000-4000-8000-000000000046',
+        mode: 'describe',
+        query: 'movies about aliens',
+        mediaType: 'movie',
+        filters: {
+          originCountries: [], includedGenres: [], excludedGenres: [],
+          excludedTmdbIds: [], excludedTitles: [],
+        },
+        pageSize: 20,
+      } as any,
+      'fingerprint',
+      20,
+      stub,
+      runRecommendation as any,
+    )).resolves.toBeUndefined();
+
+    expect(runRecommendation).toHaveBeenCalledTimes(2);
+    expect(stub.releaseContinuation).toHaveBeenCalledWith('fingerprint', 2);
+    expect(totalCount).toBe(25);
   });
 
   it('pages plain Ended filters directly through TMDB without requiring a Durable Object pool', async () => {

@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Returns up to 20 verified generated matches per batch and makes Find more matches run a fresh Groq/TMDB continuation with displayed-title exclusions and deeper source-balanced TMDB pages."
+            "releaseNotes": "Returns up to 20 verified matches per batch, treats broad related-topic queries as alternatives without weakening compound-premise checks, and makes Find more matches run fresh Groq/TMDB searches with a bounded sparse-result retry."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Returns up to 20 verified generated matches per batch and makes Find more matches run a fresh Groq/TMDB continuation with displayed-title exclusions and deeper source-balanced TMDB pages."
+          body: "Returns up to 20 verified matches per batch, treats broad related-topic queries as alternatives without weakening compound-premise checks, and makes Find more matches run fresh Groq/TMDB searches with a bounded sparse-result retry."
           files: |
             aliflix-mobile.apk
             update-mobile.json

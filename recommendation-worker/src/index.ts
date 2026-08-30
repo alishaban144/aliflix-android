@@ -13,9 +13,22 @@ const catalogJson = (body: unknown): Response => new Response(JSON.stringify(bod
   status: 200,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' },
 });
-// One fresh engine pass per tap keeps the complete AI + TMDB request within the
-// same bounded subrequest budget as an initial search.
-const MAX_CONTINUATION_ATTEMPTS_PER_CLICK = 1;
+// A continuation normally needs one fresh engine pass. If that pass is empty
+// or unusually small, one bounded retry explores the next deterministic TMDB
+// lanes instead of returning a blank "Find more matches" page. This spends no
+// extra provider request when the first pass already returns a useful batch.
+const MAX_CONTINUATION_ATTEMPTS_PER_CLICK = 2;
+const MIN_CONTINUATION_RESULTS_PER_CLICK = 10;
+
+interface ContinuationSessionApi {
+  reserveContinuation(fingerprint: string): Promise<ContinuationReservation>;
+  completeContinuation(
+    fingerprint: string,
+    pass: number,
+    results: RecommendationResult[],
+  ): Promise<{ added: number; count: number; exhausted: boolean }>;
+  releaseContinuation(fingerprint: string, pass: number): Promise<void>;
+}
 
 function continuationRequest(
   parsed: ParsedRecommendationRequest,
@@ -36,6 +49,58 @@ function continuationRequest(
       ])].slice(0, 100),
     },
   };
+}
+
+export async function expandGeneratedContinuation(
+  env: RecommendationEnv,
+  parsed: ParsedRecommendationRequest,
+  fingerprint: string,
+  offset: number,
+  stub: ContinuationSessionApi,
+  runRecommendation: typeof processRecommendation = processRecommendation,
+): Promise<void> {
+  const target = Math.min(parsed.pageSize, MIN_CONTINUATION_RESULTS_PER_CLICK);
+  let availableAfterExpansion = 0;
+  for (let attempt = 0; attempt < MAX_CONTINUATION_ATTEMPTS_PER_CLICK; attempt++) {
+    const reservation = await stub.reserveContinuation(fingerprint);
+    if (!reservation.canExpand || reservation.pass === null) break;
+    let expanded: RecommendationResult[];
+    try {
+      expanded = await runRecommendation(
+        env,
+        continuationRequest(parsed, reservation),
+        {},
+        { continuationPass: reservation.pass },
+      );
+    } catch (error) {
+      await stub.releaseContinuation(fingerprint, reservation.pass);
+      if (availableAfterExpansion > 0) {
+        console.warn(JSON.stringify({
+          event: 'generated_continuation_retry_skipped',
+          requestId: parsed.requestId,
+          mode: parsed.mode,
+          pass: reservation.pass,
+          available: availableAfterExpansion,
+        }));
+        break;
+      }
+      throw error;
+    }
+    const completed = await stub.completeContinuation(fingerprint, reservation.pass, expanded);
+    availableAfterExpansion = Math.max(0, completed.count - offset);
+    console.log(JSON.stringify({
+      event: 'generated_continuation_completed',
+      requestId: parsed.requestId,
+      mode: parsed.mode,
+      pass: reservation.pass,
+      added: completed.added,
+      available: availableAfterExpansion,
+      target,
+      total: completed.count,
+      exhausted: completed.exhausted,
+    }));
+    if (completed.exhausted || availableAfterExpansion >= target) break;
+  }
 }
 
 async function enforceRateLimit(request: Request, env: RecommendationEnv): Promise<void> {
@@ -114,33 +179,7 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
       );
     }
   } else if (parsed.mode !== 'filters') {
-    for (let attempt = 0; attempt < MAX_CONTINUATION_ATTEMPTS_PER_CLICK; attempt++) {
-      const reservation = await stub.reserveContinuation(fingerprint);
-      if (!reservation.canExpand || reservation.pass === null) break;
-      let expanded: RecommendationResult[];
-      try {
-        expanded = await processRecommendation(
-          env,
-          continuationRequest(parsed, reservation),
-          {},
-          { continuationPass: reservation.pass },
-        );
-      } catch (error) {
-        await stub.releaseContinuation(fingerprint, reservation.pass);
-        throw error;
-      }
-      const completed = await stub.completeContinuation(fingerprint, reservation.pass, expanded);
-      console.log(JSON.stringify({
-        event: 'generated_continuation_completed',
-        requestId: parsed.requestId,
-        mode: parsed.mode,
-        pass: reservation.pass,
-        added: completed.added,
-        total: completed.count,
-        exhausted: completed.exhausted,
-      }));
-      if (completed.added > 0) break;
-    }
+    await expandGeneratedContinuation(env, parsed, fingerprint, offset, stub);
   }
   const page = await stub.getPage(fingerprint, offset, parsed.pageSize);
   const nextCursor = page.nextOffset === null ? null : await createCursor(env.CURSOR_SIGNING_SECRET, {
