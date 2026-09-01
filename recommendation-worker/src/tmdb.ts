@@ -135,6 +135,12 @@ export class TmdbClient {
         : 'keywords,credits,external_ids,reviews,release_dates,recommendations,similar',
     });
   }
+  recommendations(type: MediaType, id: number, page = 1): Promise<TmdbPage> {
+    return this.request(`/${type}/${id}/recommendations`, { page, language: 'en-US' });
+  }
+  similar(type: MediaType, id: number, page = 1): Promise<TmdbPage> {
+    return this.request(`/${type}/${id}/similar`, { page, language: 'en-US' });
+  }
   tvAttributionDetails(id: number): Promise<TmdbDetails> {
     return this.request(`/tv/${id}`, { language: 'en-US' });
   }

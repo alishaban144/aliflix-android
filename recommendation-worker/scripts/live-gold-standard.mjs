@@ -42,16 +42,21 @@ for (const [fixtureIndex, fixture] of fixtures.entries()) {
     const titles = body.results.map(result => result.title);
     const normalizedTitles = new Set(titles.map(normalize));
     const expectedHits = fixture.expected.filter(title => normalizedTitles.has(normalize(title)));
+    const requiredHits = (fixture.required || []).filter(title => normalizedTitles.has(normalize(title)));
+    const missingRequired = (fixture.required || []).filter(title => !normalizedTitles.has(normalize(title)));
     const weakHits = fixture.knownWeak.filter(title => normalizedTitles.has(normalize(title)));
     const minimumResults = fixture.minimumResults || (fixture.mode === 'describe' ? 12 : 10);
     const minimumExpectedHits = fixture.minimumExpectedHits || (fixture.mode === 'describe' ? 4 : 3);
-    const passed = body.results.length >= minimumResults && expectedHits.length >= minimumExpectedHits && weakHits.length === 0;
+    const passed = body.results.length >= minimumResults && expectedHits.length >= minimumExpectedHits &&
+      missingRequired.length === 0 && weakHits.length === 0;
     reports.push({
       id: fixture.id,
       passed,
       resultCount: body.results.length,
       minimumResults,
       expectedHits,
+      requiredHits,
+      missingRequired,
       expectedRecall: Number((expectedHits.length / fixture.expected.length).toFixed(3)),
       weakHits,
       titles,

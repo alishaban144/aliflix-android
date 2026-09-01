@@ -7,7 +7,7 @@
 
 Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by selectable Groq or Gemini interpretation and authoritative TMDB metadata.
 
-This source tree targets **Aliflix 3.1.35** (`versionCode 125`) for Android 10 and newer.
+This source tree targets **Aliflix 3.1.36** (`versionCode 126`) for Android 10 and newer.
 
 [Download the latest mobile APK](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk) | [View release notes](https://github.com/alishaban144/aliflix-android/releases/latest)
 
@@ -16,9 +16,9 @@ This source tree targets **Aliflix 3.1.35** (`versionCode 125`) for Android 10 a
 ## Highlights
 
 - **Native mobile UI** with Home, Discover, title details, genres, and My Space.
-- **No account required** for the published app; personal lists and playback preferences stay on the device.
+- **No account required**; local lists, history, and settings remain fully functional offline, with optional Firebase account and cloud-sync infrastructure ready for the mobile account UI.
 - **Ask Aliflix v3** with Describe, Similar, and Filters modes for movies or series.
-- **Grounded recommendations**: Describe and Similar use the selected Groq or Gemini model to propose real titles, then exact TMDB identity and hydrated metadata verify every result. Describe can recover from a temporary provider failure through strict TMDB concept retrieval without another model call or popularity padding.
+- **Grounded recommendations**: Describe and Similar use the selected Groq or Gemini model to propose real titles, then exact TMDB identity and hydrated metadata verify every result. Both generated modes retain strict TMDB-native recovery paths when the selected provider is temporarily unavailable.
 - **Deterministic filtering** after metadata enrichment, including production companies, genre inclusion/exclusion, year, runtime, language, country, rating, title exclusions, and TMDB ID exclusions.
 - **Canonical Similar mode** with authoritative TMDB movie and TV title search, direct anchor identity, anchor exclusion, and preserved output type.
 - **TV Networks home tab** with popularity-ranked rows for TV networks, streaming providers, and production companies.
@@ -55,7 +55,13 @@ AskAliflixScreen
 
 Describe makes one compact request to the selected Groq or Gemini model and asks for a bounded premise-specific title set. The Worker exact-resolves every title through TMDB, hydrates authoritative metadata, and applies hard filters such as Returning or Ended only as eligibility checks. Relevance never receives a popularity, rating, status, generic genre, or title-word boost. If the provider has a retryable capacity, quota, timeout, or structured-output failure, Describe derives only the query's explicit concepts locally and uses exact TMDB keyword/genre retrieval with deterministic ranking; it does not make another model or embedding request and returns fewer results instead of padding.
 
-Similar uses authoritative TMDB anchor details and a dedicated medium-effort generation contract. Single-anchor, multi-anchor, and cross-media matches must share substantive story or narrative connections; broad genre overlap cannot pass. Filters retains its specialized deterministic TMDB retrieval path. Missing metadata cannot satisfy a filter that requires it.
+Similar uses authoritative TMDB anchor details and a dedicated medium-effort generation contract. It supplements model candidates with the anchor's TMDB recommendations, Similar catalogue, and grounded keyword lanes; continuation pages remain available when the selected model is temporarily unavailable. Single-anchor, multi-anchor, and cross-media matches must share substantive story or narrative connections; broad genre overlap cannot pass. Filters retains its specialized deterministic TMDB retrieval path. Missing metadata cannot satisfy a filter that requires it.
+
+## Optional account architecture
+
+Anonymous use remains the default and never depends on Firebase. On mobile, `AccountRepository` owns Firebase Authentication and modern Credential Manager Google Sign-In, while `AccountSyncRepository` layers Cloud Firestore listeners over the existing SharedPreferences-backed stores. Local actions update immediately and Firebase failures do not block browsing, playback, lists, history, or settings.
+
+Cloud documents are UID-scoped under `users/{uid}` with individual My List, favorite, and recent documents keyed by `Media.key`. First sign-in unions local and cloud library data, preserves the 30-item recent limit, reconciles timestamped settings, and snapshots guest and per-account local state to prevent account-switch leakage. The TV flavor intentionally exposes only no-op account infrastructure until a TV-native sign-in experience is designed.
 
 Recommendation sessions are stored in a Cloudflare Durable Object. Subsequent pages use signed cursors tied to the request and session instead of fabricated offsets or client-side slicing.
 
@@ -312,8 +318,8 @@ https://github.com/alishaban144/aliflix-android/releases/latest/download/update-
 
 ## Current release
 
-- Version: **3.1.35**
-- Version code: **125**
+- Version: **3.1.36**
+- Version code: **126**
 - Minimum Android version: **Android 10 / API 29**
-- Release page: [Aliflix 3.1.35](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.35)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.35/aliflix-mobile.apk)
+- Release page: [Aliflix 3.1.36](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.36)
+- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.36/aliflix-mobile.apk)

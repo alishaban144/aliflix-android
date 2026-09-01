@@ -1,10 +1,11 @@
 plugins {
     id("com.android.application")
+    id("com.google.gms.google-services")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 125
-val mobileVersionName = "3.1.35"
+val mobileVersionCode = 126
+val mobileVersionName = "3.1.36"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
 val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
@@ -133,9 +134,20 @@ val validateReleaseSigning by tasks.registering {
     }
 }
 
+// The Firebase project currently registers only the mobile application ID.
+// Account UI and Firebase initialization are intentionally mobile-only; keep
+// the TV flavor buildable until a deliberate TV account experience exists.
+tasks.matching {
+    it.name.startsWith("processTv") && it.name.endsWith("GoogleServices")
+}.configureEach {
+    enabled = false
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
+    val firebaseBom = platform("com.google.firebase:firebase-bom:34.18.0")
     implementation(composeBom)
+    implementation(firebaseBom)
     androidTestImplementation(composeBom)
 
     implementation("androidx.core:core-ktx:1.19.0")
@@ -143,6 +155,12 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
     implementation("androidx.webkit:webkit:1.17.0")
+    implementation("com.google.firebase:firebase-auth")
+    add("mobileImplementation", "androidx.credentials:credentials:1.6.0")
+    add("mobileImplementation", "androidx.credentials:credentials-play-services-auth:1.6.0")
+    add("mobileImplementation", "com.google.android.libraries.identity.googleid:googleid:1.2.0")
+    add("mobileImplementation", "com.google.firebase:firebase-firestore")
+    add("mobileImplementation", "org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")

@@ -216,7 +216,9 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(results[0].retrievalSources).toEqual(expect.arrayContaining([
       'gemini:similar-recommendation', 'gemini:similarity-verification', 'tmdb:identity-search', 'tmdb:details',
     ]));
-    expect({ recommendationCalls, similarCalls, discoverCalls }).toEqual({ recommendationCalls: 0, similarCalls: 0, discoverCalls: 0 });
+    expect(recommendationCalls).toBe(0);
+    expect(similarCalls).toBe(0);
+    expect(discoverCalls).toBeGreaterThan(0);
   });
 
   it('bounds a broad TMDB candidate pool before enrichment', async () => {
@@ -354,7 +356,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
 
     expect(recommendationCalls).toBe(0);
     expect(similarCalls).toBe(0);
-    expect(discoverCalls).toBe(0);
+    expect(discoverCalls).toBeGreaterThan(0);
     expect(results.map(item => `${item.mediaType}:${item.tmdbId}`)).toEqual(['movie:900']);
   });
 
@@ -1243,7 +1245,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     })).rejects.toBe(failure);
   });
 
-  it('propagates Gemini Similar failure without invoking broad TMDB retrieval fallback', async () => {
+  it('keeps Similar available through targeted TMDB retrieval when the selected model is temporarily unavailable', async () => {
     let recommendationCalls = 0;
     let similarCalls = 0;
     let discoverCalls = 0;
@@ -1259,15 +1261,144 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     };
     const failure = new ServiceError('GEMINI_UNAVAILABLE', 'Gemini timed out', 504, true);
 
-    await expect(processRecommendation({} as any, {
+    const results = await processRecommendation({} as any, {
       ...request,
       mode: 'similar', mediaType: 'tv',
       anchor: { tmdbId: 55, title: 'Canonical Anchor', mediaType: 'tv' },
     }, {
       tmdb: tmdb as any,
       recommendSimilar: async () => { throw failure; },
-    })).rejects.toBe(failure);
-    expect({ recommendationCalls, similarCalls, discoverCalls }).toEqual({ recommendationCalls: 0, similarCalls: 0, discoverCalls: 0 });
+    });
+    expect(results).toEqual([]);
+    expect(recommendationCalls).toBe(0);
+    expect(similarCalls).toBe(0);
+    expect(discoverCalls).toBe(0);
+  });
+
+  it('returns a full The Killing catalogue containing The Chestnut Man during a provider outage', async () => {
+    const related = [
+      { id: 127865, name: 'The Chestnut Man', first_air_date: '2021-09-29' },
+      ...Array.from({ length: 13 }, (_, index) => ({
+        id: 2000 + index,
+        name: `Nordic Crime Fixture ${index + 1}`,
+        first_air_date: `${2010 + index}-01-01`,
+      })),
+    ].map((item, index) => ({
+      ...item,
+      overview: 'A detective investigates a serial murder in a bleak city.',
+      genre_ids: [18, 80, 9648],
+      vote_average: 8 - index / 100,
+      vote_count: 2_000 - index,
+      popularity: 100 - index,
+    }));
+    const tmdb = {
+      ...fakeTmdb(),
+      callsRemaining: 100,
+      searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      details: async (_type: string, id: number) => id === 34415
+        ? {
+            id,
+            name: 'The Killing',
+            first_air_date: '2011-04-03',
+            overview: 'Detectives investigate one murder across a rain-soaked city.',
+            genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 9648, name: 'Mystery' }],
+            keywords: { results: [{ id: 10714, name: 'serial killer' }, { id: 5340, name: 'investigation' }] },
+            recommendations: { page: 1, total_pages: 2, total_results: related.length, results: related },
+            similar: { page: 1, total_pages: 1, total_results: 0, results: [] },
+          }
+        : {
+            id,
+            name: related.find(item => item.id === id)?.name || `Nordic Crime Fixture ${id}`,
+            first_air_date: related.find(item => item.id === id)?.first_air_date || '2020-01-01',
+            overview: 'A detective investigates a serial murder in a bleak city.',
+            genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 9648, name: 'Mystery' }],
+            keywords: { results: [{ id: 10714, name: 'serial killer' }, { id: 5340, name: 'investigation' }] },
+            vote_average: 7.8,
+            vote_count: 1_000,
+          },
+    };
+    const providerFailure = new ServiceError('GROQ_UNAVAILABLE', 'selected model timed out', 503, true);
+    const results = await processRecommendation({ AI_GENERATION_MODEL: 'groq-qwen-3.8-27b' } as any, {
+      ...request,
+      mode: 'similar',
+      mediaType: 'tv',
+      pageSize: 20,
+      anchor: { tmdbId: 34415, title: 'The Killing', mediaType: 'tv' },
+    }, {
+      tmdb: tmdb as any,
+      recommendSimilar: async () => { throw providerFailure; },
+      assessSimilarity: async () => { throw providerFailure; },
+    });
+
+    expect(results.length).toBeGreaterThanOrEqual(10);
+    expect(results.some(result => result.tmdbId === 34415)).toBe(false);
+    expect(results.map(result => result.title)).toContain('The Chestnut Man');
+    expect(results.every(result => result.retrievalSources.includes('tmdb:anchor-recommendations'))).toBe(true);
+    expect(results.every(result => result.retrievalSources.includes('tmdb:similarity-evidence-fallback'))).toBe(true);
+  });
+
+  it('loads a fresh Similar continuation page without depending on the selected model', async () => {
+    const continuationItems = Array.from({ length: 12 }, (_, index) => ({
+      id: 3000 + index,
+      name: index === 0 ? 'The Chestnut Man' : `Fresh Nordic Mystery ${index + 1}`,
+      first_air_date: `${2010 + index}-01-01`,
+      overview: 'A detective investigates a serial murder in a bleak city.',
+      genre_ids: [18, 80, 9648],
+      vote_average: 7.9,
+      vote_count: 1_500 - index,
+    }));
+    const requestedRecommendationPages: number[] = [];
+    const tmdb = {
+      ...fakeTmdb(),
+      callsRemaining: 100,
+      searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      recommendations: async (_type: string, _id: number, page: number) => {
+        requestedRecommendationPages.push(page);
+        return { page, total_pages: 2, total_results: continuationItems.length, results: continuationItems };
+      },
+      similar: async (_type: string, _id: number, page: number) => ({ page, total_pages: 2, total_results: 0, results: [] }),
+      discover: async () => ({ page: 2, total_pages: 2, total_results: 0, results: [] }),
+      details: async (_type: string, id: number) => id === 34415
+        ? {
+            id,
+            name: 'The Killing',
+            first_air_date: '2011-04-03',
+            overview: 'Detectives investigate one murder across a rain-soaked city.',
+            genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 9648, name: 'Mystery' }],
+            keywords: { results: [{ id: 10714, name: 'serial killer' }] },
+            recommendations: { page: 1, total_pages: 2, total_results: 0, results: [] },
+            similar: { page: 1, total_pages: 2, total_results: 0, results: [] },
+          }
+        : {
+            id,
+            name: continuationItems.find(item => item.id === id)?.name || `Fresh Nordic Mystery ${id}`,
+            first_air_date: '2021-01-01',
+            overview: 'A detective investigates a serial murder in a bleak city.',
+            genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 9648, name: 'Mystery' }],
+            keywords: { results: [{ id: 10714, name: 'serial killer' }] },
+            vote_average: 7.8,
+            vote_count: 1_000,
+          },
+    };
+    const providerFailure = new ServiceError('GROQ_UNAVAILABLE', 'selected model timed out', 503, true);
+    const results = await processRecommendation({ AI_GENERATION_MODEL: 'groq-qwen-3.8-27b' } as any, {
+      ...request,
+      mode: 'similar',
+      mediaType: 'tv',
+      pageSize: 20,
+      anchor: { tmdbId: 34415, title: 'The Killing', mediaType: 'tv' },
+      filters: { ...request.filters, excludedTmdbIds: [2000, 2001, 2002], excludedTitles: ['Earlier Result'] },
+    }, {
+      tmdb: tmdb as any,
+      recommendSimilar: async () => { throw providerFailure; },
+      assessSimilarity: async () => { throw providerFailure; },
+    }, { continuationPass: 1 });
+
+    expect(requestedRecommendationPages).toEqual([2]);
+    expect(results).toHaveLength(12);
+    expect(results.map(result => result.title)).toContain('The Chestnut Man');
+    expect(results.every(result => result.retrievalSources.includes('tmdb:anchor-recommendations:page-2'))).toBe(true);
   });
 
   it('rejects a TV-only seriesStatus filter on movie requests', () => {

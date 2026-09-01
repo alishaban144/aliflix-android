@@ -12,7 +12,20 @@
           "package_name": "com.aliflix.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "166825996633-6ivpvn8ve58o311vqkflco8h2ia15gir.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aliflix.app",
+            "certificate_hash": "04b7b78586a18f211093113c06f02ece3323dbb7"
+          }
+        },
+        {
+          "client_id": "166825996633-ovvr2bg8ir3o8j5k75mtekn1g9g1rvas.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCav3OfHDwS4tWDeECM91wuy9zkBs_Ti1E"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "166825996633-ovvr2bg8ir3o8j5k75mtekn1g9g1rvas.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

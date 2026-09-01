@@ -1,8 +1,11 @@
 package com.aliflix.app
 
 import android.app.Application
+import android.app.Activity
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.aliflix.app.account.AccountActionResult
+import com.aliflix.app.account.createAccountServices
 import com.aliflix.app.data.CatalogClient
 import com.aliflix.app.data.AndroidCatalogCacheStore
 import com.aliflix.app.data.HomeSnapshotStore
@@ -171,6 +174,13 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private val recommendationStore = RecommendationStore(
         context = application,
     )
+    private val accountServices = createAccountServices(
+        application = application,
+        libraryStore = library,
+        playbackRepository = playbackProviderRepository,
+        recommendationStore = recommendationStore,
+        scope = viewModelScope,
+    )
     private val aiClient = com.aliflix.app.recommendation.RecommendationAiClient(
         baseUrl = BuildConfig.RECOMMENDATION_AI_BASE_URL,
         ioDispatcher = recommendationDispatchers.io
@@ -210,6 +220,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     val myList = library.myList
     val recent = library.recent
     val likes = library.likes
+    val accountState = accountServices.accountRepository.state
+    val accountSyncState = accountServices.syncRepository.state
 
     private val _askUiState = MutableStateFlow<com.aliflix.app.ui.discover.AskAliflixUiState>(com.aliflix.app.ui.discover.AskAliflixUiState.Editing)
     val askUiState: StateFlow<com.aliflix.app.ui.discover.AskAliflixUiState> = _askUiState.asStateFlow()
@@ -1112,9 +1124,46 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         recommendationStore.setAiModel(model)
     }
 
+    suspend fun signInWithGoogle(activity: Activity): AccountActionResult =
+        accountServices.accountRepository.signInWithGoogle(activity)
+
+    suspend fun createEmailAccount(
+        email: String,
+        password: String,
+        displayName: String? = null,
+    ): AccountActionResult = accountServices.accountRepository.createEmailAccount(
+        email = email,
+        password = password,
+        displayName = displayName,
+    )
+
+    suspend fun signInWithEmail(email: String, password: String): AccountActionResult =
+        accountServices.accountRepository.signInWithEmail(email, password)
+
+    suspend fun sendPasswordResetEmail(email: String): AccountActionResult =
+        accountServices.accountRepository.sendPasswordResetEmail(email)
+
+    suspend fun signOutAccount(): AccountActionResult =
+        accountServices.accountRepository.signOut()
+
+    suspend fun reauthenticateAccountWithPassword(password: String): AccountActionResult =
+        accountServices.accountRepository.reauthenticateWithPassword(password)
+
+    suspend fun reauthenticateAccountWithGoogle(activity: Activity): AccountActionResult =
+        accountServices.accountRepository.reauthenticateWithGoogle(activity)
+
+    fun clearAccountMessage() = accountServices.accountRepository.clearMessage()
+
+    fun retryAccountSync() = accountServices.syncRepository.retry()
+
     private fun pauseBackgroundHomeRefresh() {
         homeRefreshJob?.cancel()
         homeRefreshJob = null
+    }
+
+    override fun onCleared() {
+        accountServices.close()
+        super.onCleared()
     }
 
     private companion object {

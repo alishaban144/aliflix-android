@@ -9,6 +9,16 @@
     "minimumExpectedHits": 3
   },
   {
+    "id": "similar-tv-the-killing",
+    "mediaType": "tv",
+    "anchor": { "tmdbId": 34415, "title": "The Killing", "mediaType": "tv" },
+    "expected": ["The Chestnut Man", "Forbrydelsen", "The Bridge", "Broadchurch", "Deadwind", "Bordertown", "Trapped", "The Valhalla Murders"],
+    "required": ["The Chestnut Man"],
+    "knownWeak": ["Bridgerton", "Emily in Paris", "Demon Slayer: Kimetsu no Yaiba"],
+    "minimumResults": 10,
+    "minimumExpectedHits": 2
+  },
+  {
     "id": "similar-movie-interstellar",
     "mediaType": "movie",
     "anchor": { "tmdbId": 157336, "title": "Interstellar", "mediaType": "movie" },

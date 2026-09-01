@@ -25,7 +25,7 @@ export interface EngineDependencies {
   assessSimilarity?: typeof assessRecommendationSimilarity;
   embed?: typeof embedForSearch;
   tmdb?: Pick<TmdbClient, 'callsRemaining' | 'genres' | 'searchKeyword' | 'searchPerson' | 'searchCompany' | 'discover' | 'details'> &
-    Partial<Pick<TmdbClient, 'searchTitle'>>;
+    Partial<Pick<TmdbClient, 'searchTitle' | 'recommendations' | 'similar'>>;
 }
 
 export interface RecommendationExecutionOptions {
@@ -229,6 +229,8 @@ interface GeneratedRecommendationContext {
   groundedVerificationSource?: string;
   supplementKeywordTerms?: Array<{ term: string; maxNewCandidates: number }>;
   generate: (excludedTitles: string[]) => Promise<DescribeRecommendation[]>;
+  seedCandidates?: (candidates: Map<string, Candidate>) => Promise<void>;
+  allowRetryableGenerationFailure?: boolean;
   verify: (candidates: PremiseCandidateDocument[]) => Promise<PremiseAssessment[]>;
   fallbackVerify: (candidates: PremiseCandidateDocument[]) => PremiseAssessment[];
   promoteGrounded?: (
@@ -386,6 +388,7 @@ function premiseDocument(candidate: Candidate, index: number): PremiseCandidateD
     keywords: candidate.keywords.map(keyword => keyword.name),
     aiReason: candidate.aiRecommendationReason || '',
     aiConfidence: candidate.aiRecommendationConfidence || 0,
+    retrievalSources: [...candidate.retrievalSources].sort(),
   };
 }
 
@@ -554,7 +557,18 @@ function deterministicSimilarityAssessments(
   candidates: PremiseCandidateDocument[],
 ): PremiseAssessment[] {
   return candidates.flatMap(candidate => {
-    if (candidate.aiConfidence < .82) return [];
+    if (candidate.aiConfidence < .70) return [];
+    const sources = new Set(candidate.retrievalSources || []);
+    const isDirectTmdbRelation = [...sources].some(source => (
+      source.startsWith('tmdb:anchor-recommendations') ||
+      source.startsWith('tmdb:anchor-similar')
+    ));
+    const isKeywordRetrieval = [...sources].some(source => (
+      source.startsWith('tmdb:anchor-keyword')
+    ));
+    const isGeneratedRecommendation = [...sources].some(source => (
+      source.endsWith(':similar-recommendation')
+    ));
     const candidateKeywords = new Set(candidate.keywords.map(canonicalConceptPhrase).filter(Boolean));
     const candidateGenres = new Set(candidate.genres.map(normalize).filter(Boolean));
     const anchorEvidence = anchors.map(anchor => {
@@ -569,9 +583,16 @@ function deterministicSimilarityAssessments(
     const groundedForEveryAnchor = anchorEvidence.every(evidence => (
       evidence.sharedKeywords >= 1 || evidence.sharedGenres >= 2
     ));
-    const highConfidenceGenreFallback = candidate.aiConfidence >= .90 &&
+    const keywordGroundedForEveryAnchor = anchorEvidence.every(evidence => (
+      evidence.sharedKeywords >= 1 && evidence.sharedGenres >= 1
+    ));
+    const highConfidenceGenreFallback = isGeneratedRecommendation && candidate.aiConfidence >= .90 &&
       anchorEvidence.every(evidence => evidence.sharedGenres >= 1);
-    if (!groundedForEveryAnchor && !highConfidenceGenreFallback) return [];
+    const accepted = (isDirectTmdbRelation && groundedForEveryAnchor) ||
+      (isKeywordRetrieval && keywordGroundedForEveryAnchor) ||
+      (isGeneratedRecommendation && groundedForEveryAnchor) ||
+      highConfidenceGenreFallback;
+    if (!accepted) return [];
     const evidenceCount = anchorEvidence.reduce(
       (total, evidence) => total + evidence.sharedKeywords + Math.min(2, evidence.sharedGenres),
       0,
@@ -580,7 +601,7 @@ function deterministicSimilarityAssessments(
       index: candidate.index,
       relevanceScore: Math.min(.84, .72 + evidenceCount * .025),
       matchedGroupIndexes: [],
-      reason: candidate.aiReason || 'TMDB metadata corroborates the generated similarity.',
+      reason: candidate.aiReason || 'TMDB metadata corroborates the selected title similarity.',
     }];
   });
 }
@@ -676,7 +697,18 @@ async function processGeneratedRecommendations(
   if (!tmdb.searchTitle) {
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB title verification is unavailable', 503, true);
   }
-  const recommendations = await generatedRecommendations(context.generationLimit, context.generate);
+  let recommendations: DescribeRecommendation[] = [];
+  try {
+    recommendations = await generatedRecommendations(context.generationLimit, context.generate);
+  } catch (error) {
+    if (!context.allowRetryableGenerationFailure || !isRetryableAiProviderError(error)) throw error;
+    console.warn(JSON.stringify({
+      event: 'generated_candidate_fallback',
+      mode: request.mode,
+      model: selectedAiModel(env),
+      reason: error.message,
+    }));
+  }
 
   const candidates = new Map<string, Candidate>();
   for (let start = 0; start < recommendations.length; start += DISCOVERY_CONCURRENCY) {
@@ -702,6 +734,8 @@ async function processGeneratedRecommendations(
       }
     });
   }
+
+  await context.seedCandidates?.(candidates);
 
   await supplementGeneratedCandidatesFromTmdb(request, tmdb, context, candidates);
 
@@ -950,6 +984,154 @@ async function processDescribeRecommendation(
   });
 }
 
+async function supplementSimilarCandidatesFromTmdb(
+  request: ParsedRecommendationRequest,
+  tmdb: NonNullable<EngineDependencies['tmdb']>,
+  requestedAnchors: NonNullable<ParsedRecommendationRequest['anchors']>,
+  anchorDetails: TmdbDetails[],
+  continuationPass: number,
+  excludedCandidateKeys: Set<string>,
+  candidates: Map<string, Candidate>,
+): Promise<void> {
+  const addItems = (
+    items: TmdbListItem[],
+    source: string,
+    confidence: number,
+    matchedKeywordIds: number[] = [],
+  ): void => {
+    for (const item of items) {
+      if (candidates.size >= MAX_GENERATED_CANDIDATES) break;
+      const candidate = toCandidate(item, request.mediaType, new Map());
+      if (!candidate || excludedCandidateKeys.has(candidate.key)) continue;
+      const existing = candidates.get(candidate.key) || candidate;
+      existing.retrievalSources.add(source);
+      if (source.includes('keyword')) existing.retrievalSources.add('tmdb:keyword-supplement');
+      matchedKeywordIds.forEach(id => existing.matchedKeywordIds.add(id));
+      existing.aiRecommendationConfidence = Math.max(existing.aiRecommendationConfidence || 0, confidence);
+      existing.aiRecommendationReason ||= source.includes('recommendations')
+        ? 'TMDB identifies this as a related title for the selected anchor.'
+        : source.includes('similar')
+          ? 'TMDB places this title in the selected anchor\'s Similar catalogue.'
+          : 'TMDB keyword and genre evidence connects this title to the selected anchor.';
+      candidates.set(existing.key, existing);
+    }
+  };
+
+  let retrievalCalls = 0;
+  const runPage = async (
+    operation: string,
+    source: string,
+    confidence: number,
+    call: () => Promise<TmdbPage>,
+    matchedKeywordIds: number[] = [],
+  ): Promise<void> => {
+    if (
+      retrievalCalls >= 6 ||
+      candidates.size >= MAX_GENERATED_CANDIDATES ||
+      tmdb.callsRemaining <= MAX_GENERATED_RESULTS
+    ) return;
+    retrievalCalls++;
+    const page = await optionalTmdbCall(operation, call);
+    addItems(page?.results || [], source, confidence, matchedKeywordIds);
+  };
+
+  const pageNumber = continuationPass + 1;
+  for (const [index, details] of anchorDetails.entries()) {
+    const requested = requestedAnchors[index];
+    if (!requested) continue;
+    if (requested.mediaType === request.mediaType) {
+      if (continuationPass === 0) {
+        addItems(details.recommendations?.results || [], 'tmdb:anchor-recommendations', .88);
+        addItems(details.similar?.results || [], 'tmdb:anchor-similar', .86);
+      } else {
+        if (typeof tmdb.recommendations === 'function') {
+          await runPage(
+            `similar-anchor-recommendations:${requested.tmdbId}:page-${pageNumber}`,
+            `tmdb:anchor-recommendations:page-${pageNumber}`,
+            .88,
+            () => tmdb.recommendations!(request.mediaType, requested.tmdbId, pageNumber),
+          );
+        }
+        if (typeof tmdb.similar === 'function') {
+          await runPage(
+            `similar-anchor-similar:${requested.tmdbId}:page-${pageNumber}`,
+            `tmdb:anchor-similar:page-${pageNumber}`,
+            .86,
+            () => tmdb.similar!(request.mediaType, requested.tmdbId, pageNumber),
+          );
+        }
+      }
+    }
+
+    if (index >= 2) continue;
+    const keywords = (details.keywords?.keywords || details.keywords?.results || [])
+      .map(keyword => keyword.id)
+      .filter((id, keywordIndex, values) => values.indexOf(id) === keywordIndex)
+      .slice(0, 8);
+    if (keywords.length) {
+      await runPage(
+        `similar-anchor-keywords:${requested.tmdbId}:page-${pageNumber}`,
+        `tmdb:anchor-keywords:page-${pageNumber}`,
+        .80,
+        () => tmdb.discover(request.mediaType, {
+          with_keywords: keywords.join('|'),
+          sort_by: 'vote_count.desc',
+          page: pageNumber,
+        }),
+        keywords,
+      );
+      if (keywords.length >= 2) {
+        await runPage(
+          `similar-anchor-keyword-intersection:${requested.tmdbId}:page-${pageNumber}`,
+          `tmdb:anchor-keyword-intersection:page-${pageNumber}`,
+          .84,
+          () => tmdb.discover(request.mediaType, {
+            with_keywords: keywords.slice(0, 2).join(','),
+            sort_by: 'vote_count.desc',
+            page: pageNumber,
+          }),
+          keywords.slice(0, 2),
+        );
+      }
+    }
+    const genreIds = (details.genres || []).map(genre => genre.id).slice(0, 4);
+    if (genreIds.length >= 2) {
+      await runPage(
+        `similar-anchor-genres:${requested.tmdbId}:page-${pageNumber}`,
+        `tmdb:anchor-genres:page-${pageNumber}`,
+        .68,
+        () => tmdb.discover(request.mediaType, {
+          with_genres: genreIds.join(','),
+          sort_by: 'vote_count.desc',
+          page: pageNumber,
+        }),
+      );
+    }
+  }
+
+  if (anchorDetails.length > 1) {
+    const keywordGroups = anchorDetails.map(details => (
+      (details.keywords?.keywords || details.keywords?.results || [])
+        .map(keyword => keyword.id)
+        .slice(0, 4)
+    )).filter(group => group.length);
+    if (keywordGroups.length === anchorDetails.length) {
+      const matchedIds = keywordGroups.flat();
+      await runPage(
+        `similar-anchor-fusion:page-${pageNumber}`,
+        `tmdb:anchor-keyword-fusion:page-${pageNumber}`,
+        .86,
+        () => tmdb.discover(request.mediaType, {
+          with_keywords: keywordGroups.map(group => group.join('|')).join(','),
+          sort_by: 'vote_count.desc',
+          page: pageNumber,
+        }),
+        matchedIds,
+      );
+    }
+  }
+}
+
 async function processSimilarRecommendation(
   env: RecommendationEnv,
   request: ParsedRecommendationRequest,
@@ -958,11 +1140,11 @@ async function processSimilarRecommendation(
   continuationPass: number,
 ): Promise<RecommendationResult[]> {
   const requestedAnchors = request.anchors?.length ? request.anchors : (request.anchor ? [request.anchor] : []);
-  const anchorDetails = await Promise.all(requestedAnchors.map(anchor => optionalTmdbCall(
+  const optionalAnchorDetails = await Promise.all(requestedAnchors.map(anchor => optionalTmdbCall(
     `anchor-details:${anchor.mediaType}:${anchor.tmdbId}`,
     () => tmdb.details(anchor.mediaType, anchor.tmdbId),
   )));
-  const anchors = anchorDetails.flatMap((details, index): SimilarAnchorDocument[] => {
+  const anchors = optionalAnchorDetails.flatMap((details, index): SimilarAnchorDocument[] => {
     if (!details) return [];
     const requested = requestedAnchors[index];
     const title = (requested.mediaType === 'movie' ? details.title : details.name)?.trim() || requested.title;
@@ -982,6 +1164,7 @@ async function processSimilarRecommendation(
   if (anchors.length !== requestedAnchors.length) {
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB could not verify every Similar anchor', 503, true);
   }
+  const anchorDetails = optionalAnchorDetails.filter((details): details is TmdbDetails => Boolean(details));
   const refinement = (request.refinementQuery || request.query || '').trim();
   const filters = mergeFilters(request.filters, emptyIntent().hardFilters);
   applyQueryDateConstraints(refinement, filters);
@@ -1001,6 +1184,16 @@ async function processSimilarRecommendation(
     recommendationSource: `${aiProviderName(selectedAiModel(env))}:similar-recommendation`,
     verificationSource: `${aiProviderName(selectedAiModel(env))}:similarity-verification`,
     fallbackVerificationSource: 'tmdb:similarity-evidence-fallback',
+    allowRetryableGenerationFailure: true,
+    seedCandidates: candidates => supplementSimilarCandidatesFromTmdb(
+      request,
+      tmdb,
+      requestedAnchors,
+      anchorDetails,
+      continuationPass,
+      excludedCandidateKeys,
+      candidates,
+    ),
     generate: excludedTitles => (dependencies.recommendSimilar || recommendSimilarTitles)(
       env,
       anchors,

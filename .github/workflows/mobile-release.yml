@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.35"
+      - "release/v3.1.36"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.35"
+        description: "Release tag, for example v3.1.36"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "125"
-  RELEASE_VERSION_NAME: "3.1.35"
+  RELEASE_VERSION_CODE: "126"
+  RELEASE_VERSION_NAME: "3.1.36"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Adds Production company filtering, restores canonical Similar title search, introduces popularity-ranked TV network, streaming provider, and studio rows, and refreshes Ask Aliflix result cards."
+            "releaseNotes": "Fixes Similar result depth and Show more failures with grounded TMDB fallback and adds optional Firebase account and cloud-sync infrastructure while keeping anonymous use local-first."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Adds Production company filtering, restores canonical Similar title search, introduces popularity-ranked TV network, streaming provider, and studio rows, and refreshes Ask Aliflix result cards."
+          body: "Fixes Similar result depth and Show more failures with grounded TMDB fallback and adds optional Firebase account and cloud-sync infrastructure while keeping anonymous use local-first."
           files: |
             aliflix-mobile.apk
             update-mobile.json

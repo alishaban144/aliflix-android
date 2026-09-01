@@ -181,6 +181,7 @@ export interface PremiseCandidateDocument {
   keywords: string[];
   aiReason: string;
   aiConfidence: number;
+  retrievalSources?: string[];
 }
 
 export interface PremiseAssessment {
