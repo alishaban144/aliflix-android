@@ -18,6 +18,7 @@ const RecommendationFiltersObjectSchema = z.object({
   includedGenres: z.array(trimmed.min(1).max(80)).max(20).default([]),
   excludedGenres: z.array(trimmed.min(1).max(80)).max(20).default([]),
   minimumTmdbRating: z.number().min(0).max(10).nullish().transform(value => value ?? undefined),
+  productionCompanyIds: z.array(z.number().int().positive()).max(8).default([]),
   seriesStatus: z.preprocess(value => value ?? undefined, z.enum(['returning', 'ended']).optional()),
   sortBy: z.preprocess(value => value ?? undefined, z.enum([
     'most_popular', 'highest_rated', 'most_voted', 'newest_first', 'oldest_first', 'runtime_short_to_long',
@@ -55,7 +56,7 @@ export const RecommendationRequestSchema = z.object({
   filters: RecommendationFiltersObjectSchema.default({
     minimumYear: undefined, maximumYear: undefined, originalLanguage: undefined, originCountries: [],
     minimumRuntimeMinutes: undefined, maximumRuntimeMinutes: undefined, includedGenres: [], excludedGenres: [],
-    minimumTmdbRating: undefined, excludedTmdbIds: [], excludedTitles: [],
+    minimumTmdbRating: undefined, productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [],
   }),
   pageSize: z.number().int().min(1).max(40).default(20),
   cursor: z.string().min(1).max(2048).optional(),
@@ -87,7 +88,7 @@ export const GeminiIntentResponseSchema = z.object({
   hardFilters: RecommendationFiltersObjectSchema.default({
     minimumYear: undefined, maximumYear: undefined, originalLanguage: undefined, originCountries: [],
     minimumRuntimeMinutes: undefined, maximumRuntimeMinutes: undefined, includedGenres: [], excludedGenres: [],
-    minimumTmdbRating: undefined, excludedTmdbIds: [], excludedTitles: [],
+    minimumTmdbRating: undefined, productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [],
   }),
   requiredConceptGroups: z.array(ConceptGroupSchema).max(8).default([]),
   softConcepts: z.array(trimmed.min(1).max(120)).max(20).default([]),
@@ -118,11 +119,12 @@ export const GeminiIntentJsonSchema = {
         includedGenres: { type: 'ARRAY', items: { type: 'STRING' } },
         excludedGenres: { type: 'ARRAY', items: { type: 'STRING' } },
         minimumTmdbRating: { type: 'NUMBER', nullable: true },
+        productionCompanyIds: { type: 'ARRAY', items: { type: 'INTEGER' } },
         seriesStatus: { type: 'STRING', nullable: true },
         excludedTmdbIds: { type: 'ARRAY', items: { type: 'INTEGER' } },
         excludedTitles: { type: 'ARRAY', items: { type: 'STRING' } },
       },
-      required: ['originCountries', 'includedGenres', 'excludedGenres', 'excludedTmdbIds', 'excludedTitles'],
+      required: ['originCountries', 'includedGenres', 'excludedGenres', 'productionCompanyIds', 'excludedTmdbIds', 'excludedTitles'],
     },
     requiredConceptGroups: {
       type: 'ARRAY', items: { type: 'OBJECT', properties: {

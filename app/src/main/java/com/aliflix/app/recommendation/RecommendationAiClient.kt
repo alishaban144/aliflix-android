@@ -9,6 +9,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -46,6 +47,32 @@ class RecommendationAiClient(
 
     suspend fun getHomeFeed(): V3HomeFeed = withContext(ioDispatcher) {
         V3HomeFeed.fromJson(JSONObject(getJson("$baseUrl/v3/home")))
+    }
+
+    suspend fun searchTitles(query: String): List<V3CatalogMedia> = withContext(ioDispatcher) {
+        val encoded = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.name())
+        JSONObject(getJson("$baseUrl/v3/search/titles?query=$encoded"))
+            .optJSONArray("results")
+            .toStringList { V3CatalogMedia.fromJson(it) }
+    }
+
+    suspend fun searchCompanies(query: String): List<ProductionCompanyFilter> = withContext(ioDispatcher) {
+        val encoded = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.name())
+        JSONObject(getJson("$baseUrl/v3/search/companies?query=$encoded"))
+            .optJSONArray("results")
+            .toStringList {
+                ProductionCompanyFilter(
+                    tmdbId = it.getInt("tmdbId"),
+                    name = it.getString("name"),
+                    logoPath = it.nullableString("logoPath"),
+                    originCountry = it.nullableString("originCountry"),
+                )
+            }
+    }
+
+    suspend fun getTvNetworkFeed(region: String): V3TvNetworkFeed = withContext(ioDispatcher) {
+        val safeRegion = region.trim().uppercase().takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
+        V3TvNetworkFeed.fromJson(JSONObject(getJson("$baseUrl/v3/tv-networks?region=$safeRegion")))
     }
 
     private suspend fun getJson(url: String): String = suspendCancellableCoroutine { continuation ->
@@ -130,6 +157,7 @@ data class V3RecommendationFilters(
     val includedGenres: List<String> = emptyList(),
     val excludedGenres: List<String> = emptyList(),
     val minimumTmdbRating: Double? = null,
+    val productionCompanyIds: List<Int> = emptyList(),
     val seriesStatus: String? = null,
     val sortBy: String? = null,
     val excludedTmdbIds: List<Int> = emptyList(),
@@ -140,7 +168,8 @@ data class V3RecommendationFilters(
         originalLanguage?.let { put("originalLanguage", it) }; put("originCountries", JSONArray(originCountries))
         minimumRuntimeMinutes?.let { put("minimumRuntimeMinutes", it) }; maximumRuntimeMinutes?.let { put("maximumRuntimeMinutes", it) }
         put("includedGenres", JSONArray(includedGenres)); put("excludedGenres", JSONArray(excludedGenres))
-        minimumTmdbRating?.let { put("minimumTmdbRating", it) }; seriesStatus?.let { put("seriesStatus", it) }
+        minimumTmdbRating?.let { put("minimumTmdbRating", it) }
+        put("productionCompanyIds", JSONArray(productionCompanyIds)); seriesStatus?.let { put("seriesStatus", it) }
         sortBy?.let { put("sortBy", it) }
         put("excludedTmdbIds", JSONArray(excludedTmdbIds)); put("excludedTitles", JSONArray(excludedTitles))
     }
@@ -299,6 +328,40 @@ data class V3HomeFeed(
             hero = V3CatalogMedia.fromJson(json.getJSONObject("hero")),
             rails = json.optJSONArray("rails").toStringList { V3HomeRail.fromJson(it) },
             editorialPicks = json.optJSONArray("editorialPicks").toStringList { V3CatalogMedia.fromJson(it) },
+        )
+    }
+}
+
+data class V3TvEntityRail(
+    val entityId: Int,
+    val title: String,
+    val category: String,
+    val logoPath: String?,
+    val popularityScore: Double,
+    val items: List<V3CatalogMedia>,
+) {
+    companion object {
+        fun fromJson(json: JSONObject) = V3TvEntityRail(
+            entityId = json.getInt("entityId"),
+            title = json.getString("title"),
+            category = json.getString("category"),
+            logoPath = json.nullableString("logoPath"),
+            popularityScore = json.optDouble("popularityScore"),
+            items = json.optJSONArray("items").toStringList { V3CatalogMedia.fromJson(it) },
+        )
+    }
+}
+
+data class V3TvNetworkFeed(
+    val region: String,
+    val attribution: String,
+    val rails: List<V3TvEntityRail>,
+) {
+    companion object {
+        fun fromJson(json: JSONObject) = V3TvNetworkFeed(
+            region = json.optString("region", "US"),
+            attribution = json.optString("attribution", "Streaming availability data by JustWatch"),
+            rails = json.optJSONArray("rails").toStringList { V3TvEntityRail.fromJson(it) },
         )
     }
 }

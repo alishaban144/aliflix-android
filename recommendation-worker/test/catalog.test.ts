@@ -18,6 +18,103 @@ afterEach(() => {
 });
 
 describe('TMDB-backed mobile catalogue routes', () => {
+  it('searches canonical movie and TV titles through the Worker for Similar anchors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/search/movie')) return response({ page: 1, total_pages: 1, total_results: 1, results: [
+        { id: 1, title: 'Dark', original_title: 'Dark', release_date: '2018-01-01', popularity: 10, vote_count: 100, genre_ids: [878] },
+      ] });
+      if (url.pathname.endsWith('/search/tv')) return response({ page: 1, total_pages: 1, total_results: 1, results: [
+        { id: 70523, name: 'Dark', original_name: 'Dark', first_air_date: '2017-12-01', popularity: 200, vote_count: 7_000, genre_ids: [10765] },
+      ] });
+      if (url.pathname.endsWith('/genre/movie/list')) return response({ genres: [{ id: 878, name: 'Science Fiction' }] });
+      if (url.pathname.endsWith('/genre/tv/list')) return response({ genres: [{ id: 10765, name: 'Sci-Fi & Fantasy' }] });
+      throw new Error(`Unexpected URL ${url}`);
+    }));
+
+    const result = await worker.fetch(new Request('https://worker.test/v3/search/titles?query=Dark'), env);
+    expect(result.status).toBe(200);
+    const body: any = await result.json();
+    expect(body.results.map((item: any) => `${item.mediaType}:${item.tmdbId}`)).toEqual(['tv:70523', 'movie:1']);
+    expect(body.results[0]).toMatchObject({ title: 'Dark', genres: ['Sci-Fi & Fantasy'] });
+  });
+
+  it('returns exact production-company identities for the filter picker', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe('/3/search/company');
+      expect(url.searchParams.get('query')).toBe('A24');
+      return response({ page: 1, total_pages: 1, total_results: 2, results: [
+        { id: 99, name: 'A24 Television' },
+        { id: 41077, name: 'A24', logo_path: '/a24.svg', origin_country: 'US' },
+      ] });
+    }));
+
+    const result = await worker.fetch(new Request('https://worker.test/v3/search/companies?query=A24'), env);
+    expect(result.status).toBe(200);
+    const body: any = await result.json();
+    expect(body.results[0]).toEqual({ tmdbId: 41077, name: 'A24', logoPath: '/a24.svg', originCountry: 'US' });
+  });
+
+  it('builds popularity-sorted TV rows from networks, providers, and production companies', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/tv/popular')) return response({
+        page: Number(url.searchParams.get('page') || 1), total_pages: 2, total_results: 1,
+        results: Number(url.searchParams.get('page')) === 1 ? [{ id: 10, name: 'Popular Show' }] : [],
+      });
+      if (url.pathname.endsWith('/genre/tv/list')) return response({ genres: [{ id: 18, name: 'Drama' }] });
+      if (url.pathname.endsWith('/watch/providers/tv')) return response({ results: [
+        { provider_id: 8, provider_name: 'Netflix', display_priorities: { DE: 1 } },
+      ] });
+      if (url.pathname === '/3/tv/10') return response({
+        id: 10, name: 'Popular Show', popularity: 500, vote_count: 2_000,
+        networks: [{ id: 49, name: 'HBO' }],
+        production_companies: [{ id: 88, name: 'Prestige Television' }],
+      });
+      if (url.pathname.endsWith('/search/company')) {
+        const query = url.searchParams.get('query');
+        return response({ page: 1, total_pages: 1, total_results: 1, results: [
+          { id: query === 'A24' ? 41077 : 101, name: query },
+        ] });
+      }
+      if (url.pathname.endsWith('/discover/tv')) {
+        const entityId = Number(
+          url.searchParams.get('with_networks') ||
+          url.searchParams.get('with_companies') ||
+          url.searchParams.get('with_watch_providers'),
+        );
+        if (url.searchParams.has('with_watch_providers')) {
+          expect(url.searchParams.get('watch_region')).toBe('DE');
+          expect(url.searchParams.get('with_watch_monetization_types')).toBe('flatrate|free|ads');
+        }
+        return response({ page: 1, total_pages: 1, total_results: 1, results: [{
+          id: 1_000 + entityId,
+          name: `Entity ${entityId} series`,
+          first_air_date: '2025-01-01',
+          poster_path: `/entity-${entityId}.jpg`,
+          genre_ids: [18],
+          popularity: entityId,
+          vote_count: 100,
+        }] });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    }));
+
+    const result = await worker.fetch(new Request('https://worker.test/v3/tv-networks?region=de'), env);
+    expect(result.status).toBe(200);
+    const body: any = await result.json();
+    expect(body.region).toBe('DE');
+    expect(body.attribution).toContain('JustWatch');
+    expect(new Set(body.rails.map((rail: any) => rail.category))).toEqual(new Set([
+      'network', 'streaming_provider', 'production_company',
+    ]));
+    expect(body.rails.map((rail: any) => rail.popularityScore)).toEqual(
+      [...body.rails.map((rail: any) => rail.popularityScore)].sort((a: number, b: number) => b - a),
+    );
+    expect(body.rails.every((rail: any) => rail.items.length === 1 && rail.items[0].mediaType === 'tv')).toBe(true);
+  });
+
   it('returns authoritative TV status, creators, genres, and original language', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input));

@@ -7,7 +7,7 @@
 
 Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by selectable Groq or Gemini interpretation and authoritative TMDB metadata.
 
-This source tree targets **Aliflix 3.1.34** (`versionCode 124`) for Android 10 and newer.
+This source tree targets **Aliflix 3.1.35** (`versionCode 125`) for Android 10 and newer.
 
 [Download the latest mobile APK](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk) | [View release notes](https://github.com/alishaban144/aliflix-android/releases/latest)
 
@@ -19,9 +19,10 @@ This source tree targets **Aliflix 3.1.34** (`versionCode 124`) for Android 10 a
 - **No account required** for the published app; personal lists and playback preferences stay on the device.
 - **Ask Aliflix v3** with Describe, Similar, and Filters modes for movies or series.
 - **Grounded recommendations**: Describe and Similar use the selected Groq or Gemini model to propose real titles, then exact TMDB identity and hydrated metadata verify every result. Describe can recover from a temporary provider failure through strict TMDB concept retrieval without another model call or popularity padding.
-- **Deterministic filtering** after metadata enrichment, including genre inclusion/exclusion, year, runtime, language, country, rating, title exclusions, and TMDB ID exclusions.
-- **Canonical Similar mode** that uses the selected TMDB identity directly, excludes the anchor, and preserves the requested output type.
-- **Useful result cards** with poster, title, year, genres, rating, and a quick My List action.
+- **Deterministic filtering** after metadata enrichment, including production companies, genre inclusion/exclusion, year, runtime, language, country, rating, title exclusions, and TMDB ID exclusions.
+- **Canonical Similar mode** with authoritative TMDB movie and TV title search, direct anchor identity, anchor exclusion, and preserved output type.
+- **TV Networks home tab** with popularity-ranked rows for TV networks, streaming providers, and production companies.
+- **Modern result cards** with match confidence, rationale, metadata, genres, TMDB rating, details navigation, and a quick My List action.
 - **Real pagination** backed by signed recommendation-session cursors.
 - **Personal library** with favorites, My List, recently played titles, and playback settings.
 - **Native details and navigation**; a WebView is created only after Play is selected.
@@ -311,8 +312,8 @@ https://github.com/alishaban144/aliflix-android/releases/latest/download/update-
 
 ## Current release
 
-- Version: **3.1.34**
-- Version code: **124**
+- Version: **3.1.35**
+- Version code: **125**
 - Minimum Android version: **Android 10 / API 29**
-- Release page: [Aliflix 3.1.34](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.34)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.34/aliflix-mobile.apk)
+- Release page: [Aliflix 3.1.35](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.35)
+- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.35/aliflix-mobile.apk)

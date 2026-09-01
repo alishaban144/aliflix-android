@@ -107,6 +107,7 @@ object AskAliflixRequestMapper {
             includedGenres = resolvedIncludedGenres,
             excludedGenres = resolvedExcludedGenres,
             minimumTmdbRating = minimumTmdb,
+            productionCompanyIds = productionCompanies.map { it.tmdbId }.distinct(),
             seriesStatus = when (requiredStatus?.trim()?.lowercase()) {
                 "returning series" -> "returning"
                 "ended" -> "ended"

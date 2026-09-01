@@ -35,7 +35,7 @@ export const GROQ_MAX_OUTPUT_TOKENS = 1_536;
 export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 2_048;
 
 const EMPTY_FILTERS = {
-  originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
+  originCountries: [], includedGenres: [], excludedGenres: [], productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [],
 };
 
 interface GroqChatCompletionResponse {

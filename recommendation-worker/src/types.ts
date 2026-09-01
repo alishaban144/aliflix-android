@@ -15,6 +15,7 @@ export interface RecommendationFilters {
   includedGenres: string[];
   excludedGenres: string[];
   minimumTmdbRating?: number;
+  productionCompanyIds: number[];
   seriesStatus?: 'returning' | 'ended';
   sortBy?: RecommendationSort;
   excludedTmdbIds: number[];
@@ -128,6 +129,7 @@ export interface Candidate {
   status?: string;
   collectionId?: number;
   certifications: string[];
+  productionCompanyIds: number[];
   keywords: TmdbKeyword[];
   matchedKeywordIds: Set<number>;
   matchedConceptGroupIndexes: Set<number>;

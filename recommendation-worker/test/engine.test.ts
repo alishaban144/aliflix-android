@@ -8,12 +8,12 @@ const request: ParsedRecommendationRequest = {
   requestId: '00000000-0000-4000-8000-000000000001', mode: 'filters', query: 'funny movies', mediaType: 'movie', pageSize: 20,
   filters: {
     minimumYear: undefined, maximumYear: undefined, originalLanguage: undefined, originCountries: [],
-    minimumRuntimeMinutes: undefined, maximumRuntimeMinutes: undefined, includedGenres: [], excludedGenres: [],
+    minimumRuntimeMinutes: undefined, maximumRuntimeMinutes: undefined, includedGenres: [], excludedGenres: [], productionCompanyIds: [],
     minimumTmdbRating: undefined, excludedTmdbIds: [], excludedTitles: [],
   },
 };
 const interpreted: InterpretedIntent = {
-  hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [] },
+  hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [] },
   requiredConceptGroups: [{ label: 'comedy', synonyms: ['funny', 'comedy'], weight: 1 }], softConcepts: [], excludedConcepts: [],
   excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
   genreHints: ['Comedy'], toneAndMood: ['funny'], broadSearchPhrases: [],
@@ -257,7 +257,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
       },
     };
     const broadIntent: InterpretedIntent = {
-      hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [] },
+      hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [] },
       requiredConceptGroups: [], softConcepts: [], excludedConcepts: [],
       excludedKeywords: [], crewNames: [], castNames: [], studioNames: [], certifications: [],
       genreHints: [], toneAndMood: [], broadSearchPhrases: [],

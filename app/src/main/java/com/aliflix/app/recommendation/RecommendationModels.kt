@@ -72,6 +72,13 @@ enum class RecommendationAiModel(
     }
 }
 
+data class ProductionCompanyFilter(
+    val tmdbId: Int,
+    val name: String,
+    val logoPath: String? = null,
+    val originCountry: String? = null,
+)
+
 /** The filter state shared by the Ask Aliflix editor and Worker request mapper. */
 data class CatalogDiscoverySpec(
     val mediaKind: RecommendationMediaKind,
@@ -82,6 +89,7 @@ data class CatalogDiscoverySpec(
     val yearMinimum: Int? = null,
     val yearMaximum: Int? = null,
     val minimumTmdb: Double? = null,
+    val productionCompanies: List<ProductionCompanyFilter> = emptyList(),
     val originalLanguage: String? = null,
     val animationFilter: AnimationFilter? = null,
     val requiredStatus: String? = null,
@@ -93,4 +101,7 @@ data class CatalogDiscoverySpec(
 /** UI-ready Worker result. TMDB-verified metadata lives on [media]. */
 data class RecommendationCandidate(
     val media: Media,
+    val matchLevel: String = "Relevant",
+    val matchScore: Double = 0.0,
+    val matchReasons: List<String> = emptyList(),
 )

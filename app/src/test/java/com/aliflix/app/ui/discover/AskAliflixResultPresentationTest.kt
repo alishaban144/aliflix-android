@@ -6,6 +6,7 @@ import com.aliflix.app.recommendation.CatalogDiscoverySpec
 import com.aliflix.app.recommendation.AnimationFilter
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationSort
+import com.aliflix.app.recommendation.ProductionCompanyFilter
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.Assert.assertNull
@@ -40,13 +41,32 @@ class AskAliflixResultPresentationTest {
             minimumTmdb = 7.5,
             originalLanguage = "ko",
             countries = listOf("KR"),
+            productionCompanies = listOf(ProductionCompanyFilter(41077, "A24")),
         ).askFilterSummary()
 
         assertEquals(
             "Crime, Drama / Avoid Comedy / Years 2015-2024 / " +
-                "Runtime 40-65 min / TMDB 7.5+ / Korean / South Korea",
+                "Runtime 40-65 min / TMDB 7.5+ / Produced by A24 / Korean / South Korea",
             summary,
         )
+    }
+
+    @Test
+    fun resultCardsPresentCanonicalMetadataAndRoundedMatchConfidence() {
+        val item = RecommendationCandidate(
+            media = Media(
+                id = 10,
+                type = MediaType.MOVIE,
+                title = "Past Lives",
+                year = "2023",
+                runtime = "106 min",
+            ),
+            matchLevel = "Exceptional",
+            matchScore = 0.936,
+        )
+
+        assertEquals("2023 · 106 min · Movie", askResultMetadata(item.media))
+        assertEquals("Exceptional match · 94%", askResultMatchLabel(item))
     }
 
     @Test

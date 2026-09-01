@@ -1,4 +1,4 @@
-import { TmdbClient, TmdbDetails, TmdbPage } from './tmdb';
+import { TmdbClient, TmdbCompany, TmdbDetails, TmdbPage, TmdbWatchProvider } from './tmdb';
 import { MediaType, RecommendationEnv, ServiceError, TmdbGenre, TmdbListItem } from './types';
 
 export interface CatalogPerson {
@@ -54,6 +54,28 @@ export interface CatalogHomeFeed {
   hero: CatalogMediaSummary;
   rails: CatalogHomeRail[];
   editorialPicks: CatalogMediaSummary[];
+}
+
+export interface CatalogCompany {
+  tmdbId: number;
+  name: string;
+  logoPath?: string;
+  originCountry?: string;
+}
+
+export type CatalogTvEntityCategory = 'network' | 'streaming_provider' | 'production_company';
+
+export interface CatalogTvEntityRail extends CatalogHomeRail {
+  entityId: number;
+  category: CatalogTvEntityCategory;
+  logoPath?: string;
+  popularityScore: number;
+}
+
+export interface CatalogTvNetworkFeed {
+  region: string;
+  attribution: string;
+  rails: CatalogTvEntityRail[];
 }
 
 interface HomeGenreRailSpec {
@@ -213,6 +235,219 @@ function detailsSummary(details: TmdbDetails, mediaType: MediaType): CatalogTitl
 
 export async function titleDetails(env: RecommendationEnv, mediaType: MediaType, id: number): Promise<CatalogTitleDetails> {
   return detailsSummary(await new TmdbClient(env, 4).details(mediaType, id), mediaType);
+}
+
+function normalizedSearchText(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function titleSearchScore(item: TmdbListItem, mediaType: MediaType, query: string): number {
+  const title = normalizedSearchText(mediaType === 'movie' ? item.title || '' : item.name || '');
+  const originalTitle = normalizedSearchText(mediaType === 'movie' ? item.original_title || '' : item.original_name || '');
+  const exact = title === query || originalTitle === query;
+  const prefix = title.startsWith(query) || originalTitle.startsWith(query);
+  const contains = title.includes(query) || originalTitle.includes(query);
+  return (exact ? 10_000 : prefix ? 5_000 : contains ? 2_000 : 0) +
+    (item.popularity || 0) * 2 + Math.log10(Math.max(1, item.vote_count || 0)) * 20;
+}
+
+export async function titleSearch(env: RecommendationEnv, rawQuery: string): Promise<{ results: CatalogMediaSummary[] }> {
+  const query = rawQuery.trim();
+  const normalizedQuery = normalizedSearchText(query);
+  if (normalizedQuery.length < 2) throw new ServiceError('INVALID_QUERY', 'Enter at least two characters', 400, false);
+  const tmdb = new TmdbClient(env, 4);
+  const [movies, tv, movieGenres, tvGenres] = await Promise.all([
+    tmdb.searchTitle('movie', query),
+    tmdb.searchTitle('tv', query),
+    tmdb.genres('movie'),
+    tmdb.genres('tv'),
+  ]);
+  const movieGenreMap = genreMap(movieGenres.genres);
+  const tvGenreMap = genreMap(tvGenres.genres);
+  const ranked = [
+    ...movies.results.map(item => ({ item, mediaType: 'movie' as const, score: titleSearchScore(item, 'movie', normalizedQuery) })),
+    ...tv.results.map(item => ({ item, mediaType: 'tv' as const, score: titleSearchScore(item, 'tv', normalizedQuery) })),
+  ]
+    .filter(entry => entry.item.id > 0 && mediaTitle(entry.item) !== 'Untitled')
+    .sort((left, right) => right.score - left.score || mediaTitle(left.item).localeCompare(mediaTitle(right.item)))
+    .filter((entry, index, values) => values.findIndex(other => (
+      other.mediaType === entry.mediaType && other.item.id === entry.item.id
+    )) === index)
+    .slice(0, 30)
+    .map(entry => summary(
+      entry.item,
+      entry.mediaType,
+      entry.mediaType === 'movie' ? movieGenreMap : tvGenreMap,
+    ));
+  return { results: ranked };
+}
+
+export async function companySearch(env: RecommendationEnv, rawQuery: string): Promise<{ results: CatalogCompany[] }> {
+  const query = rawQuery.trim();
+  const normalizedQuery = normalizedSearchText(query);
+  if (normalizedQuery.length < 2) throw new ServiceError('INVALID_QUERY', 'Enter at least two characters', 400, false);
+  const response = await new TmdbClient(env, 2).searchCompany(query);
+  const results = (response.results || [])
+    .filter(company => company.id > 0 && present(company.name))
+    .filter((company, index, values) => values.findIndex(other => other.id === company.id) === index)
+    .sort((left, right) => {
+      const leftName = normalizedSearchText(left.name);
+      const rightName = normalizedSearchText(right.name);
+      const leftScore = leftName === normalizedQuery ? 3 : leftName.startsWith(normalizedQuery) ? 2 : 1;
+      const rightScore = rightName === normalizedQuery ? 3 : rightName.startsWith(normalizedQuery) ? 2 : 1;
+      return rightScore - leftScore || left.name.localeCompare(right.name);
+    })
+    .slice(0, 20)
+    .map(company => ({
+      tmdbId: company.id,
+      name: company.name.trim(),
+      logoPath: present(company.logo_path),
+      originCountry: present(company.origin_country),
+    }));
+  return { results };
+}
+
+interface TvEntityCandidate {
+  id: number;
+  name: string;
+  category: CatalogTvEntityCategory;
+  logoPath?: string;
+  seedPopularity: number;
+}
+
+function displayPriority(provider: TmdbWatchProvider, region: string): number {
+  return provider.display_priorities?.[region] ?? provider.display_priority ?? Number.MAX_SAFE_INTEGER;
+}
+
+function addTvEntity(
+  entities: Map<string, TvEntityCandidate>,
+  candidate: Omit<TvEntityCandidate, 'seedPopularity'>,
+  popularity: number,
+): void {
+  if (candidate.id <= 0 || !present(candidate.name)) return;
+  const key = `${candidate.category}:${candidate.id}`;
+  const existing = entities.get(key);
+  entities.set(key, {
+    ...candidate,
+    name: candidate.name.trim(),
+    seedPopularity: (existing?.seedPopularity || 0) + Math.max(0, popularity),
+  });
+}
+
+export async function tvNetworkFeed(env: RecommendationEnv, region: string): Promise<CatalogTvNetworkFeed> {
+  const tmdb = new TmdbClient(env, 48);
+  const today = new Date().toISOString().slice(0, 10);
+  const [popular1, popular2, tvGenres, providerResponse] = await Promise.all([
+    tmdb.popular('tv', 1),
+    tmdb.popular('tv', 2),
+    tmdb.genres('tv'),
+    tmdb.watchProviders('tv', region),
+  ]);
+  const popular = [...popular1.results, ...popular2.results]
+    .filter((item, index, values) => values.findIndex(other => other.id === item.id) === index)
+    .slice(0, 18);
+  const details: TmdbDetails[] = [];
+  for (let start = 0; start < popular.length; start += 6) {
+    details.push(...await Promise.all(popular.slice(start, start + 6).map(item => tmdb.tvAttributionDetails(item.id))));
+  }
+
+  const entities = new Map<string, TvEntityCandidate>();
+  details.forEach(detail => {
+    const popularity = (detail.popularity || 0) + Math.log10(Math.max(1, detail.vote_count || 0)) * 4;
+    (detail.networks || []).forEach(network => addTvEntity(entities, {
+      id: network.id,
+      name: network.name,
+      logoPath: present(network.logo_path),
+      category: 'network',
+    }, popularity));
+    (detail.production_companies || []).forEach(company => addTvEntity(entities, {
+      id: company.id,
+      name: company.name,
+      logoPath: present(company.logo_path),
+      category: 'production_company',
+    }, popularity));
+  });
+
+  const featuredCompanyNames = ['A24', 'Apple Studios'];
+  const featuredCompanies = await Promise.all(featuredCompanyNames.map(name => tmdb.searchCompany(name)));
+  const featuredCompanyEntities = featuredCompanyNames.flatMap((name, index) => {
+    const exact = featuredCompanies[index].results.find(company => (
+      normalizedSearchText(company.name) === normalizedSearchText(name)
+    ));
+    return exact ? [{
+      id: exact.id,
+      name: exact.name,
+      logoPath: present(exact.logo_path),
+      category: 'production_company' as const,
+      seedPopularity: Number.MAX_SAFE_INTEGER,
+    }] : [];
+  });
+
+  const networks = [...entities.values()]
+    .filter(entity => entity.category === 'network')
+    .sort((left, right) => right.seedPopularity - left.seedPopularity || left.name.localeCompare(right.name))
+    .slice(0, 6);
+  const discoveredCompanies = [...entities.values()]
+    .filter(entity => entity.category === 'production_company')
+    .sort((left, right) => right.seedPopularity - left.seedPopularity || left.name.localeCompare(right.name));
+  const companies = [...featuredCompanyEntities, ...discoveredCompanies]
+    .filter((entity, index, values) => values.findIndex(other => other.id === entity.id) === index)
+    .slice(0, 6);
+  const providers: TvEntityCandidate[] = (providerResponse.results || [])
+    .filter(provider => provider.provider_id > 0 && present(provider.provider_name))
+    .sort((left, right) => displayPriority(left, region) - displayPriority(right, region) || left.provider_name.localeCompare(right.provider_name))
+    .slice(0, 8)
+    .map(provider => ({
+      id: provider.provider_id,
+      name: provider.provider_name.trim(),
+      logoPath: present(provider.logo_path),
+      category: 'streaming_provider',
+      seedPopularity: Math.max(0, 1_000 - displayPriority(provider, region)),
+    }));
+  const selectedEntities = [...networks, ...companies, ...providers];
+  const tvGenreMap = genreMap(tvGenres.genres);
+  const rails: CatalogTvEntityRail[] = [];
+  for (let start = 0; start < selectedEntities.length; start += 6) {
+    const batch = selectedEntities.slice(start, start + 6);
+    const pages = await Promise.all(batch.map(entity => tmdb.discover('tv', {
+      page: 1,
+      sort_by: 'popularity.desc',
+      'first_air_date.lte': today,
+      'vote_count.gte': 5,
+      with_networks: entity.category === 'network' ? entity.id : undefined,
+      with_companies: entity.category === 'production_company' ? entity.id : undefined,
+      with_watch_providers: entity.category === 'streaming_provider' ? entity.id : undefined,
+      watch_region: entity.category === 'streaming_provider' ? region : undefined,
+      with_watch_monetization_types: entity.category === 'streaming_provider' ? 'flatrate|free|ads' : undefined,
+    })));
+    pages.forEach((page, index) => {
+      const entity = batch[index];
+      const items = (page.results || [])
+        .filter(item => item.id > 0 && item.poster_path && item.first_air_date && item.first_air_date <= today)
+        .filter((item, itemIndex, values) => values.findIndex(other => other.id === item.id) === itemIndex)
+        .slice(0, 20)
+        .map(item => summary(item, 'tv', tvGenreMap));
+      if (!items.length) return;
+      const popularityScore = (page.results || []).slice(0, 10).reduce(
+        (score, item) => score + (item.popularity || 0) + Math.log10(Math.max(1, item.vote_count || 0)),
+        0,
+      );
+      rails.push({
+        entityId: entity.id,
+        title: entity.name,
+        category: entity.category,
+        logoPath: entity.logoPath,
+        popularityScore: Number(popularityScore.toFixed(3)),
+        items,
+      });
+    });
+  }
+  rails.sort((left, right) => right.popularityScore - left.popularityScore || left.title.localeCompare(right.title));
+  return {
+    region,
+    attribution: 'Streaming availability data by JustWatch',
+    rails,
+  };
 }
 
 export async function personCredits(env: RecommendationEnv, id: number): Promise<{ person: CatalogPerson; results: CatalogMediaSummary[] }> {

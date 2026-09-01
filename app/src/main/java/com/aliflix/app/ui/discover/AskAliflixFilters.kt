@@ -30,20 +30,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Business
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -66,6 +72,7 @@ import com.aliflix.app.recommendation.CatalogDiscoverySpec
 import com.aliflix.app.recommendation.AnimationFilter
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationSort
+import com.aliflix.app.recommendation.ProductionCompanyFilter
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
@@ -75,6 +82,7 @@ import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 import java.time.Year
+import kotlinx.coroutines.delay
 
 @Composable
 fun AskAliflixFilters(
@@ -82,6 +90,7 @@ fun AskAliflixFilters(
     onSpecChanged: (CatalogDiscoverySpec) -> Unit,
     onSubmit: () -> Unit,
     loading: Boolean,
+    onSearchCompanies: suspend (String) -> List<ProductionCompanyFilter> = { emptyList() },
     modifier: Modifier = Modifier,
 ) {
     var genresOpen by rememberSaveable { mutableStateOf(true) }
@@ -89,6 +98,35 @@ fun AskAliflixFilters(
     var yearRuntimeOpen by rememberSaveable { mutableStateOf(false) }
     var ratingOpen by rememberSaveable { mutableStateOf(false) }
     var regionOpen by rememberSaveable { mutableStateOf(false) }
+    var companiesOpen by rememberSaveable { mutableStateOf(false) }
+    var companyQuery by rememberSaveable { mutableStateOf("") }
+    var companySuggestions by remember { mutableStateOf<List<ProductionCompanyFilter>>(emptyList()) }
+    var companySuggestionsLoading by remember { mutableStateOf(false) }
+    var companySuggestionsError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(companyQuery, spec.productionCompanies.map { it.tmdbId }) {
+        val query = companyQuery.trim()
+        if (query.length < 2 || spec.productionCompanies.size >= 8) {
+            companySuggestions = emptyList()
+            companySuggestionsLoading = false
+            companySuggestionsError = null
+            return@LaunchedEffect
+        }
+        delay(250)
+        companySuggestionsLoading = true
+        companySuggestionsError = null
+        companySuggestions = try {
+            onSearchCompanies(query).filterNot { option ->
+                spec.productionCompanies.any { selected -> selected.tmdbId == option.tmdbId }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            companySuggestionsError = "Company search is temporarily unavailable."
+            emptyList()
+        }
+        companySuggestionsLoading = false
+    }
 
     val genres = askTmdbGenres(spec.mediaKind).map(AskTmdbGenre::name)
     val genreChoices = askGenreChoices(spec.mediaKind)
@@ -162,6 +200,94 @@ fun AskAliflixFilters(
                             }
                         },
                     )
+                }
+            }
+
+            item {
+                FilterSection(
+                    title = "Production company",
+                    icon = Icons.Rounded.Business,
+                    badgeCount = spec.productionCompanies.size,
+                    expanded = companiesOpen,
+                    onToggle = { companiesOpen = !companiesOpen },
+                ) {
+                    FilterSubheading("TMDB PRODUCTION COMPANIES")
+                    if (spec.productionCompanies.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp),
+                        ) {
+                            spec.productionCompanies.forEach { company ->
+                                SelectedCompanyChip(
+                                    company = company,
+                                    onRemove = {
+                                        onSpecChanged(spec.copy(
+                                            productionCompanies = spec.productionCompanies.filterNot { it.tmdbId == company.tmdbId },
+                                        ))
+                                    },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    OutlinedTextField(
+                        value = companyQuery,
+                        onValueChange = { companyQuery = it.take(80) },
+                        placeholder = { Text("Search A24, Netflix, Apple Studios…", fontSize = 13.sp) },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Search, contentDescription = null, tint = AliflixAccentSecondary)
+                        },
+                        trailingIcon = {
+                            when {
+                                companySuggestionsLoading -> CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = AliflixAccentSecondary,
+                                )
+                                companyQuery.isNotBlank() -> IconButton(onClick = { companyQuery = "" }) {
+                                    Icon(Icons.Rounded.Close, contentDescription = "Clear company search")
+                                }
+                            }
+                        },
+                        enabled = spec.productionCompanies.size < 8,
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AliflixAccentPrimary,
+                            unfocusedBorderColor = AliflixBorderSubtle,
+                            focusedContainerColor = AliflixSurfaceSecondary,
+                            unfocusedContainerColor = AliflixSurfaceSecondary,
+                            focusedTextColor = AliflixContentPrimary,
+                            unfocusedTextColor = AliflixContentPrimary,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    companySuggestionsError?.let { message ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(message, color = com.aliflix.app.ui.theme.AliflixError, fontSize = 11.sp)
+                    }
+                    if (companySuggestions.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            companySuggestions.take(6).forEach { company ->
+                                CompanySuggestionRow(
+                                    company = company,
+                                    onClick = {
+                                        onSpecChanged(spec.copy(
+                                            productionCompanies = (spec.productionCompanies + company)
+                                                .distinctBy(ProductionCompanyFilter::tmdbId)
+                                                .take(8),
+                                        ))
+                                        companyQuery = ""
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (spec.productionCompanies.size >= 8) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Maximum of 8 companies selected.", color = AliflixContentTertiary, fontSize = 11.sp)
+                    }
                 }
             }
 
@@ -348,6 +474,76 @@ fun AskAliflixFilters(
             loading = loading,
             onClick = onSubmit,
         )
+    }
+}
+
+@Composable
+private fun SelectedCompanyChip(
+    company: ProductionCompanyFilter,
+    onRemove: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = AliflixAccentPrimary.copy(alpha = 0.2f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.55f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .clickable(role = Role.Button, onClick = onRemove)
+                .padding(start = 11.dp, end = 7.dp, top = 7.dp, bottom = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                company.name,
+                color = AliflixContentPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                Icons.Rounded.Close,
+                contentDescription = "Remove ${company.name}",
+                tint = AliflixAccentSecondary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompanySuggestionRow(
+    company: ProductionCompanyFilter,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .clip(RoundedCornerShape(13.dp))
+            .background(AliflixSurfaceSecondary.copy(alpha = 0.78f))
+            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(13.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(AliflixAccentPrimary.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Rounded.Business, contentDescription = null, tint = AliflixAccentSecondary, modifier = Modifier.size(17.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(company.name, color = AliflixContentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            company.originCountry?.takeIf(String::isNotBlank)?.let { country ->
+                Text(country, color = AliflixContentTertiary, fontSize = 10.sp)
+            }
+        }
+        Text("Add", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -545,6 +741,9 @@ internal fun CatalogDiscoverySpec.askFilterSummary(): String {
             runtimeMaximumMinutes != null -> add("Runtime up to $runtimeMaximumMinutes min")
         }
         minimumTmdb?.let { add("TMDB ${it.toString().removeSuffix(".0")}+") }
+        if (productionCompanies.isNotEmpty()) {
+            add("Produced by ${productionCompanies.joinToString(", ") { it.name }}")
+        }
         requiredStatus?.let { add(it) }
         originalLanguage?.let { code ->
             add(ASK_LANGUAGES.firstOrNull { it.code == code }?.label ?: code.uppercase())
@@ -559,7 +758,8 @@ internal fun CatalogDiscoverySpec.askFilterSummary(): String {
 }
 
 private fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
-    spec.includedGenres.size + spec.excludedGenres.size + (if (spec.animationFilter != null) 1 else 0) +
+    spec.includedGenres.size + spec.excludedGenres.size + spec.productionCompanies.size +
+        (if (spec.animationFilter != null) 1 else 0) +
         listOf(
             spec.yearMinimum != null || spec.yearMaximum != null,
             spec.runtimeMinimumMinutes != null || spec.runtimeMaximumMinutes != null,
@@ -576,6 +776,7 @@ private fun CatalogDiscoverySpec.clearAskFilters() = copy(
     yearMinimum = null,
     yearMaximum = null,
     minimumTmdb = null,
+    productionCompanies = emptyList(),
     originalLanguage = null,
     animationFilter = null,
     requiredStatus = null,

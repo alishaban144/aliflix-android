@@ -33,6 +33,9 @@ export function mergeFilters(structured: RecommendationFilters, interpreted: Rec
       ? structured.excludedGenres
       : interpreted.excludedGenres.filter(genre => !structuredIncluded.has(normalize(genre)))),
     minimumTmdbRating: structured.minimumTmdbRating ?? interpreted.minimumTmdbRating,
+    productionCompanyIds: unique(structured.productionCompanyIds.length
+      ? structured.productionCompanyIds
+      : interpreted.productionCompanyIds),
     seriesStatus: structured.seriesStatus ?? interpreted.seriesStatus,
     sortBy: structured.sortBy ?? interpreted.sortBy,
     excludedTmdbIds: unique(structured.excludedTmdbIds.length ? structured.excludedTmdbIds : interpreted.excludedTmdbIds),
@@ -79,6 +82,7 @@ export function passesHardFilters(candidate: Candidate, filters: RecommendationF
   if (filters.includedGenres.length && !filters.includedGenres.every(genre => genres.has(normalize(genre)))) return false;
   if (filters.excludedGenres.some(genre => genres.has(normalize(genre)))) return false;
   if (filters.minimumTmdbRating !== undefined && (candidate.tmdbRating === undefined || candidate.tmdbRating < filters.minimumTmdbRating)) return false;
+  if (filters.productionCompanyIds.length && !filters.productionCompanyIds.some(id => candidate.productionCompanyIds.includes(id))) return false;
   if (filters.seriesStatus) {
     if (!candidate.status) return false;
     const expected = filters.seriesStatus === 'returning' ? 'returning series' : 'ended';
@@ -209,7 +213,7 @@ export function rankCandidates(
         filters.originalLanguage !== undefined || filters.originCountries.length > 0 ||
         filters.minimumRuntimeMinutes !== undefined || filters.maximumRuntimeMinutes !== undefined ||
         filters.includedGenres.length > 0 || filters.excludedGenres.length > 0 ||
-        filters.minimumTmdbRating !== undefined || filters.seriesStatus !== undefined;
+        filters.minimumTmdbRating !== undefined || filters.productionCompanyIds.length > 0 || filters.seriesStatus !== undefined;
       candidate.matchReasons.push(
         hasHardFilters ? 'Matches your selected filters' : 'Relevant based on TMDB metadata',
       );

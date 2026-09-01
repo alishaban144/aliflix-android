@@ -201,6 +201,7 @@ class AskAliflixWiringIntegrationTest {
             runtimeMinimumMinutes = 40, runtimeMaximumMinutes = 70,
             yearMinimum = 2021, yearMaximum = 2025, minimumTmdb = 7.5,
             originalLanguage = "ko", countries = listOf("KR"), discoveryText = "serial killers",
+            productionCompanies = listOf(ProductionCompanyFilter(41077, "A24")),
         )
         val filters = AskAliflixRequestMapper.map(
             AskAliflixRequest.Filters(spec), "00000000-0000-4000-8000-000000000003",
@@ -208,6 +209,7 @@ class AskAliflixWiringIntegrationTest {
         assertEquals(2021, filters.getInt("minimumYear"))
         assertEquals("ko", filters.getString("originalLanguage"))
         assertEquals("KR", filters.getJSONArray("originCountries").getString(0))
+        assertEquals(41077, filters.getJSONArray("productionCompanyIds").getInt(0))
         assertEquals(7.5, filters.getDouble("minimumTmdbRating"), 0.0)
         assertEquals("most_popular", filters.getString("sortBy"))
         assertFalse(filters.has("minimumImdb"))

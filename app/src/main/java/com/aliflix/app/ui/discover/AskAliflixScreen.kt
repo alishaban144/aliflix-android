@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.aliflix.app.model.Media
+import com.aliflix.app.recommendation.ProductionCompanyFilter
 import com.aliflix.app.ui.common.aliflixScreenBackground
 
 @Composable
@@ -26,6 +27,7 @@ fun AskAliflixScreen(
     suggestionsLoading: Boolean,
     suggestionsError: String? = null,
     onRetrySuggestions: () -> Unit = {},
+    onSearchCompanies: suspend (String) -> List<ProductionCompanyFilter> = { emptyList() },
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
@@ -172,6 +174,7 @@ fun AskAliflixScreen(
                                     onSpecChanged = { onEditorStateChanged(editorState.copy(spec = it)) },
                                     onSubmit = { onSubmitRequest(AskAliflixRequest.Filters(editorState.spec)) },
                                     loading = false,
+                                    onSearchCompanies = onSearchCompanies,
                                 )
                             }
                         }

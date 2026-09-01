@@ -33,7 +33,7 @@ export const GEMINI_STRUCTURED_MAX_ATTEMPTS = 1;
 export const GEMINI_37_RECOMMENDATION_LIMIT = 8;
 export const GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS = 3_072;
 const EMPTY_FILTERS = {
-  originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [],
+  originCountries: [], includedGenres: [], excludedGenres: [], productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [],
 };
 
 const FALLBACK_STOP_WORDS = new Set([

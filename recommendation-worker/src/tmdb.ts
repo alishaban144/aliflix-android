@@ -19,6 +19,28 @@ export interface TmdbReviewItem {
   url?: string;
 }
 
+export interface TmdbCompany {
+  id: number;
+  name: string;
+  logo_path?: string | null;
+  origin_country?: string;
+}
+
+export interface TmdbNetwork {
+  id: number;
+  name: string;
+  logo_path?: string | null;
+  origin_country?: string;
+}
+
+export interface TmdbWatchProvider {
+  provider_id: number;
+  provider_name: string;
+  logo_path?: string | null;
+  display_priority?: number;
+  display_priorities?: Record<string, number>;
+}
+
 export interface TmdbDetails extends TmdbListItem {
   genres?: TmdbGenre[]; runtime?: number | null; episode_run_time?: number[]; keywords?: { keywords?: TmdbKeyword[]; results?: TmdbKeyword[] };
   credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }>; crew?: Array<{ id: number; name: string; job?: string; profile_path?: string | null }> };
@@ -32,6 +54,8 @@ export interface TmdbDetails extends TmdbListItem {
   belongs_to_collection?: { id: number; name: string; poster_path?: string | null; backdrop_path?: string | null } | null;
   release_dates?: { results?: Array<{ iso_3166_1: string; release_dates?: Array<{ certification?: string }> }> };
   content_ratings?: { results?: Array<{ iso_3166_1: string; rating?: string }> };
+  networks?: TmdbNetwork[];
+  production_companies?: TmdbCompany[];
 }
 
 export interface TmdbCombinedCredits {
@@ -100,7 +124,7 @@ export class TmdbClient {
   searchTitle(type: MediaType, query: string, page = 1): Promise<TmdbPage> { return this.request(`/search/${type}`, { query, page, include_adult: false }); }
   searchKeyword(query: string): Promise<TmdbPage<TmdbKeyword>> { return this.request('/search/keyword', { query, page: 1 }); }
   searchPerson(query: string): Promise<TmdbPage<TmdbPerson>> { return this.request('/search/person', { query, page: 1, include_adult: false }); }
-  searchCompany(query: string): Promise<TmdbPage<{ id: number; name: string }>> { return this.request('/search/company', { query, page: 1 }); }
+  searchCompany(query: string): Promise<TmdbPage<TmdbCompany>> { return this.request('/search/company', { query, page: 1 }); }
   discover(type: MediaType, params: Record<string, string | number | boolean | undefined>): Promise<TmdbPage> {
     return this.request(`/discover/${type}`, { include_adult: false, ...params });
   }
@@ -110,6 +134,12 @@ export class TmdbClient {
         ? 'keywords,aggregate_credits,external_ids,reviews,content_ratings,recommendations,similar'
         : 'keywords,credits,external_ids,reviews,release_dates,recommendations,similar',
     });
+  }
+  tvAttributionDetails(id: number): Promise<TmdbDetails> {
+    return this.request(`/tv/${id}`, { language: 'en-US' });
+  }
+  watchProviders(type: MediaType, region: string): Promise<{ results: TmdbWatchProvider[] }> {
+    return this.request(`/watch/providers/${type}`, { language: 'en-US', watch_region: region });
   }
   personCombinedCredits(id: number): Promise<TmdbCombinedCredits> {
     return this.request(`/person/${id}/combined_credits`, { language: 'en-US' });

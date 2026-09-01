@@ -126,6 +126,7 @@ import com.aliflix.app.SearchUiState
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
+import com.aliflix.app.recommendation.ProductionCompanyFilter
 import com.aliflix.app.ui.launch.AnimatedAliflixHeatmapLogo
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
@@ -156,6 +157,7 @@ internal fun DiscoverScreen(
     onQueryChange: (String) -> Unit,
     onSubmitSearch: (String) -> Unit,
     onSearchTitles: suspend (String) -> List<Media>,
+    onSearchCompanies: suspend (String) -> List<ProductionCompanyFilter> = { emptyList() },
     onModeChange: (SearchMode) -> Unit,
     onOpen: (Media) -> Unit,
     catalogGridState: LazyGridState,
@@ -319,6 +321,7 @@ internal fun DiscoverScreen(
                     suggestionsLoading = similarSuggestionsLoading,
                     suggestionsError = similarSuggestionsError,
                     onRetrySuggestions = { similarSuggestionsRetry += 1 },
+                    onSearchCompanies = onSearchCompanies,
                     onLoadMore = onLoadMoreAskAliflix,
                     onRetry = onRetryAskAliflix,
                     onRefineRequest = onRefineAskAliflix,

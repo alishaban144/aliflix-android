@@ -111,4 +111,38 @@ class V3CatalogMappingTest {
         assertEquals(listOf("movie", "tv"), parsed.rails.single().items.map { it.mediaType })
         assertEquals("Pick", parsed.editorialPicks.single().title)
     }
+
+    @Test
+    fun tvNetworkFeedParserPreservesEntityCategoryPopularityAndAttribution() {
+        val parsed = V3TvNetworkFeed.fromJson(
+            JSONObject(
+                """
+                {
+                  "region": "DE",
+                  "attribution": "Streaming availability data by JustWatch",
+                  "rails": [{
+                    "entityId": 213,
+                    "title": "Netflix",
+                    "category": "streaming_provider",
+                    "logoPath": "/netflix.jpg",
+                    "popularityScore": 812.4,
+                    "items": [{
+                      "tmdbId": 1396,
+                      "mediaType": "tv",
+                      "title": "Breaking Bad",
+                      "genres": ["Drama"],
+                      "originCountries": ["US"]
+                    }]
+                  }]
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals("DE", parsed.region)
+        assertEquals("Streaming availability data by JustWatch", parsed.attribution)
+        assertEquals("streaming_provider", parsed.rails.single().category)
+        assertEquals(812.4, parsed.rails.single().popularityScore, 0.0)
+        assertEquals("Breaking Bad", parsed.rails.single().items.single().title)
+    }
 }

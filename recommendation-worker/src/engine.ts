@@ -127,7 +127,8 @@ function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<n
     releaseDate: (mediaType === 'movie' ? item.release_date : item.first_air_date) || undefined,
     originalLanguage: item.original_language, originCountries: item.origin_country || [], genreIds: item.genre_ids || [],
     genres: (item.genre_ids || []).map(id => genreNames.get(id)).filter((name): name is string => Boolean(name)),
-    tmdbRating: item.vote_average, tmdbVoteCount: item.vote_count, popularity: item.popularity, certifications: [], keywords: [],
+    tmdbRating: item.vote_average, tmdbVoteCount: item.vote_count, popularity: item.popularity, certifications: [],
+    productionCompanyIds: [], keywords: [],
     matchedKeywordIds: new Set(), matchedConceptGroupIndexes: new Set(),
     retrievalSources: new Set(), hardFiltersVerified: false, detailsLoaded: false,
     matchReasons: [],
@@ -154,13 +155,14 @@ function mergeDetails(candidate: Candidate, details: TmdbDetails): void {
     ...(details.release_dates?.results || []).filter(country => country.iso_3166_1 === 'US').flatMap(country => country.release_dates || []).map(release => release.certification?.trim()),
     ...(details.content_ratings?.results || []).filter(country => country.iso_3166_1 === 'US').map(rating => rating.rating?.trim()),
   ].filter((value): value is string => Boolean(value)))];
+  candidate.productionCompanyIds = (details.production_companies || []).map(company => company.id);
   candidate.hardFiltersVerified = true;
   candidate.detailsLoaded = true;
 }
 
 function emptyIntent(): InterpretedIntent {
   return {
-    hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [] },
+    hardFilters: { originCountries: [], includedGenres: [], excludedGenres: [], productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [] },
     requiredConceptGroups: [], softConcepts: [], excludedConcepts: [], excludedKeywords: [], crewNames: [],
     castNames: [], studioNames: [], certifications: [], genreHints: [], toneAndMood: [], broadSearchPhrases: [],
   };
@@ -1165,6 +1167,7 @@ function discoverParams(
       : undefined,
     'with_runtime.gte': filters.minimumRuntimeMinutes, 'with_runtime.lte': filters.maximumRuntimeMinutes,
     'vote_average.gte': filters.minimumTmdbRating,
+    with_companies: filters.productionCompanyIds.length ? filters.productionCompanyIds.join('|') : undefined,
     'vote_count.gte': applyRecommendationVoteFloor ? (type === 'movie' ? 20 : 10) : undefined,
   };
   if (filters.minimumYear) params[type === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte'] = `${filters.minimumYear}-01-01`;
@@ -1300,6 +1303,7 @@ async function processRuntimeSortedMoviePage(
         if (!candidate) continue;
         candidate.runtimeMinutes = located.runtime;
         candidate.hardFiltersVerified = true;
+        candidate.productionCompanyIds = request.filters.productionCompanyIds;
         candidate.retrievalSources.add(`discover:runtime-${located.runtime}:page-${response.page}`);
         if (passesKnownFilters(candidate, request.filters)) results.push(filterResult(candidate));
       }
@@ -1364,6 +1368,7 @@ export async function processFilterDiscoveryPage(
           candidate.status = request.filters.seriesStatus === 'ended' ? 'Ended' : 'Returning Series';
         }
         candidate.hardFiltersVerified = true;
+        candidate.productionCompanyIds = request.filters.productionCompanyIds;
         candidate.retrievalSources.add(`discover:filtered-catalogue:page-${page.page}`);
         if (passesKnownFilters(candidate, request.filters)) candidates.push(candidate);
       }
@@ -1406,6 +1411,7 @@ function passesKnownFilters(candidate: Candidate, filters: RecommendationFilters
     if (filters.excludedGenres.some(genre => genres.has(normalize(genre)))) return false;
   }
   if (filters.minimumTmdbRating !== undefined && candidate.tmdbRating !== undefined && candidate.tmdbRating < filters.minimumTmdbRating) return false;
+  if (filters.productionCompanyIds.length && !filters.productionCompanyIds.some(id => candidate.productionCompanyIds.includes(id))) return false;
   if (filters.seriesStatus && candidate.detailsLoaded) {
     const expected = filters.seriesStatus === 'returning' ? 'returning series' : 'ended';
     if (!candidate.status || normalize(candidate.status) !== expected) return false;

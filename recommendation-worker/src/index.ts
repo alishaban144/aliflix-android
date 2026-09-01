@@ -3,7 +3,7 @@ import { processFilterDiscoveryPage, processRecommendation, supportsDirectFilter
 import { ParsedRecommendationRequest, RecommendationRequestSchema } from './schemas';
 import { ContinuationReservation, createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
 import { RecommendationEnv, RecommendationResponse, RecommendationResult, ServiceError } from './types';
-import { editorialPicks, homeFeed, personCredits, titleDetails } from './catalog';
+import { companySearch, editorialPicks, homeFeed, personCredits, titleDetails, titleSearch, tvNetworkFeed } from './catalog';
 
 export { RecommendationSession };
 
@@ -229,13 +229,23 @@ export default {
     const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);
     const isEditorialPicks = url.pathname === '/v3/editorial-picks';
     const isHomeFeed = url.pathname === '/v3/home';
-    if (titleMatch || personMatch || isEditorialPicks || isHomeFeed) {
+    const isTitleSearch = url.pathname === '/v3/search/titles';
+    const isCompanySearch = url.pathname === '/v3/search/companies';
+    const isTvNetworkFeed = url.pathname === '/v3/tv-networks';
+    if (titleMatch || personMatch || isEditorialPicks || isHomeFeed || isTitleSearch || isCompanySearch || isTvNetworkFeed) {
       if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
       try {
         await enforceRateLimit(request, env);
         if (titleMatch) return catalogJson(await titleDetails(env, titleMatch[1] as 'movie' | 'tv', Number(titleMatch[2])));
         if (personMatch) {
           return catalogJson(await personCredits(env, Number(personMatch[1])));
+        }
+        if (isTitleSearch) return catalogJson(await titleSearch(env, url.searchParams.get('query') || ''));
+        if (isCompanySearch) return catalogJson(await companySearch(env, url.searchParams.get('query') || ''));
+        if (isTvNetworkFeed) {
+          const requestedRegion = (url.searchParams.get('region') || 'US').trim().toUpperCase();
+          const region = /^[A-Z]{2}$/.test(requestedRegion) ? requestedRegion : 'US';
+          return catalogJson(await tvNetworkFeed(env, region));
         }
         if (isHomeFeed) return catalogJson(await homeFeed(env));
         return catalogJson(await editorialPicks(env));

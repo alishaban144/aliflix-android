@@ -35,6 +35,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
@@ -178,6 +179,7 @@ import com.aliflix.app.AliflixViewModel
 import com.aliflix.app.DetailUiState
 import com.aliflix.app.GenreUiState
 import com.aliflix.app.HomeUiState
+import com.aliflix.app.TvNetworksUiState
 import com.aliflix.app.PersonUiState
 import com.aliflix.app.data.RamoflixConfig
 import com.aliflix.app.model.ContentRail
@@ -441,6 +443,7 @@ private enum class HomeFilter(val label: String) {
     MOVIES("Movies"),
     TV("TV Shows"),
     NEW("New & Popular"),
+    TV_NETWORKS("TV Networks"),
 }
 
 private data class MobileUpdateUiState(
@@ -457,6 +460,7 @@ fun AliflixApp(
     playerController: WebPlayerController,
 ) {
     val home by viewModel.home.collectAsState()
+    val tvNetworks by viewModel.tvNetworks.collectAsState()
     val search by viewModel.search.collectAsState()
     val detail by viewModel.detail.collectAsState()
     val genre by viewModel.genre.collectAsState()
@@ -1043,9 +1047,11 @@ fun AliflixApp(
 
                     AppScreen.HOME -> HomeScreen(
                         state = home,
+                        tvNetworks = tvNetworks,
                         recent = recent,
                         likes = likes,
                         onRetry = viewModel::refreshHome,
+                        onRetryTvNetworks = { viewModel.loadTvNetworks(force = true) },
                         onOpen = ::openDetails,
                         onPlay = ::playMedia,
                         onSearch = { showRoot(AppTab.SEARCH) },
@@ -1053,7 +1059,10 @@ fun AliflixApp(
                         selectedFilter = HomeFilter.entries.firstOrNull { filter ->
                             filter.name == homeFilterName
                         } ?: HomeFilter.FOR_YOU,
-                        onSelectFilter = { homeFilterName = it.name },
+                        onSelectFilter = {
+                            homeFilterName = it.name
+                            if (it == HomeFilter.TV_NETWORKS) viewModel.loadTvNetworks()
+                        },
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
 
@@ -1074,6 +1083,7 @@ fun AliflixApp(
                         onQueryChange = viewModel::updateSearch,
                         onSubmitSearch = viewModel::submitCatalogueSearch,
                         onSearchTitles = viewModel::searchTitles,
+                        onSearchCompanies = viewModel::searchCompanies,
                         onModeChange = viewModel::selectSearchMode,
                         onOpen = ::openDetails,
                         catalogGridState = searchScrollState,
@@ -1309,9 +1319,11 @@ private fun AliflixBottomBar(
 @Composable
 private fun HomeScreen(
     state: HomeUiState,
+    tvNetworks: TvNetworksUiState,
     recent: List<Media>,
     likes: List<Media>,
     onRetry: () -> Unit,
+    onRetryTvNetworks: () -> Unit,
     onOpen: (Media) -> Unit,
     onPlay: (Media) -> Unit,
     onSearch: () -> Unit,
@@ -1323,9 +1335,11 @@ private fun HomeScreen(
     when {
         state.content != null -> HomeFeed(
             content = state.content,
+            tvNetworks = tvNetworks,
             editorialPicks = state.editorialPicks,
             recent = recent,
             likes = likes,
+            onRetryTvNetworks = onRetryTvNetworks,
             onOpen = onOpen,
             onPlay = onPlay,
             onSearch = onSearch,
@@ -1346,9 +1360,11 @@ private fun HomeScreen(
 @Composable
 private fun HomeFeed(
     content: HomeContent,
+    tvNetworks: TvNetworksUiState,
     editorialPicks: List<Media>,
     recent: List<Media>,
     likes: List<Media>,
+    onRetryTvNetworks: () -> Unit,
     onOpen: (Media) -> Unit,
     onPlay: (Media) -> Unit,
     onSearch: () -> Unit,
@@ -1360,7 +1376,7 @@ private fun HomeFeed(
     val filtersPinned by remember(listState) {
         derivedStateOf { listState.firstVisibleItemIndex > 0 }
     }
-    val filteredRails = remember(content, selectedFilter, likes) {
+    val filteredRails = remember(content, selectedFilter, likes, tvNetworks.rails) {
         val matchingRails = when (selectedFilter) {
             HomeFilter.FOR_YOU -> content.rails
             HomeFilter.MOVIES -> content.rails
@@ -1376,8 +1392,9 @@ private fun HomeFeed(
             HomeFilter.NEW -> content.rails.filter {
                 "Now" in it.title || "Airing" in it.title || "Trending" in it.title
             }
+            HomeFilter.TV_NETWORKS -> tvNetworks.rails
         }
-        val selectedRails = if (matchingRails.isEmpty()) {
+        val selectedRails = if (matchingRails.isEmpty() && selectedFilter != HomeFilter.TV_NETWORKS) {
             content.rails
         } else {
             matchingRails
@@ -1439,6 +1456,17 @@ private fun HomeFeed(
             )
             .take(20)
             .toList()
+    }
+
+    LaunchedEffect(selectedFilter) {
+        if (
+            selectedFilter == HomeFilter.TV_NETWORKS &&
+            tvNetworks.rails.isEmpty() &&
+            !tvNetworks.loading &&
+            tvNetworks.error == null
+        ) {
+            onRetryTvNetworks()
+        }
     }
 
     LaunchedEffect(pagerState, heroCandidates) {
@@ -1504,6 +1532,26 @@ private fun HomeFeed(
             )
         }
 
+        if (selectedFilter == HomeFilter.TV_NETWORKS) {
+            item(key = "tv-networks-attribution") {
+                Text(
+                    text = tvNetworks.attribution,
+                    color = AliflixContentTertiary,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+            if (tvNetworks.rails.isEmpty()) {
+                item(key = "tv-networks-state") {
+                    TvNetworksStateCard(
+                        loading = tvNetworks.loading,
+                        error = tvNetworks.error,
+                        onRetry = onRetryTvNetworks,
+                    )
+                }
+            }
+        }
+
         if (recent.isNotEmpty() && selectedFilter == HomeFilter.FOR_YOU) {
             item {
                 RecentRail(
@@ -1529,6 +1577,47 @@ private fun HomeFeed(
                 onOpen = onOpen,
                 compact = false,
             )
+        }
+    }
+}
+
+@Composable
+private fun TvNetworksStateCard(
+    loading: Boolean,
+    error: String?,
+    onRetry: () -> Unit,
+) {
+    Surface(
+        color = AliflixSurfaceRaised.copy(alpha = 0.82f),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, AliflixBorderSubtle),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 20.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    strokeWidth = 2.5.dp,
+                    color = AliflixAccentSecondary,
+                )
+                Text("Loading popular TV networks and studios…", color = AliflixContentSecondary, fontSize = 13.sp)
+            } else {
+                Text(
+                    text = error ?: "No TV network rows are available for this region yet.",
+                    color = AliflixContentSecondary,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                )
+                OutlinedButton(onClick = onRetry, shape = RoundedCornerShape(14.dp)) {
+                    Text("Try again")
+                }
+            }
         }
     }
 }

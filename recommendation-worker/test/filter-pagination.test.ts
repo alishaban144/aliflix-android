@@ -21,6 +21,7 @@ const filtersRequest = (overrides: Partial<ParsedRecommendationRequest> = {}): P
     includedGenres: ['Animation', 'Sci-Fi & Fantasy'],
     excludedGenres: [],
     minimumTmdbRating: undefined,
+    productionCompanyIds: [],
     seriesStatus: undefined,
     sortBy: 'most_popular',
     excludedTmdbIds: [],
@@ -180,6 +181,25 @@ describe('direct TMDB filter pagination', () => {
     );
 
     expect(tmdb.discoverParams.every(params => params.sort_by === expectedSort)).toBe(true);
+  });
+
+  it('applies selected production company IDs to every comprehensive TMDB page', async () => {
+    const tmdb = fakeTmdb(catalogue());
+    const result = await processFilterDiscoveryPage(
+      {} as RecommendationEnv,
+      filtersRequest({
+        filters: {
+          ...filtersRequest().filters,
+          productionCompanyIds: [41077, 420],
+        },
+      }),
+      0,
+      { tmdb },
+    );
+
+    expect(result.results).toHaveLength(24);
+    expect(tmdb.discoverParams).toHaveLength(6);
+    expect(tmdb.discoverParams.every(params => params.with_companies === '41077|420')).toBe(true);
   });
 
   it('paginates movies in exact ascending runtime order across duration groups', async () => {

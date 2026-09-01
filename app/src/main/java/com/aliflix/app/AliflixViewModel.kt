@@ -10,6 +10,7 @@ import com.aliflix.app.data.AndroidHomeSnapshotStore
 import com.aliflix.app.data.PersistedHomeSnapshot
 import com.aliflix.app.data.LibraryStore
 import com.aliflix.app.data.PlaybackProviderRepository
+import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
@@ -40,6 +41,13 @@ data class HomeUiState(
     val loading: Boolean = true,
     val content: HomeContent? = null,
     val editorialPicks: List<Media> = emptyList(),
+    val error: String? = null,
+)
+
+data class TvNetworksUiState(
+    val loading: Boolean = false,
+    val rails: List<ContentRail> = emptyList(),
+    val attribution: String = "Streaming availability data by JustWatch",
     val error: String? = null,
 )
 
@@ -178,10 +186,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private var genreJob: Job? = null
     private var personJob: Job? = null
     private var homeRefreshJob: Job? = null
+    private var tvNetworksJob: Job? = null
     private var lastHomeRefreshAt = 0L
 
     private val _home = MutableStateFlow(HomeUiState())
     val home: StateFlow<HomeUiState> = _home.asStateFlow()
+
+    private val _tvNetworks = MutableStateFlow(TvNetworksUiState())
+    val tvNetworks: StateFlow<TvNetworksUiState> = _tvNetworks.asStateFlow()
 
     private val _search = MutableStateFlow(SearchUiState())
     val search: StateFlow<SearchUiState> = _search.asStateFlow()
@@ -492,6 +504,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 status = result.status.orEmpty(),
                 runtime = result.runtimeMinutes?.takeIf { it > 0 }?.let { "$it min" }.orEmpty(),
             ),
+            matchLevel = result.matchLevel,
+            matchScore = result.finalScore,
+            matchReasons = result.matchReasons,
         )
 
     private fun askAliflixErrorMessage(error: Exception, fallback: String): String {
@@ -565,6 +580,43 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun refreshHomeIfStale() =
         refreshHomeInternal(force = false, showLoading = false)
+
+    fun loadTvNetworks(force: Boolean = false) {
+        if (BuildConfig.IS_TV || tvNetworksJob?.isActive == true) return
+        if (!force && _tvNetworks.value.rails.isNotEmpty()) return
+        tvNetworksJob = viewModelScope.launch {
+            val previous = _tvNetworks.value
+            _tvNetworks.value = previous.copy(loading = true, error = null)
+            _tvNetworks.value = runCatching {
+                aiClient.getTvNetworkFeed(java.util.Locale.getDefault().country).let { feed ->
+                    TvNetworksUiState(
+                        rails = feed.rails.mapNotNull { rail ->
+                            val category = when (rail.category) {
+                                "network" -> "Network"
+                                "streaming_provider" -> "Streaming"
+                                "production_company" -> "Production company"
+                                else -> return@mapNotNull null
+                            }
+                            ContentRail(
+                                title = "${rail.title} · $category",
+                                items = rail.items.map { it.toMedia() }.distinctBy(Media::key),
+                            ).takeIf { it.items.isNotEmpty() }
+                        },
+                        attribution = feed.attribution,
+                    )
+                }
+            }.getOrElse { error ->
+                previous.copy(
+                    loading = false,
+                    error = if (previous.rails.isEmpty()) {
+                        error.message ?: "Unable to load TV networks."
+                    } else {
+                        null
+                    },
+                )
+            }
+        }
+    }
 
     private fun refreshHomeInternal(force: Boolean, showLoading: Boolean) {
         if (!force && System.currentTimeMillis() - lastHomeRefreshAt < HOME_STALE_AFTER_MS) return
@@ -776,7 +828,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    suspend fun searchTitles(query: String): List<Media> = client.search(query.trim())
+    suspend fun searchTitles(query: String): List<Media> = aiClient.searchTitles(query.trim())
+        .map { it.toMedia() }
+        .distinctBy(Media::key)
+
+    suspend fun searchCompanies(query: String): List<com.aliflix.app.recommendation.ProductionCompanyFilter> =
+        aiClient.searchCompanies(query.trim())
 
     fun selectSearchMode(mode: SearchMode) {
         if (mode == SearchMode.AI && !recommendationStore.enabled.value) return

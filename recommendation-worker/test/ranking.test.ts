@@ -3,7 +3,7 @@ import { buildKeywordExpressions, canonicalConceptPhrase, mergeFilters, rankCand
 import { Candidate, InterpretedIntent, RecommendationFilters } from '../src/types';
 
 const filters = (overrides: Partial<RecommendationFilters> = {}): RecommendationFilters => ({
-  originCountries: [], includedGenres: [], excludedGenres: [], excludedTmdbIds: [], excludedTitles: [], ...overrides,
+  originCountries: [], includedGenres: [], excludedGenres: [], productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [], ...overrides,
 });
 const intent = (groups: string[][], hard = filters(), genreHints: string[] = []): InterpretedIntent => ({
   hardFilters: hard, requiredConceptGroups: groups.map((synonyms, index) => ({ label: `g${index}`, synonyms, weight: 1 })),
@@ -11,7 +11,7 @@ const intent = (groups: string[][], hard = filters(), genreHints: string[] = [])
   genreHints, toneAndMood: [], broadSearchPhrases: [],
 });
 const candidate = (id: number, title: string, overview: string, overrides: Partial<Candidate> = {}): Candidate => ({
-  key: `tv:${id}`, tmdbId: id, mediaType: 'tv', title, overview, originCountries: [], genreIds: [], genres: [], certifications: [],
+  key: `tv:${id}`, tmdbId: id, mediaType: 'tv', title, overview, originCountries: [], genreIds: [], genres: [], certifications: [], productionCompanyIds: [],
   keywords: [], matchedKeywordIds: new Set(), matchedConceptGroupIndexes: new Set(),
   retrievalSources: new Set(['discover:test']), hardFiltersVerified: true, detailsLoaded: true,
   matchReasons: [], tmdbRating: 7, tmdbVoteCount: 1000, ...overrides,
