@@ -1152,6 +1152,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     suspend fun reauthenticateAccountWithGoogle(activity: Activity): AccountActionResult =
         accountServices.accountRepository.reauthenticateWithGoogle(activity)
 
+    suspend fun deleteCurrentAccount(): AccountActionResult =
+        accountServices.deleteCurrentAccount()
+
     fun clearAccountMessage() = accountServices.accountRepository.clearMessage()
 
     fun retryAccountSync() = accountServices.syncRepository.retry()

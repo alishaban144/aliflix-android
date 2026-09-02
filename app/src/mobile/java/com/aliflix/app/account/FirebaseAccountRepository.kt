@@ -70,10 +70,12 @@ class FirebaseAccountRepository(
         val result = auth.createUserWithEmailAndPassword(email.trim(), password).await()
         val cleanName = displayName?.trim()?.takeIf(String::isNotBlank)
         if (cleanName != null) {
-            result.user?.updateProfile(
-                UserProfileChangeRequest.Builder().setDisplayName(cleanName).build(),
-            )?.await()
-            result.user?.reload()?.await()
+            runCatching {
+                result.user?.updateProfile(
+                    UserProfileChangeRequest.Builder().setDisplayName(cleanName).build(),
+                )?.await()
+                result.user?.reload()?.await()
+            }
         }
     }
 
@@ -113,6 +115,16 @@ class FirebaseAccountRepository(
             val user = auth.currentUser ?: error("Sign in before confirming your identity.")
             user.reauthenticate(requestGoogleFirebaseCredential(activity)).await()
         }
+
+    override suspend fun deleteCurrentUser(): AccountActionResult = runOperation(
+        defaultErrorMessage = "Account deletion could not be completed. Please try again.",
+    ) {
+        val user = auth.currentUser ?: error("Sign in before deleting an account.")
+        user.delete().await()
+        runCatching {
+            credentialManager.clearCredentialState(ClearCredentialStateRequest())
+        }
+    }
 
     override fun clearMessage() {
         _state.value = _state.value.copy(
@@ -160,6 +172,7 @@ class FirebaseAccountRepository(
 
     private suspend fun runOperation(
         passwordResetEmail: String? = null,
+        defaultErrorMessage: String = "Account sign-in could not be completed. Please try again.",
         block: suspend () -> Unit,
     ): AccountActionResult = operationMutex.withLock {
         _state.value = _state.value.copy(
@@ -179,13 +192,13 @@ class FirebaseAccountRepository(
                 message = passwordResetEmail?.let { "Password reset email sent to $it." },
             )
         } catch (error: Exception) {
-            val message = humanReadableAuthError(error)
+            val message = humanReadableAuthError(error, defaultErrorMessage)
             _state.value = _state.value.copy(isLoading = false, errorMessage = message)
             AccountActionResult(succeeded = false, message = message)
         }
     }
 
-    private fun humanReadableAuthError(error: Exception): String = when (error) {
+    private fun humanReadableAuthError(error: Exception, defaultMessage: String): String = when (error) {
         is IllegalArgumentException,
         is IllegalStateException -> error.message ?: "The account request is incomplete."
         is GetCredentialCancellationException -> "Google sign-in was canceled."
@@ -201,9 +214,9 @@ class FirebaseAccountRepository(
         is FirebaseAuthException -> when (error.errorCode) {
             "ERROR_TOO_MANY_REQUESTS" -> "Too many attempts. Please wait a moment and try again."
             "ERROR_USER_DISABLED" -> "This account has been disabled."
-            else -> "Account sign-in could not be completed. Please try again."
+            else -> defaultMessage
         }
-        else -> "Account sign-in could not be completed. Please try again."
+        else -> defaultMessage
     }
 }
 

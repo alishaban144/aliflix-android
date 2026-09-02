@@ -108,6 +108,14 @@ class AccountMergePolicyTest {
         assertEquals(AccountMergePolicy.userScope("user-b"), returningB.scopeToRestore)
     }
 
+    @Test
+    fun deletionTargetsOnlyTheDocumentedAccountCollections() {
+        assertEquals(
+            listOf("profile", "myList", "favorites", "recent", "settings"),
+            AccountCloudDeletionPlan.collections,
+        )
+    }
+
     private fun media(
         id: Int,
         title: String,

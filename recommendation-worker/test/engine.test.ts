@@ -1276,14 +1276,11 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
   });
 
   it('returns a full The Killing catalogue containing The Chestnut Man during a provider outage', async () => {
-    const related = [
-      { id: 127865, name: 'The Chestnut Man', first_air_date: '2021-09-29' },
-      ...Array.from({ length: 13 }, (_, index) => ({
+    const directRelated = Array.from({ length: 13 }, (_, index) => ({
         id: 2000 + index,
         name: `Nordic Crime Fixture ${index + 1}`,
         first_air_date: `${2010 + index}-01-01`,
-      })),
-    ].map((item, index) => ({
+      })).map((item, index) => ({
       ...item,
       overview: 'A detective investigates a serial murder in a bleak city.',
       genre_ids: [18, 80, 9648],
@@ -1291,10 +1288,39 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
       vote_count: 2_000 - index,
       popularity: 100 - index,
     }));
+    const neighborRelated = [
+      { id: 127865, name: 'The Chestnut Man', first_air_date: '2021-09-29' },
+      ...Array.from({ length: 9 }, (_, index) => ({
+        id: 2100 + index,
+        name: `Danish Noir Fixture ${index + 1}`,
+        first_air_date: `${2012 + index}-01-01`,
+      })),
+    ].map((item, index) => ({
+      ...item,
+      overview: 'A detective investigates a serial murder in a bleak city.',
+      genre_ids: [18, 80, 9648],
+      vote_average: 8 - index / 100,
+      vote_count: 1_800 - index,
+      popularity: 90 - index,
+    }));
+    let danishNeighborCalls = 0;
     const tmdb = {
       ...fakeTmdb(),
       callsRemaining: 100,
-      searchTitle: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
+      searchTitle: async () => ({
+        page: 1, total_pages: 1, total_results: 2,
+        results: [
+          { id: 34415, name: 'The Killing', first_air_date: '2011-04-03' },
+          { id: 32368, name: 'The Killing', first_air_date: '2007-01-07', vote_count: 500 },
+        ],
+      }),
+      recommendations: async (_type: string, id: number) => {
+        if (id === 32368) {
+          danishNeighborCalls++;
+          return { page: 1, total_pages: 1, total_results: neighborRelated.length, results: neighborRelated };
+        }
+        return { page: 1, total_pages: 0, total_results: 0, results: [] };
+      },
       discover: async () => ({ page: 1, total_pages: 0, total_results: 0, results: [] }),
       details: async (_type: string, id: number) => id === 34415
         ? {
@@ -1304,13 +1330,13 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
             overview: 'Detectives investigate one murder across a rain-soaked city.',
             genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 9648, name: 'Mystery' }],
             keywords: { results: [{ id: 10714, name: 'serial killer' }, { id: 5340, name: 'investigation' }] },
-            recommendations: { page: 1, total_pages: 2, total_results: related.length, results: related },
+            recommendations: { page: 1, total_pages: 2, total_results: directRelated.length, results: directRelated },
             similar: { page: 1, total_pages: 1, total_results: 0, results: [] },
           }
         : {
             id,
-            name: related.find(item => item.id === id)?.name || `Nordic Crime Fixture ${id}`,
-            first_air_date: related.find(item => item.id === id)?.first_air_date || '2020-01-01',
+            name: [...directRelated, ...neighborRelated].find(item => item.id === id)?.name || 'The Killing',
+            first_air_date: [...directRelated, ...neighborRelated].find(item => item.id === id)?.first_air_date || '2007-01-07',
             overview: 'A detective investigates a serial murder in a bleak city.',
             genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 9648, name: 'Mystery' }],
             keywords: { results: [{ id: 10714, name: 'serial killer' }, { id: 5340, name: 'investigation' }] },
@@ -1333,8 +1359,10 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
 
     expect(results.length).toBeGreaterThanOrEqual(10);
     expect(results.some(result => result.tmdbId === 34415)).toBe(false);
-    expect(results.map(result => result.title)).toContain('The Chestnut Man');
-    expect(results.every(result => result.retrievalSources.includes('tmdb:anchor-recommendations'))).toBe(true);
+    const chestnutMan = results.find(result => result.title === 'The Chestnut Man');
+    expect(chestnutMan).toBeDefined();
+    expect(chestnutMan?.retrievalSources).toContain('tmdb:anchor-title-neighbor-recommendations:tv:32368');
+    expect(danishNeighborCalls).toBe(1);
     expect(results.every(result => result.retrievalSources.includes('tmdb:similarity-evidence-fallback'))).toBe(true);
   });
 

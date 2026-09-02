@@ -34,6 +34,7 @@ private object TvAccountRepository : AccountRepository {
     override suspend fun signOut() = AccountActionResult(succeeded = true)
     override suspend fun reauthenticateWithPassword(password: String) = unavailable()
     override suspend fun reauthenticateWithGoogle(activity: Activity) = unavailable()
+    override suspend fun deleteCurrentUser() = unavailable()
     override fun clearMessage() = Unit
     override fun close() = Unit
 
@@ -47,5 +48,11 @@ private object TvAccountSyncRepository : AccountSyncRepository {
     private val _state = MutableStateFlow<AccountSyncState>(AccountSyncState.SignedOut)
     override val state: StateFlow<AccountSyncState> = _state.asStateFlow()
     override fun retry() = Unit
+    override suspend fun deleteCloudAccountData(uid: String) = AccountActionResult(
+        succeeded = false,
+        message = "Accounts are not available on Android TV yet.",
+    )
+    override suspend fun finishAccountDeletion(uid: String) = Unit
+    override suspend fun resumeAfterFailedAccountDeletion(uid: String) = Unit
     override fun close() = Unit
 }

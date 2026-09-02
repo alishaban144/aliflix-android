@@ -21,6 +21,7 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.Source
 import com.google.firebase.Timestamp
 import java.util.Date
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.channels.Channel
@@ -37,13 +39,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 
 class FirebaseAccountSyncRepository(
     context: Context,
@@ -61,18 +66,33 @@ class FirebaseAccountSyncRepository(
     override val state: StateFlow<AccountSyncState> = _state.asStateFlow()
     private val retrySignal = Channel<Unit>(capacity = Channel.CONFLATED)
     private val closed = AtomicBoolean(false)
+    private val deletingUid = MutableStateFlow<String?>(null)
+    private val pausedDeletionUid = MutableStateFlow<String?>(null)
 
     init {
         scope.launch {
-            accountRepository.state
-                .map { it.uid }
+            combine(
+                accountRepository.state.map { it.uid }.distinctUntilChanged(),
+                deletingUid,
+            ) { uid, deleting -> uid to deleting }
                 .distinctUntilChanged()
-                .collectLatest { uid ->
+                .collectLatest { (uid, deleting) ->
                     switchLocalScope(uid)
-                    if (uid == null) {
-                        _state.value = AccountSyncState.SignedOut
-                    } else {
-                        runSignedInSession(uid)
+                    when {
+                        uid == null -> {
+                            pausedDeletionUid.value = null
+                            deletingUid.value = null
+                            _state.value = AccountSyncState.SignedOut
+                        }
+                        uid == deleting -> {
+                            pausedDeletionUid.value = uid
+                            _state.value = AccountSyncState.Syncing
+                            awaitCancellation()
+                        }
+                        else -> {
+                            pausedDeletionUid.value = null
+                            runSignedInSession(uid)
+                        }
                     }
                 }
         }
@@ -80,6 +100,62 @@ class FirebaseAccountSyncRepository(
 
     override fun retry() {
         retrySignal.trySend(Unit)
+    }
+
+    override suspend fun deleteCloudAccountData(uid: String): AccountActionResult {
+        if (accountRepository.uid != uid) {
+            return AccountActionResult(false, "The signed-in account changed. Please try again.")
+        }
+        deletingUid.value = uid
+        return try {
+            withTimeout(DELETION_TIMEOUT_MILLIS) {
+                pausedDeletionUid.first { it == uid }
+                val user = userDocument(uid)
+                AccountCloudDeletionPlan.collections.forEach { collection ->
+                    deleteCollection(user.collection(collection))
+                }
+                val remaining = AccountCloudDeletionPlan.collections.firstOrNull { collection ->
+                    !user.collection(collection).limit(1).get(Source.SERVER).await().isEmpty
+                }
+                check(remaining == null) {
+                    "Cloud account data could not be fully removed."
+                }
+            }
+            AccountActionResult(succeeded = true)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            deletingUid.value = null
+            val message = when (error) {
+                is FirebaseFirestoreException -> syncErrorMessage(error)
+                else -> "Account data could not be deleted. Nothing on this device was removed."
+            }
+            _state.value = AccountSyncState.Error(message)
+            AccountActionResult(succeeded = false, message = message)
+        }
+    }
+
+    override suspend fun finishAccountDeletion(uid: String) {
+        withContext(Dispatchers.Main.immediate) {
+            val deletedScope = AccountMergePolicy.userScope(uid)
+            if (snapshotStore.activeScope == deletedScope) {
+                restoreGuestScope()
+            }
+            snapshotStore.remove(deletedScope)
+            pausedDeletionUid.value = null
+            deletingUid.value = null
+            _state.value = AccountSyncState.SignedOut
+        }
+    }
+
+    override suspend fun resumeAfterFailedAccountDeletion(uid: String) {
+        withContext(Dispatchers.Main.immediate) {
+            if (deletingUid.value == uid) {
+                pausedDeletionUid.value = null
+                deletingUid.value = null
+                retrySignal.trySend(Unit)
+            }
+        }
     }
 
     override fun close() {
@@ -355,6 +431,28 @@ class FirebaseAccountSyncRepository(
         snapshotStore.save(targetScope, currentLocalSnapshot())
     }
 
+    private fun restoreGuestScope() {
+        val guest = snapshotStore.load(AccountMergePolicy.GUEST_SCOPE)
+        if (guest != null) {
+            libraryStore.applySyncedSnapshot(guest.library)
+            applySettingsSnapshot(guest.settings)
+        } else {
+            libraryStore.applySyncedSnapshot(LibrarySnapshot())
+        }
+        snapshotStore.setActiveScope(AccountMergePolicy.GUEST_SCOPE)
+        snapshotStore.save(AccountMergePolicy.GUEST_SCOPE, currentLocalSnapshot())
+    }
+
+    private suspend fun deleteCollection(collection: com.google.firebase.firestore.CollectionReference) {
+        while (true) {
+            val snapshot = collection.limit(MAX_BATCH_WRITES.toLong()).get(Source.SERVER).await()
+            if (snapshot.isEmpty) return
+            val batch = firestore.batch()
+            snapshot.documents.forEach { document -> batch.delete(document.reference) }
+            batch.commit().await()
+        }
+    }
+
     private fun saveActiveLocalSnapshot() {
         snapshotStore.save(snapshotStore.activeScope, currentLocalSnapshot())
     }
@@ -473,6 +571,7 @@ class FirebaseAccountSyncRepository(
         const val MAIN_DOCUMENT = "main"
         const val MAX_BATCH_WRITES = 400
         const val INITIAL_SYNC_TIMEOUT_MILLIS = 20_000L
+        const val DELETION_TIMEOUT_MILLIS = 60_000L
     }
 }
 

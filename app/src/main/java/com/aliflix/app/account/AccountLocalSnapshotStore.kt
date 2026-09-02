@@ -44,6 +44,15 @@ class AccountLocalSnapshotStore(context: Context) {
         )
     }.getOrNull()
 
+    fun remove(scope: String) {
+        preferences.edit {
+            remove(snapshotKey(scope))
+            if (scope != AccountMergePolicy.GUEST_SCOPE) {
+                putStringSet(KEY_USER_SCOPES, existingUserScopes() - scope)
+            }
+        }
+    }
+
     private fun snapshotKey(scope: String) = "snapshot:$scope"
 
     private companion object {

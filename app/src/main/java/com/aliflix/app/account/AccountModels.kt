@@ -35,6 +35,16 @@ sealed interface AccountSyncState {
     data class Error(val message: String) : AccountSyncState
 }
 
+object AccountCloudDeletionPlan {
+    val collections: List<String> = listOf(
+        "profile",
+        "myList",
+        "favorites",
+        "recent",
+        "settings",
+    )
+}
+
 data class RecentMediaEntry(
     val media: Media,
     val lastPlayedAtMillis: Long,

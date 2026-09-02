@@ -377,6 +377,12 @@ function hasGeneratedRecommendationEvidence(candidate: Candidate): boolean {
   ));
 }
 
+function hasAnchorTitleNeighborEvidence(candidate: Candidate): boolean {
+  return [...candidate.retrievalSources].some(source => (
+    source.startsWith('tmdb:anchor-title-neighbor-recommendations')
+  ));
+}
+
 function premiseDocument(candidate: Candidate, index: number): PremiseCandidateDocument {
   return {
     index,
@@ -561,7 +567,8 @@ function deterministicSimilarityAssessments(
     const sources = new Set(candidate.retrievalSources || []);
     const isDirectTmdbRelation = [...sources].some(source => (
       source.startsWith('tmdb:anchor-recommendations') ||
-      source.startsWith('tmdb:anchor-similar')
+      source.startsWith('tmdb:anchor-similar') ||
+      source.startsWith('tmdb:anchor-title')
     ));
     const isKeywordRetrieval = [...sources].some(source => (
       source.startsWith('tmdb:anchor-keyword')
@@ -611,6 +618,7 @@ function selectVerificationDocuments(
   documents: PremiseCandidateDocument[],
 ): PremiseCandidateDocument[] {
   const generatedOnly: PremiseCandidateDocument[] = [];
+  const anchorTitleNeighbors: PremiseCandidateDocument[] = [];
   const defaultPrimary: PremiseCandidateDocument[] = [];
   const defaultSecondary: PremiseCandidateDocument[] = [];
   const voteCount: PremiseCandidateDocument[] = [];
@@ -620,7 +628,9 @@ function selectVerificationDocuments(
   for (const document of documents) {
     const candidate = hydrated[document.index];
     if (!candidate) continue;
-    if (candidate.retrievalSources.has('tmdb:keyword-supplement')) {
+    if (hasAnchorTitleNeighborEvidence(candidate)) {
+      anchorTitleNeighbors.push(document);
+    } else if (candidate.retrievalSources.has('tmdb:keyword-supplement')) {
       keywordGrounded.push(document);
       if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-primary')) defaultPrimary.push(document);
       if (candidate.retrievalSources.has('tmdb:keyword-supplement:default-secondary')) defaultSecondary.push(document);
@@ -638,6 +648,7 @@ function selectVerificationDocuments(
     selectedIndexes.add(document.index);
   };
   generatedOnly.slice(0, GENERATED_VERIFICATION_RESERVE).forEach(add);
+  anchorTitleNeighbors.slice(0, 10).forEach(add);
   defaultPrimary.slice(0, 4).forEach(add);
   defaultSecondary.slice(0, 3).forEach(add);
   voteCount.slice(0, 3).forEach(add);
@@ -650,6 +661,7 @@ function selectVerificationDocuments(
 }
 
 function selectGeneratedDetailPool(resolved: Candidate[]): Candidate[] {
+  const anchorTitleNeighbors = resolved.filter(hasAnchorTitleNeighborEvidence);
   const keywordGrounded = resolved.filter(candidate => candidate.retrievalSources.has('tmdb:keyword-supplement'));
   const defaultPrimary = keywordGrounded.filter(candidate => (
     candidate.retrievalSources.has('tmdb:keyword-supplement:default-primary')
@@ -677,6 +689,7 @@ function selectGeneratedDetailPool(resolved: Candidate[]): Candidate[] {
     selectedKeys.add(candidate.key);
   };
   generatedOnly.slice(0, GENERATED_DETAIL_RESERVE).forEach(add);
+  anchorTitleNeighbors.slice(0, 10).forEach(add);
   defaultPrimary.slice(0, 5).forEach(add);
   defaultSecondary.slice(0, 3).forEach(add);
   voteCount.slice(0, 3).forEach(add);
@@ -852,6 +865,7 @@ async function processGeneratedRecommendations(
     candidate.finalScore = assessment.relevanceScore;
     return [{ candidate, score: assessment.relevanceScore }];
   }).sort((left, right) => right.score - left.score ||
+    Number(hasAnchorTitleNeighborEvidence(right.candidate)) - Number(hasAnchorTitleNeighborEvidence(left.candidate)) ||
     Number(hasGeneratedRecommendationEvidence(right.candidate)) - Number(hasGeneratedRecommendationEvidence(left.candidate)) ||
     (right.candidate.tmdbVoteCount || 0) - (left.candidate.tmdbVoteCount || 0) ||
     left.candidate.title.localeCompare(right.candidate.title));
@@ -998,12 +1012,16 @@ async function supplementSimilarCandidatesFromTmdb(
     source: string,
     confidence: number,
     matchedKeywordIds: number[] = [],
+    maxNewCandidates = MAX_GENERATED_CANDIDATES,
   ): void => {
+    let addedCandidates = 0;
     for (const item of items) {
       if (candidates.size >= MAX_GENERATED_CANDIDATES) break;
       const candidate = toCandidate(item, request.mediaType, new Map());
       if (!candidate || excludedCandidateKeys.has(candidate.key)) continue;
-      const existing = candidates.get(candidate.key) || candidate;
+      const existingCandidate = candidates.get(candidate.key);
+      if (!existingCandidate && addedCandidates >= maxNewCandidates) continue;
+      const existing = existingCandidate || candidate;
       existing.retrievalSources.add(source);
       if (source.includes('keyword')) existing.retrievalSources.add('tmdb:keyword-supplement');
       matchedKeywordIds.forEach(id => existing.matchedKeywordIds.add(id));
@@ -1014,6 +1032,7 @@ async function supplementSimilarCandidatesFromTmdb(
           ? 'TMDB places this title in the selected anchor\'s Similar catalogue.'
           : 'TMDB keyword and genre evidence connects this title to the selected anchor.';
       candidates.set(existing.key, existing);
+      if (!existingCandidate) addedCandidates++;
     }
   };
 
@@ -1024,6 +1043,7 @@ async function supplementSimilarCandidatesFromTmdb(
     confidence: number,
     call: () => Promise<TmdbPage>,
     matchedKeywordIds: number[] = [],
+    maxNewCandidates = MAX_GENERATED_CANDIDATES,
   ): Promise<void> => {
     if (
       retrievalCalls >= 6 ||
@@ -1032,7 +1052,7 @@ async function supplementSimilarCandidatesFromTmdb(
     ) return;
     retrievalCalls++;
     const page = await optionalTmdbCall(operation, call);
-    addItems(page?.results || [], source, confidence, matchedKeywordIds);
+    addItems(page?.results || [], source, confidence, matchedKeywordIds, maxNewCandidates);
   };
 
   const pageNumber = continuationPass + 1;
@@ -1041,8 +1061,8 @@ async function supplementSimilarCandidatesFromTmdb(
     if (!requested) continue;
     if (requested.mediaType === request.mediaType) {
       if (continuationPass === 0) {
-        addItems(details.recommendations?.results || [], 'tmdb:anchor-recommendations', .88);
-        addItems(details.similar?.results || [], 'tmdb:anchor-similar', .86);
+        addItems(details.recommendations?.results || [], 'tmdb:anchor-recommendations', .88, [], 14);
+        addItems(details.similar?.results || [], 'tmdb:anchor-similar', .86, [], 8);
       } else {
         if (typeof tmdb.recommendations === 'function') {
           await runPage(
@@ -1063,6 +1083,43 @@ async function supplementSimilarCandidatesFromTmdb(
       }
     }
 
+    if (continuationPass === 0 && requested.mediaType === request.mediaType) {
+      await runPage(
+        `similar-anchor-title-relations:${requested.tmdbId}`,
+        'tmdb:anchor-title-relations',
+        .90,
+        () => tmdb.searchTitle!(request.mediaType, requested.title),
+        [],
+        4,
+      );
+    }
+  }
+
+  if (continuationPass === 0) {
+    const anchorTitles = new Set(requestedAnchors.map(anchor => canonicalConceptPhrase(anchor.title)));
+    const titleRelationSeeds = [...candidates.values()]
+      .filter(candidate => (
+        anchorTitles.has(canonicalConceptPhrase(candidate.title)) &&
+        [...candidate.retrievalSources].some(source => source.startsWith('tmdb:anchor-title-relations'))
+      ))
+      .sort((left, right) => (right.tmdbVoteCount || 0) - (left.tmdbVoteCount || 0))
+      .slice(0, 2);
+    for (const neighbor of titleRelationSeeds) {
+      if (typeof tmdb.recommendations !== 'function') break;
+      await runPage(
+        `similar-anchor-title-neighbor:${neighbor.tmdbId}`,
+        `tmdb:anchor-title-neighbor-recommendations:${neighbor.key}`,
+        .86,
+        () => tmdb.recommendations!(request.mediaType, neighbor.tmdbId, 1),
+        [],
+        10,
+      );
+    }
+  }
+
+  for (const [index, details] of anchorDetails.entries()) {
+    const requested = requestedAnchors[index];
+    if (!requested) continue;
     if (index >= 2) continue;
     const keywords = (details.keywords?.keywords || details.keywords?.results || [])
       .map(keyword => keyword.id)

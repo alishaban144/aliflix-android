@@ -153,6 +153,17 @@ class MobileNavigationStackTest {
     }
 
     @Test
+    fun accountFlowPushesFromMySpaceAndPopsBackWithoutChangingTabs() {
+        val root = MobileDestination.Root(AppTab.MY_SPACE)
+        val signIn = MobileDestination.Account(AccountRoute.SIGN_IN)
+        val stack = listOf<MobileDestination>(root, signIn)
+
+        assertEquals("2:account:SIGN_IN", mobileDestinationSaveKey(stack))
+        assertEquals(listOf<MobileDestination>(root), popMobileDestinationStack(stack))
+        assertTrue(shouldReturnHomeOnSystemBack(stack))
+    }
+
+    @Test
     fun creatorWorksAndNestedDetailsPopInChronologicalOrder() {
         val show = Media(id = 1396, type = MediaType.TV, title = "Breaking Bad")
         val work = Media(id = 60059, type = MediaType.TV, title = "Better Call Saul")

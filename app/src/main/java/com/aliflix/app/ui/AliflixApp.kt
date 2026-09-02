@@ -176,6 +176,8 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.aliflix.app.AliflixViewModel
+import com.aliflix.app.account.AccountState
+import com.aliflix.app.account.AccountSyncState
 import com.aliflix.app.DetailUiState
 import com.aliflix.app.GenreUiState
 import com.aliflix.app.HomeUiState
@@ -250,6 +252,7 @@ private enum class AppScreen {
     DETAIL,
     GENRE_EXPLORE,
     PERSON,
+    ACCOUNT,
 }
 
 internal enum class MobileNavigationMotion {
@@ -306,6 +309,8 @@ internal sealed interface MobileDestination {
         val firstVisibleItemIndex: Int = 0,
         val firstVisibleItemScrollOffset: Int = 0,
     ) : MobileDestination
+
+    data class Account(val route: AccountRoute) : MobileDestination
 }
 
 private data class MobileAnimatedDestination(
@@ -316,6 +321,7 @@ private data class MobileAnimatedDestination(
     val detailItem: Media? = null,
     val genreName: String? = null,
     val genreMediaType: MediaType? = null,
+    val accountRoute: AccountRoute? = null,
 )
 
 internal fun popMobileDestinationStack(
@@ -343,6 +349,8 @@ internal fun mobileDestinationSaveKey(
             "${destinations.size}:genre:${destination.mediaType.name}:${destination.name}"
         is MobileDestination.Person ->
             "${destinations.size}:person:${destination.creator.tmdbId}"
+        is MobileDestination.Account ->
+            "${destinations.size}:account:${destination.route.name}"
     }
 }
 
@@ -377,6 +385,9 @@ private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>
                                 "firstVisibleItemScrollOffset",
                                 destination.firstVisibleItemScrollOffset,
                             )
+                        is MobileDestination.Account -> JSONObject()
+                            .put("kind", "account")
+                            .put("route", destination.route.name)
                     },
                 )
             }
@@ -423,6 +434,13 @@ private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>
                                     value.optInt("firstVisibleItemIndex").coerceAtLeast(0),
                                 firstVisibleItemScrollOffset =
                                     value.optInt("firstVisibleItemScrollOffset").coerceAtLeast(0),
+                            ),
+                        )
+                        "account" -> add(
+                            MobileDestination.Account(
+                                AccountRoute.entries.firstOrNull {
+                                    it.name == value.optString("route")
+                                } ?: AccountRoute.SIGN_IN,
                             ),
                         )
                     }
@@ -472,6 +490,8 @@ fun AliflixApp(
     val recommendationAiModel by viewModel.recommendationAiModel.collectAsState()
     val askUiState by viewModel.askUiState.collectAsState()
     val askEditorState by viewModel.askEditorState.collectAsState()
+    val accountState by viewModel.accountState.collectAsState()
+    val accountSyncState by viewModel.accountSyncState.collectAsState()
 
     val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val ramoflixConfig = playbackPreferences.ramoflixConfig
@@ -513,6 +533,7 @@ fun AliflixApp(
     var discoverFocusRequestId by remember { mutableIntStateOf(0) }
     var consumedDiscoverFocusRequestId by remember { mutableIntStateOf(0) }
     var libraryPage by rememberSaveable { mutableIntStateOf(0) }
+    var accountNotice by rememberSaveable { mutableStateOf<String?>(null) }
     var launchCompleted by rememberSaveable { mutableStateOf(false) }
     val isHomeReady = !home.loading && (home.content != null || home.error != null)
     val requestedDetailProvider = PlaybackProviderId.fromStoredValue(detailProviderName)
@@ -552,6 +573,16 @@ fun AliflixApp(
         captureDetailStateSnapshot()
         destinationStack = destinationStack + MobileDestination.Detail(item)
         viewModel.openDetails(item)
+    }
+
+    fun openAccount(route: AccountRoute) {
+        viewModel.clearAccountMessage()
+        destinationStack = destinationStack + MobileDestination.Account(route)
+    }
+
+    fun navigateAccount(route: AccountRoute) {
+        viewModel.clearAccountMessage()
+        destinationStack = destinationStack.dropLast(1) + MobileDestination.Account(route)
     }
 
     fun captureGenreScrollPosition() {
@@ -594,6 +625,7 @@ fun AliflixApp(
             is MobileDestination.Person -> capturePersonScrollPosition()
             is MobileDestination.Genre -> captureGenreScrollPosition()
             is MobileDestination.Detail -> captureDetailStateSnapshot()
+            is MobileDestination.Account -> Unit
             is MobileDestination.Root -> Unit
         }
         destinationStack = popMobileDestinationStack(destinationStack)
@@ -620,6 +652,7 @@ fun AliflixApp(
                     viewModel.openPerson(destination.creator)
                 }
             }
+            is MobileDestination.Account -> Unit
         }
     }
 
@@ -699,6 +732,7 @@ fun AliflixApp(
                         }
                     }
             }
+            is MobileDestination.Account -> Unit
         }
     }
 
@@ -861,6 +895,7 @@ fun AliflixApp(
                 is MobileDestination.Detail -> AppScreen.DETAIL
                 is MobileDestination.Genre -> AppScreen.GENRE_EXPLORE
                 is MobileDestination.Person -> AppScreen.PERSON
+                is MobileDestination.Account -> AppScreen.ACCOUNT
                 is MobileDestination.Root -> when (selectedTab) {
                     AppTab.HOME -> AppScreen.HOME
                     AppTab.SEARCH -> AppScreen.SEARCH
@@ -876,6 +911,7 @@ fun AliflixApp(
                 genreName = (currentDestination as? MobileDestination.Genre)?.name,
                 genreMediaType =
                     (currentDestination as? MobileDestination.Genre)?.mediaType,
+                accountRoute = (currentDestination as? MobileDestination.Account)?.route,
             )
             AnimatedContent(
                 targetState = animatedDestination,
@@ -953,6 +989,38 @@ fun AliflixApp(
             ) { targetDestination ->
                 destinationStateHolder.SaveableStateProvider(targetDestination.saveKey) {
                     when (targetDestination.screen) {
+                    AppScreen.ACCOUNT -> AccountScreen(
+                        route = targetDestination.accountRoute ?: AccountRoute.SIGN_IN,
+                        accountState = accountState,
+                        syncState = accountSyncState,
+                        onBack = ::popDestination,
+                        onNavigate = ::navigateAccount,
+                        onAuthenticated = {
+                            accountNotice = "Signed in. Your local data is being reconciled safely with the cloud."
+                            showRoot(AppTab.MY_SPACE)
+                        },
+                        onAccountEnded = { message ->
+                            accountNotice = message
+                            showRoot(AppTab.MY_SPACE)
+                        },
+                        onGoogle = { viewModel.signInWithGoogle(activity) },
+                        onCreate = { email, password, displayName ->
+                            viewModel.createEmailAccount(email, password, displayName)
+                        },
+                        onSignIn = viewModel::signInWithEmail,
+                        onResetPassword = viewModel::sendPasswordResetEmail,
+                        onSignOut = viewModel::signOutAccount,
+                        onReauthenticateGoogle = {
+                            viewModel.reauthenticateAccountWithGoogle(activity)
+                        },
+                        onReauthenticatePassword =
+                            viewModel::reauthenticateAccountWithPassword,
+                        onDeleteAccount = viewModel::deleteCurrentAccount,
+                        onSync = viewModel::retryAccountSync,
+                        onClearMessage = viewModel::clearAccountMessage,
+                        modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
+                    )
+
                     AppScreen.PERSON -> PersonCreditsScreen(
                         state = person,
                         onRetry = viewModel::retryPerson,
@@ -1111,6 +1179,34 @@ fun AliflixApp(
                         myList = myList,
                         likes = likes,
                         recent = recent,
+                        accountState = accountState,
+                        accountSyncState = accountSyncState,
+                        accountNotice = accountNotice,
+                        onContinueWithGoogle = {
+                            viewModel.clearAccountMessage()
+                            accountNotice = null
+                            updateScope.launch {
+                                val result = viewModel.signInWithGoogle(activity)
+                                accountNotice = if (result.succeeded) {
+                                    "Signed in. Your local data is being reconciled safely with the cloud."
+                                } else {
+                                    null
+                                }
+                            }
+                        },
+                        onOpenEmailAccount = { openAccount(AccountRoute.SIGN_IN) },
+                        onManageAccount = { openAccount(AccountRoute.MANAGE) },
+                        onSyncAccount = viewModel::retryAccountSync,
+                        onSignOutAccount = {
+                            updateScope.launch {
+                                val result = viewModel.signOutAccount()
+                                accountNotice = if (result.succeeded) {
+                                    "Signed out. Aliflix remains fully available on this device."
+                                } else {
+                                    null
+                                }
+                            }
+                        },
                         onOpen = ::openDetails,
                         onRemoveRecent = viewModel::removeRecent,
                         onClearRecent = viewModel::clearRecent,
@@ -3360,6 +3456,14 @@ private fun MySpaceScreen(
     myList: List<Media>,
     likes: List<Media>,
     recent: List<Media>,
+    accountState: AccountState,
+    accountSyncState: AccountSyncState,
+    accountNotice: String?,
+    onContinueWithGoogle: () -> Unit,
+    onOpenEmailAccount: () -> Unit,
+    onManageAccount: () -> Unit,
+    onSyncAccount: () -> Unit,
+    onSignOutAccount: () -> Unit,
     onOpen: (Media) -> Unit,
     onRemoveRecent: (Media) -> Unit,
     onClearRecent: () -> Unit,
@@ -3496,6 +3600,17 @@ private fun MySpaceScreen(
                 )
             }
         }
+        MySpaceAccountCard(
+            accountState = accountState,
+            syncState = accountSyncState,
+            notice = accountNotice,
+            onContinueWithGoogle = onContinueWithGoogle,
+            onEmailAccount = onOpenEmailAccount,
+            onManage = onManageAccount,
+            onSync = onSyncAccount,
+            onSignOut = onSignOutAccount,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+        )
         val libraryTabs = listOf(
             "My List" to myList.size,
             "Favorites" to likes.size,
