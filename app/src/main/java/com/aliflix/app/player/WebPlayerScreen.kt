@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -41,10 +42,12 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,6 +56,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.Episode
 import com.aliflix.app.ui.theme.AliflixBlack
 import com.aliflix.app.ui.theme.AliflixMuted
 import com.aliflix.app.ui.theme.AliflixRed
@@ -64,12 +68,14 @@ fun WebPlayerScreen(
     visible: Boolean,
     controller: WebPlayerController,
     onClose: () -> Unit,
+    onSelectEpisode: (Episode) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val loading by controller.loading.collectAsState()
     val error by controller.error.collectAsState()
     val webViewGeneration by controller.webViewGeneration.collectAsState()
     val moviepireServers by controller.moviepireServers.collectAsState()
+    val playing by controller.playing.collectAsState()
     val nativeMoviepire = selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE
     val resumableProgress = remember(selection.key) {
         controller.savedProgressFor(selection)?.takeIf { it.resumeEligible }
@@ -78,6 +84,8 @@ fun WebPlayerScreen(
         mutableStateOf(resumableProgress == null)
     }
     var serverMenuExpanded by remember(selection.key) { mutableStateOf(false) }
+    var episodeMenuExpanded by remember(selection.key) { mutableStateOf(false) }
+    var controlsVisible by remember(selection.key) { mutableStateOf(true) }
 
     LaunchedEffect(selection.key) {
         controller.prepareSelection(selection)
@@ -85,6 +93,13 @@ fun WebPlayerScreen(
 
     LaunchedEffect(visible, resumeDecisionMade) {
         controller.setVisible(visible && resumeDecisionMade)
+    }
+
+    LaunchedEffect(playing, controlsVisible, serverMenuExpanded, episodeMenuExpanded) {
+        if (playing && controlsVisible && !serverMenuExpanded && !episodeMenuExpanded) {
+            delay(3_200L)
+            controlsVisible = false
+        }
     }
 
     BackHandler(enabled = visible) {
@@ -222,15 +237,37 @@ fun WebPlayerScreen(
         }
 
         if (nativeMoviepire && !BuildConfig.IS_TV) {
-            NativeMoviepireTopBar(
-                servers = moviepireServers,
-                menuExpanded = serverMenuExpanded,
-                onMenuExpandedChange = { serverMenuExpanded = it },
-                onSelectServer = controller::selectMoviepireServer,
-                onClose = onClose,
-                onCast = controller::openCastPicker,
+            if (!controlsVisible && resumeDecisionMade && error == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = { controlsVisible = true },
+                        ),
+                )
+            }
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = fadeIn(),
+                exit = fadeOut(),
                 modifier = Modifier.align(Alignment.TopCenter),
-            )
+            ) {
+                NativeMoviepireTopBar(
+                    servers = moviepireServers,
+                    episodes = selection.availableEpisodes,
+                    currentEpisodeNumber = selection.episodeNumber,
+                    serverMenuExpanded = serverMenuExpanded,
+                    episodeMenuExpanded = episodeMenuExpanded,
+                    onServerMenuExpandedChange = { serverMenuExpanded = it },
+                    onEpisodeMenuExpandedChange = { episodeMenuExpanded = it },
+                    onSelectServer = controller::selectMoviepireServer,
+                    onSelectEpisode = onSelectEpisode,
+                    onClose = onClose,
+                    onCast = controller::openCastPicker,
+                )
+            }
         } else {
             ExistingPlayerTopControls(selection, controller, onClose)
         }
@@ -240,9 +277,14 @@ fun WebPlayerScreen(
 @Composable
 private fun NativeMoviepireTopBar(
     servers: List<MoviepireServerOption>,
-    menuExpanded: Boolean,
-    onMenuExpandedChange: (Boolean) -> Unit,
+    episodes: List<Episode>,
+    currentEpisodeNumber: Int?,
+    serverMenuExpanded: Boolean,
+    episodeMenuExpanded: Boolean,
+    onServerMenuExpandedChange: (Boolean) -> Unit,
+    onEpisodeMenuExpandedChange: (Boolean) -> Unit,
     onSelectServer: (MoviepireServerOption) -> Unit,
+    onSelectEpisode: (Episode) -> Unit,
     onClose: () -> Unit,
     onCast: () -> Unit,
     modifier: Modifier = Modifier,
@@ -250,17 +292,21 @@ private fun NativeMoviepireTopBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.92f))
-            .padding(top = 40.dp, start = 12.dp, end = 12.dp, bottom = 10.dp),
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color.Black.copy(alpha = 0.94f), Color.Black.copy(alpha = 0.72f), Color.Transparent),
+                ),
+            )
+            .padding(top = 38.dp, start = 14.dp, end = 14.dp, bottom = 30.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         PlayerIconButton(onClick = onClose) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back to Aliflix")
         }
-        Spacer(Modifier.weight(1f))
         Box {
             Button(
-                onClick = { onMenuExpandedChange(true) },
+                onClick = { onServerMenuExpandedChange(true) },
                 enabled = servers.isNotEmpty(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color.White.copy(alpha = 0.12f),
@@ -268,7 +314,7 @@ private fun NativeMoviepireTopBar(
                     disabledContainerColor = Color.White.copy(alpha = 0.08f),
                     disabledContentColor = Color.White.copy(alpha = 0.65f),
                 ),
-                shape = CircleShape,
+                shape = RoundedCornerShape(15.dp),
             ) {
                 Text(
                     text = servers.firstOrNull { it.selected }?.label ?: "Servers",
@@ -277,8 +323,8 @@ private fun NativeMoviepireTopBar(
                 )
             }
             DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { onMenuExpandedChange(false) },
+                expanded = serverMenuExpanded,
+                onDismissRequest = { onServerMenuExpandedChange(false) },
             ) {
                 servers.forEach { server ->
                     DropdownMenuItem(
@@ -289,10 +335,49 @@ private fun NativeMoviepireTopBar(
                             )
                         },
                         onClick = {
-                            onMenuExpandedChange(false)
+                            onServerMenuExpandedChange(false)
                             onSelectServer(server)
                         },
                     )
+                }
+            }
+        }
+        if (episodes.isNotEmpty()) {
+            Box {
+                Button(
+                    onClick = { onEpisodeMenuExpandedChange(true) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White.copy(alpha = 0.13f),
+                        contentColor = Color.White,
+                    ),
+                    shape = RoundedCornerShape(15.dp),
+                ) {
+                    Text(
+                        text = currentEpisodeNumber?.let { "Episode $it" } ?: "Episodes",
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                }
+                DropdownMenu(
+                    expanded = episodeMenuExpanded,
+                    onDismissRequest = { onEpisodeMenuExpandedChange(false) },
+                ) {
+                    episodes.forEach { episode ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "${episode.number}. ${episode.title}",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = if (episode.number == currentEpisodeNumber) FontWeight.Bold else FontWeight.Normal,
+                                )
+                            },
+                            onClick = {
+                                onEpisodeMenuExpandedChange(false)
+                                onSelectEpisode(episode)
+                            },
+                        )
+                    }
                 }
             }
         }

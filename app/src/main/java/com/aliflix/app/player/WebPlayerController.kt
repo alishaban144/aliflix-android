@@ -75,11 +75,12 @@ class WebPlayerController(
     private var moviepireProtectedSourceHost: String? = null
     private var moviepireProtectedNativeMode = false
     private var moviepireMessageListenerInstalled = false
-    private var exactEpisodeRecoveryAttempts = 0
     private var latestPositionSeconds = 0.0
     private var latestDurationSeconds = 0.0
     private var lastLocalProgressWriteAt = 0L
     private var pendingSeekSeconds: Double? = null
+    private var pendingServerKey: String? = null
+    private var serverSwitchStartedAt = 0L
     private var playerVisible = false
 
     private val _loading = MutableStateFlow(false)
@@ -94,6 +95,9 @@ class WebPlayerController(
     private val _moviepireServers = MutableStateFlow<List<MoviepireServerOption>>(emptyList())
     val moviepireServers: StateFlow<List<MoviepireServerOption>> = _moviepireServers.asStateFlow()
 
+    private val _playing = MutableStateFlow(false)
+    val playing: StateFlow<Boolean> = _playing.asStateFlow()
+
     fun viewFor(selection: PlaybackSelection): WebView {
         val view = webView ?: createWebView().also { webView = it }
         if (activeSelection?.key != selection.key) flushProgress(urgentCloudSync = true)
@@ -102,11 +106,11 @@ class WebPlayerController(
         val defaultKey = selection.key
         if (loadedKey != defaultKey) {
             loadedKey = defaultKey
-            exactEpisodeRecoveryAttempts = 0
             latestPositionSeconds = 0.0
             latestDurationSeconds = 0.0
             lastLocalProgressWriteAt = 0L
             _moviepireServers.value = emptyList()
+            _playing.value = false
             _error.value = null
             view.stopLoading()
             loadSelection(view, selection)
@@ -145,6 +149,8 @@ class WebPlayerController(
         if (selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE) return
         if (_moviepireServers.value.none { it.key == option.key }) return
         if (latestPositionSeconds > 0.0) pendingSeekSeconds = latestPositionSeconds
+        pendingServerKey = option.key
+        serverSwitchStartedAt = SystemClock.elapsedRealtime()
         flushProgress(urgentCloudSync = true)
         val quotedKey = JSONObject.quote(option.key)
         view.evaluateJavascript(
@@ -209,7 +215,6 @@ class WebPlayerController(
 
     fun reload() {
         _error.value = null
-        exactEpisodeRecoveryAttempts = 0
         val view = webView
         val selection = activeSelection
         if (view != null && selection != null) {
@@ -400,12 +405,25 @@ class WebPlayerController(
         }
         latestPositionSeconds = position.coerceAtMost(duration)
         latestDurationSeconds = duration
-        if (event == "loadedmetadata") {
-            pendingSeekSeconds?.let { seek ->
-                if (seek >= PlaybackProgress.RESUME_MINIMUM_SECONDS && seek < duration) {
-                    postSeekToMoviepirePlayer(view, seek)
-                }
+        when (event) {
+            "play" -> _playing.value = true
+            "pause", "ended" -> _playing.value = false
+        }
+        pendingSeekSeconds?.let { seek ->
+            val switchingServer = pendingServerKey != null
+            val switchReady = !switchingServer ||
+                SystemClock.elapsedRealtime() - serverSwitchStartedAt >= SERVER_SWITCH_SEEK_DELAY_MILLIS
+            if (
+                switchReady &&
+                event in setOf("loadedmetadata", "play", "timeupdate") &&
+                seek >= PlaybackProgress.RESUME_MINIMUM_SECONDS && seek < duration &&
+                position < seek - SEEK_RESTORE_TOLERANCE_SECONDS
+            ) {
+                postSeekToMoviepirePlayer(view, seek)
+            }
+            if (position >= seek - SEEK_RESTORE_TOLERANCE_SECONDS) {
                 pendingSeekSeconds = null
+                pendingServerKey = null
             }
         }
         val now = SystemClock.elapsedRealtime()
@@ -1389,7 +1407,6 @@ class WebPlayerController(
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)
                 if (selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE) {
                     discoverMoviepireServers(view, selection)
-                    verifyExactMoviepireEpisode(view, selection)
                 }
             }
             PlaybackProviderId.DORABY -> { /* Doraby webpage loads directly */ }
@@ -1413,47 +1430,25 @@ class WebPlayerController(
                 JSONTokener(result).nextValue() as? String
             }.getOrNull().orEmpty()
             val servers = parseMoviepireServerDiscovery(payload)
-            if (servers.isNotEmpty()) _moviepireServers.value = servers
-        }
-    }
-
-    private fun verifyExactMoviepireEpisode(
-        view: WebView,
-        selection: PlaybackSelection,
-    ) {
-        if (
-            selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE ||
-            selection.media.type != MediaType.TV ||
-            !isActiveSelection(view, selection)
-        ) {
-            return
-        }
-        val current = runCatching { URI(view.url.orEmpty()) }.getOrNull() ?: return
-        val currentHost = current.host?.lowercase()?.removePrefix("www.") ?: return
-        if (!currentHost.equals(selection.source.cleanDomain, ignoreCase = true)) return
-        val expectedPath = "/watch/${selection.media.id}"
-        val query = current.rawQuery.orEmpty().split('&')
-            .mapNotNull { part ->
-                val pieces = part.split('=', limit = 2)
-                pieces.firstOrNull()?.takeIf(String::isNotBlank)?.let { key ->
-                    key to pieces.getOrElse(1) { "" }
+            if (servers.isNotEmpty()) {
+                _moviepireServers.value = servers
+                val target = pendingServerKey
+                if (target != null && servers.any { it.key == target && it.selected }) {
+                    pendingSeekSeconds?.let { seconds ->
+                        listOf(450L, 1_200L, 2_800L).forEach { delay ->
+                            view.postDelayed(
+                                {
+                                    if (isActiveSelection(view, selection) && pendingSeekSeconds != null) {
+                                        postSeekToMoviepirePlayer(view, seconds)
+                                    }
+                                },
+                                delay,
+                            )
+                        }
+                    }
                 }
             }
-            .toMap()
-        val exact = current.path?.trimEnd('/') == expectedPath &&
-            query["s"]?.toIntOrNull() == (selection.seasonNumber ?: 1) &&
-            query["e"]?.toIntOrNull() == (selection.episodeNumber ?: 1)
-        if (exact) return
-        if (exactEpisodeRecoveryAttempts >= MAX_EXACT_EPISODE_RECOVERIES) {
-            _loading.value = false
-            _error.value = "Moviepire could not verify the requested season and episode. Playback was stopped to avoid opening the wrong title."
-            view.stopLoading()
-            return
         }
-        exactEpisodeRecoveryAttempts += 1
-        val exactUrl = selection.entryUrl ?: return
-        view.stopLoading()
-        view.loadUrl(exactUrl)
     }
 
     private fun installMobileMoviepireAdShield(
@@ -1676,7 +1671,8 @@ class WebPlayerController(
         const val PLAYBACK_BRIDGE_NAME = "AliflixPlaybackProgress"
         const val LOCAL_PROGRESS_INTERVAL_MILLIS = 7_000L
         const val MAX_REASONABLE_VIDEO_DURATION_SECONDS = 7 * 24 * 60 * 60.0
-        const val MAX_EXACT_EPISODE_RECOVERIES = 2
+        const val SERVER_SWITCH_SEEK_DELAY_MILLIS = 350L
+        const val SEEK_RESTORE_TOLERANCE_SECONDS = 3.0
     }
 }
 
@@ -1735,6 +1731,7 @@ internal fun moviepireServerDiscoveryScript(): String =
       if (!select) return "[]";
 
       select.dataset.aliflixServerSelect = "true";
+      const wrapperControls = select.closest(".player-controls,[class*='player-controls']");
       const servers = Array.from(select.options).map((option, index) => {
         const label = normalize(option.label || option.textContent || option.value);
         const key = "option:" + index + ":" + String(option.value || "");
@@ -1748,6 +1745,18 @@ internal fun moviepireServerDiscoveryScript(): String =
       select.style.setProperty("pointer-events", "none", "important");
       select.setAttribute("aria-hidden", "true");
       select.tabIndex = -1;
+      if (wrapperControls && !wrapperControls.querySelector("iframe,video")) {
+        wrapperControls.dataset.aliflixWrapperControls = "true";
+        wrapperControls.style.setProperty("display", "none", "important");
+      } else if (wrapperControls) {
+        const downloadControls = Array.from(wrapperControls.querySelectorAll(
+          "a[download],a[href*='download' i],[aria-label*='download' i],[title*='download' i],[data-testid*='download' i],[class*='download' i]"
+        ));
+        downloadControls.forEach((control) => {
+          const target = control.closest("a,button") || control;
+          target.style.setProperty("display", "none", "important");
+        });
+      }
       return JSON.stringify(servers);
     })();
     """.trimIndent()

@@ -39,13 +39,13 @@ class FirebaseAccountRepository(
     private val appContext = context.applicationContext
     private val credentialManager = CredentialManager.create(appContext)
     private val operationMutex = Mutex()
-    private val _state = MutableStateFlow(AccountState(user = auth.currentUser?.toAccountUser()))
+    private val _state = MutableStateFlow(AccountState(user = auth.currentUser?.toVerifiedAccountUser()))
     override val state: StateFlow<AccountState> = _state.asStateFlow()
     override val currentFirebaseUser: FirebaseUser? get() = auth.currentUser
 
     private val authListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
         _state.value = _state.value.copy(
-            user = firebaseAuth.currentUser?.toAccountUser(),
+            user = firebaseAuth.currentUser?.toVerifiedAccountUser(),
             isLoading = false,
         )
     }
@@ -64,19 +64,20 @@ class FirebaseAccountRepository(
         email: String,
         password: String,
         displayName: String?,
-    ): AccountActionResult = runOperation {
+    ): AccountActionResult = runOperation(
+        successMessage = "Verification email sent. Open the link, then return here to sign in.",
+    ) {
         require(email.isNotBlank()) { "Enter your email address." }
         require(password.length >= 6) { "Use a password with at least 6 characters." }
         val result = auth.createUserWithEmailAndPassword(email.trim(), password).await()
         val cleanName = displayName?.trim()?.takeIf(String::isNotBlank)
-        if (cleanName != null) {
-            runCatching {
-                result.user?.updateProfile(
-                    UserProfileChangeRequest.Builder().setDisplayName(cleanName).build(),
-                )?.await()
-                result.user?.reload()?.await()
-            }
-        }
+            ?: error("Enter your first name.")
+        result.user?.updateProfile(
+            UserProfileChangeRequest.Builder().setDisplayName(cleanName).build(),
+        )?.await()
+        val user = result.user ?: error("The new account could not be verified.")
+        user.sendEmailVerification().await()
+        auth.signOut()
     }
 
     override suspend fun signInWithEmail(
@@ -86,7 +87,14 @@ class FirebaseAccountRepository(
         require(email.isNotBlank() && password.isNotBlank()) {
             "Enter both your email address and password."
         }
-        auth.signInWithEmailAndPassword(email.trim(), password).await()
+        val user = auth.signInWithEmailAndPassword(email.trim(), password).await().user
+            ?: error("The account could not be loaded.")
+        user.reload().await()
+        if (!user.isEmailVerified) {
+            runCatching { user.sendEmailVerification().await() }
+            auth.signOut()
+            error("Verify your email address using the link we sent, then sign in again.")
+        }
     }
 
     override suspend fun sendPasswordResetEmail(email: String): AccountActionResult =
@@ -171,6 +179,7 @@ class FirebaseAccountRepository(
 
     private suspend fun runOperation(
         passwordResetEmail: String? = null,
+        successMessage: String? = null,
         defaultErrorMessage: String = "Account sign-in could not be completed. Please try again.",
         block: suspend () -> Unit,
     ): AccountActionResult = operationMutex.withLock {
@@ -182,13 +191,13 @@ class FirebaseAccountRepository(
         try {
             block()
             _state.value = _state.value.copy(
-                user = auth.currentUser?.toAccountUser(),
+                user = auth.currentUser?.toVerifiedAccountUser(),
                 isLoading = false,
                 passwordResetSentTo = passwordResetEmail,
             )
             AccountActionResult(
                 succeeded = true,
-                message = passwordResetEmail?.let { "Password reset email sent to $it." },
+                message = successMessage ?: passwordResetEmail?.let { "Password reset email sent to $it." },
             )
         } catch (error: Exception) {
             val message = humanReadableAuthError(error, defaultErrorMessage)
@@ -219,10 +228,14 @@ class FirebaseAccountRepository(
     }
 }
 
-private fun FirebaseUser.toAccountUser() = AccountUser(
+private fun FirebaseUser.toVerifiedAccountUser(): AccountUser? {
+    val usesEmailPassword = providerData.any { it.providerId == EmailAuthProvider.PROVIDER_ID }
+    if (usesEmailPassword && !isEmailVerified) return null
+    return AccountUser(
     uid = uid,
     displayName = displayName?.trim()?.takeIf(String::isNotBlank),
     email = email?.trim()?.takeIf(String::isNotBlank),
     photoUrl = photoUrl?.toString(),
     providerIds = providerData.mapNotNull { it.providerId.takeIf(String::isNotBlank) }.toSet(),
-)
+    )
+}

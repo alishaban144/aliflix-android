@@ -69,6 +69,9 @@ class WebPlayerCompatibilityTest {
         assertTrue(script.contains("aliflixServerSelect"))
         assertTrue(script.contains("aliflixServerKey"))
         assertTrue(script.contains("option.value"))
+        assertTrue(script.contains("aliflixWrapperControls"))
+        assertTrue(script.contains("a[download]"))
+        assertTrue(script.contains("display\", \"none\""))
         assertFalse(script.contains("querySelectorAll(\"button\")"))
     }
 

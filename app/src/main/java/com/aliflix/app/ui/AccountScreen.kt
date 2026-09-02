@@ -90,128 +90,35 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun MySpaceAccountCard(
     accountState: AccountState,
-    syncState: AccountSyncState,
-    notice: String?,
-    onContinueWithGoogle: () -> Unit,
-    onEmailAccount: () -> Unit,
-    onManage: () -> Unit,
-    onSync: () -> Unit,
-    onSignOut: () -> Unit,
+    onOpenAccount: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val sync = accountSyncPresentation(syncState)
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .testTag("my-space-account-card")
-            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(22.dp)),
-        color = AliflixSurfaceElevated,
-        shape = RoundedCornerShape(22.dp),
+            .testTag("my-space-account-card"),
+        color = Color.Transparent,
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        Row(
+            modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.clickable(onClick = onOpenAccount),
+            ) {
                 AccountAvatar(
-                    name = accountState.displayName ?: accountState.email,
-                    size = 36,
+                    name = accountState.displayName,
+                    size = 40,
                 )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = accountState.displayName
-                            ?: accountState.email
-                            ?: "Aliflix account",
-                        color = AliflixContentPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = if (accountState.isSignedIn) sync.label else
-                            "Optional cloud backup",
-                        color = when {
-                            sync.isError -> AliflixError
-                            accountState.isSignedIn && syncState == AccountSyncState.Synced ->
-                                AliflixSuccess
-                            else -> AliflixContentSecondary
-                        },
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
             }
-
-            if (!accountState.isSignedIn) {
-                PrimaryAccountButton(
-                    text = "Continue with Google",
-                    loading = accountState.isLoading,
-                    onClick = onContinueWithGoogle,
-                    modifier = Modifier
-                        .testTag("account-continue-google")
-                        .heightIn(min = 42.dp),
-                )
-                TextButton(
-                    onClick = onEmailAccount,
-                    enabled = !accountState.isLoading,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("account-email-entry")
-                        .heightIn(min = 36.dp),
-                ) {
-                    Icon(Icons.Rounded.Email, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Use email instead", fontWeight = FontWeight.Bold)
-                }
-            } else {
-                accountState.email?.takeIf { it != accountState.displayName }?.let { email ->
-                    Text(email, color = AliflixContentSecondary, fontSize = 12.sp)
-                }
-                sync.detail?.let { detail ->
-                    Text(detail, color = AliflixContentTertiary, fontSize = 11.sp, lineHeight = 16.sp)
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(
-                        onClick = onSync,
-                        enabled = !accountState.isLoading,
-                        modifier = Modifier.weight(1f).heightIn(min = 40.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                    ) {
-                        Icon(Icons.Rounded.Sync, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Sync now", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Button(
-                        onClick = onManage,
-                        enabled = !accountState.isLoading,
-                        modifier = Modifier.weight(1f).heightIn(min = 40.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                    ) {
-                        Text("Manage account", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-                TextButton(
-                    onClick = onSignOut,
-                    enabled = !accountState.isLoading,
-                    modifier = Modifier.align(Alignment.End),
-                ) {
-                    Text("Sign out", color = AliflixContentSecondary, fontWeight = FontWeight.Bold)
-                }
-            }
-            notice?.let { message ->
-                InlineAccountMessage(message = message, isError = false)
-            }
-            accountState.errorMessage?.let { error ->
-                InlineAccountMessage(message = error, isError = true)
-            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = accountState.displayName ?: "Aliflix account",
+                color = AliflixContentPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -225,7 +132,6 @@ internal fun AccountScreen(
     onNavigate: (AccountRoute) -> Unit,
     onAuthenticated: () -> Unit,
     onAccountEnded: (String) -> Unit,
-    onGoogle: suspend () -> AccountActionResult,
     onCreate: suspend (String, String, String?) -> AccountActionResult,
     onSignIn: suspend (String, String) -> AccountActionResult,
     onResetPassword: suspend (String) -> AccountActionResult,
@@ -358,7 +264,6 @@ internal fun AccountScreen(
             when (route) {
                 AccountRoute.SIGN_IN -> SignInForm(
                     busy = busy,
-                    onGoogle = { runAction(onGoogle) },
                     onSignIn = { email, password ->
                         runAction(action = { onSignIn(email, password) })
                     },
@@ -368,9 +273,11 @@ internal fun AccountScreen(
                 )
                 AccountRoute.CREATE_ACCOUNT -> CreateAccountForm(
                     busy = busy,
-                    onGoogle = { runAction(onGoogle) },
                     onCreate = { email, password, name ->
-                        runAction(action = { onCreate(email, password, name) })
+                        runAction(
+                            action = { onCreate(email, password, name) },
+                            onSuccess = { localMessage = it.message },
+                        )
                     },
                     onSignIn = { onNavigate(AccountRoute.SIGN_IN) },
                     onLocalError = { localError = it },
@@ -431,7 +338,6 @@ internal fun AccountScreen(
 @Composable
 private fun ColumnScope.SignInForm(
     busy: Boolean,
-    onGoogle: () -> Unit,
     onSignIn: (String, String) -> Unit,
     onCreate: () -> Unit,
     onForgot: () -> Unit,
@@ -453,8 +359,6 @@ private fun ColumnScope.SignInForm(
         title = "Your Aliflix, on every device",
         body = "Signing in adds cloud backup and sync. Watching, search, and your local library work without an account.",
     )
-    PrimaryAccountButton("Continue with Google", busy, onGoogle)
-    AccountDivider()
     AccountEmailField(email, { email = it; errors = errors.copy(email = null) }, errors.email, busy)
     AccountPasswordField(
         value = password,
@@ -483,7 +387,6 @@ private fun ColumnScope.SignInForm(
 @Composable
 private fun ColumnScope.CreateAccountForm(
     busy: Boolean,
-    onGoogle: () -> Unit,
     onCreate: (String, String, String?) -> Unit,
     onSignIn: () -> Unit,
     onLocalError: (String?) -> Unit,
@@ -495,6 +398,10 @@ private fun ColumnScope.CreateAccountForm(
     var errors by remember { mutableStateOf(AccountFormErrors()) }
     val focusManager = LocalFocusManager.current
     fun submit() {
+        if (name.isBlank()) {
+            onLocalError("Enter your first name.")
+            return
+        }
         errors = validateAccountForm(AccountRoute.CREATE_ACCOUNT, email, password, confirmation)
         onLocalError(listOfNotNull(errors.email, errors.password, errors.confirmation).firstOrNull())
         if (errors.isValid) {
@@ -506,12 +413,10 @@ private fun ColumnScope.CreateAccountForm(
         title = "Back up what you love",
         body = "Create an optional account to sync My List, favorites, recent history, playback settings, and Ask Aliflix preferences.",
     )
-    PrimaryAccountButton("Continue with Google", busy, onGoogle)
-    AccountDivider()
     AccountTextField(
         value = name,
         onValueChange = { name = it },
-        label = "Display name (optional)",
+        label = "First name",
         enabled = !busy,
         leadingIcon = { Icon(Icons.Rounded.AccountCircle, contentDescription = null) },
     )
@@ -863,7 +768,7 @@ private fun AccountInfoRow(label: String, value: String, valueColor: Color = Ali
 }
 
 @Composable
-private fun AccountAvatar(name: String?, size: Int) {
+internal fun AccountAvatar(name: String?, size: Int) {
     Box(
         modifier = Modifier
             .size(size.dp)

@@ -762,7 +762,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     loading = true,
                 )
                 _search.value = loading
-                val results = client.search(query)
+                val results = runCatching { searchTitles(query) }
+                    .getOrElse { client.search(query) }
                 if (_search.value.query == query && _search.value.mode == mode) {
                     val complete = _search.value.copy(
                         query = query,
@@ -816,7 +817,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         
         searchJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
             try {
-                val results = client.search(trimmed)
+                val results = runCatching { searchTitles(trimmed) }
+                    .getOrElse { client.search(trimmed) }
                 if (_search.value.query == trimmed && _search.value.mode == mode) {
                     val complete = _search.value.copy(
                         query = trimmed,

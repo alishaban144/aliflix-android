@@ -155,6 +155,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -185,6 +186,8 @@ import com.aliflix.app.HomeUiState
 import com.aliflix.app.TvNetworksUiState
 import com.aliflix.app.PersonUiState
 import com.aliflix.app.data.RamoflixConfig
+import com.aliflix.app.data.PlaybackProgress
+import com.aliflix.app.data.playbackProgressKey
 import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
@@ -492,6 +495,7 @@ fun AliflixApp(
     val askEditorState by viewModel.askEditorState.collectAsState()
     val accountState by viewModel.accountState.collectAsState()
     val accountSyncState by viewModel.accountSyncState.collectAsState()
+    val playbackProgress by viewModel.playbackProgressStore.entries.collectAsState()
 
     val playbackPreferences by viewModel.playbackPreferences.collectAsState()
     val ramoflixConfig = playbackPreferences.ramoflixConfig
@@ -996,14 +1000,13 @@ fun AliflixApp(
                         onBack = ::popDestination,
                         onNavigate = ::navigateAccount,
                         onAuthenticated = {
-                            accountNotice = "Signed in. Your local data is being reconciled safely with the cloud."
+                            accountNotice = null
                             showRoot(AppTab.MY_SPACE)
                         },
                         onAccountEnded = { message ->
                             accountNotice = message
                             showRoot(AppTab.MY_SPACE)
                         },
-                        onGoogle = { viewModel.signInWithGoogle(activity) },
                         onCreate = { email, password, displayName ->
                             viewModel.createEmailAccount(email, password, displayName)
                         },
@@ -1079,10 +1082,14 @@ fun AliflixApp(
                             state = targetDetail,
                             inMyList = targetInMyList,
                             liked = targetLiked,
+                            playbackProgress = playbackProgress,
                             onBack = ::popDestination,
                             onPlay = { item ->
                                 playSelection(
-                                    PlaybackSelection(item),
+                                    PlaybackSelection(
+                                        media = item,
+                                        availableEpisodes = targetDetail.episodes,
+                                    ),
                                     requestedProvider = detailProvider,
                                 )
                             },
@@ -1093,6 +1100,7 @@ fun AliflixApp(
                                         seasonNumber = episode.seasonNumber,
                                         episodeNumber = episode.number,
                                         episodeTitle = episode.title,
+                                        availableEpisodes = targetDetail.episodes,
                                     ),
                                     requestedProvider = detailProvider,
                                 )
@@ -1118,6 +1126,7 @@ fun AliflixApp(
                         tvNetworks = tvNetworks,
                         recent = recent,
                         likes = likes,
+                        playbackProgress = playbackProgress,
                         onRetry = viewModel::refreshHome,
                         onRetryTvNetworks = { viewModel.loadTvNetworks(force = true) },
                         onOpen = ::openDetails,
@@ -1179,33 +1188,8 @@ fun AliflixApp(
                         likes = likes,
                         recent = recent,
                         accountState = accountState,
-                        accountSyncState = accountSyncState,
-                        accountNotice = accountNotice,
-                        onContinueWithGoogle = {
-                            viewModel.clearAccountMessage()
-                            accountNotice = null
-                            updateScope.launch {
-                                val result = viewModel.signInWithGoogle(activity)
-                                accountNotice = if (result.succeeded) {
-                                    "Signed in. Your local data is being reconciled safely with the cloud."
-                                } else {
-                                    null
-                                }
-                            }
-                        },
                         onOpenEmailAccount = { openAccount(AccountRoute.SIGN_IN) },
                         onManageAccount = { openAccount(AccountRoute.MANAGE) },
-                        onSyncAccount = viewModel::retryAccountSync,
-                        onSignOutAccount = {
-                            updateScope.launch {
-                                val result = viewModel.signOutAccount()
-                                accountNotice = if (result.succeeded) {
-                                    "Signed out. Aliflix remains fully available on this device."
-                                } else {
-                                    null
-                                }
-                            }
-                        },
                         onOpen = ::openDetails,
                         onRemoveRecent = viewModel::removeRecent,
                         onClearRecent = viewModel::clearRecent,
@@ -1255,6 +1239,16 @@ fun AliflixApp(
                         visible = playerVisible,
                         controller = playerController,
                         onClose = { playerVisible = false },
+                        onSelectEpisode = { episode ->
+                            playSelection(
+                                selection.copy(
+                                    seasonNumber = episode.seasonNumber,
+                                    episodeNumber = episode.number,
+                                    episodeTitle = episode.title,
+                                ),
+                                requestedProvider = selection.source.provider,
+                            )
+                        },
                     )
                 }
             }
@@ -1424,6 +1418,7 @@ private fun HomeScreen(
     tvNetworks: TvNetworksUiState,
     recent: List<Media>,
     likes: List<Media>,
+    playbackProgress: Map<String, PlaybackProgress>,
     onRetry: () -> Unit,
     onRetryTvNetworks: () -> Unit,
     onOpen: (Media) -> Unit,
@@ -1441,6 +1436,7 @@ private fun HomeScreen(
             editorialPicks = state.editorialPicks,
             recent = recent,
             likes = likes,
+            playbackProgress = playbackProgress,
             onRetryTvNetworks = onRetryTvNetworks,
             onOpen = onOpen,
             onPlay = onPlay,
@@ -1466,6 +1462,7 @@ private fun HomeFeed(
     editorialPicks: List<Media>,
     recent: List<Media>,
     likes: List<Media>,
+    playbackProgress: Map<String, PlaybackProgress>,
     onRetryTvNetworks: () -> Unit,
     onOpen: (Media) -> Unit,
     onPlay: (Media) -> Unit,
@@ -1626,6 +1623,7 @@ private fun HomeFeed(
             item {
                 RecentRail(
                     items = recent,
+                    playbackProgress = playbackProgress,
                     onOpen = onOpen,
                 )
             }
@@ -2470,6 +2468,7 @@ private fun SectionHeader(
 @Composable
 private fun RecentRail(
     items: List<Media>,
+    playbackProgress: Map<String, PlaybackProgress>,
     onOpen: (Media) -> Unit,
 ) {
     Column(
@@ -2482,6 +2481,9 @@ private fun RecentRail(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(items, key = { it.key }) { item ->
+                val progress = playbackProgress.values
+                    .filter { it.media.key == item.key && it.positionSeconds > 0.0 }
+                    .maxByOrNull(PlaybackProgress::updatedAtMillis)
                 val interactionSource = remember { MutableInteractionSource() }
                 val pressed by interactionSource.collectIsPressedAsState()
                 val cardScale by animateFloatAsState(
@@ -2543,6 +2545,14 @@ private fun RecentRail(
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Black,
                             letterSpacing = 1.0.sp,
+                        )
+                    }
+                    if (progress != null) {
+                        PlaybackProgressRing(
+                            fraction = progress.progressFraction.toFloat(),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(10.dp),
                         )
                     }
                     Column(
@@ -2997,6 +3007,8 @@ private fun MobileUpdatePanel(
 
 @Composable
 private fun MobileSettingsDialog(
+    accountState: AccountState,
+    onOpenAccount: () -> Unit,
     generalProvider: PlaybackProviderId,
     onSelectProvider: (PlaybackProviderId) -> Unit,
     onEditProviderUrl: (PlaybackProviderId) -> Unit,
@@ -3440,6 +3452,45 @@ private fun MobileSettingsDialog(
                     }
                 }
 
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text(
+                        text = "Account",
+                        color = AliflixContentPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(AliflixSurfaceSecondary)
+                            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(14.dp))
+                            .padding(horizontal = 13.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(modifier = Modifier.clickable(onClick = onOpenAccount)) {
+                            AccountAvatar(name = accountState.displayName, size = 40)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = accountState.displayName ?: "Aliflix account",
+                                color = AliflixContentPrimary,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = if (accountState.isSignedIn) {
+                                    "Email account"
+                                } else {
+                                    "Tap the icon to sign in or create an account"
+                                },
+                                color = AliflixContentSecondary,
+                                fontSize = 11.sp,
+                            )
+                        }
+                    }
+                }
+
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "Feedback",
@@ -3557,13 +3608,8 @@ private fun MySpaceScreen(
     likes: List<Media>,
     recent: List<Media>,
     accountState: AccountState,
-    accountSyncState: AccountSyncState,
-    accountNotice: String?,
-    onContinueWithGoogle: () -> Unit,
     onOpenEmailAccount: () -> Unit,
     onManageAccount: () -> Unit,
-    onSyncAccount: () -> Unit,
-    onSignOutAccount: () -> Unit,
     onOpen: (Media) -> Unit,
     onRemoveRecent: (Media) -> Unit,
     onClearRecent: () -> Unit,
@@ -3638,6 +3684,11 @@ private fun MySpaceScreen(
 
     if (showSettingsWindow) {
         MobileSettingsDialog(
+            accountState = accountState,
+            onOpenAccount = {
+                showSettingsWindow = false
+                if (accountState.isSignedIn) onManageAccount() else onOpenEmailAccount()
+            },
             generalProvider = generalProvider,
             onSelectProvider = onSelectProvider,
             onEditProviderUrl = onEditProviderUrl,
@@ -3704,13 +3755,9 @@ private fun MySpaceScreen(
         }
         MySpaceAccountCard(
             accountState = accountState,
-            syncState = accountSyncState,
-            notice = accountNotice,
-            onContinueWithGoogle = onContinueWithGoogle,
-            onEmailAccount = onOpenEmailAccount,
-            onManage = onManageAccount,
-            onSync = onSyncAccount,
-            onSignOut = onSignOutAccount,
+            onOpenAccount = {
+                if (accountState.isSignedIn) onManageAccount() else onOpenEmailAccount()
+            },
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
         )
         val libraryTabs = listOf(
@@ -4595,6 +4642,7 @@ private fun DetailScreen(
     state: DetailUiState,
     inMyList: Boolean,
     liked: Boolean,
+    playbackProgress: Map<String, PlaybackProgress>,
     personalMatch: PersonalMatch?,
     onBack: () -> Unit,
     onPlay: (Media) -> Unit,
@@ -4609,6 +4657,18 @@ private fun DetailScreen(
     onOpenCreator: (MediaCreator) -> Unit = {},
 ) {
     val item = state.item ?: return
+    val latestEpisodeProgress = playbackProgress.values
+        .filter { progress -> progress.media.id == item.id && progress.media.type == MediaType.TV }
+        .maxByOrNull(PlaybackProgress::updatedAtMillis)
+    val mainEpisode = latestEpisodeProgress?.let { progress ->
+        state.episodes.firstOrNull {
+            it.seasonNumber == progress.seasonNumber && it.number == progress.episodeNumber
+        } ?: Episode(
+            seasonNumber = progress.seasonNumber ?: state.selectedSeason,
+            number = progress.episodeNumber ?: 1,
+            title = progress.episodeTitle.orEmpty().ifBlank { "Episode ${progress.episodeNumber ?: 1}" },
+        )
+    } ?: state.episodes.firstOrNull()
     val configuration = LocalConfiguration.current
     val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else 500.dp
     val detailListState = rememberLazyListState()
@@ -4723,9 +4783,8 @@ private fun DetailScreen(
             ) {
                 Button(
                         onClick = {
-                            val firstEpisode = state.episodes.firstOrNull()
-                            if (item.type == MediaType.TV && firstEpisode != null) {
-                                onPlayEpisode(item, firstEpisode)
+                            if (item.type == MediaType.TV && mainEpisode != null) {
+                                onPlayEpisode(item, mainEpisode)
                             } else {
                                 onPlay(item)
                             }
@@ -4744,9 +4803,9 @@ private fun DetailScreen(
                         Text(
                             text = if (
                                 item.type == MediaType.TV &&
-                                state.episodes.isNotEmpty()
+                                mainEpisode != null
                             ) {
-                                "Play S${state.selectedSeason} E${state.episodes.first().number}"
+                                "Play S${mainEpisode.seasonNumber} E${mainEpisode.number}"
                             } else {
                                 "Play"
                             } + " \u2022 " + selectedProvider.displayName,
@@ -5053,6 +5112,13 @@ private fun DetailScreen(
                 ) { episode ->
                     EpisodeRow(
                         episode = episode,
+                        progress = playbackProgress[playbackProgressKey(
+                            PlaybackSelection(
+                                media = item,
+                                seasonNumber = episode.seasonNumber,
+                                episodeNumber = episode.number,
+                            ),
+                        )],
                         onPlay = { onPlayEpisode(item, episode) },
                     )
                 }
@@ -5656,6 +5722,7 @@ private fun MovingMovieLoader(accent: Color) {
 @Composable
 private fun EpisodeRow(
     episode: Episode,
+    progress: PlaybackProgress?,
     onPlay: () -> Unit,
 ) {
     val ratings = episodeRatingsPresentation(episode)
@@ -5697,6 +5764,14 @@ private fun EpisodeRow(
                     Icons.Rounded.PlayArrow,
                     contentDescription = "Play episode ${episode.number}: ${episode.title}",
                     tint = Color.Black,
+                )
+            }
+            if (progress != null && progress.positionSeconds > 0.0) {
+                PlaybackProgressRing(
+                    fraction = progress.progressFraction.toFloat(),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp),
                 )
             }
             Box(
@@ -5758,6 +5833,32 @@ private fun EpisodeRow(
                 accent = Color(0xFFF5C518),
             )
         }
+    }
+}
+
+@Composable
+private fun PlaybackProgressRing(
+    fraction: Float,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(
+        modifier = modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.72f))
+            .padding(4.dp),
+    ) {
+        drawCircle(
+            color = Color.White.copy(alpha = 0.20f),
+            style = Stroke(width = 2.6.dp.toPx()),
+        )
+        drawArc(
+            color = AliflixAccentSecondary,
+            startAngle = -90f,
+            sweepAngle = 360f * fraction.coerceIn(0f, 1f),
+            useCenter = false,
+            style = Stroke(width = 2.6.dp.toPx()),
+        )
     }
 }
 

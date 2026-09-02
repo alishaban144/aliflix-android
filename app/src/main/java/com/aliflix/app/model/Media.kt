@@ -302,6 +302,7 @@ data class PlaybackSelection(
     val seasonNumber: Int? = null,
     val episodeNumber: Int? = null,
     val episodeTitle: String? = null,
+    val availableEpisodes: List<Episode> = emptyList(),
     val source: PlaybackSource = PlaybackSource.ramoflix(),
 ) {
     val key: String
