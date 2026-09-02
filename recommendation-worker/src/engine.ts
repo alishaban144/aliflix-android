@@ -579,27 +579,36 @@ function deterministicSimilarityAssessments(
     const candidateKeywords = new Set(candidate.keywords.map(canonicalConceptPhrase).filter(Boolean));
     const candidateGenres = new Set(candidate.genres.map(normalize).filter(Boolean));
     const anchorEvidence = anchors.map(anchor => {
-      const sharedKeywords = anchor.keywords
+      const sharedKeywordValues = anchor.keywords
         .map(canonicalConceptPhrase)
-        .filter(keyword => keyword && candidateKeywords.has(keyword)).length;
+        .filter(keyword => keyword && candidateKeywords.has(keyword));
+      const sharedKeywords = sharedKeywordValues.length;
+      const specificSharedKeywords = sharedKeywordValues.filter(keyword => (
+        keyword.split(' ').filter(Boolean).length >= 2
+      )).length;
+      const overviewSharedKeywords = sharedKeywordValues.filter(keyword => (
+        metadataContains(candidate.overview, keyword)
+      )).length;
       const sharedGenres = anchor.genres
         .map(normalize)
         .filter(genre => genre && candidateGenres.has(genre)).length;
-      return { sharedKeywords, sharedGenres };
+      return { sharedKeywords, specificSharedKeywords, overviewSharedKeywords, sharedGenres };
     });
     // TMDB recommendation/Similar lanes are useful candidate generators, but
     // two broad genres (for example Drama + Crime) are not enough to prove a
     // shared story. During verifier outages, deterministic acceptance requires
-    // an exact shared TMDB narrative keyword plus genre compatibility.
+    // genre compatibility plus either multiple shared keywords, a specific
+    // multi-word narrative tag, or a shared tag that is central in the overview.
     const metadataGroundedForEveryAnchor = anchorEvidence.every(evidence => (
-      evidence.sharedKeywords >= 1 && evidence.sharedGenres >= 1
+      evidence.sharedGenres >= 1 && (
+        evidence.sharedKeywords >= 2 ||
+        evidence.specificSharedKeywords >= 1 ||
+        evidence.overviewSharedKeywords >= 1
+      )
     ));
-    const highConfidenceGenreFallback = isGeneratedRecommendation && candidate.aiConfidence >= .90 &&
-      anchorEvidence.every(evidence => evidence.sharedGenres >= 1);
     const accepted = (isDirectTmdbRelation && metadataGroundedForEveryAnchor) ||
       (isKeywordRetrieval && metadataGroundedForEveryAnchor) ||
-      (isGeneratedRecommendation && metadataGroundedForEveryAnchor) ||
-      highConfidenceGenreFallback;
+      (isGeneratedRecommendation && metadataGroundedForEveryAnchor);
     if (!accepted) return [];
     const evidenceCount = anchorEvidence.reduce(
       (total, evidence) => total + evidence.sharedKeywords + Math.min(2, evidence.sharedGenres),

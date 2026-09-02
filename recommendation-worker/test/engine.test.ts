@@ -1394,7 +1394,10 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
             first_air_date: '2011-04-03',
             overview: 'Detectives investigate one murder across a rain-soaked city.',
             genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }, { id: 9648, name: 'Mystery' }],
-            keywords: { results: [{ id: 10714, name: 'serial killer' }] },
+            keywords: { results: [
+              { id: 10714, name: 'serial killer' },
+              { id: 111, name: 'police' },
+            ] },
             recommendations: { page: 1, total_pages: 2, total_results: 0, results: [] },
             similar: { page: 1, total_pages: 2, total_results: 0, results: [] },
           }
@@ -1463,7 +1466,10 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
             first_air_date: '2011-04-03',
             overview: 'Detectives investigate one murder across a rain-soaked city.',
             genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }],
-            keywords: { results: [{ id: 10714, name: 'serial killer' }] },
+            keywords: { results: [
+              { id: 10714, name: 'serial killer' },
+              { id: 111, name: 'police' },
+            ] },
             recommendations: { page: 1, total_pages: 2, total_results: 0, results: [] },
             similar: { page: 1, total_pages: 2, total_results: 0, results: [] },
           }
@@ -1477,7 +1483,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
             genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }],
             keywords: { results: id === 4001
               ? [{ id: 10714, name: 'serial killer' }]
-              : [{ id: 123, name: 'workplace' }] },
+              : [{ id: 111, name: 'police' }] },
           },
     };
     const providerFailure = new ServiceError('GROQ_UNAVAILABLE', 'selected model timed out', 503, true);
