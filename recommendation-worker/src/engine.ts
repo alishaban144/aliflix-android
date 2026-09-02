@@ -62,6 +62,12 @@ const GENERIC_SUBJECT_CONCEPTS = new Set([
   'protagonist', 'protagonists', 'series', 'show', 'shows', 'someone', 'story', 'stories',
 ]);
 
+const SIMILARITY_TOKEN_STOP_WORDS = new Set([
+  'about', 'after', 'against', 'along', 'among', 'based', 'before', 'between', 'during',
+  'following', 'from', 'into', 'over', 'story', 'their', 'through', 'under', 'when',
+  'where', 'while', 'with', 'without',
+]);
+
 const NARRATIVE_CONNECTOR_CONCEPTS = new Set([
   'deal', 'dealing', 'deals', 'discover', 'discovering', 'discovers', 'face', 'faces', 'facing',
   'find', 'finding', 'finds', 'hunt', 'hunting', 'hunts', 'investigate', 'investigates', 'investigating',
@@ -568,16 +574,12 @@ function deterministicSimilarityAssessments(
     if (/^detectiv/.test(token)) return 'detective';
     return token;
   };
-  const overviewSupportsKeyword = (overview: string, keyword: string): boolean => {
-    const overviewTokens = new Set(
-      canonicalConceptPhrase(overview).split(' ').filter(Boolean).map(narrativeStem),
-    );
-    const keywordTokens = canonicalConceptPhrase(keyword)
+  const narrativeTokens = (value: string): Set<string> => new Set(
+    canonicalConceptPhrase(value)
       .split(' ')
-      .filter(Boolean)
-      .map(narrativeStem);
-    return keywordTokens.length > 0 && keywordTokens.every(token => overviewTokens.has(token));
-  };
+      .filter(token => token.length >= 4 && !SIMILARITY_TOKEN_STOP_WORDS.has(token))
+      .map(narrativeStem),
+  );
   return candidates.flatMap(candidate => {
     if (candidate.aiConfidence < .70) return [];
     const sources = new Set(candidate.retrievalSources || []);
@@ -597,6 +599,7 @@ function deterministicSimilarityAssessments(
     ));
     const candidateKeywords = new Set(candidate.keywords.map(canonicalConceptPhrase).filter(Boolean));
     const candidateGenres = new Set(candidate.genres.map(normalize).filter(Boolean));
+    const candidateOverviewTokens = narrativeTokens(candidate.overview);
     const anchorEvidence = anchors.map(anchor => {
       const sharedKeywordValues = anchor.keywords
         .map(canonicalConceptPhrase)
@@ -605,41 +608,33 @@ function deterministicSimilarityAssessments(
       const specificSharedKeywords = sharedKeywordValues.filter(keyword => (
         keyword.split(' ').filter(Boolean).length >= 2
       )).length;
-      const overviewSharedKeywords = sharedKeywordValues.filter(keyword => (
-        overviewSupportsKeyword(candidate.overview, keyword)
-      )).length;
-      const overviewSpecificSharedKeywords = sharedKeywordValues.filter(keyword => (
-        keyword.split(' ').filter(Boolean).length >= 2 &&
-        overviewSupportsKeyword(candidate.overview, keyword)
-      )).length;
+      const anchorKeywordTokens = narrativeTokens(anchor.keywords.join(' '));
+      const centralNarrativeTokens = [...anchorKeywordTokens]
+        .filter(token => candidateOverviewTokens.has(token)).length;
       const sharedGenres = anchor.genres
         .map(normalize)
         .filter(genre => genre && candidateGenres.has(genre)).length;
       return {
         sharedKeywords,
         specificSharedKeywords,
-        overviewSharedKeywords,
-        overviewSpecificSharedKeywords,
+        centralNarrativeTokens,
         sharedGenres,
       };
     });
     // TMDB recommendation/Similar lanes are useful candidate generators, but
     // two broad genres (for example Drama + Crime) are not enough to prove a
     // shared story. During verifier outages, deterministic acceptance requires
-    // genre compatibility plus either multiple shared keywords, a specific
-    // multi-word narrative tag, or a shared tag that is central in the overview.
+    // genre compatibility plus either multiple shared keywords or a specific
+    // multi-word narrative tag. Ordinary candidates additionally need at least
+    // two anchor-keyword concepts to be central in their plot overview.
     const metadataGroundedForEveryAnchor = anchorEvidence.every(evidence => (
       evidence.sharedGenres >= 1 && (
         evidence.sharedKeywords >= 2 ||
-        evidence.specificSharedKeywords >= 1 ||
-        evidence.overviewSharedKeywords >= 1
+        evidence.specificSharedKeywords >= 1
       )
     ));
     const centrallyGroundedForEveryAnchor = anchorEvidence.every(evidence => (
-      evidence.sharedGenres >= 1 && (
-        evidence.overviewSpecificSharedKeywords >= 1 ||
-        evidence.overviewSharedKeywords >= 2
-      )
+      evidence.sharedGenres >= 1 && evidence.centralNarrativeTokens >= 2
     ));
     const accepted = (isTitleNeighborRecommendation && metadataGroundedForEveryAnchor) ||
       (isDirectTmdbRelation && centrallyGroundedForEveryAnchor) ||
