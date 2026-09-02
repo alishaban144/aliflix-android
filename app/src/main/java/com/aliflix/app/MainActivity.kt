@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
                 statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
             )
         }
-        playerController = WebPlayerController(this)
+        playerController = WebPlayerController(this, viewModel.playbackProgressStore)
 
         setContent {
             if (BuildConfig.IS_TV) {
@@ -50,6 +50,11 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         playerController.destroy()
         super.onDestroy()
+    }
+
+    override fun onStop() {
+        playerController.onAppBackground()
+        super.onStop()
     }
 
 }

@@ -3,6 +3,9 @@ package com.aliflix.app.account
 import android.content.Context
 import androidx.core.content.edit
 import com.aliflix.app.model.Media
+import com.aliflix.app.data.PlaybackProgress
+import com.aliflix.app.data.playbackProgressFromJson
+import com.aliflix.app.data.toJson
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -26,6 +29,9 @@ class AccountLocalSnapshotStore(context: Context) {
     fun save(scope: String, snapshot: AccountLocalSnapshot) {
         val json = JSONObject()
             .put("library", snapshot.library.toJson())
+            .put("playbackProgress", JSONArray().apply {
+                snapshot.playbackProgress.forEach { put(it.toJson()) }
+            })
             .put("settings", snapshot.settings.toJson())
         preferences.edit {
             putString(snapshotKey(scope), json.toString())
@@ -40,6 +46,11 @@ class AccountLocalSnapshotStore(context: Context) {
         val json = JSONObject(raw)
         AccountLocalSnapshot(
             library = json.getJSONObject("library").toLibrarySnapshot(),
+            playbackProgress = json.optJSONArray("playbackProgress")?.let { array ->
+                (0 until array.length()).mapNotNull { index ->
+                    array.optJSONObject(index)?.let(::playbackProgressFromJson)
+                }
+            }.orEmpty(),
             settings = json.getJSONObject("settings").toSettingsSnapshot(),
         )
     }.getOrNull()

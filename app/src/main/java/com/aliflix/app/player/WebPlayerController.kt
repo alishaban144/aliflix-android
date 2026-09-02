@@ -36,22 +36,34 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.ScriptHandler
+import androidx.webkit.JavaScriptReplyProxy
+import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.aliflix.app.BuildConfig
+import com.aliflix.app.data.PlaybackProgress
+import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.ByteArrayInputStream
 import java.net.URI
 
+data class MoviepireServerOption(
+    val key: String,
+    val label: String,
+    val selected: Boolean,
+)
+
 class WebPlayerController(
     private val activity: ComponentActivity,
+    private val playbackProgressStore: PlaybackProgressStore,
 ) {
     private var webView: WebView? = null
     private var loadedKey: String? = null
@@ -61,6 +73,13 @@ class WebPlayerController(
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var moviepireDocumentStartScriptHandler: ScriptHandler? = null
     private var moviepireProtectedSourceHost: String? = null
+    private var moviepireProtectedNativeMode = false
+    private var moviepireMessageListenerInstalled = false
+    private var exactEpisodeRecoveryAttempts = 0
+    private var latestPositionSeconds = 0.0
+    private var latestDurationSeconds = 0.0
+    private var lastLocalProgressWriteAt = 0L
+    private var pendingSeekSeconds: Double? = null
     private var playerVisible = false
 
     private val _loading = MutableStateFlow(false)
@@ -72,19 +91,88 @@ class WebPlayerController(
     private val _webViewGeneration = MutableStateFlow(0)
     val webViewGeneration: StateFlow<Int> = _webViewGeneration.asStateFlow()
 
+    private val _moviepireServers = MutableStateFlow<List<MoviepireServerOption>>(emptyList())
+    val moviepireServers: StateFlow<List<MoviepireServerOption>> = _moviepireServers.asStateFlow()
+
     fun viewFor(selection: PlaybackSelection): WebView {
         val view = webView ?: createWebView().also { webView = it }
+        if (activeSelection?.key != selection.key) flushProgress(urgentCloudSync = true)
         activeSelection = selection
         configureMobileMoviepireDocumentStartProtection(view, selection)
         val defaultKey = selection.key
         if (loadedKey != defaultKey) {
             loadedKey = defaultKey
+            exactEpisodeRecoveryAttempts = 0
+            latestPositionSeconds = 0.0
+            latestDurationSeconds = 0.0
+            lastLocalProgressWriteAt = 0L
+            _moviepireServers.value = emptyList()
             _error.value = null
             view.stopLoading()
             loadSelection(view, selection)
         }
         (view.parent as? ViewGroup)?.removeView(view)
         return view
+    }
+
+    fun savedProgressFor(selection: PlaybackSelection): PlaybackProgress? =
+        playbackProgressStore.progressFor(selection)
+
+    fun prepareSelection(selection: PlaybackSelection) {
+        if (activeSelection?.key == selection.key) return
+        flushProgress(urgentCloudSync = true)
+        activeSelection = selection
+        pendingSeekSeconds = null
+        webView?.apply {
+            visibility = View.INVISIBLE
+            onPause()
+        }
+    }
+
+    fun requestResume(progress: PlaybackProgress) {
+        if (!progress.resumeEligible) return
+        pendingSeekSeconds = progress.positionSeconds
+    }
+
+    fun startOver(selection: PlaybackSelection) {
+        pendingSeekSeconds = 0.0
+        playbackProgressStore.startOver(selection)
+    }
+
+    fun selectMoviepireServer(option: MoviepireServerOption) {
+        val selection = activeSelection ?: return
+        val view = webView ?: return
+        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE) return
+        if (_moviepireServers.value.none { it.key == option.key }) return
+        if (latestPositionSeconds > 0.0) pendingSeekSeconds = latestPositionSeconds
+        flushProgress(urgentCloudSync = true)
+        val quotedKey = JSONObject.quote(option.key)
+        view.evaluateJavascript(
+            """
+            (() => {
+              const select = document.querySelector('select[data-aliflix-server-select="true"]');
+              if (!select) return false;
+              const option = Array.from(select.options).find(
+                candidate => candidate.dataset.aliflixServerKey === $quotedKey
+              );
+              if (!option) return false;
+              select.value = option.value;
+              option.selected = true;
+              select.dispatchEvent(new Event('input', { bubbles: true }));
+              select.dispatchEvent(new Event('change', { bubbles: true }));
+              return true;
+            })();
+            """.trimIndent(),
+        ) { result ->
+            if (result == "true") {
+                listOf(250L, 900L, 2_200L).forEach { delay ->
+                    view.postDelayed(
+                        { if (isActiveSelection(view, selection)) discoverMoviepireServers(view, selection) },
+                        delay,
+                    )
+                }
+            }
+        }
     }
 
     fun showProviderOptions() {
@@ -104,6 +192,7 @@ class WebPlayerController(
     }
 
     fun setVisible(visible: Boolean) {
+        if (playerVisible && !visible) flushProgress(urgentCloudSync = true)
         playerVisible = visible
         setSystemBarsVisible(activity, !visible)
         webView?.let {
@@ -120,6 +209,7 @@ class WebPlayerController(
 
     fun reload() {
         _error.value = null
+        exactEpisodeRecoveryAttempts = 0
         val view = webView
         val selection = activeSelection
         if (view != null && selection != null) {
@@ -156,12 +246,14 @@ class WebPlayerController(
     }
 
     fun destroy() {
+        flushProgress(urgentCloudSync = true)
         hideCustomView()
         playerVisible = false
         setSystemBarsVisible(activity, true)
         moviepireDocumentStartScriptHandler?.remove()
         moviepireDocumentStartScriptHandler = null
         moviepireProtectedSourceHost = null
+        removeMoviepireMessageListener(webView)
         webView?.apply {
             stopLoading()
             loadUrl("about:blank")
@@ -172,6 +264,10 @@ class WebPlayerController(
         webView = null
         loadedKey = null
         activeSelection = null
+    }
+
+    fun onAppBackground() {
+        flushProgress(urgentCloudSync = true)
     }
 
     private fun loadSelection(
@@ -195,11 +291,13 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ) {
         if (BuildConfig.IS_TV) return
-        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE) {
+        if (!selection.source.provider.usesMoviepire) {
             view.setDownloadListener(null)
             moviepireDocumentStartScriptHandler?.remove()
             moviepireDocumentStartScriptHandler = null
             moviepireProtectedSourceHost = null
+            moviepireProtectedNativeMode = false
+            removeMoviepireMessageListener(view)
             return
         }
         view.setDownloadListener { _, _, _, _, _ ->
@@ -208,24 +306,149 @@ class WebPlayerController(
         }
 
         val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
+        val nativeMode = selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE
         if (
             moviepireDocumentStartScriptHandler != null &&
-            moviepireProtectedSourceHost == sourceHost
+            moviepireProtectedSourceHost == sourceHost &&
+            moviepireProtectedNativeMode == nativeMode
         ) {
             return
         }
         moviepireDocumentStartScriptHandler?.remove()
         moviepireDocumentStartScriptHandler = null
         moviepireProtectedSourceHost = sourceHost
+        moviepireProtectedNativeMode = nativeMode
+        if (nativeMode) installMoviepireMessageListener(view, sourceHost) else removeMoviepireMessageListener(view)
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
 
         moviepireDocumentStartScriptHandler = runCatching {
             WebViewCompat.addDocumentStartJavaScript(
                 view,
-                mobileMoviepireAdShieldScript(),
+                mobileMoviepireAdShieldScript() + if (nativeMode) {
+                    "\n" + mobileMoviepireProgressBridgeScript()
+                } else {
+                    ""
+                },
                 mobileMoviepireShieldOriginRules(sourceHost),
             )
         }.getOrNull()
+    }
+
+    private fun installMoviepireMessageListener(view: WebView, sourceHost: String) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+        removeMoviepireMessageListener(view)
+        runCatching {
+            WebViewCompat.addWebMessageListener(
+                view,
+                PLAYBACK_BRIDGE_NAME,
+                mobileMoviepireShieldOriginRules(sourceHost),
+                object : WebViewCompat.WebMessageListener {
+                    override fun onPostMessage(
+                        view: WebView,
+                        message: WebMessageCompat,
+                        sourceOrigin: Uri,
+                        isMainFrame: Boolean,
+                        replyProxy: JavaScriptReplyProxy,
+                    ) {
+                        val selection = activeSelection ?: return
+                        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE) return
+                        if (!isApprovedMoviepireProgressOrigin(sourceOrigin, selection)) return
+                        handlePlaybackMessage(view, selection, message.data)
+                    }
+                },
+            )
+            moviepireMessageListenerInstalled = true
+        }
+    }
+
+    private fun removeMoviepireMessageListener(view: WebView?) {
+        if (!moviepireMessageListenerInstalled || view == null) return
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            runCatching { WebViewCompat.removeWebMessageListener(view, PLAYBACK_BRIDGE_NAME) }
+        }
+        moviepireMessageListenerInstalled = false
+    }
+
+    private fun isApprovedMoviepireProgressOrigin(
+        origin: Uri,
+        selection: PlaybackSelection,
+    ): Boolean {
+        if (!origin.scheme.equals("https", ignoreCase = true)) return false
+        val host = origin.host?.lowercase()?.removePrefix("www.") ?: return false
+        val approved = PlaybackNavigationPolicy.moviepirePlayerDocumentHosts +
+            selection.source.cleanDomain.lowercase().removePrefix("www.")
+        return approved.any { allowed -> host == allowed || host.endsWith(".$allowed") }
+    }
+
+    private fun handlePlaybackMessage(
+        view: WebView,
+        selection: PlaybackSelection,
+        raw: String?,
+    ) {
+        if (!isActiveSelection(view, selection) || raw.isNullOrBlank()) return
+        val payload = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        val event = payload.optString("event")
+        val position = payload.optDouble("positionSeconds", Double.NaN)
+        val duration = payload.optDouble("durationSeconds", Double.NaN)
+        if (
+            !position.isFinite() || position < 0.0 ||
+            !duration.isFinite() || duration <= 0.0 ||
+            duration > MAX_REASONABLE_VIDEO_DURATION_SECONDS ||
+            position > duration + 5.0
+        ) {
+            return
+        }
+        latestPositionSeconds = position.coerceAtMost(duration)
+        latestDurationSeconds = duration
+        if (event == "loadedmetadata") {
+            pendingSeekSeconds?.let { seek ->
+                if (seek >= PlaybackProgress.RESUME_MINIMUM_SECONDS && seek < duration) {
+                    postSeekToMoviepirePlayer(view, seek)
+                }
+                pendingSeekSeconds = null
+            }
+        }
+        val now = SystemClock.elapsedRealtime()
+        val urgent = event in setOf("pause", "ended", "seeked")
+        if (urgent || now - lastLocalProgressWriteAt >= LOCAL_PROGRESS_INTERVAL_MILLIS) {
+            playbackProgressStore.savePlayerProgress(
+                selection = selection,
+                positionSeconds = latestPositionSeconds,
+                durationSeconds = latestDurationSeconds,
+                urgentCloudSync = urgent,
+            )
+            lastLocalProgressWriteAt = now
+        }
+    }
+
+    private fun flushProgress(urgentCloudSync: Boolean) {
+        val selection = activeSelection ?: return
+        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE) return
+        if (latestDurationSeconds <= 0.0) return
+        playbackProgressStore.savePlayerProgress(
+            selection = selection,
+            positionSeconds = latestPositionSeconds,
+            durationSeconds = latestDurationSeconds,
+            urgentCloudSync = urgentCloudSync,
+        )
+        lastLocalProgressWriteAt = SystemClock.elapsedRealtime()
+    }
+
+    private fun postSeekToMoviepirePlayer(view: WebView, seconds: Double) {
+        if (!seconds.isFinite() || seconds < 0.0) return
+        view.evaluateJavascript(
+            """
+            (() => {
+              const message = { type: "aliflix-seek", seconds: $seconds };
+              window.postMessage(message, "*");
+              document.querySelectorAll("iframe").forEach(frame => {
+                try { frame.contentWindow?.postMessage(message, "*"); } catch (_) {}
+              });
+              return true;
+            })();
+            """.trimIndent(),
+            null,
+        )
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -299,9 +522,12 @@ class WebPlayerController(
                     _error.value = null
                     view?.alpha = 1f
                     val selection = activeSelection
+                    if (selection?.source?.provider == PlaybackProviderId.MOVIEPIRE_NATIVE) {
+                        _moviepireServers.value = emptyList()
+                    }
                     if (
                         view != null &&
-                        selection?.source?.provider == PlaybackProviderId.MOVIEPIRE &&
+                        selection?.source?.provider?.usesMoviepire == true &&
                         !BuildConfig.IS_TV
                     ) {
                         // Document-start injection is the primary path. These short retries are a
@@ -356,7 +582,7 @@ class WebPlayerController(
                         if (selection != null) {
                             if (
                                 !BuildConfig.IS_TV &&
-                                selection.source.provider == PlaybackProviderId.MOVIEPIRE
+                                selection.source.provider.usesMoviepire
                             ) {
                                 installMobileMoviepireAdShield(view, selection)
                             }
@@ -601,11 +827,11 @@ class WebPlayerController(
 
     private fun isMobileMoviepireSelection(): Boolean =
         !BuildConfig.IS_TV &&
-            activeSelection?.source?.provider == PlaybackProviderId.MOVIEPIRE
+            activeSelection?.source?.provider?.usesMoviepire == true
 
     private fun isMoviepireWrapper(view: WebView): Boolean {
         val selection = activeSelection ?: return false
-        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE) return false
+        if (!selection.source.provider.usesMoviepire) return false
         val currentHost = runCatching {
             URI(view.url.orEmpty()).host?.removePrefix("www.")
         }.getOrNull()
@@ -1157,21 +1383,93 @@ class WebPlayerController(
     ) {
         when (selection.source.provider) {
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
-            PlaybackProviderId.MOVIEPIRE -> {
+            PlaybackProviderId.MOVIEPIRE,
+            PlaybackProviderId.MOVIEPIRE_NATIVE,
+            -> {
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)
+                if (selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE) {
+                    discoverMoviepireServers(view, selection)
+                    verifyExactMoviepireEpisode(view, selection)
+                }
             }
             PlaybackProviderId.DORABY -> { /* Doraby webpage loads directly */ }
         }
+    }
+
+    private fun discoverMoviepireServers(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        if (
+            selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE ||
+            !isActiveSelection(view, selection) ||
+            !isMoviepireWrapper(view)
+        ) {
+            return
+        }
+        view.evaluateJavascript(moviepireServerDiscoveryScript()) { result ->
+            if (!isActiveSelection(view, selection)) return@evaluateJavascript
+            val payload = runCatching {
+                JSONTokener(result).nextValue() as? String
+            }.getOrNull().orEmpty()
+            val servers = parseMoviepireServerDiscovery(payload)
+            if (servers.isNotEmpty()) _moviepireServers.value = servers
+        }
+    }
+
+    private fun verifyExactMoviepireEpisode(
+        view: WebView,
+        selection: PlaybackSelection,
+    ) {
+        if (
+            selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE ||
+            selection.media.type != MediaType.TV ||
+            !isActiveSelection(view, selection)
+        ) {
+            return
+        }
+        val current = runCatching { URI(view.url.orEmpty()) }.getOrNull() ?: return
+        val currentHost = current.host?.lowercase()?.removePrefix("www.") ?: return
+        if (!currentHost.equals(selection.source.cleanDomain, ignoreCase = true)) return
+        val expectedPath = "/watch/${selection.media.id}"
+        val query = current.rawQuery.orEmpty().split('&')
+            .mapNotNull { part ->
+                val pieces = part.split('=', limit = 2)
+                pieces.firstOrNull()?.takeIf(String::isNotBlank)?.let { key ->
+                    key to pieces.getOrElse(1) { "" }
+                }
+            }
+            .toMap()
+        val exact = current.path?.trimEnd('/') == expectedPath &&
+            query["s"]?.toIntOrNull() == (selection.seasonNumber ?: 1) &&
+            query["e"]?.toIntOrNull() == (selection.episodeNumber ?: 1)
+        if (exact) return
+        if (exactEpisodeRecoveryAttempts >= MAX_EXACT_EPISODE_RECOVERIES) {
+            _loading.value = false
+            _error.value = "Moviepire could not verify the requested season and episode. Playback was stopped to avoid opening the wrong title."
+            view.stopLoading()
+            return
+        }
+        exactEpisodeRecoveryAttempts += 1
+        val exactUrl = selection.entryUrl ?: return
+        view.stopLoading()
+        view.loadUrl(exactUrl)
     }
 
     private fun installMobileMoviepireAdShield(
         view: WebView,
         selection: PlaybackSelection,
     ) {
-        if (BuildConfig.IS_TV || selection.source.provider != PlaybackProviderId.MOVIEPIRE) return
+        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
         if (!isActiveSelection(view, selection)) return
         view.evaluateJavascript(
-            mobileMoviepireAdShieldScript(),
+            mobileMoviepireAdShieldScript() + if (
+                selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE
+            ) {
+                "\n" + mobileMoviepireProgressBridgeScript()
+            } else {
+                ""
+            },
             null,
         )
     }
@@ -1373,6 +1671,13 @@ class WebPlayerController(
             controller.hide(WindowInsetsCompat.Type.systemBars())
         }
     }
+
+    private companion object {
+        const val PLAYBACK_BRIDGE_NAME = "AliflixPlaybackProgress"
+        const val LOCAL_PROGRESS_INTERVAL_MILLIS = 7_000L
+        const val MAX_REASONABLE_VIDEO_DURATION_SECONDS = 7 * 24 * 60 * 60.0
+        const val MAX_EXACT_EPISODE_RECOVERIES = 2
+    }
 }
 
 internal fun browserCompatibleUserAgent(userAgent: String): String =
@@ -1400,6 +1705,135 @@ internal fun mobileMoviepireShieldOriginRules(sourceHost: String): Set<String> {
             listOf("https://$host", "https://*.$host")
         }
 }
+
+/**
+ * Finds Moviepire's own source selector without relying on a server label or a generated class
+ * name. The selector is tagged before it is hidden so native choices can still dispatch the
+ * original React input/change events.
+ */
+internal fun moviepireServerDiscoveryScript(): String =
+    """
+    (() => {
+      const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+      const candidates = Array.from(document.querySelectorAll("select"));
+      const select = candidates.find((candidate) => {
+        if (candidate.options.length < 1) return false;
+        const identity = normalize([
+          candidate.getAttribute("aria-label"),
+          candidate.getAttribute("name"),
+          candidate.id,
+          candidate.getAttribute("data-testid")
+        ].filter(Boolean).join(" ")).toLowerCase();
+        const positivelyNamed = /(?:video\s*)?(?:source|server|stream)/i.test(identity);
+        const controls = candidate.closest(".player-controls,[class*='player-controls']");
+        const playerContext = Boolean(controls && (
+          controls.parentElement?.querySelector("iframe,video") ||
+          document.querySelector("iframe[src],video")
+        ));
+        return positivelyNamed || playerContext;
+      });
+      if (!select) return "[]";
+
+      select.dataset.aliflixServerSelect = "true";
+      const servers = Array.from(select.options).map((option, index) => {
+        const label = normalize(option.label || option.textContent || option.value);
+        const key = "option:" + index + ":" + String(option.value || "");
+        option.dataset.aliflixServerKey = key;
+        return { key, label, selected: option.selected || select.selectedIndex === index };
+      }).filter((option) => option.label.length > 0);
+      if (servers.length === 0) return "[]";
+
+      select.style.setProperty("visibility", "hidden", "important");
+      select.style.setProperty("opacity", "0", "important");
+      select.style.setProperty("pointer-events", "none", "important");
+      select.setAttribute("aria-hidden", "true");
+      select.tabIndex = -1;
+      return JSON.stringify(servers);
+    })();
+    """.trimIndent()
+
+internal fun parseMoviepireServerDiscovery(payload: String): List<MoviepireServerOption> =
+    runCatching {
+        val array = JSONArray(payload)
+        (0 until array.length()).mapNotNull { index ->
+            val item = array.optJSONObject(index) ?: return@mapNotNull null
+            val key = item.optString("key").trim()
+            val label = item.optString("label").trim()
+            if (key.isBlank() || label.isBlank()) return@mapNotNull null
+            MoviepireServerOption(
+                key = key,
+                label = label,
+                selected = item.optBoolean("selected"),
+            )
+        }.distinctBy(MoviepireServerOption::key)
+    }.getOrDefault(emptyList())
+
+/** Runs only in origin-restricted Moviepire/player documents registered with AndroidX WebKit. */
+internal fun mobileMoviepireProgressBridgeScript(): String =
+    """
+    (() => {
+      "use strict";
+      if (window.__aliflixPlaybackProgressBridge === true) return true;
+      window.__aliflixPlaybackProgressBridge = true;
+      const bridge = window.AliflixPlaybackProgress;
+      if (!bridge || typeof bridge.postMessage !== "function") return false;
+
+      let activeVideo = null;
+      let lastTimeUpdateSentAt = 0;
+      const validNumber = (value) => Number.isFinite(value) && value >= 0;
+      const post = (event, video) => {
+        if (!video || !validNumber(video.currentTime) ||
+            !Number.isFinite(video.duration) || video.duration <= 0) return;
+        try {
+          bridge.postMessage(JSON.stringify({
+            event,
+            positionSeconds: video.currentTime,
+            durationSeconds: video.duration
+          }));
+        } catch (_) {}
+      };
+      const onTimeUpdate = (event) => {
+        const now = Date.now();
+        if (now - lastTimeUpdateSentAt < 1000) return;
+        lastTimeUpdateSentAt = now;
+        post("timeupdate", event.currentTarget);
+      };
+      const attach = (video) => {
+        if (!video || video.dataset.aliflixProgressAttached === "true") return;
+        video.dataset.aliflixProgressAttached = "true";
+        activeVideo = video;
+        video.addEventListener("loadedmetadata", (event) => post("loadedmetadata", event.currentTarget));
+        video.addEventListener("timeupdate", onTimeUpdate);
+        ["play", "pause", "seeking", "seeked", "ended"].forEach((eventName) => {
+          video.addEventListener(eventName, (event) => post(eventName, event.currentTarget));
+        });
+        if (video.readyState >= 1) post("loadedmetadata", video);
+      };
+      const scan = () => document.querySelectorAll("video").forEach(attach);
+      new MutationObserver(scan).observe(document.documentElement || document, {
+        childList: true,
+        subtree: true
+      });
+      document.addEventListener("DOMContentLoaded", scan, { once: true });
+      scan();
+
+      window.addEventListener("message", (event) => {
+        const data = event.data;
+        if (!data || data.type !== "aliflix-seek") return;
+        const seconds = Number(data.seconds);
+        if (!validNumber(seconds)) return;
+        const video = activeVideo || document.querySelector("video");
+        if (!video) return;
+        const seek = () => {
+          if (!Number.isFinite(video.duration) || video.duration <= 0) return false;
+          video.currentTime = Math.min(seconds, Math.max(0, video.duration - 0.25));
+          return true;
+        };
+        if (!seek()) video.addEventListener("loadedmetadata", seek, { once: true });
+      });
+      return true;
+    })();
+    """.trimIndent()
 
 /**
  * Runs at document start in Moviepire and each of its player frames. Native interception remains

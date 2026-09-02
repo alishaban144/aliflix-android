@@ -1,6 +1,7 @@
 package com.aliflix.app.account
 
 import com.aliflix.app.model.Media
+import com.aliflix.app.data.PlaybackProgress
 
 data class AccountUser(
     val uid: String,
@@ -41,6 +42,7 @@ object AccountCloudDeletionPlan {
         "myList",
         "favorites",
         "recent",
+        "progress",
         "settings",
     )
 }
@@ -69,6 +71,7 @@ data class AccountSettingsSnapshot(
 
 data class AccountLocalSnapshot(
     val library: LibrarySnapshot,
+    val playbackProgress: List<PlaybackProgress> = emptyList(),
     val settings: AccountSettingsSnapshot,
 )
 

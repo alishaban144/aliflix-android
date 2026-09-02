@@ -98,7 +98,6 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import kotlin.math.roundToInt
 
 @Composable
 fun AskAliflixResults(
@@ -441,14 +440,6 @@ private fun ResultCard(
         AskAliflixMotion.pressSpec(),
         label = "ask-result-border",
     )
-    val matchTone = when (item.matchLevel.lowercase()) {
-        "exceptional" -> AliflixAccentSecondary
-        "strong" -> AliflixAccentPrimary
-        else -> AliflixContentSecondary
-    }
-    val matchLabel = askResultMatchLabel(item)
-    val primaryReason = item.matchReasons.firstOrNull { it.isNotBlank() }
-
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -470,7 +461,11 @@ private fun ResultCard(
             modifier = Modifier
                 .background(
                     Brush.linearGradient(
-                        listOf(matchTone.copy(alpha = 0.11f), Color.Transparent, AliflixSurfaceSecondary.copy(alpha = 0.2f)),
+                        listOf(
+                            AliflixAccentPrimary.copy(alpha = 0.09f),
+                            Color.Transparent,
+                            AliflixSurfaceSecondary.copy(alpha = 0.2f),
+                        ),
                     ),
                 )
                 .padding(11.dp),
@@ -484,21 +479,6 @@ private fun ResultCard(
 
             Spacer(Modifier.width(13.dp))
             Column(modifier = Modifier.weight(1f)) {
-                matchLabel?.let { label ->
-                    Text(
-                        text = label,
-                        color = matchTone,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(matchTone.copy(alpha = 0.13f))
-                            .border(1.dp, matchTone.copy(alpha = 0.24f), RoundedCornerShape(50))
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                    )
-                    Spacer(Modifier.height(7.dp))
-                }
                 Row(verticalAlignment = Alignment.Top) {
                     Text(
                         text = item.media.title,
@@ -540,9 +520,12 @@ private fun ResultCard(
                     overflow = TextOverflow.Ellipsis,
                 )
 
-                if (item.media.genres.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (item.media.genres.isNotEmpty()) {
                         item.media.genres.take(2).forEach { genre ->
                             Text(
                                 text = genre,
@@ -557,24 +540,14 @@ private fun ResultCard(
                             )
                         }
                     }
-                }
-
-                if (item.media.rating > 0.0) {
-                    Spacer(Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(Color(0xFFFFC857).copy(alpha = 0.12f))
-                            .padding(horizontal = 7.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
+                    if (item.media.rating > 0.0) {
                         Icon(Icons.Rounded.Star, contentDescription = null, tint = Color(0xFFFFC857), modifier = Modifier.size(13.dp))
                         Spacer(Modifier.width(3.dp))
-                        Text("TMDB ${"%.1f".format(item.media.rating)}", color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("${"%.1f".format(item.media.rating)}", color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
-                (primaryReason ?: item.media.overview.takeIf { it.isNotBlank() })?.let { context ->
+                item.media.overview.takeIf { it.isNotBlank() }?.let { plot ->
                     Spacer(Modifier.height(10.dp))
                     Box(
                         Modifier
@@ -584,12 +557,12 @@ private fun ResultCard(
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = context,
+                        text = plot,
                         color = AliflixContentSecondary,
-                        fontSize = 11.sp,
-                        fontWeight = if (primaryReason != null) FontWeight.Medium else FontWeight.Normal,
-                        lineHeight = 15.sp,
-                        maxLines = 2,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Normal,
+                        lineHeight = 17.sp,
+                        maxLines = 4,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -623,13 +596,10 @@ internal fun askResultMetadata(media: Media): String = listOfNotNull(
     media.year.takeIf(String::isNotBlank),
     media.runtime.takeIf(String::isNotBlank),
     if (media.type == com.aliflix.app.model.MediaType.MOVIE) "Movie" else "Series",
+    media.status.takeIf {
+        media.type == com.aliflix.app.model.MediaType.TV && it.isNotBlank()
+    },
 ).joinToString(" · ")
-
-internal fun askResultMatchLabel(item: RecommendationCandidate): String? {
-    val level = item.matchLevel.trim().takeIf { it.isNotBlank() } ?: return null
-    val score = item.matchScore.takeIf { it > 0.0 }?.coerceIn(0.0, 1.0)
-    return if (score == null) "$level match" else "$level match · ${(score * 100).roundToInt()}%"
-}
 
 @Composable
 private fun ResultContextBar(

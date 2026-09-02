@@ -23,8 +23,16 @@ enum class PlaybackProviderId(
         displayName = "Moviepire",
         defaultBaseUrl = "https://moviepire.ru/",
         supportsGeneralPlayback = true,
+    ),
+    MOVIEPIRE_NATIVE(
+        displayName = "Moviepire Native",
+        defaultBaseUrl = "https://moviepire.ru/",
+        supportsGeneralPlayback = true,
         isBeta = true,
     );
+
+    val usesMoviepire: Boolean
+        get() = this == MOVIEPIRE || this == MOVIEPIRE_NATIVE
 
     fun isAvailableFor(@Suppress("UNUSED_PARAMETER") media: Media): Boolean =
         supportsGeneralPlayback
@@ -55,9 +63,10 @@ internal fun defaultGeneralPlaybackProvider(isTv: Boolean): PlaybackProviderId =
 
 internal fun mobileGeneralPlaybackProviders(): List<PlaybackProviderId> = buildList {
     add(PlaybackProviderId.MOVIEPIRE)
+    add(PlaybackProviderId.MOVIEPIRE_NATIVE)
     addAll(
         PlaybackProviderId.entries.filter { provider ->
-            provider.supportsGeneralPlayback && provider != PlaybackProviderId.MOVIEPIRE
+            provider.supportsGeneralPlayback && !provider.usesMoviepire
         },
     )
 }
@@ -82,7 +91,9 @@ data class PlaybackSource(
         PlaybackProviderId.RAMOFLIX ->
             RamoflixConfig(baseUrl).buildWatchUrl(media.title)
 
-        PlaybackProviderId.MOVIEPIRE -> {
+        PlaybackProviderId.MOVIEPIRE,
+        PlaybackProviderId.MOVIEPIRE_NATIVE,
+        -> {
             val base = baseUrl.trimEnd('/')
             val route = if (media.type == MediaType.TV) {
                 val s = seasonNumber ?: 1
@@ -112,6 +123,10 @@ data class PlaybackSource(
             baseUrl: String = PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
         ) = PlaybackSource(PlaybackProviderId.MOVIEPIRE, baseUrl)
 
+        fun moviepireNative(
+            baseUrl: String = PlaybackProviderId.MOVIEPIRE_NATIVE.defaultBaseUrl,
+        ) = PlaybackSource(PlaybackProviderId.MOVIEPIRE_NATIVE, baseUrl)
+
         fun doraby(
             baseUrl: String = PlaybackProviderId.DORABY.defaultBaseUrl,
         ) = PlaybackSource(PlaybackProviderId.DORABY, baseUrl)
@@ -138,6 +153,7 @@ data class PlaybackPreferences(
         return when (provider) {
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
             PlaybackProviderId.MOVIEPIRE -> PlaybackSource.moviepire(moviepireBaseUrl)
+            PlaybackProviderId.MOVIEPIRE_NATIVE -> PlaybackSource.moviepireNative(moviepireBaseUrl)
             PlaybackProviderId.DORABY -> PlaybackSource.doraby(dorabyBaseUrl)
         }
     }

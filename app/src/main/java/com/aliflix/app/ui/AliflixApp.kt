@@ -176,6 +176,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.aliflix.app.AliflixViewModel
+import com.aliflix.app.account.AccountActionResult
 import com.aliflix.app.account.AccountState
 import com.aliflix.app.account.AccountSyncState
 import com.aliflix.app.DetailUiState
@@ -461,7 +462,6 @@ private enum class HomeFilter(val label: String) {
     MOVIES("Movies"),
     TV("TV Shows"),
     NEW("New & Popular"),
-    TV_NETWORKS("TV Networks"),
 }
 
 private data class MobileUpdateUiState(
@@ -1129,7 +1129,6 @@ fun AliflixApp(
                         } ?: HomeFilter.FOR_YOU,
                         onSelectFilter = {
                             homeFilterName = it.name
-                            if (it == HomeFilter.TV_NETWORKS) viewModel.loadTvNetworks()
                         },
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
@@ -1229,6 +1228,7 @@ fun AliflixApp(
                             viewModel::setAiRecommendationsEnabled,
                         recommendationAiModel = recommendationAiModel,
                         onSetRecommendationAiModel = viewModel::setRecommendationAiModel,
+                        onSubmitFeedback = viewModel::submitFeedback,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
                 }
@@ -1263,7 +1263,9 @@ fun AliflixApp(
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
-                PlaybackProviderId.MOVIEPIRE -> moviepireBaseUrl
+                PlaybackProviderId.MOVIEPIRE,
+                PlaybackProviderId.MOVIEPIRE_NATIVE,
+                -> moviepireBaseUrl
                 PlaybackProviderId.DORABY -> dorabyBaseUrl
             }
             MobileProviderUrlDialog(
@@ -1274,7 +1276,9 @@ fun AliflixApp(
                 onSave = { newUrl ->
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
-                        PlaybackProviderId.MOVIEPIRE -> viewModel.updateMoviepireUrl(newUrl)
+                        PlaybackProviderId.MOVIEPIRE,
+                        PlaybackProviderId.MOVIEPIRE_NATIVE,
+                        -> viewModel.updateMoviepireUrl(newUrl)
                         PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(newUrl)
                     }
                     urlDialogProvider = null
@@ -1282,7 +1286,9 @@ fun AliflixApp(
                 onReset = {
                     when (provider) {
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
-                        PlaybackProviderId.MOVIEPIRE -> viewModel.resetMoviepireUrl()
+                        PlaybackProviderId.MOVIEPIRE,
+                        PlaybackProviderId.MOVIEPIRE_NATIVE,
+                        -> viewModel.resetMoviepireUrl()
                         PlaybackProviderId.DORABY -> viewModel.resetDorabyUrl()
                     }
                     urlDialogProvider = null
@@ -1488,9 +1494,8 @@ private fun HomeFeed(
             HomeFilter.NEW -> content.rails.filter {
                 "Now" in it.title || "Airing" in it.title || "Trending" in it.title
             }
-            HomeFilter.TV_NETWORKS -> tvNetworks.rails
         }
-        val selectedRails = if (matchingRails.isEmpty() && selectedFilter != HomeFilter.TV_NETWORKS) {
+        val selectedRails = if (matchingRails.isEmpty()) {
             content.rails
         } else {
             matchingRails
@@ -1554,17 +1559,6 @@ private fun HomeFeed(
             .toList()
     }
 
-    LaunchedEffect(selectedFilter) {
-        if (
-            selectedFilter == HomeFilter.TV_NETWORKS &&
-            tvNetworks.rails.isEmpty() &&
-            !tvNetworks.loading &&
-            tvNetworks.error == null
-        ) {
-            onRetryTvNetworks()
-        }
-    }
-
     LaunchedEffect(pagerState, heroCandidates) {
         if (heroCandidates.size > 1) {
             while (true) {
@@ -1626,26 +1620,6 @@ private fun HomeFeed(
                 onSelect = onSelectFilter,
                 pinned = filtersPinned,
             )
-        }
-
-        if (selectedFilter == HomeFilter.TV_NETWORKS) {
-            item(key = "tv-networks-attribution") {
-                Text(
-                    text = tvNetworks.attribution,
-                    color = AliflixContentTertiary,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
-            if (tvNetworks.rails.isEmpty()) {
-                item(key = "tv-networks-state") {
-                    TvNetworksStateCard(
-                        loading = tvNetworks.loading,
-                        error = tvNetworks.error,
-                        onRetry = onRetryTvNetworks,
-                    )
-                }
-            }
         }
 
         if (recent.isNotEmpty() && selectedFilter == HomeFilter.FOR_YOU) {
@@ -3035,9 +3009,16 @@ private fun MobileSettingsDialog(
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onClearRecent: () -> Unit,
+    onSubmitFeedback: suspend (String) -> AccountActionResult,
     onDismiss: () -> Unit,
 ) {
     var showClearConfirmation by remember { mutableStateOf(false) }
+    var feedbackExpanded by rememberSaveable { mutableStateOf(false) }
+    var feedbackText by rememberSaveable { mutableStateOf("") }
+    var feedbackBusy by remember { mutableStateOf(false) }
+    var feedbackMessage by remember { mutableStateOf<String?>(null) }
+    var feedbackError by remember { mutableStateOf(false) }
+    val feedbackScope = rememberCoroutineScope()
 
     if (showClearConfirmation) {
         AlertDialog(
@@ -3166,7 +3147,7 @@ private fun MobileSettingsDialog(
                                     fontWeight = FontWeight.Bold,
                                 )
                                 Text(
-                                    text = generalProvider.displayName,
+                                    text = generalProvider.displayName + if (generalProvider.isBeta) " · Beta" else "",
                                     color = AliflixAccentSecondary,
                                     fontSize = 11.sp,
                                 )
@@ -3207,6 +3188,18 @@ private fun MobileSettingsDialog(
                                                     FontWeight.Bold
                                                 } else FontWeight.Normal,
                                             )
+                                            if (provider.isBeta) {
+                                                Text(
+                                                    text = "Beta",
+                                                    color = AliflixAccentSecondary,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(AliflixAccentPrimary.copy(alpha = 0.18f))
+                                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                                )
+                                            }
                                             if (provider == generalProvider) {
                                                 Icon(
                                                     imageVector = Icons.Filled.Check,
@@ -3446,6 +3439,113 @@ private fun MobileSettingsDialog(
                         )
                     }
                 }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Feedback",
+                        color = AliflixContentPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(AliflixSurfaceSecondary)
+                            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { feedbackExpanded = !feedbackExpanded }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Share your feedback and help us improve",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Text(
+                                    "Send a private message to the Aliflix developer",
+                                    color = AliflixMuted,
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            Icon(
+                                if (feedbackExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                contentDescription = if (feedbackExpanded) "Hide feedback form" else "Open feedback form",
+                                tint = AliflixContentSecondary,
+                            )
+                        }
+                        if (feedbackExpanded) {
+                            OutlinedTextField(
+                                value = feedbackText,
+                                onValueChange = { value ->
+                                    if (value.length <= 2_000) feedbackText = value
+                                    feedbackMessage = null
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("settings-feedback-input"),
+                                enabled = !feedbackBusy,
+                                minLines = 4,
+                                maxLines = 7,
+                                label = { Text("Your feedback") },
+                                supportingText = { Text("${feedbackText.length}/2000") },
+                                shape = RoundedCornerShape(14.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AliflixAccentSecondary,
+                                    unfocusedBorderColor = AliflixBorderStrong,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    cursorColor = AliflixAccentSecondary,
+                                ),
+                            )
+                            feedbackMessage?.let { message ->
+                                Text(
+                                    text = message,
+                                    color = if (feedbackError) AliflixError else AliflixGreen,
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    feedbackScope.launch {
+                                        feedbackBusy = true
+                                        feedbackMessage = null
+                                        val result = onSubmitFeedback(feedbackText)
+                                        feedbackBusy = false
+                                        feedbackError = !result.succeeded
+                                        feedbackMessage = result.message
+                                        if (result.succeeded) feedbackText = ""
+                                    }
+                                },
+                                enabled = !feedbackBusy && feedbackText.trim().length >= 3,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 46.dp)
+                                    .testTag("settings-feedback-submit"),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
+                            ) {
+                                if (feedbackBusy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color.White,
+                                    )
+                                } else {
+                                    Text("Submit feedback", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -3483,6 +3583,7 @@ private fun MySpaceScreen(
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onSubmitFeedback: suspend (String) -> AccountActionResult,
     modifier: Modifier = Modifier,
 ) {
     val pagerState = rememberPagerState(
@@ -3549,6 +3650,7 @@ private fun MySpaceScreen(
             onDownloadUpdate = onDownloadUpdate,
             onInstallUpdate = onInstallUpdate,
             onClearRecent = onClearRecent,
+            onSubmitFeedback = onSubmitFeedback,
             onDismiss = { showSettingsWindow = false },
         )
     }

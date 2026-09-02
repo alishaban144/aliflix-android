@@ -2,6 +2,7 @@ package com.aliflix.app.model
 
 import com.aliflix.app.data.RamoflixConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
@@ -40,6 +41,11 @@ class MediaTest {
             "https://moviepire.ru/watch/66732?s=2&e=3",
             tvSelection.entryUrl,
         )
+
+        val nativeTvSelection = tvSelection.copy(source = PlaybackSource.moviepireNative())
+        assertEquals(tvSelection.entryUrl, nativeTvSelection.entryUrl)
+        assertEquals(2, nativeTvSelection.seasonNumber)
+        assertEquals(3, nativeTvSelection.episodeNumber)
     }
 
     @Test
@@ -123,6 +129,7 @@ class MediaTest {
         assertEquals(
             listOf(
                 PlaybackProviderId.MOVIEPIRE,
+                PlaybackProviderId.MOVIEPIRE_NATIVE,
                 PlaybackProviderId.RAMOFLIX,
                 PlaybackProviderId.DORABY,
             ),
@@ -143,11 +150,28 @@ class MediaTest {
     }
 
     @Test
-    fun moviepireIsTheOnlyBetaPlaybackProvider() {
+    fun moviepireNativeIsTheOnlyBetaPlaybackProvider() {
         assertEquals(
-            listOf(PlaybackProviderId.MOVIEPIRE),
+            listOf(PlaybackProviderId.MOVIEPIRE_NATIVE),
             PlaybackProviderId.entries.filter(PlaybackProviderId::isBeta),
         )
+        assertFalse(PlaybackProviderId.MOVIEPIRE.isBeta)
+        assertNotEquals(PlaybackProviderId.MOVIEPIRE, PlaybackProviderId.MOVIEPIRE_NATIVE)
+    }
+
+    @Test
+    fun moviepireNativeUsesConfiguredMoviepireBaseUrlWithoutChangingNormalMoviepire() {
+        val media = Media(id = 27205, type = MediaType.MOVIE, title = "Inception")
+        val preferences = PlaybackPreferences(
+            generalProvider = PlaybackProviderId.MOVIEPIRE_NATIVE,
+            moviepireBaseUrl = "https://moviepire-mirror.example/",
+        )
+
+        assertEquals(
+            "https://moviepire-mirror.example/watch/27205",
+            preferences.sourceFor(media).buildEntryUrl(media),
+        )
+        assertEquals(PlaybackProviderId.MOVIEPIRE, PlaybackSource.moviepire().provider)
     }
 
     @Test

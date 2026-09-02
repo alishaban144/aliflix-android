@@ -4,7 +4,12 @@ import android.content.Context
 import com.aliflix.app.data.LibraryMutation
 import com.aliflix.app.data.LibraryStore
 import com.aliflix.app.data.PlaybackProviderRepository
+import com.aliflix.app.data.PlaybackProgress
+import com.aliflix.app.data.PlaybackProgressMutation
+import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.data.RamoflixConfig
+import com.aliflix.app.data.isValidPlaybackProgress
+import com.aliflix.app.data.mergePlaybackProgress
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
@@ -55,6 +60,7 @@ class FirebaseAccountSyncRepository(
     private val accountRepository: AccountRepository,
     private val libraryStore: LibraryStore,
     private val playbackRepository: PlaybackProviderRepository,
+    private val playbackProgressStore: PlaybackProgressStore,
     private val recommendationStore: RecommendationStore,
     parentScope: CoroutineScope,
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
@@ -168,6 +174,7 @@ class FirebaseAccountSyncRepository(
         val mutationJobs = listOf(
             launch { collectLibraryMutations(uid) },
             launch { collectSettingsMutations(uid) },
+            launch { collectPlaybackProgressMutations(uid) },
         )
         val listeners = mutableListOf<ListenerRegistration>()
         var retryDelayMillis = 2_000L
@@ -205,14 +212,16 @@ class FirebaseAccountSyncRepository(
     private suspend fun reconcileInitialState(uid: String) {
         val cloud = withTimeout(INITIAL_SYNC_TIMEOUT_MILLIS) { fetchCloudSnapshot(uid) }
         val mergedLibrary = AccountMergePolicy.mergeLibrary(libraryStore.snapshot(), cloud.library)
+        val mergedProgress = mergePlaybackProgress(playbackProgressStore.snapshot(), cloud.playbackProgress)
         val localSettings = currentSettingsSnapshot()
         val mergedSettings = AccountMergePolicy.resolveSettings(localSettings, cloud.settings)
         libraryStore.applySyncedSnapshot(mergedLibrary)
+        playbackProgressStore.applySyncedEntries(mergedProgress)
         applySettingsSnapshot(mergedSettings)
         saveActiveLocalSnapshot()
 
         withTimeout(INITIAL_SYNC_TIMEOUT_MILLIS) {
-            uploadMergedSnapshot(uid, mergedLibrary, mergedSettings)
+            uploadMergedSnapshot(uid, mergedLibrary, mergedProgress, mergedSettings)
         }
     }
 
@@ -221,6 +230,7 @@ class FirebaseAccountSyncRepository(
         val myList = async { user.collection(MY_LIST).get().await().toMediaList() }
         val favorites = async { user.collection(FAVORITES).get().await().toMediaList() }
         val recent = async { user.collection(RECENT).get().await().toRecentList() }
+        val playbackProgress = async { user.collection(PROGRESS).get().await().toPlaybackProgressList() }
         val settings = async {
             user.collection(SETTINGS).document(MAIN_DOCUMENT).get().await()
                 .takeIf(DocumentSnapshot::exists)
@@ -232,6 +242,7 @@ class FirebaseAccountSyncRepository(
                 favorites = favorites.await(),
                 recent = recent.await(),
             ),
+            playbackProgress = playbackProgress.await(),
             settings = settings.await(),
         )
     }
@@ -239,6 +250,7 @@ class FirebaseAccountSyncRepository(
     private suspend fun uploadMergedSnapshot(
         uid: String,
         library: LibrarySnapshot,
+        playbackProgress: List<PlaybackProgress>,
         settings: AccountSettingsSnapshot,
     ) {
         val user = userDocument(uid)
@@ -253,6 +265,12 @@ class FirebaseAccountSyncRepository(
             writes += PendingSet(
                 user.collection(RECENT).document(entry.media.key),
                 recentDocument(entry, useServerTimestamp = false),
+            )
+        }
+        playbackProgress.forEach { progress ->
+            writes += PendingSet(
+                user.collection(PROGRESS).document(progress.key),
+                progressDocument(progress, useServerTimestamp = false),
             )
         }
         writes += PendingSet(
@@ -304,6 +322,17 @@ class FirebaseAccountSyncRepository(
                 if (!validRemoteSnapshot(uid, snapshot, error)) return@addSnapshotListener
                 libraryStore.applySyncedSnapshot(
                     libraryStore.snapshot().copy(recent = snapshot!!.toRecentList()),
+                )
+                saveActiveLocalSnapshot()
+                _state.value = AccountSyncState.Synced
+            },
+            user.collection(PROGRESS).addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
+                if (!validRemoteSnapshot(uid, snapshot, error)) return@addSnapshotListener
+                playbackProgressStore.applySyncedEntries(
+                    mergePlaybackProgress(
+                        playbackProgressStore.snapshot(),
+                        snapshot!!.toPlaybackProgressList(),
+                    ),
                 )
                 saveActiveLocalSnapshot()
                 _state.value = AccountSyncState.Synced
@@ -393,6 +422,29 @@ class FirebaseAccountSyncRepository(
         }
     }
 
+    private suspend fun collectPlaybackProgressMutations(uid: String) {
+        val lastCloudWriteAt = mutableMapOf<String, Long>()
+        playbackProgressStore.mutations.collect { mutation ->
+            if (accountRepository.uid != uid) return@collect
+            saveActiveLocalSnapshot()
+            when (mutation) {
+                is PlaybackProgressMutation.Changed -> {
+                    val progress = mutation.progress
+                    val lastWrite = lastCloudWriteAt[progress.key] ?: 0L
+                    if (
+                        mutation.urgentCloudSync ||
+                        progress.updatedAtMillis - lastWrite >= PROGRESS_CLOUD_INTERVAL_MILLIS
+                    ) {
+                        lastCloudWriteAt[progress.key] = progress.updatedAtMillis
+                        userDocument(uid).collection(PROGRESS).document(progress.key)
+                            .set(progressDocument(progress, useServerTimestamp = true))
+                            .observeWriteResult(uid)
+                    }
+                }
+            }
+        }
+    }
+
     private fun clearRemoteRecent(uid: String): Task<*> = userDocument(uid).collection(RECENT).get()
         .addOnSuccessListener { snapshot ->
             val batch = firestore.batch()
@@ -423,9 +475,11 @@ class FirebaseAccountSyncRepository(
         val restored = snapshotStore.load(transition.scopeToRestore)
         if (restored != null) {
             libraryStore.applySyncedSnapshot(restored.library)
+            playbackProgressStore.applySyncedEntries(restored.playbackProgress)
             applySettingsSnapshot(restored.settings)
         } else {
             libraryStore.applySyncedSnapshot(LibrarySnapshot())
+            playbackProgressStore.applySyncedEntries(emptyList())
         }
         snapshotStore.setActiveScope(targetScope)
         snapshotStore.save(targetScope, currentLocalSnapshot())
@@ -435,9 +489,11 @@ class FirebaseAccountSyncRepository(
         val guest = snapshotStore.load(AccountMergePolicy.GUEST_SCOPE)
         if (guest != null) {
             libraryStore.applySyncedSnapshot(guest.library)
+            playbackProgressStore.applySyncedEntries(guest.playbackProgress)
             applySettingsSnapshot(guest.settings)
         } else {
             libraryStore.applySyncedSnapshot(LibrarySnapshot())
+            playbackProgressStore.applySyncedEntries(emptyList())
         }
         snapshotStore.setActiveScope(AccountMergePolicy.GUEST_SCOPE)
         snapshotStore.save(AccountMergePolicy.GUEST_SCOPE, currentLocalSnapshot())
@@ -459,6 +515,7 @@ class FirebaseAccountSyncRepository(
 
     private fun currentLocalSnapshot() = AccountLocalSnapshot(
         library = libraryStore.snapshot(),
+        playbackProgress = playbackProgressStore.snapshot(),
         settings = currentSettingsSnapshot(),
     )
 
@@ -535,6 +592,29 @@ class FirebaseAccountSyncRepository(
         "updatedAtMillis" to settings.updatedAtMillis,
     )
 
+    private fun progressDocument(
+        progress: PlaybackProgress,
+        useServerTimestamp: Boolean,
+    ): Map<String, Any?> = mapOf(
+        "progressKey" to progress.key,
+        "mediaKey" to progress.media.key,
+        "mediaJson" to progress.media.toJson().toString(),
+        "mediaId" to progress.media.id,
+        "mediaType" to progress.media.type.routeName,
+        "seasonNumber" to progress.seasonNumber,
+        "episodeNumber" to progress.episodeNumber,
+        "episodeTitle" to progress.episodeTitle,
+        "positionSeconds" to progress.positionSeconds,
+        "durationSeconds" to progress.durationSeconds,
+        "completed" to progress.completed,
+        "updatedAt" to if (useServerTimestamp) {
+            FieldValue.serverTimestamp()
+        } else {
+            Timestamp(Date(progress.updatedAtMillis))
+        },
+        "updatedAtMillis" to progress.updatedAtMillis,
+    )
+
     private fun syncErrorMessage(error: Throwable): String = when {
         error is FirebaseFirestoreException &&
             error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED ->
@@ -552,6 +632,7 @@ class FirebaseAccountSyncRepository(
 
     private data class CloudAccountSnapshot(
         val library: LibrarySnapshot,
+        val playbackProgress: List<PlaybackProgress>,
         val settings: AccountSettingsSnapshot?,
     )
 
@@ -567,11 +648,13 @@ class FirebaseAccountSyncRepository(
         const val MY_LIST = "myList"
         const val FAVORITES = "favorites"
         const val RECENT = "recent"
+        const val PROGRESS = "progress"
         const val SETTINGS = "settings"
         const val MAIN_DOCUMENT = "main"
         const val MAX_BATCH_WRITES = 400
         const val INITIAL_SYNC_TIMEOUT_MILLIS = 20_000L
         const val DELETION_TIMEOUT_MILLIS = 60_000L
+        const val PROGRESS_CLOUD_INTERVAL_MILLIS = 45_000L
     }
 }
 
@@ -585,6 +668,26 @@ private fun QuerySnapshot.toRecentList(): List<RecentMediaEntry> = documents.map
     RecentMediaEntry(media, timestamp)
 }.sortedByDescending(RecentMediaEntry::lastPlayedAtMillis)
     .take(AccountMergePolicy.MAX_RECENT)
+
+private fun QuerySnapshot.toPlaybackProgressList(): List<PlaybackProgress> = documents.mapNotNull { document ->
+    val media = document.getString("mediaJson")?.let { raw ->
+        runCatching { Media.fromJson(org.json.JSONObject(raw)) }.getOrNull()
+    } ?: return@mapNotNull null
+    val progress = PlaybackProgress(
+        key = document.getString("progressKey") ?: document.id,
+        media = media,
+        seasonNumber = document.getLong("seasonNumber")?.toInt(),
+        episodeNumber = document.getLong("episodeNumber")?.toInt(),
+        episodeTitle = document.getString("episodeTitle"),
+        positionSeconds = document.getDouble("positionSeconds") ?: return@mapNotNull null,
+        durationSeconds = document.getDouble("durationSeconds") ?: return@mapNotNull null,
+        updatedAtMillis = document.getTimestamp("updatedAt")?.toDate()?.time
+            ?: document.getLong("updatedAtMillis")
+            ?: 0L,
+        completed = document.getBoolean("completed") ?: false,
+    )
+    progress.takeIf { it.key == document.id && isValidPlaybackProgress(it) }
+}.sortedByDescending(PlaybackProgress::updatedAtMillis)
 
 private fun DocumentSnapshot.toMedia(): Media? {
     val raw = getString("mediaJson") ?: return null

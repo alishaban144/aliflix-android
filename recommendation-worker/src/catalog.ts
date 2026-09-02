@@ -605,17 +605,7 @@ export async function homeFeed(env: RecommendationEnv): Promise<CatalogHomeFeed>
         : tvSummaries(page.results),
     ),
   }));
-  const seenHomeTitles = new Set<string>();
   const rails = [...primaryRails, ...genreRails]
-    .map(rail => ({
-      ...rail,
-      items: rail.items.filter(item => {
-        const key = `${item.mediaType}:${item.tmdbId}`;
-        if (seenHomeTitles.has(key)) return false;
-        seenHomeTitles.add(key);
-        return true;
-      }),
-    }))
     .filter(rail => rail.items.length > 0);
 
   const qualityScore = (item: CatalogMediaSummary): number => {

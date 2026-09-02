@@ -17,7 +17,7 @@ class AccountUiTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun signedOutAccountCardKeepsAccountsOptionalAndOffersBothSignInPaths() {
+    fun signedOutAccountCardIsCompactAndOffersBothSignInPaths() {
         composeRule.setContent {
             AliflixTheme {
                 MySpaceAccountCard(
@@ -36,8 +36,6 @@ class AccountUiTest {
         composeRule.onNodeWithTag("my-space-account-card").assertIsDisplayed()
         composeRule.onNodeWithTag("account-continue-google").assertHasClickAction()
         composeRule.onNodeWithTag("account-email-entry").assertHasClickAction()
-        composeRule.onNodeWithText(
-            "No account is required. Aliflix continues to work normally and offline.",
-        ).assertIsDisplayed()
+        composeRule.onNodeWithText("Use email instead").assertIsDisplayed()
     }
 }

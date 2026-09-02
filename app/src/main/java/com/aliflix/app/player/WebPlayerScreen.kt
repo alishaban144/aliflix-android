@@ -1,26 +1,33 @@
 package com.aliflix.app.player
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.border
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
@@ -31,6 +38,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,9 +69,22 @@ fun WebPlayerScreen(
     val loading by controller.loading.collectAsState()
     val error by controller.error.collectAsState()
     val webViewGeneration by controller.webViewGeneration.collectAsState()
+    val moviepireServers by controller.moviepireServers.collectAsState()
+    val nativeMoviepire = selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE
+    val resumableProgress = remember(selection.key) {
+        controller.savedProgressFor(selection)?.takeIf { it.resumeEligible }
+    }
+    var resumeDecisionMade by remember(selection.key) {
+        mutableStateOf(resumableProgress == null)
+    }
+    var serverMenuExpanded by remember(selection.key) { mutableStateOf(false) }
 
-    LaunchedEffect(visible) {
-        controller.setVisible(visible)
+    LaunchedEffect(selection.key) {
+        controller.prepareSelection(selection)
+    }
+
+    LaunchedEffect(visible, resumeDecisionMade) {
+        controller.setVisible(visible && resumeDecisionMade)
     }
 
     BackHandler(enabled = visible) {
@@ -73,16 +96,54 @@ fun WebPlayerScreen(
             .fillMaxSize()
             .background(AliflixBlack),
     ) {
-        key(selection.key, webViewGeneration) {
-            AndroidView(
-                factory = { controller.viewFor(selection) },
-                update = { controller.setVisible(visible) },
-                modifier = Modifier.fillMaxSize(),
-            )
+        if (resumeDecisionMade) {
+            key(selection.key, webViewGeneration) {
+                AndroidView(
+                    factory = { controller.viewFor(selection) },
+                    update = { controller.setVisible(visible) },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        } else {
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                Text(
+                    text = "Resume from ${formatPlaybackTime(resumableProgress!!.positionSeconds)}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        onClick = {
+                            controller.requestResume(resumableProgress)
+                            resumeDecisionMade = true
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AliflixRed),
+                    ) {
+                        Text("Resume")
+                    }
+                    Button(
+                        onClick = {
+                            controller.startOver(selection)
+                            resumeDecisionMade = true
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AliflixSurfaceRaised,
+                            contentColor = Color.White,
+                        ),
+                    ) {
+                        Text("Start over")
+                    }
+                }
+            }
         }
 
         AnimatedVisibility(
-            visible = loading,
+            visible = loading && resumeDecisionMade,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize(),
@@ -150,66 +211,135 @@ fun WebPlayerScreen(
                     style = MaterialTheme.typography.headlineSmall,
                     color = Color.White,
                 )
-                Text(
-                    text = error.orEmpty(),
-                    color = Color.LightGray,
-                )
+                Text(text = error.orEmpty(), color = Color.LightGray)
                 FilledIconButton(
                     onClick = controller::reload,
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = AliflixRed,
-                    ),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = AliflixRed),
                 ) {
                     Icon(Icons.Rounded.Refresh, contentDescription = "Retry player")
                 }
             }
         }
 
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(top = 44.dp, start = 16.dp),
-        ) {
-            FilledIconButton(
-                onClick = onClose,
-                modifier = Modifier.size(44.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = Color.Black.copy(alpha = 0.68f),
-                    contentColor = Color.White,
-                ),
-            ) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back to Aliflix")
-            }
+        if (nativeMoviepire && !BuildConfig.IS_TV) {
+            NativeMoviepireTopBar(
+                servers = moviepireServers,
+                menuExpanded = serverMenuExpanded,
+                onMenuExpandedChange = { serverMenuExpanded = it },
+                onSelectServer = controller::selectMoviepireServer,
+                onClose = onClose,
+                onCast = controller::openCastPicker,
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
+        } else {
+            ExistingPlayerTopControls(selection, controller, onClose)
         }
+    }
+}
 
-        if (!BuildConfig.IS_TV) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 44.dp, end = 16.dp),
+@Composable
+private fun NativeMoviepireTopBar(
+    servers: List<MoviepireServerOption>,
+    menuExpanded: Boolean,
+    onMenuExpandedChange: (Boolean) -> Unit,
+    onSelectServer: (MoviepireServerOption) -> Unit,
+    onClose: () -> Unit,
+    onCast: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.92f))
+            .padding(top = 40.dp, start = 12.dp, end = 12.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PlayerIconButton(onClick = onClose) {
+            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back to Aliflix")
+        }
+        Spacer(Modifier.weight(1f))
+        Box {
+            Button(
+                onClick = { onMenuExpandedChange(true) },
+                enabled = servers.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White.copy(alpha = 0.12f),
+                    contentColor = Color.White,
+                    disabledContainerColor = Color.White.copy(alpha = 0.08f),
+                    disabledContentColor = Color.White.copy(alpha = 0.65f),
+                ),
+                shape = CircleShape,
             ) {
-                FilledIconButton(
-                    onClick = controller::openCastPicker,
-                    modifier = Modifier.size(44.dp),
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = Color.Black.copy(alpha = 0.68f),
-                        contentColor = Color.White,
-                    ),
-                ) {
-                    Icon(Icons.Rounded.Cast, contentDescription = "Cast screen")
+                Text(
+                    text = servers.firstOrNull { it.selected }?.label ?: "Servers",
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+            }
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { onMenuExpandedChange(false) },
+            ) {
+                servers.forEach { server ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = server.label,
+                                fontWeight = if (server.selected) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        },
+                        onClick = {
+                            onMenuExpandedChange(false)
+                            onSelectServer(server)
+                        },
+                    )
                 }
             }
         }
+        Spacer(Modifier.weight(1f))
+        PlayerIconButton(onClick = onCast) {
+            Icon(Icons.Rounded.Cast, contentDescription = "Cast screen")
+        }
+    }
+}
 
-        Box(
+@Composable
+private fun BoxScope.ExistingPlayerTopControls(
+    selection: PlaybackSelection,
+    controller: WebPlayerController,
+    onClose: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .align(Alignment.TopStart)
+            .padding(top = 44.dp, start = 16.dp),
+    ) {
+        PlayerIconButton(onClick = onClose) {
+            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back to Aliflix")
+        }
+    }
+
+    if (!BuildConfig.IS_TV) {
+        Row(
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 44.dp),
+                .align(Alignment.TopEnd)
+                .padding(top = 44.dp, end = 16.dp),
         ) {
-            if (selection.source.provider == PlaybackProviderId.RAMOFLIX) {
-            androidx.compose.material3.Button(
+            PlayerIconButton(onClick = controller::openCastPicker) {
+                Icon(Icons.Rounded.Cast, contentDescription = "Cast screen")
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 44.dp),
+    ) {
+        if (selection.source.provider == PlaybackProviderId.RAMOFLIX) {
+            Button(
                 onClick = controller::showProviderOptions,
-                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                colors = ButtonDefaults.buttonColors(
                     containerColor = Color.Black.copy(alpha = 0.72f),
                     contentColor = Color.White,
                 ),
@@ -221,18 +351,45 @@ fun WebPlayerScreen(
                     fontWeight = FontWeight.Bold,
                 )
             }
-            } else {
-                Text(
-                    text = selection.source.provider.displayName,
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .padding(horizontal = 18.dp, vertical = 11.dp),
-                )
-            }
+        } else {
+            Text(
+                text = selection.source.provider.displayName,
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 18.dp, vertical = 11.dp),
+            )
         }
+    }
+}
+
+@Composable
+private fun PlayerIconButton(
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    FilledIconButton(
+        onClick = onClick,
+        modifier = Modifier.size(44.dp),
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = Color.Black.copy(alpha = 0.68f),
+            contentColor = Color.White,
+        ),
+        content = content,
+    )
+}
+
+private fun formatPlaybackTime(seconds: Double): String {
+    val totalSeconds = seconds.toLong().coerceAtLeast(0L)
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val remainingSeconds = totalSeconds % 60L
+    return if (hours > 0L) {
+        "%d:%02d:%02d".format(hours, minutes, remainingSeconds)
+    } else {
+        "%d:%02d".format(minutes, remainingSeconds)
     }
 }

@@ -135,6 +135,43 @@ function errorResponse(error: unknown): Response {
   return json({ error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred', retryable: true } }, 500);
 }
 
+function feedbackHtml(value: string): string {
+  return value.replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[character] || character));
+}
+
+async function routeFeedback(request: Request, env: RecommendationEnv): Promise<Response> {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 8_192) {
+    throw new ServiceError('PAYLOAD_TOO_LARGE', 'Feedback is too long', 413, false);
+  }
+  const raw = await request.text();
+  if (raw.length > 8_192) throw new ServiceError('PAYLOAD_TOO_LARGE', 'Feedback is too long', 413, false);
+  const payload = JSON.parse(raw) as { message?: unknown; appVersion?: unknown };
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+  const appVersion = typeof payload.appVersion === 'string'
+    ? payload.appVersion.trim().slice(0, 64)
+    : 'unknown';
+  if (message.length < 3 || message.length > 2_000) {
+    throw new ServiceError('INVALID_FEEDBACK', 'Enter between 3 and 2,000 characters', 400, false);
+  }
+  const destination = env.FEEDBACK_DESTINATION_EMAIL?.trim();
+  const sender = env.FEEDBACK_FROM_EMAIL?.trim();
+  if (!destination || !sender) {
+    throw new ServiceError('FEEDBACK_NOT_CONFIGURED', 'Feedback delivery is not configured yet', 503, false);
+  }
+  const text = `Aliflix feedback\n\n${message}\n\nApp version: ${appVersion}`;
+  await env.FEEDBACK_EMAIL.send({
+    to: destination,
+    from: { email: sender, name: 'Aliflix' },
+    subject: 'New Aliflix feedback',
+    text,
+    html: `<h2>Aliflix feedback</h2><p>${feedbackHtml(message).replace(/\n/g, '<br>')}</p><p><small>App version: ${feedbackHtml(appVersion)}</small></p>`,
+  });
+  return json({ accepted: true });
+}
+
 async function routeRecommendation(request: Request, env: RecommendationEnv): Promise<Response> {
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (contentLength > 131_072) return json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Payload exceeds 128 KiB', retryable: false } }, 413);
@@ -224,6 +261,18 @@ export default {
         groqConfigured: Boolean(env.GROQ_API_KEY),
         tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN),
       });
+    }
+    if (url.pathname === '/v3/feedback') {
+      if (request.method !== 'POST') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
+      if (!request.headers.get('content-type')?.toLowerCase().includes('application/json')) {
+        return json({ error: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Expected application/json', retryable: false } }, 415);
+      }
+      try {
+        await enforceRateLimit(request, env);
+        return await routeFeedback(request, env);
+      } catch (error) {
+        return errorResponse(error);
+      }
     }
     const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);
     const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);

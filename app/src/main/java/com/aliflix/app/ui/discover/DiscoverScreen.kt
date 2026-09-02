@@ -789,7 +789,7 @@ private fun DiscoverIdleContent(
             item(key = "recent", contentType = "media-rail") {
                 DiscoverMediaRail(
                     title = "Pick up where you left off",
-                    subtitle = "Your recent activity",
+                    subtitle = null,
                     items = recentItems,
                     onOpen = onOpen,
                 )

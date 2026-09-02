@@ -59,4 +59,49 @@ class WebPlayerCompatibilityTest {
         assertFalse(script.contains("requestFullscreen ="))
         assertFalse(script.contains("chrome.cast ="))
     }
+
+    @Test
+    fun nativeServerDiscoveryUsesOriginalSelectIdentityWithoutHardcodedNames() {
+        val script = moviepireServerDiscoveryScript()
+
+        assertFalse(script.contains("Mist", ignoreCase = true))
+        assertTrue(script.contains("querySelectorAll(\"select\")"))
+        assertTrue(script.contains("aliflixServerSelect"))
+        assertTrue(script.contains("aliflixServerKey"))
+        assertTrue(script.contains("option.value"))
+        assertFalse(script.contains("querySelectorAll(\"button\")"))
+    }
+
+    @Test
+    fun discoveredServerPayloadKeepsStableOriginalControlKeys() {
+        val servers = parseMoviepireServerDiscovery(
+            """[{"key":"option:0:azute","label":"Azute","selected":true},""" +
+                """{"key":"option:1:other","label":"Other","selected":false}]""",
+        )
+
+        assertEquals(
+            listOf("option:0:azute", "option:1:other"),
+            servers.map(MoviepireServerOption::key),
+        )
+        assertEquals("Azute", servers.first().label)
+        assertTrue(servers.first().selected)
+    }
+
+    @Test
+    fun playbackBridgeObservesRealVideoAndUsesOriginScopedWebMessaging() {
+        val script = mobileMoviepireProgressBridgeScript()
+
+        listOf(
+            "document.querySelectorAll(\"video\")",
+            "loadedmetadata",
+            "timeupdate",
+            "pause",
+            "seeked",
+            "ended",
+            "AliflixPlaybackProgress",
+            "aliflix-seek",
+        ).forEach { marker -> assertTrue(marker, script.contains(marker)) }
+        assertFalse(script.contains("contentDocument"))
+        assertFalse(script.contains("addJavascriptInterface"))
+    }
 }

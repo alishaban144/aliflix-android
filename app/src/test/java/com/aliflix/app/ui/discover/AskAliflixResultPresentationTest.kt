@@ -52,21 +52,21 @@ class AskAliflixResultPresentationTest {
     }
 
     @Test
-    fun resultCardsPresentCanonicalMetadataAndRoundedMatchConfidence() {
+    fun resultCardsPresentCanonicalMetadataAndTvStatusWithoutMatchScoring() {
         val item = RecommendationCandidate(
             media = Media(
                 id = 10,
-                type = MediaType.MOVIE,
+                type = MediaType.TV,
                 title = "Past Lives",
                 year = "2023",
                 runtime = "106 min",
+                status = "Ended",
             ),
             matchLevel = "Exceptional",
             matchScore = 0.936,
         )
 
-        assertEquals("2023 · 106 min · Movie", askResultMetadata(item.media))
-        assertEquals("Exceptional match · 94%", askResultMatchLabel(item))
+        assertEquals("2023 · 106 min · Series · Ended", askResultMetadata(item.media))
     }
 
     @Test

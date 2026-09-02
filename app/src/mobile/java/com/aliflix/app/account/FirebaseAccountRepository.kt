@@ -163,11 +163,10 @@ class FirebaseAccountRepository(
             return GoogleIdTokenCredential.createFrom(credential.data).idToken
         }
 
-        return try {
-            request(authorizedAccountsOnly = true)
-        } catch (_: NoCredentialException) {
-            request(authorizedAccountsOnly = false)
-        }
+        // This is an explicit button press, so show every Google account on the device.
+        // An authorized-only request can immediately return NoCredentialException for a
+        // perfectly valid first-time user and never present the account chooser.
+        return request(authorizedAccountsOnly = false)
     }
 
     private suspend fun runOperation(

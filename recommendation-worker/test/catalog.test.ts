@@ -325,6 +325,12 @@ describe('TMDB-backed mobile catalogue routes', () => {
         if (genres) {
           genreDiscoveries.push({ path: url.pathname, genres });
           const id = Number(`2${genres.replaceAll(',', '')}`);
+          if (genres === '80,18') {
+            return response({ page: 1, total_pages: 1, total_results: 2, results: [
+              { ...tv(20, 'Trending Series'), genre_ids: [80, 18] },
+              { ...tv(21, 'Airing Series'), genre_ids: [80, 18] },
+            ] });
+          }
           return response({ page: 1, total_pages: 1, total_results: 1, results: [
             { ...tv(id, `TV genres ${genres}`), genre_ids: genres.split(',').map(Number) },
           ] });
@@ -360,8 +366,13 @@ describe('TMDB-backed mobile catalogue routes', () => {
     expect(body.rails.flatMap((rail: any) => rail.items).some((item: any) => item.title === 'Future Film')).toBe(false);
     expect(body.editorialPicks.map((item: any) => item.title).sort()).toEqual(['Acclaimed Film', 'Acclaimed Series']);
     expect(body.rails.flatMap((rail: any) => rail.items).every((item: any) => item.posterPath && item.releaseDate)).toBe(true);
+    body.rails.forEach((rail: any) => {
+      const railKeys = rail.items.map((item: any) => `${item.mediaType}:${item.tmdbId}`);
+      expect(new Set(railKeys).size).toBe(railKeys.length);
+    });
+    expect(body.rails.find((rail: any) => rail.title === 'Crime dramas').items).toHaveLength(2);
     const homeKeys = body.rails.flatMap((rail: any) => rail.items.map((item: any) => `${item.mediaType}:${item.tmdbId}`));
-    expect(new Set(homeKeys).size).toBe(homeKeys.length);
+    expect(new Set(homeKeys).size).toBeLessThan(homeKeys.length);
     expect(seenHosts.every(host => host === 'api.themoviedb.org')).toBe(true);
   });
 });

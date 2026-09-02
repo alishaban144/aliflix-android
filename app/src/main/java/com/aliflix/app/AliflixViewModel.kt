@@ -13,6 +13,7 @@ import com.aliflix.app.data.AndroidHomeSnapshotStore
 import com.aliflix.app.data.PersistedHomeSnapshot
 import com.aliflix.app.data.LibraryStore
 import com.aliflix.app.data.PlaybackProviderRepository
+import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.HomeContent
@@ -171,6 +172,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     )
     private val library = LibraryStore(application)
     private val playbackProviderRepository = PlaybackProviderRepository(application)
+    val playbackProgressStore = PlaybackProgressStore(application)
     private val recommendationStore = RecommendationStore(
         context = application,
     )
@@ -178,6 +180,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         application = application,
         libraryStore = library,
         playbackRepository = playbackProviderRepository,
+        playbackProgressStore = playbackProgressStore,
         recommendationStore = recommendationStore,
         scope = viewModelScope,
     )
@@ -846,6 +849,22 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     suspend fun searchCompanies(query: String): List<com.aliflix.app.recommendation.ProductionCompanyFilter> =
         aiClient.searchCompanies(query.trim())
+
+    suspend fun submitFeedback(message: String): AccountActionResult = runCatching {
+        require(message.trim().length >= 3) { "Enter a little more detail before submitting." }
+        aiClient.submitFeedback(message, BuildConfig.VERSION_NAME)
+        AccountActionResult(succeeded = true, message = "Thank you. Your feedback was sent.")
+    }.getOrElse { error ->
+        val clientError = error as? com.aliflix.app.recommendation.RecommendationAiClientException
+        AccountActionResult(
+            succeeded = false,
+            message = when (clientError?.code) {
+                "FEEDBACK_NOT_CONFIGURED" -> "Feedback delivery is not configured yet."
+                "RATE_LIMITED" -> "Please wait a moment before sending more feedback."
+                else -> error.message ?: "Feedback could not be sent. Please try again."
+            },
+        )
+    }
 
     fun selectSearchMode(mode: SearchMode) {
         if (mode == SearchMode.AI && !recommendationStore.enabled.value) return

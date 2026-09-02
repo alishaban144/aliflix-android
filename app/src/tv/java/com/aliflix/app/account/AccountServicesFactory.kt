@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import com.aliflix.app.data.LibraryStore
 import com.aliflix.app.data.PlaybackProviderRepository
+import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.recommendation.RecommendationStore
 import com.google.firebase.auth.FirebaseUser
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +16,7 @@ fun createAccountServices(
     application: Application,
     libraryStore: LibraryStore,
     playbackRepository: PlaybackProviderRepository,
+    playbackProgressStore: PlaybackProgressStore,
     recommendationStore: RecommendationStore,
     scope: CoroutineScope,
 ): AccountServices = AccountServices(

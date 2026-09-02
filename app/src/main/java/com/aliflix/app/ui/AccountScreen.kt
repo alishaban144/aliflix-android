@@ -69,7 +69,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.aliflix.app.account.AccountActionResult
 import com.aliflix.app.account.AccountState
 import com.aliflix.app.account.AccountSyncState
@@ -110,14 +109,13 @@ internal fun MySpaceAccountCard(
         shape = RoundedCornerShape(22.dp),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AccountAvatar(
                     name = accountState.displayName ?: accountState.email,
-                    photoUrl = accountState.photoUrl,
-                    size = 44,
+                    size = 36,
                 )
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -126,7 +124,7 @@ internal fun MySpaceAccountCard(
                             ?: accountState.email
                             ?: "Aliflix account",
                         color = AliflixContentPrimary,
-                        fontSize = 16.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,
                     )
@@ -146,38 +144,26 @@ internal fun MySpaceAccountCard(
             }
 
             if (!accountState.isSignedIn) {
-                Text(
-                    text = "Sign in to sync your My Space and settings across devices.",
-                    color = AliflixContentSecondary,
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
-                )
                 PrimaryAccountButton(
                     text = "Continue with Google",
                     loading = accountState.isLoading,
                     onClick = onContinueWithGoogle,
-                    modifier = Modifier.testTag("account-continue-google"),
+                    modifier = Modifier
+                        .testTag("account-continue-google")
+                        .heightIn(min = 42.dp),
                 )
-                OutlinedButton(
+                TextButton(
                     onClick = onEmailAccount,
                     enabled = !accountState.isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("account-email-entry")
-                        .heightIn(min = 48.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
+                        .heightIn(min = 36.dp),
                 ) {
                     Icon(Icons.Rounded.Email, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Sign in or create account", fontWeight = FontWeight.Bold)
+                    Text("Use email instead", fontWeight = FontWeight.Bold)
                 }
-                Text(
-                    text = "No account is required. Aliflix continues to work normally and offline.",
-                    color = AliflixContentTertiary,
-                    fontSize = 10.sp,
-                    lineHeight = 15.sp,
-                )
             } else {
                 accountState.email?.takeIf { it != accountState.displayName }?.let { email ->
                     Text(email, color = AliflixContentSecondary, fontSize = 12.sp)
@@ -192,7 +178,7 @@ internal fun MySpaceAccountCard(
                     OutlinedButton(
                         onClick = onSync,
                         enabled = !accountState.isLoading,
-                        modifier = Modifier.weight(1f).heightIn(min = 46.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                         shape = RoundedCornerShape(14.dp),
                         border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
                         contentPadding = PaddingValues(horizontal = 8.dp),
@@ -204,7 +190,7 @@ internal fun MySpaceAccountCard(
                     Button(
                         onClick = onManage,
                         enabled = !accountState.isLoading,
-                        modifier = Modifier.weight(1f).heightIn(min = 46.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 40.dp),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
                         contentPadding = PaddingValues(horizontal = 8.dp),
@@ -602,7 +588,7 @@ private fun ManageAccountContent(
     val sync = accountSyncPresentation(syncState)
     AccountPanel {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            AccountAvatar(user?.displayName ?: user?.email, user?.photoUrl, 58)
+            AccountAvatar(user?.displayName ?: user?.email, 58)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -877,7 +863,7 @@ private fun AccountInfoRow(label: String, value: String, valueColor: Color = Ali
 }
 
 @Composable
-private fun AccountAvatar(name: String?, photoUrl: String?, size: Int) {
+private fun AccountAvatar(name: String?, size: Int) {
     Box(
         modifier = Modifier
             .size(size.dp)
@@ -892,20 +878,16 @@ private fun AccountAvatar(name: String?, photoUrl: String?, size: Int) {
             ),
         contentAlignment = Alignment.Center,
     ) {
-        if (photoUrl.isNullOrBlank()) {
-            Text(
-                text = name?.trim()?.firstOrNull()?.uppercase() ?: "A",
-                color = Color.White,
-                fontWeight = FontWeight.Black,
-                fontSize = (size * 0.4f).sp,
-            )
-        } else {
-            AsyncImage(
-                model = photoUrl,
-                contentDescription = "Account profile photo",
-                modifier = Modifier.fillMaxSize().clip(CircleShape),
-            )
-        }
+        Text(
+            text = name
+                ?.trim()
+                ?.firstOrNull { character -> character.isLetterOrDigit() }
+                ?.uppercase()
+                ?: "A",
+            color = Color.White,
+            fontWeight = FontWeight.Black,
+            fontSize = (size * 0.4f).sp,
+        )
     }
 }
 
