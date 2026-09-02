@@ -1429,6 +1429,73 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     expect(results.every(result => result.retrievalSources.includes('tmdb:anchor-recommendations:page-2'))).toBe(true);
   });
 
+  it('does not treat two broad shared genres as story evidence during a Similar verifier outage', async () => {
+    const tmdb = {
+      ...fakeTmdb(),
+      callsRemaining: 100,
+      recommendations: async () => ({
+        page: 2,
+        total_pages: 2,
+        total_results: 2,
+        results: [
+          {
+            id: 4001,
+            name: 'Grounded Murder Mystery',
+            first_air_date: '2022-01-01',
+            overview: 'A detective investigates a serial murderer in a small city.',
+            genre_ids: [18, 80],
+          },
+          {
+            id: 4002,
+            name: 'Broad Genre Match',
+            first_air_date: '2022-01-01',
+            overview: 'Young officers share workplace drama while patrolling city streets.',
+            genre_ids: [18, 80],
+          },
+        ],
+      }),
+      similar: async () => ({ page: 2, total_pages: 2, total_results: 0, results: [] }),
+      discover: async () => ({ page: 2, total_pages: 2, total_results: 0, results: [] }),
+      details: async (_type: string, id: number) => id === 34415
+        ? {
+            id,
+            name: 'The Killing',
+            first_air_date: '2011-04-03',
+            overview: 'Detectives investigate one murder across a rain-soaked city.',
+            genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }],
+            keywords: { results: [{ id: 10714, name: 'serial killer' }] },
+            recommendations: { page: 1, total_pages: 2, total_results: 0, results: [] },
+            similar: { page: 1, total_pages: 2, total_results: 0, results: [] },
+          }
+        : {
+            id,
+            name: id === 4001 ? 'Grounded Murder Mystery' : 'Broad Genre Match',
+            first_air_date: '2022-01-01',
+            overview: id === 4001
+              ? 'A detective investigates a serial murderer in a small city.'
+              : 'Young officers share workplace drama while patrolling city streets.',
+            genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }],
+            keywords: { results: id === 4001
+              ? [{ id: 10714, name: 'serial killer' }]
+              : [{ id: 123, name: 'workplace' }] },
+          },
+    };
+    const providerFailure = new ServiceError('GROQ_UNAVAILABLE', 'selected model timed out', 503, true);
+
+    const results = await processRecommendation({ AI_GENERATION_MODEL: 'groq-qwen-3.8-27b' } as any, {
+      ...request,
+      mode: 'similar',
+      mediaType: 'tv',
+      anchor: { tmdbId: 34415, title: 'The Killing', mediaType: 'tv' },
+    }, {
+      tmdb: tmdb as any,
+      recommendSimilar: async () => { throw providerFailure; },
+      assessSimilarity: async () => { throw providerFailure; },
+    }, { continuationPass: 1 });
+
+    expect(results.map(result => result.title)).toEqual(['Grounded Murder Mystery']);
+  });
+
   it('rejects a TV-only seriesStatus filter on movie requests', () => {
     expect(() => RecommendationRequestSchema.parse({
       ...request,

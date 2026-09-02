@@ -587,17 +587,18 @@ function deterministicSimilarityAssessments(
         .filter(genre => genre && candidateGenres.has(genre)).length;
       return { sharedKeywords, sharedGenres };
     });
-    const groundedForEveryAnchor = anchorEvidence.every(evidence => (
-      evidence.sharedKeywords >= 1 || evidence.sharedGenres >= 2
-    ));
-    const keywordGroundedForEveryAnchor = anchorEvidence.every(evidence => (
+    // TMDB recommendation/Similar lanes are useful candidate generators, but
+    // two broad genres (for example Drama + Crime) are not enough to prove a
+    // shared story. During verifier outages, deterministic acceptance requires
+    // an exact shared TMDB narrative keyword plus genre compatibility.
+    const metadataGroundedForEveryAnchor = anchorEvidence.every(evidence => (
       evidence.sharedKeywords >= 1 && evidence.sharedGenres >= 1
     ));
     const highConfidenceGenreFallback = isGeneratedRecommendation && candidate.aiConfidence >= .90 &&
       anchorEvidence.every(evidence => evidence.sharedGenres >= 1);
-    const accepted = (isDirectTmdbRelation && groundedForEveryAnchor) ||
-      (isKeywordRetrieval && keywordGroundedForEveryAnchor) ||
-      (isGeneratedRecommendation && groundedForEveryAnchor) ||
+    const accepted = (isDirectTmdbRelation && metadataGroundedForEveryAnchor) ||
+      (isKeywordRetrieval && metadataGroundedForEveryAnchor) ||
+      (isGeneratedRecommendation && metadataGroundedForEveryAnchor) ||
       highConfidenceGenreFallback;
     if (!accepted) return [];
     const evidenceCount = anchorEvidence.reduce(

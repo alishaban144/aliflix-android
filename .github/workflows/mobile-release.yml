@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.37"
+      - "release/v3.1.38"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.37"
+        description: "Release tag, for example v3.1.38"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "127"
-  RELEASE_VERSION_NAME: "3.1.37"
+  RELEASE_VERSION_CODE: "128"
+  RELEASE_VERSION_NAME: "3.1.38"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Fixes Similar result depth and Show more failures, adds TMDB original/adaptation bridging, and completes optional Firebase accounts with mobile sign-in, cloud sync, and verified account deletion while anonymous use stays local-first."
+            "releaseNotes": "Fixes Similar depth and Show more failures with original/adaptation bridging and stricter narrative evidence, and completes optional Firebase accounts with mobile sign-in, cloud sync, and verified deletion while anonymous use stays local-first."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Fixes Similar result depth and Show more failures, adds TMDB original/adaptation bridging, and completes optional Firebase accounts with mobile sign-in, cloud sync, and verified account deletion while anonymous use stays local-first."
+          body: "Fixes Similar depth and Show more failures with original/adaptation bridging and stricter narrative evidence, and completes optional Firebase accounts with mobile sign-in, cloud sync, and verified deletion while anonymous use stays local-first."
           files: |
             aliflix-mobile.apk
             update-mobile.json
