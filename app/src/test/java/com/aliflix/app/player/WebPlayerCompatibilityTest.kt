@@ -1,11 +1,49 @@
 package com.aliflix.app.player
 
+import com.aliflix.app.model.Media
+import com.aliflix.app.model.MediaType
+import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.PlaybackSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WebPlayerCompatibilityTest {
+    @Test
+    fun nativeTvBootstrapsThroughMoviepireSeriesPageWhileMoviesStayDirect() {
+        val series = Media(id = 86831, type = MediaType.TV, title = "Love, Death & Robots")
+        val episode = PlaybackSelection(
+            media = series,
+            seasonNumber = 1,
+            episodeNumber = 4,
+            source = PlaybackSource.moviepireNative(),
+        )
+        val movie = episode.copy(media = Media(27205, MediaType.MOVIE, "Inception"))
+
+        assertEquals("https://moviepire.ru/series/86831", mobileMoviepireEpisodeBootstrapUrl(episode))
+        assertEquals(null, mobileMoviepireEpisodeBootstrapUrl(movie))
+        assertEquals("https://moviepire.ru/watch/86831?s=1&e=4", episode.entryUrl)
+    }
+
+    @Test
+    fun exactEpisodeResolverUsesMoviepireOriginalSeasonAndEpisodeControls() {
+        val script = moviepireExactEpisodeResolverScript(1405, 1, 8)
+
+        listOf(
+            "expectedId = 1405",
+            "expectedSeason = 1",
+            "expectedEpisode = 8",
+            "seasonSelect.dispatchEvent",
+            "target.searchParams.get(\"s\")",
+            "target.searchParams.get(\"e\")",
+            "exactLink.click()",
+            "episodes-expanded",
+        ).forEach { marker -> assertTrue(marker, script.contains(marker)) }
+        assertFalse(script.contains("Dexter", ignoreCase = true))
+        assertFalse(script.contains("iframe.src ="))
+    }
+
     @Test
     fun removesWebViewAndAppMarkersFromUserAgent() {
         val userAgent =

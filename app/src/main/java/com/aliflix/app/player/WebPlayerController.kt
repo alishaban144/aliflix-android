@@ -81,6 +81,7 @@ class WebPlayerController(
     private var pendingSeekSeconds: Double? = null
     private var pendingServerKey: String? = null
     private var serverSwitchStartedAt = 0L
+    private var moviepireEpisodeBootstrapReloads = 0
     private var playerVisible = false
 
     private val _loading = MutableStateFlow(false)
@@ -111,6 +112,7 @@ class WebPlayerController(
             lastLocalProgressWriteAt = 0L
             _moviepireServers.value = emptyList()
             _playing.value = false
+            moviepireEpisodeBootstrapReloads = 0
             _error.value = null
             view.stopLoading()
             loadSelection(view, selection)
@@ -282,7 +284,7 @@ class WebPlayerController(
         _loading.value = true
         _error.value = null
         view.alpha = 1f
-        val entryUrl = selection.entryUrl
+        val entryUrl = mobileMoviepireEpisodeBootstrapUrl(selection) ?: selection.entryUrl
         if (entryUrl == null) {
             _loading.value = false
             _error.value = "This provider could not create a playback link."
@@ -571,6 +573,14 @@ class WebPlayerController(
                     CookieManager.getInstance().flush()
                     val selection = activeSelection
                     if (view != null && url != null) {
+                        if (
+                            selection != null &&
+                            shouldResolveMobileMoviepireEpisode(selection)
+                        ) {
+                            view.alpha = 0f
+                            resolveMobileMoviepireEpisode(view, selection, attempt = 0)
+                            return
+                        }
                         if (
                             selection != null &&
                             selection.source.provider == PlaybackProviderId.RAMOFLIX &&
@@ -1413,6 +1423,73 @@ class WebPlayerController(
         }
     }
 
+    private fun resolveMobileMoviepireEpisode(
+        view: WebView,
+        selection: PlaybackSelection,
+        attempt: Int,
+    ) {
+        if (!isActiveSelection(view, selection) || !shouldResolveMobileMoviepireEpisode(selection)) {
+            return
+        }
+        val season = selection.seasonNumber ?: 1
+        val episode = selection.episodeNumber ?: 1
+        view.evaluateJavascript(
+            moviepireExactEpisodeResolverScript(
+                tmdbId = selection.media.id,
+                seasonNumber = season,
+                episodeNumber = episode,
+            ),
+        ) { result ->
+            if (!isActiveSelection(view, selection)) return@evaluateJavascript
+            val status = runCatching {
+                JSONTokener(result).nextValue() as? String
+            }.getOrNull().orEmpty()
+            when (status) {
+                "ready" -> {
+                    moviepireEpisodeBootstrapReloads = 0
+                    _error.value = null
+                    _loading.value = false
+                    view.alpha = 1f
+                    installMobileMoviepireAdShield(view, selection)
+                    alignProviderContent(view, selection)
+                }
+                "wrong-route" -> {
+                    if (moviepireEpisodeBootstrapReloads < MAX_MOVIEPIRE_EPISODE_BOOTSTRAP_RELOADS) {
+                        moviepireEpisodeBootstrapReloads += 1
+                        val bootstrap = mobileMoviepireEpisodeBootstrapUrl(selection)
+                        if (bootstrap != null) {
+                            view.loadUrl(bootstrap)
+                            return@evaluateJavascript
+                        }
+                    }
+                    scheduleMoviepireEpisodeResolution(view, selection, attempt)
+                }
+                else -> scheduleMoviepireEpisodeResolution(view, selection, attempt)
+            }
+        }
+    }
+
+    private fun scheduleMoviepireEpisodeResolution(
+        view: WebView,
+        selection: PlaybackSelection,
+        attempt: Int,
+    ) {
+        if (attempt >= MAX_MOVIEPIRE_EPISODE_RESOLUTION_ATTEMPTS) {
+            _loading.value = false
+            view.alpha = 1f
+            _error.value = "Moviepire did not expose the selected episode. Please retry playback."
+            return
+        }
+        view.postDelayed(
+            {
+                if (isActiveSelection(view, selection)) {
+                    resolveMobileMoviepireEpisode(view, selection, attempt + 1)
+                }
+            },
+            MOVIEPIRE_EPISODE_RESOLUTION_RETRY_MILLIS,
+        )
+    }
+
     private fun discoverMoviepireServers(
         view: WebView,
         selection: PlaybackSelection,
@@ -1673,6 +1750,9 @@ class WebPlayerController(
         const val MAX_REASONABLE_VIDEO_DURATION_SECONDS = 7 * 24 * 60 * 60.0
         const val SERVER_SWITCH_SEEK_DELAY_MILLIS = 350L
         const val SEEK_RESTORE_TOLERANCE_SECONDS = 3.0
+        const val MOVIEPIRE_EPISODE_RESOLUTION_RETRY_MILLIS = 450L
+        const val MAX_MOVIEPIRE_EPISODE_RESOLUTION_ATTEMPTS = 32
+        const val MAX_MOVIEPIRE_EPISODE_BOOTSTRAP_RELOADS = 1
     }
 }
 
@@ -1683,6 +1763,91 @@ internal fun browserCompatibleUserAgent(userAgent: String): String =
         .replace(Regex("""\s+Aliflix(?:Android|TV)/[^\s]+""", RegexOption.IGNORE_CASE), "")
         .replace(Regex("""\s{2,}"""), " ")
         .trim()
+
+internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
+    !BuildConfig.IS_TV &&
+        selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE &&
+        selection.media.type == MediaType.TV
+
+internal fun mobileMoviepireEpisodeBootstrapUrl(selection: PlaybackSelection): String? =
+    selection.takeIf(::shouldResolveMobileMoviepireEpisode)?.let {
+        "${it.source.baseUrl.trimEnd('/')}/series/${it.media.id}"
+    }
+
+/**
+ * Replays Moviepire's own exact episode flow. Moviepire decides movie-versus-series from its
+ * router query, while its details page supplies the authoritative episode link and `me` count.
+ * Selecting the original season control and clicking that original link keeps this resilient to
+ * player-source changes without constructing any embedded-player URL in Aliflix.
+ */
+internal fun moviepireExactEpisodeResolverScript(
+    tmdbId: Int,
+    seasonNumber: Int,
+    episodeNumber: Int,
+): String =
+    """
+    (() => {
+      const expectedId = $tmdbId;
+      const expectedSeason = $seasonNumber;
+      const expectedEpisode = $episodeNumber;
+      const current = new URL(location.href);
+      const watchPath = "/watch/" + expectedId;
+      const seriesPath = "/series/" + expectedId;
+      const currentPath = current.pathname.replace(/\/+$/, "") || "/";
+
+      if (currentPath === watchPath) {
+        const exact = Number(current.searchParams.get("s")) === expectedSeason &&
+          Number(current.searchParams.get("e")) === expectedEpisode;
+        if (!exact) return "wrong-route";
+        return document.querySelector(".player iframe, iframe[title^='Video Player']")
+          ? "ready"
+          : "waiting-player";
+      }
+      if (currentPath !== seriesPath) return "wrong-route";
+
+      const seasonSelect = Array.from(document.querySelectorAll("select")).find((candidate) => {
+        const options = Array.from(candidate.options || []);
+        return options.some((option) => Number(option.value) === expectedSeason) &&
+          options.some((option) => /season/i.test(option.textContent || ""));
+      });
+      if (!seasonSelect) return "waiting-details";
+      if (Number(seasonSelect.value) !== expectedSeason) {
+        seasonSelect.value = String(expectedSeason);
+        seasonSelect.dispatchEvent(new Event("input", { bubbles: true }));
+        seasonSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        return "season-changed";
+      }
+
+      const episodeLinks = Array.from(document.querySelectorAll("a[href]"));
+      const exactLink = episodeLinks.find((link) => {
+        try {
+          const target = new URL(link.href, location.href);
+          return target.pathname.replace(/\/+$/, "") === watchPath &&
+            Number(target.searchParams.get("s")) === expectedSeason &&
+            Number(target.searchParams.get("e")) === expectedEpisode;
+        } catch (_) {
+          return false;
+        }
+      });
+      if (exactLink) {
+        exactLink.click();
+        return "episode-clicked";
+      }
+
+      const episodeSection = Array.from(document.querySelectorAll("section,div")).find((node) => {
+        const heading = node.querySelector(":scope > h2, :scope > h3, :scope > .title-row h3");
+        return /episodes/i.test(heading?.textContent || "");
+      });
+      const expandButton = episodeSection?.querySelector(
+        ".title-extend button, button [class*='chevron-down']"
+      )?.closest("button");
+      if (expandButton) {
+        expandButton.click();
+        return "episodes-expanded";
+      }
+      return "waiting-episodes";
+    })();
+    """.trimIndent()
 
 internal fun mobileMoviepireShieldOriginRules(sourceHost: String): Set<String> {
     val cleanSourceHost = sourceHost
