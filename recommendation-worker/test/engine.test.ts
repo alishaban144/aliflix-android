@@ -1193,7 +1193,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
           id: 56,
           name: 'Looped Again',
           first_air_date: '2022-01-01',
-          overview: 'A detective repeatedly relives the same day while solving a murder.',
+          overview: 'A detective is trapped in a time loop while solving a murder.',
         }],
       }),
       details: async (_type: string, id: number) => id === 55
@@ -1209,7 +1209,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
             id,
             name: 'Looped Again',
             first_air_date: '2022-01-01',
-            overview: 'A detective repeatedly relives the same day while solving a murder.',
+            overview: 'A detective is trapped in a time loop while solving a murder.',
             genres: [{ id: 18, name: 'Drama' }, { id: 9648, name: 'Mystery' }],
             keywords: { results: [{ id: 9, name: 'time loop' }] },
           },
@@ -1235,6 +1235,58 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
 
     expect(results.map(result => result.title)).toEqual(['Looped Again']);
     expect(results[0].retrievalSources).toContain('tmdb:similarity-evidence-fallback');
+  });
+
+  it('rejects a high-confidence generated Similar title when only its genre overlaps', async () => {
+    const tmdb = {
+      ...fakeTmdb(),
+      searchTitle: async () => ({
+        page: 1, total_pages: 1, total_results: 1,
+        results: [{
+          id: 57,
+          name: 'Unrelated Hospital Drama',
+          first_air_date: '2022-01-01',
+          overview: 'Surgeons pioneer new medical procedures at a busy hospital.',
+        }],
+      }),
+      details: async (_type: string, id: number) => id === 55
+        ? {
+            id,
+            name: 'Canonical Anchor',
+            first_air_date: '2020-01-01',
+            overview: 'A detective investigates a serial murderer.',
+            genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }],
+            keywords: { results: [{ id: 9, name: 'serial killer' }] },
+          }
+        : {
+            id,
+            name: 'Unrelated Hospital Drama',
+            first_air_date: '2022-01-01',
+            overview: 'Surgeons pioneer new medical procedures at a busy hospital.',
+            genres: [{ id: 18, name: 'Drama' }],
+            keywords: { results: [{ id: 10, name: 'hospital' }] },
+          },
+    };
+
+    const results = await processRecommendation({} as any, {
+      ...request,
+      mode: 'similar',
+      mediaType: 'tv',
+      anchor: { tmdbId: 55, title: 'Canonical Anchor', mediaType: 'tv' },
+    }, {
+      tmdb: tmdb as any,
+      recommendSimilar: async () => [{
+        title: 'Unrelated Hospital Drama',
+        releaseYear: 2022,
+        confidence: .96,
+        reason: 'A fabricated claim of a detective-led murder investigation.',
+      }],
+      assessSimilarity: async () => {
+        throw new ServiceError('GROQ_UNAVAILABLE', 'temporary verifier outage', 503, true);
+      },
+    });
+
+    expect(results).toEqual([]);
   });
 
   it('does not hide a non-retryable Describe configuration failure behind fallback results', async () => {

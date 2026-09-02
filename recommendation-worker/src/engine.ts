@@ -562,6 +562,22 @@ function deterministicSimilarityAssessments(
   anchors: SimilarAnchorDocument[],
   candidates: PremiseCandidateDocument[],
 ): PremiseAssessment[] {
+  const narrativeStem = (token: string): string => {
+    if (/^(murder|kill|homicid)/.test(token)) return 'homicide';
+    if (/^investigat/.test(token)) return 'investigate';
+    if (/^detectiv/.test(token)) return 'detective';
+    return token;
+  };
+  const overviewSupportsKeyword = (overview: string, keyword: string): boolean => {
+    const overviewTokens = new Set(
+      canonicalConceptPhrase(overview).split(' ').filter(Boolean).map(narrativeStem),
+    );
+    const keywordTokens = canonicalConceptPhrase(keyword)
+      .split(' ')
+      .filter(Boolean)
+      .map(narrativeStem);
+    return keywordTokens.length > 0 && keywordTokens.every(token => overviewTokens.has(token));
+  };
   return candidates.flatMap(candidate => {
     if (candidate.aiConfidence < .70) return [];
     const sources = new Set(candidate.retrievalSources || []);
@@ -576,6 +592,9 @@ function deterministicSimilarityAssessments(
     const isGeneratedRecommendation = [...sources].some(source => (
       source.endsWith(':similar-recommendation')
     ));
+    const isTitleNeighborRecommendation = [...sources].some(source => (
+      source.startsWith('tmdb:anchor-title-neighbor-recommendations')
+    ));
     const candidateKeywords = new Set(candidate.keywords.map(canonicalConceptPhrase).filter(Boolean));
     const candidateGenres = new Set(candidate.genres.map(normalize).filter(Boolean));
     const anchorEvidence = anchors.map(anchor => {
@@ -587,12 +606,22 @@ function deterministicSimilarityAssessments(
         keyword.split(' ').filter(Boolean).length >= 2
       )).length;
       const overviewSharedKeywords = sharedKeywordValues.filter(keyword => (
-        metadataContains(candidate.overview, keyword)
+        overviewSupportsKeyword(candidate.overview, keyword)
+      )).length;
+      const overviewSpecificSharedKeywords = sharedKeywordValues.filter(keyword => (
+        keyword.split(' ').filter(Boolean).length >= 2 &&
+        overviewSupportsKeyword(candidate.overview, keyword)
       )).length;
       const sharedGenres = anchor.genres
         .map(normalize)
         .filter(genre => genre && candidateGenres.has(genre)).length;
-      return { sharedKeywords, specificSharedKeywords, overviewSharedKeywords, sharedGenres };
+      return {
+        sharedKeywords,
+        specificSharedKeywords,
+        overviewSharedKeywords,
+        overviewSpecificSharedKeywords,
+        sharedGenres,
+      };
     });
     // TMDB recommendation/Similar lanes are useful candidate generators, but
     // two broad genres (for example Drama + Crime) are not enough to prove a
@@ -606,9 +635,16 @@ function deterministicSimilarityAssessments(
         evidence.overviewSharedKeywords >= 1
       )
     ));
-    const accepted = (isDirectTmdbRelation && metadataGroundedForEveryAnchor) ||
-      (isKeywordRetrieval && metadataGroundedForEveryAnchor) ||
-      (isGeneratedRecommendation && metadataGroundedForEveryAnchor);
+    const centrallyGroundedForEveryAnchor = anchorEvidence.every(evidence => (
+      evidence.sharedGenres >= 1 && (
+        evidence.overviewSpecificSharedKeywords >= 1 ||
+        evidence.overviewSharedKeywords >= 2
+      )
+    ));
+    const accepted = (isTitleNeighborRecommendation && metadataGroundedForEveryAnchor) ||
+      (isDirectTmdbRelation && centrallyGroundedForEveryAnchor) ||
+      (isKeywordRetrieval && centrallyGroundedForEveryAnchor) ||
+      (isGeneratedRecommendation && centrallyGroundedForEveryAnchor);
     if (!accepted) return [];
     const evidenceCount = anchorEvidence.reduce(
       (total, evidence) => total + evidence.sharedKeywords + Math.min(2, evidence.sharedGenres),
