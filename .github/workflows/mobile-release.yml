@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.53"
+      - "release/v3.1.54"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.53"
+        description: "Release tag, for example v3.1.54"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "143"
-  RELEASE_VERSION_NAME: "3.1.53"
+  RELEASE_VERSION_CODE: "144"
+  RELEASE_VERSION_NAME: "3.1.54"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Completes SubDL subtitle support by restoring exact movie retrieval while preserving exact TV episode and season-pack matching, secure downloads, video-clock synchronization, timing adjustment, text sizing, server switching, and background Cast playback."
+            "releaseNotes": "Hardens SubDL subtitles with exact TMDB and IMDb identity verification, the current v2 search API, exact TV episode matching, and automatic recovery from expired subtitle-file links."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Completes SubDL subtitle support by restoring exact movie retrieval while preserving exact TV episode and season-pack matching, secure downloads, video-clock synchronization, timing adjustment, text sizing, server switching, and background Cast playback."
+          body: "Hardens SubDL subtitles with exact TMDB and IMDb identity verification, the current v2 search API, exact TV episode matching, and automatic recovery from expired subtitle-file links."
           files: |
             aliflix-mobile.apk
             update-mobile.json

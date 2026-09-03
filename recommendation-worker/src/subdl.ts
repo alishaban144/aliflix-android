@@ -1,6 +1,8 @@
 import { RecommendationEnv, ServiceError } from './types';
+import { TmdbClient } from './tmdb';
 
-const SUBDL_SEARCH_URL = 'https://api.subdl.com/api/v1/subtitles';
+const SUBDL_SEARCH_URL = 'https://api.subdl.com/api/v2/subtitles/search';
+const SUBDL_API_ORIGIN = 'https://api.subdl.com';
 const SUBDL_DOWNLOAD_ORIGIN = 'https://dl.subdl.com';
 const SUBDL_TIMEOUT_MILLIS = 12_000;
 const MAX_SUBDL_JSON_BYTES = 1_048_576;
@@ -8,7 +10,7 @@ const MAX_SUBTITLE_FILE_BYTES = 8_388_608;
 
 interface SubdlSearchDocument {
   status?: boolean;
-  error?: string;
+  error?: string | { message?: string };
   results?: unknown[];
   subtitles?: unknown[];
 }
@@ -85,6 +87,11 @@ function optionalString(record: Record<string, unknown>, ...keys: string[]): str
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return '';
+}
+
+function normalizedImdbId(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  return /^tt\d{5,12}$/.test(normalized) ? normalized : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -181,6 +188,15 @@ export function decodeSubdlDownloadToken(token: string): URL | null {
   }
 }
 
+function v2DownloadFallback(target: URL): URL | null {
+  const segments = target.pathname.split('/').filter(Boolean);
+  const nId = segments.length >= 2 && segments[0] === 'subtitle' ? segments[1] : '';
+  if (!/^[A-Za-z0-9_-]{4,100}$/.test(nId)) return null;
+  const fallback = new URL(`/api/v2/subtitles/${encodeURIComponent(nId)}/download`, SUBDL_API_ORIGIN);
+  fallback.searchParams.set('format', 'file');
+  return fallback;
+}
+
 function collectCandidates(document: SubdlSearchDocument): SubdlTrackCandidate[] {
   const candidates: SubdlTrackCandidate[] = [];
   for (const rawSubtitle of document.subtitles || []) {
@@ -207,14 +223,24 @@ export function parseSubdlSearchDocument(
   tmdbId: number,
   season?: number,
   episode?: number,
+  expectedImdbId?: string,
 ): SubtitleTrackResponse[] {
   if (document.status === false) {
-    throw new ServiceError('SUBDL_ERROR', document.error || 'SubDL could not search for subtitles', 502, true);
+    const errorMessage = typeof document.error === 'string'
+      ? document.error
+      : document.error?.message;
+    throw new ServiceError('SUBDL_ERROR', errorMessage || 'SubDL could not search for subtitles', 502, true);
   }
   const resultMatches = (document.results || []).some(rawResult => {
     const result = asRecord(rawResult);
-    return result !== null && optionalInteger(result.tmdb_id) === tmdbId &&
-      (!optionalString(result, 'type') || optionalString(result, 'type').toLowerCase() === mediaType);
+    if (!result) return false;
+    const resultType = optionalString(result, 'type').toLowerCase();
+    const resultTmdbId = optionalInteger(result.tmdb_id);
+    const resultImdbId = normalizedImdbId(optionalString(result, 'imdb_id'));
+    const exactIdentity = expectedImdbId
+      ? resultImdbId === expectedImdbId && (resultTmdbId === undefined || resultTmdbId === tmdbId)
+      : resultTmdbId === tmdbId;
+    return exactIdentity && (!resultType || resultType === mediaType);
   });
   if (!resultMatches) return [];
 
@@ -273,22 +299,33 @@ export async function searchSubdlSubtitles(
     ? positiveInteger(requestUrl.searchParams.get('episode'), 'episode')
     : undefined;
 
+  const externalIds = await new TmdbClient(env, 3).externalIds(mediaType, tmdbId);
+  const imdbId = normalizedImdbId(externalIds.imdb_id || '');
+  if (!imdbId) {
+    throw new ServiceError(
+      'SUBTITLE_IDENTITY_UNAVAILABLE',
+      'Subtitles could not verify this title yet',
+      502,
+      true,
+    );
+  }
+
   const upstreamUrl = new URL(SUBDL_SEARCH_URL);
-  upstreamUrl.searchParams.set('api_key', key);
-  upstreamUrl.searchParams.set('tmdb_id', String(tmdbId));
+  upstreamUrl.searchParams.set('imdb_id', imdbId);
   upstreamUrl.searchParams.set('type', mediaType);
   upstreamUrl.searchParams.set('subs_per_page', '30');
   upstreamUrl.searchParams.set('unpack', '1');
-  upstreamUrl.searchParams.set('releases', '1');
-  upstreamUrl.searchParams.set('hi', '1');
-  upstreamUrl.searchParams.set('client', 'custom_integration');
   if (season !== undefined && episode !== undefined) {
-    upstreamUrl.searchParams.set('full_season', '1');
-    upstreamUrl.searchParams.set('season_number', String(season));
-    upstreamUrl.searchParams.set('episode_number', String(episode));
+    upstreamUrl.searchParams.set('season', String(season));
+    upstreamUrl.searchParams.set('episode', String(episode));
   }
 
-  const response = await fetchWithTimeout(upstreamUrl, { headers: { accept: 'application/json' } });
+  const response = await fetchWithTimeout(upstreamUrl, {
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${key}`,
+    },
+  });
   if (!response.ok) {
     throw new ServiceError('SUBDL_UNAVAILABLE', 'SubDL could not search for subtitles', 502, response.status >= 500);
   }
@@ -310,7 +347,7 @@ export async function searchSubdlSubtitles(
     mediaKey: mediaType === 'movie'
       ? `movie:${tmdbId}`
       : `tv:${tmdbId}:s${season}:e${episode}`,
-    tracks: parseSubdlSearchDocument(document, mediaType, tmdbId, season, episode),
+    tracks: parseSubdlSearchDocument(document, mediaType, tmdbId, season, episode, imdbId),
   };
 }
 
@@ -336,6 +373,18 @@ export async function downloadSubdlSubtitle(
     response = await fetchWithTimeout(target, {
       headers: { accept: 'application/zip, text/plain, text/vtt, application/octet-stream' },
     });
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    const fallback = v2DownloadFallback(target);
+    if (fallback) {
+      response = await fetchWithTimeout(fallback, {
+        headers: {
+          accept: 'application/zip, text/plain, text/vtt, application/octet-stream',
+          authorization: `Bearer ${key}`,
+        },
+      });
+    }
   }
   if (!response.ok || !response.body) {
     throw new ServiceError('SUBDL_DOWNLOAD_FAILED', 'SubDL could not download this subtitle', 502, response.status >= 500);

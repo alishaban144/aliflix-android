@@ -58,6 +58,11 @@ export interface TmdbDetails extends TmdbListItem {
   production_companies?: TmdbCompany[];
 }
 
+export interface TmdbExternalIds {
+  imdb_id?: string | null;
+  tvdb_id?: number | null;
+}
+
 export interface TmdbCombinedCredits {
   cast?: Array<TmdbListItem & { media_type?: MediaType; character?: string }>;
   crew?: Array<TmdbListItem & { media_type?: MediaType; job?: string; department?: string }>;
@@ -134,6 +139,9 @@ export class TmdbClient {
         ? 'keywords,aggregate_credits,external_ids,reviews,content_ratings,recommendations,similar'
         : 'keywords,credits,external_ids,reviews,release_dates,recommendations,similar',
     });
+  }
+  externalIds(type: MediaType, id: number): Promise<TmdbExternalIds> {
+    return this.request(`/${type}/${id}/external_ids`);
   }
   recommendations(type: MediaType, id: number, page = 1): Promise<TmdbPage> {
     return this.request(`/${type}/${id}/recommendations`, { page, language: 'en-US' });
