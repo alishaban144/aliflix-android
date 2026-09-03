@@ -10,6 +10,42 @@ const env: any = {
 afterEach(() => vi.restoreAllMocks());
 
 describe('SubDL subtitle proxy', () => {
+  it('keeps TV-only parameters out of exact movie searches', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      expect(url.searchParams.get('api_key')).toBe('private-subdl-key');
+      expect(url.searchParams.get('tmdb_id')).toBe('27205');
+      expect(url.searchParams.get('type')).toBe('movie');
+      expect(url.searchParams.get('unpack')).toBe('1');
+      expect(url.searchParams.has('full_season')).toBe(false);
+      expect(url.searchParams.has('season_number')).toBe(false);
+      expect(url.searchParams.has('episode_number')).toBe(false);
+      return new Response(JSON.stringify({
+        status: true,
+        results: [{ tmdb_id: 27205, type: 'movie', name: 'Inception' }],
+        subtitles: [{
+          name: 'Inception.2010.1080p.srt',
+          release_name: 'Inception.2010.1080p',
+          language: 'EN',
+          format: 'srt',
+          url: '/subtitle/inception/en',
+        }],
+      }), { headers: { 'content-type': 'application/json' } });
+    });
+
+    const response = await worker.fetch(new Request(
+      'https://worker.test/v3/subtitles?type=movie&tmdbId=27205',
+    ), env);
+    const body: any = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body.mediaKey).toBe('movie:27205');
+    expect(body.tracks).toHaveLength(1);
+    expect(body.tracks[0].fileName).toBe('Inception.2010.1080p.srt');
+    expect(JSON.stringify(body)).not.toContain('private-subdl-key');
+  });
+
   it('searches TV subtitles by exact TMDB season and episode without exposing the key', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       const url = new URL(input instanceof Request ? input.url : String(input));

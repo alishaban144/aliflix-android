@@ -279,11 +279,11 @@ export async function searchSubdlSubtitles(
   upstreamUrl.searchParams.set('type', mediaType);
   upstreamUrl.searchParams.set('subs_per_page', '30');
   upstreamUrl.searchParams.set('unpack', '1');
-  upstreamUrl.searchParams.set('full_season', '1');
   upstreamUrl.searchParams.set('releases', '1');
   upstreamUrl.searchParams.set('hi', '1');
   upstreamUrl.searchParams.set('client', 'custom_integration');
   if (season !== undefined && episode !== undefined) {
+    upstreamUrl.searchParams.set('full_season', '1');
     upstreamUrl.searchParams.set('season_number', String(season));
     upstreamUrl.searchParams.set('episode_number', String(episode));
   }
