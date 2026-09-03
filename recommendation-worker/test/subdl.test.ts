@@ -20,6 +20,7 @@ describe('SubDL subtitle proxy', () => {
       expect(url.searchParams.get('season_number')).toBe('1');
       expect(url.searchParams.get('episode_number')).toBe('8');
       expect(url.searchParams.get('unpack')).toBe('1');
+      expect(url.searchParams.get('full_season')).toBe('1');
       return new Response(JSON.stringify({
         status: true,
         results: [{ tmdb_id: 1405, type: 'tv', name: 'Dexter' }],
