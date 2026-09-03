@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.49"
+      - "release/v3.1.50"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.49"
+        description: "Release tag, for example v3.1.50"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "139"
-  RELEASE_VERSION_NAME: "3.1.49"
+  RELEASE_VERSION_CODE: "140"
+  RELEASE_VERSION_NAME: "3.1.50"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Makes Moviepire resume reliable across app restarts and server changes, adds complete episode progress visibility, streamlines source selection, and fixes fullscreen exit."
+            "releaseNotes": "Keeps mobile Cast playback active across Home and other apps with a foreground playback session, CPU and Wi-Fi retention, route recovery, and WebView background protection."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Makes Moviepire resume reliable across app restarts and server changes, adds complete episode progress visibility, streamlines source selection, and fixes fullscreen exit."
+          body: "Keeps mobile Cast playback active across Home and other apps with a foreground playback session, CPU and Wi-Fi retention, route recovery, and WebView background protection."
           files: |
             aliflix-mobile.apk
             update-mobile.json

@@ -52,6 +52,11 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    override fun onStart() {
+        super.onStart()
+        playerController.onAppForeground()
+    }
+
     override fun onStop() {
         playerController.onAppBackground()
         super.onStop()

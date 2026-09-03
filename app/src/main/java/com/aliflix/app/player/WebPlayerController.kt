@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.media.MediaRouter
 import android.net.Uri
 import android.os.SystemClock
 import android.view.InputDevice
@@ -85,6 +86,40 @@ class WebPlayerController(
     private var playerVisible = false
     private var nativeFullscreenRequested = false
     private var orientationBeforeFullscreen = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    private var castBackgroundPlaybackRequested = false
+    private var castShouldContinuePlaying = false
+    private var appInBackground = false
+    private var castRouteWasConnected = false
+    private var castRouteCallbackRegistered = false
+    private var activePlayerReplyProxy: JavaScriptReplyProxy? = null
+    private val mediaRouter by lazy(LazyThreadSafetyMode.NONE) {
+        activity.getSystemService(MediaRouter::class.java)
+    }
+    private val castRouteCallback = object : MediaRouter.SimpleCallback() {
+        override fun onRouteSelected(
+            router: MediaRouter,
+            type: Int,
+            info: MediaRouter.RouteInfo,
+        ) {
+            if (type and MediaRouter.ROUTE_TYPE_LIVE_VIDEO == 0) return
+            castRouteWasConnected = true
+            beginCastBackgroundPlayback()
+        }
+
+        override fun onRouteUnselected(
+            router: MediaRouter,
+            type: Int,
+            info: MediaRouter.RouteInfo,
+        ) {
+            if (type and MediaRouter.ROUTE_TYPE_LIVE_VIDEO == 0 || !castRouteWasConnected) return
+            activity.window.decorView.postDelayed(
+                {
+                    if (!hasSelectedRemoteDisplayRoute()) stopCastBackgroundPlayback()
+                },
+                CAST_ROUTE_DISCONNECT_GRACE_MILLIS,
+            )
+        }
+    }
 
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -119,6 +154,7 @@ class WebPlayerController(
             _moviepireServers.value = emptyList()
             _switchingMoviepireServer.value = false
             _playing.value = false
+            activePlayerReplyProxy = null
             moviepireEpisodeBootstrapReloads = 0
             _error.value = null
             view.stopLoading()
@@ -234,6 +270,7 @@ class WebPlayerController(
     fun setVisible(visible: Boolean) {
         if (playerVisible && !visible) flushProgress(urgentCloudSync = true)
         playerVisible = visible
+        if (!visible) stopCastBackgroundPlayback()
         if (!visible && (customView != null || nativeFullscreenRequested)) {
             hideCustomView()
         } else {
@@ -264,6 +301,8 @@ class WebPlayerController(
     }
 
     fun openCastPicker() {
+        registerCastRouteCallback()
+        beginCastBackgroundPlayback()
         val opened = runCatching {
             activity.startActivity(
                 Intent(Settings.ACTION_CAST_SETTINGS).apply {
@@ -272,6 +311,7 @@ class WebPlayerController(
             )
         }.isSuccess
         if (!opened) {
+            stopCastBackgroundPlayback()
             Toast.makeText(
                 activity,
                 "Cast settings are unavailable on this device",
@@ -311,6 +351,8 @@ class WebPlayerController(
 
     fun destroy() {
         flushProgress(urgentCloudSync = true)
+        stopCastBackgroundPlayback()
+        unregisterCastRouteCallback()
         hideCustomView()
         playerVisible = false
         setSystemBarsVisible(activity, true)
@@ -328,12 +370,100 @@ class WebPlayerController(
         webView = null
         loadedKey = null
         activeSelection = null
+        activePlayerReplyProxy = null
         _switchingMoviepireServer.value = false
     }
 
     fun onAppBackground() {
+        appInBackground = true
         flushProgress(urgentCloudSync = true)
+        if (shouldKeepCastPlaybackAlive(castBackgroundPlaybackRequested, playerVisible)) {
+            sustainCastPlayback()
+        }
     }
+
+    fun onAppForeground() {
+        appInBackground = false
+        if (shouldKeepCastPlaybackAlive(castBackgroundPlaybackRequested, playerVisible)) {
+            sustainCastPlayback()
+        }
+    }
+
+    private fun beginCastBackgroundPlayback() {
+        if (BuildConfig.IS_TV || !playerVisible || activeSelection == null) return
+        castShouldContinuePlaying = castShouldContinuePlaying || _playing.value
+        castBackgroundPlaybackRequested = CastSessionKeepAlive.start(activity)
+        if (castBackgroundPlaybackRequested) sustainCastPlayback()
+    }
+
+    private fun stopCastBackgroundPlayback() {
+        if (castBackgroundPlaybackRequested) {
+            postCastPlaybackState(keepAlive = false, shouldPlay = false)
+        }
+        CastSessionKeepAlive.stop(activity)
+        castBackgroundPlaybackRequested = false
+        castShouldContinuePlaying = false
+        castRouteWasConnected = false
+    }
+
+    private fun sustainCastPlayback() {
+        val view = webView ?: return
+        view.onResume()
+        view.resumeTimers()
+        view.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+        postCastPlaybackState(
+            keepAlive = true,
+            shouldPlay = castShouldContinuePlaying,
+        )
+    }
+
+    private fun postCastPlaybackState(
+        keepAlive: Boolean,
+        shouldPlay: Boolean,
+    ) {
+        val view = webView ?: return
+        val command = JSONObject()
+            .put("type", "aliflix-cast-keepalive")
+            .put("active", keepAlive)
+            .put("shouldPlay", shouldPlay)
+            .toString()
+        activePlayerReplyProxy?.let { proxy -> runCatching { proxy.postMessage(command) } }
+        view.evaluateJavascript(
+            """
+            (() => {
+              const message = $command;
+              window.postMessage(message, "*");
+              document.querySelectorAll("iframe").forEach(frame => {
+                try { frame.contentWindow?.postMessage(message, "*"); } catch (_) {}
+              });
+              return true;
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun registerCastRouteCallback() {
+        if (BuildConfig.IS_TV || castRouteCallbackRegistered) return
+        runCatching {
+            mediaRouter.addCallback(MediaRouter.ROUTE_TYPE_LIVE_VIDEO, castRouteCallback)
+            castRouteCallbackRegistered = true
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun unregisterCastRouteCallback() {
+        if (!castRouteCallbackRegistered) return
+        runCatching { mediaRouter.removeCallback(castRouteCallback) }
+        castRouteCallbackRegistered = false
+    }
+
+    @Suppress("DEPRECATION")
+    private fun hasSelectedRemoteDisplayRoute(): Boolean = runCatching {
+        val selected = mediaRouter.getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_VIDEO)
+        selected != mediaRouter.defaultRoute && selected.isEnabled
+    }.getOrDefault(false)
 
     private fun loadSelection(
         view: WebView,
@@ -468,8 +598,28 @@ class WebPlayerController(
         }
         latestDurationSeconds = duration
         when (event) {
-            "play" -> _playing.value = true
-            "pause", "ended" -> _playing.value = false
+            "play" -> {
+                _playing.value = true
+                if (castBackgroundPlaybackRequested) castShouldContinuePlaying = true
+            }
+            "pause" -> {
+                _playing.value = false
+                if (!appInBackground) castShouldContinuePlaying = false
+            }
+            "ended" -> {
+                _playing.value = false
+                castShouldContinuePlaying = false
+            }
+        }
+        activePlayerReplyProxy = replyProxy
+        if (
+            castBackgroundPlaybackRequested &&
+            event in setOf("loadedmetadata", "play", "pause")
+        ) {
+            postCastPlaybackState(
+                keepAlive = true,
+                shouldPlay = castShouldContinuePlaying,
+            )
         }
         pendingSeekSeconds?.let { seek ->
             val switchingServer = pendingServerKey != null
@@ -614,14 +764,17 @@ class WebPlayerController(
                 cacheMode = WebSettings.LOAD_DEFAULT
                 useWideViewPort = true
                 loadWithOverviewMode = true
+                offscreenPreRaster = true
                 userAgentString = browserCompatibleUserAgent(userAgentString.orEmpty())
             }
+            setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
             cookieManager.setAcceptThirdPartyCookies(this, true)
 
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                     _loading.value = true
                     _error.value = null
+                    activePlayerReplyProxy = null
                     view?.alpha = 1f
                     val selection = activeSelection
                     if (!BuildConfig.IS_TV && selection?.source?.provider?.usesMoviepire == true) {
@@ -1847,6 +2000,7 @@ class WebPlayerController(
         const val SERVER_SWITCH_SEEK_DELAY_MILLIS = 350L
         const val SERVER_SWITCH_UI_TIMEOUT_MILLIS = 12_000L
         const val SEEK_RESTORE_TOLERANCE_SECONDS = 3.0
+        const val CAST_ROUTE_DISCONNECT_GRACE_MILLIS = 2_000L
         const val MOVIEPIRE_EPISODE_RESOLUTION_RETRY_MILLIS = 450L
         const val MAX_MOVIEPIRE_EPISODE_RESOLUTION_ATTEMPTS = 32
         const val MAX_MOVIEPIRE_EPISODE_BOOTSTRAP_RELOADS = 1
@@ -1876,6 +2030,11 @@ internal fun playbackRestoreStillPending(
     pendingSeekSeconds: Double?,
 ): Boolean = pendingSeekSeconds != null &&
     reportedPositionSeconds < pendingSeekSeconds - 3.0
+
+internal fun shouldKeepCastPlaybackAlive(
+    castRequested: Boolean,
+    playerVisible: Boolean,
+): Boolean = castRequested && playerVisible
 
 internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
     !BuildConfig.IS_TV &&
@@ -2077,6 +2236,9 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
       let lastTimeUpdateSentAt = 0;
       let pendingSeekSeconds = null;
       let seekGeneration = 0;
+      let castKeepAliveActive = false;
+      let castShouldPlay = false;
+      let castGeneration = 0;
       const minimumDurationSeconds = 60;
       const validNumber = (value) => Number.isFinite(value) && value >= 0;
       const videoScore = (video) => {
@@ -2127,6 +2289,30 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
             if (generation === seekGeneration && pendingSeekSeconds !== null) {
               seekActiveVideo();
             }
+          }, delay);
+        });
+      };
+      const sustainCastPlayback = () => {
+        if (!castKeepAliveActive) return;
+        const video = activeVideo && activeVideo.isConnected
+          ? activeVideo
+          : document.querySelector("video");
+        if (!video) return;
+        activate(video);
+        if (castShouldPlay && video.paused && !video.ended) {
+          try {
+            const result = video.play();
+            if (result && typeof result.catch === "function") result.catch(() => {});
+          } catch (_) {}
+        }
+      };
+      const setCastKeepAlive = (active, shouldPlay) => {
+        castKeepAliveActive = active === true;
+        castShouldPlay = castKeepAliveActive && shouldPlay === true;
+        const generation = ++castGeneration;
+        [0, 120, 400, 1000, 2500, 5000].forEach((delay) => {
+          window.setTimeout(() => {
+            if (generation === castGeneration) sustainCastPlayback();
           }, delay);
         });
       };
@@ -2181,21 +2367,36 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
         subtree: true
       });
       document.addEventListener("DOMContentLoaded", scan, { once: true });
+      document.addEventListener("visibilitychange", () => {
+        if (castKeepAliveActive) {
+          window.setTimeout(sustainCastPlayback, 0);
+          window.setTimeout(sustainCastPlayback, 300);
+          window.setTimeout(sustainCastPlayback, 1200);
+        }
+      }, true);
+      window.addEventListener("pageshow", sustainCastPlayback, true);
       scan();
 
-      const receiveSeek = (raw) => {
+      const receiveCommand = (raw) => {
         let data = raw;
         if (typeof raw === "string") {
-          try { data = JSON.parse(raw); } catch (_) { return; }
+          try { data = JSON.parse(raw); } catch (_) { return false; }
         }
-        if (!data || data.type !== "aliflix-seek") return;
-        requestSeek(Number(data.seconds));
+        if (!data) return false;
+        if (data.type === "aliflix-seek") {
+          requestSeek(Number(data.seconds));
+          return true;
+        }
+        if (data.type === "aliflix-cast-keepalive") {
+          setCastKeepAlive(data.active, data.shouldPlay);
+          return true;
+        }
+        return false;
       };
-      bridge.onmessage = (event) => receiveSeek(event.data);
+      bridge.onmessage = (event) => receiveCommand(event.data);
       window.addEventListener("message", (event) => {
         const data = event.data;
-        if (!data || data.type !== "aliflix-seek") return;
-        receiveSeek(data);
+        if (!receiveCommand(data)) return;
         // Relay down through arbitrary iframe depth. Android also replies directly to the exact
         // frame that reported progress, while this path covers players that become ready first.
         document.querySelectorAll("iframe").forEach((frame) => {

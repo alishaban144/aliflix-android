@@ -151,11 +151,17 @@ class WebPlayerCompatibilityTest {
             "video.seekable.length",
             "11000",
             "frame.contentWindow?.postMessage",
+            "aliflix-cast-keepalive",
+            "castKeepAliveActive",
+            "visibilitychange",
+            "sustainCastPlayback",
+            "video.play()",
         ).forEach { marker -> assertTrue(marker, script.contains(marker)) }
         assertFalse(script.contains("contentDocument"))
         assertFalse(script.contains("addJavascriptInterface"))
         assertFalse(script.contains("aliflix-fullscreen"))
         assertFalse(script.contains("requestFullscreen"))
+        assertFalse(script.contains("document.hidden ="))
     }
 
     @Test
@@ -172,5 +178,12 @@ class WebPlayerCompatibilityTest {
         assertTrue(playbackRestoreStillPending(1_300.0, 1_337.0))
         assertFalse(playbackRestoreStillPending(1_334.0, 1_337.0))
         assertFalse(playbackRestoreStillPending(0.0, null))
+    }
+
+    @Test
+    fun castKeepAliveRequiresAnOpenPlayerAndExplicitCastRequest() {
+        assertTrue(shouldKeepCastPlaybackAlive(castRequested = true, playerVisible = true))
+        assertFalse(shouldKeepCastPlaybackAlive(castRequested = false, playerVisible = true))
+        assertFalse(shouldKeepCastPlaybackAlive(castRequested = true, playerVisible = false))
     }
 }
