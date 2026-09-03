@@ -286,17 +286,7 @@ class WebPlayerController(
         nativeFullscreenRequested = true
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         setSystemBarsVisible(activity, false)
-        discoverMoviepireServers(view, selection)
-        listOf(0L, 250L, 800L).forEach { delay ->
-            view.postDelayed(
-                {
-                    if (nativeFullscreenRequested && isActiveSelection(view, selection)) {
-                        view.evaluateJavascript(moviepireFrameFullscreenScript(enable = true), null)
-                    }
-                },
-                delay,
-            )
-        }
+        view.requestLayout()
     }
 
     fun handleBack(): Boolean {
@@ -1574,9 +1564,6 @@ class WebPlayerController(
             val servers = parseMoviepireServerDiscovery(payload)
             if (servers.isNotEmpty()) {
                 _moviepireServers.value = servers
-                if (nativeFullscreenRequested) {
-                    view.evaluateJavascript(moviepireFrameFullscreenScript(enable = true), null)
-                }
                 val target = pendingServerKey
                 if (target != null && servers.any { it.key == target && it.selected }) {
                     val seek = pendingSeekSeconds
@@ -1805,7 +1792,6 @@ class WebPlayerController(
     }
 
     private fun exitNativeFullscreenMode() {
-        webView?.evaluateJavascript(moviepireFrameFullscreenScript(enable = false), null)
         nativeFullscreenRequested = false
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         setSystemBarsVisible(activity, !playerVisible)
@@ -1987,19 +1973,6 @@ internal fun moviepireServerDiscoveryScript(): String =
 
       select.dataset.aliflixServerSelect = "true";
       const wrapperControls = select.closest(".player-controls,[class*='player-controls']");
-      const fullscreenFrames = Array.from(document.querySelectorAll(
-        'iframe[allowfullscreen],iframe[allow*="fullscreen" i]'
-      )).filter((frame) => {
-        const rect = frame.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      }).sort((left, right) => {
-        const a = left.getBoundingClientRect();
-        const b = right.getBoundingClientRect();
-        return (b.width * b.height) - (a.width * a.height);
-      });
-      const playerFrame = wrapperControls?.parentElement?.querySelector("iframe[src],video") ||
-        fullscreenFrames[0];
-      if (playerFrame) playerFrame.dataset.aliflixPlayerFrame = "true";
       const servers = Array.from(select.options).map((option, index) => {
         const label = normalize(option.label || option.textContent || option.value);
         const key = "option:" + index + ":" + String(option.value || "");
@@ -2036,55 +2009,6 @@ internal fun moviepireServerDiscoveryScript(): String =
       return JSON.stringify(servers);
     })();
     """.trimIndent()
-
-/** Expands only the player element positively associated with Moviepire's server controls. */
-internal fun moviepireFrameFullscreenScript(enable: Boolean): String = if (enable) {
-    """
-    (() => {
-      const existing = window.__aliflixFullscreenLayout;
-      if (existing?.element?.isConnected) return true;
-      if (existing) {
-        if (document.body) document.body.style.overflow = existing.bodyOverflow;
-        document.documentElement.style.overflow = existing.rootOverflow;
-        delete window.__aliflixFullscreenLayout;
-      }
-      const select = document.querySelector('select[data-aliflix-server-select="true"]');
-      const controls = select?.closest(".player-controls,[class*='player-controls']");
-      const element = document.querySelector('[data-aliflix-player-frame="true"]') ||
-        controls?.parentElement?.querySelector("iframe[src],video");
-      if (!element) return false;
-      element.dataset.aliflixPlayerFrame = "true";
-      window.__aliflixFullscreenLayout = {
-        element,
-        elementStyle: element.style.cssText,
-        bodyOverflow: document.body?.style.overflow || "",
-        rootOverflow: document.documentElement.style.overflow || ""
-      };
-      element.style.setProperty("position", "fixed", "important");
-      element.style.setProperty("inset", "0", "important");
-      element.style.setProperty("width", "100vw", "important");
-      element.style.setProperty("height", "100vh", "important");
-      element.style.setProperty("max-width", "none", "important");
-      element.style.setProperty("max-height", "none", "important");
-      element.style.setProperty("z-index", "2147483647", "important");
-      if (document.body) document.body.style.overflow = "hidden";
-      document.documentElement.style.overflow = "hidden";
-      return true;
-    })();
-    """.trimIndent()
-} else {
-    """
-    (() => {
-      const state = window.__aliflixFullscreenLayout;
-      if (!state) return false;
-      if (state.element?.isConnected) state.element.style.cssText = state.elementStyle;
-      if (document.body) document.body.style.overflow = state.bodyOverflow;
-      document.documentElement.style.overflow = state.rootOverflow;
-      delete window.__aliflixFullscreenLayout;
-      return true;
-    })();
-    """.trimIndent()
-}
 
 internal fun parseMoviepireServerDiscovery(payload: String): List<MoviepireServerOption> =
     runCatching {
