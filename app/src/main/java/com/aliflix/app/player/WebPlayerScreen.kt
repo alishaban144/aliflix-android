@@ -301,8 +301,8 @@ fun WebPlayerScreen(
                     onSelectEpisode = onSelectEpisode,
                     onClose = onClose,
                     onFullscreen = {
-                        controlsVisible = false
-                        controller.requestMoviepireFullscreen()
+                        val fullscreenActive = controller.requestMoviepireFullscreen()
+                        controlsVisible = !fullscreenActive
                     },
                     onCast = controller::openCastPicker,
                 )

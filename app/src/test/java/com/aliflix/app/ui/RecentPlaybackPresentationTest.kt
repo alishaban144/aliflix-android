@@ -7,7 +7,9 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.Season
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RecentPlaybackPresentationTest {
@@ -79,6 +81,25 @@ class RecentPlaybackPresentationTest {
         assertEquals((1..12).toList(), menu.map(Episode::number))
         assertEquals(setOf(3), menu.map(Episode::seasonNumber).toSet())
         assertEquals(selected, menu.first { it.number == 7 })
+    }
+
+    @Test
+    fun episodeRingAppearsForStartedAndCompletedPlaybackOnly() {
+        val started = progress(
+            key = "tv:1405:s1:e7",
+            season = 1,
+            episode = 7,
+            title = "Circle of Friends",
+            position = 12.0,
+            duration = 3_000.0,
+            updatedAt = 1_000L,
+        )
+        val completed = started.copy(positionSeconds = 3_000.0, completed = true)
+
+        assertTrue(shouldShowPlaybackProgressRing(started))
+        assertTrue(shouldShowPlaybackProgressRing(completed))
+        assertFalse(shouldShowPlaybackProgressRing(started.copy(positionSeconds = 0.0)))
+        assertFalse(shouldShowPlaybackProgressRing(null))
     }
 
     private fun progress(

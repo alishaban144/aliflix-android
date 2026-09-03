@@ -146,6 +146,11 @@ class WebPlayerCompatibilityTest {
             "minimumDurationSeconds = 60",
             "videoScore",
             "activeVideo.isConnected",
+            "bridge.onmessage",
+            "pendingSeekSeconds",
+            "video.seekable.length",
+            "11000",
+            "frame.contentWindow?.postMessage",
         ).forEach { marker -> assertTrue(marker, script.contains(marker)) }
         assertFalse(script.contains("contentDocument"))
         assertFalse(script.contains("addJavascriptInterface"))
@@ -159,5 +164,13 @@ class WebPlayerCompatibilityTest {
         assertFalse(playbackSeekEligible(10.0, 2_400.0, switchingServer = false))
         assertTrue(playbackSeekEligible(25.0, 2_400.0, switchingServer = false))
         assertFalse(playbackSeekEligible(2_400.0, 2_400.0, switchingServer = true))
+    }
+
+    @Test
+    fun initialServerPositionCannotReplaceResumePointBeforeSeekIsConfirmed() {
+        assertTrue(playbackRestoreStillPending(0.0, 1_337.0))
+        assertTrue(playbackRestoreStillPending(1_300.0, 1_337.0))
+        assertFalse(playbackRestoreStillPending(1_334.0, 1_337.0))
+        assertFalse(playbackRestoreStillPending(0.0, null))
     }
 }

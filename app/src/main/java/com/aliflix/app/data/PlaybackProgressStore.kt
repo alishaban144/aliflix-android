@@ -117,7 +117,7 @@ class PlaybackProgressStore(context: Context) {
             .filter(::isValidPlaybackProgress)
             .associateBy(PlaybackProgress::key)
         _entries.value = normalized
-        writeEntries(normalized.values)
+        writeEntries(normalized.values, synchronous = true)
     }
 
     private fun put(
@@ -128,7 +128,7 @@ class PlaybackProgressStore(context: Context) {
         if (!isValidPlaybackProgress(progress)) return
         val updated = _entries.value.toMutableMap().apply { put(progress.key, progress) }
         _entries.value = updated
-        writeEntries(updated.values)
+        writeEntries(updated.values, synchronous = urgentCloudSync)
         if (emitMutation) {
             _mutations.tryEmit(
                 PlaybackProgressMutation.Changed(progress, urgentCloudSync),
@@ -146,11 +146,14 @@ class PlaybackProgressStore(context: Context) {
             .associateBy(PlaybackProgress::key)
     }.getOrDefault(emptyMap())
 
-    private fun writeEntries(entries: Collection<PlaybackProgress>) {
+    private fun writeEntries(
+        entries: Collection<PlaybackProgress>,
+        synchronous: Boolean = false,
+    ) {
         val json = JSONArray()
         entries.sortedByDescending(PlaybackProgress::updatedAtMillis)
             .forEach { json.put(it.toJson()) }
-        preferences.edit { putString(KEY_ENTRIES, json.toString()) }
+        preferences.edit(commit = synchronous) { putString(KEY_ENTRIES, json.toString()) }
     }
 
     private companion object {

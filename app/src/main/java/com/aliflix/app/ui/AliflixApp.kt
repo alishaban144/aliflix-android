@@ -2595,169 +2595,129 @@ private fun PlaybackProviderSelector(
     selectedProvider: PlaybackProviderId,
     onSelectProvider: (PlaybackProviderId) -> Unit,
     modifier: Modifier = Modifier,
-    onEditProviderUrl: ((PlaybackProviderId) -> Unit)? = null,
 ) {
     val providers = mobileGeneralPlaybackProviders()
+    var expanded by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(16.dp)
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(AliflixSurfaceSecondary)
-            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(20.dp))
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+    Box(modifier = modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .clickable { expanded = true },
+            shape = shape,
+            color = AliflixSurfaceSecondary,
+            border = BorderStroke(1.dp, AliflixBorderSubtle),
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Text(
-                    text = "Streaming source",
-                    color = AliflixContentPrimary,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(AliflixAccentPrimary.copy(alpha = 0.15f))
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
-            ) {
-                Text(
-                    text = "SOURCE",
-                    color = AliflixAccentSecondary,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.sp,
-                )
-            }
-        }
-
-        providers.forEach { provider ->
-            val selected = selectedProvider == provider
-            val cardShape = RoundedCornerShape(14.dp)
-            val cardBackground = if (selected) {
-                Brush.horizontalGradient(
-                    listOf(
-                        AliflixAccentPrimary.copy(alpha = 0.24f),
-                        AliflixAccentPrimary.copy(alpha = 0.08f),
-                    ),
-                )
-            } else {
-                Brush.horizontalGradient(
-                    listOf(
-                        AliflixSurfaceRaised,
-                        AliflixSurfaceRaised.copy(alpha = 0.75f),
-                    ),
-                )
-            }
-
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 62.dp)
-                    .clip(cardShape)
-                    .background(cardBackground)
-                    .border(
-                        width = if (selected) 1.5.dp else 1.dp,
-                        color = if (selected) {
-                            AliflixAccentSecondary.copy(alpha = 0.72f)
-                        } else {
-                            AliflixBorderSubtle
-                        },
-                        shape = cardShape,
-                    )
-                    .selectable(
-                        selected = selected,
-                        onClick = { onSelectProvider(provider) },
-                    )
-                    .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(11.dp))
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
                         .background(
-                            if (selected) {
-                                Brush.linearGradient(
-                                    listOf(AliflixAccentPrimary, AliflixAccentSecondary),
-                                )
-                            } else {
-                                Brush.linearGradient(
-                                    listOf(AliflixSurfacePressed, AliflixSurfaceRaised),
-                                )
-                            },
-                        )
-                        .border(
-                            1.dp,
-                            if (selected) Color.White.copy(alpha = 0.20f) else AliflixBorderSubtle,
-                            RoundedCornerShape(11.dp),
+                            Brush.linearGradient(
+                                listOf(
+                                    AliflixAccentPrimary.copy(alpha = 0.90f),
+                                    AliflixAccentSecondary.copy(alpha = 0.72f),
+                                ),
+                            ),
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = provider.displayName.take(1).uppercase(),
-                        color = if (selected) AliflixContentPrimary else AliflixContentSecondary,
-                        fontSize = 14.sp,
+                        text = selectedProvider.displayName.take(1).uppercase(),
+                        color = Color.White,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Black,
                     )
                 }
-
                 Spacer(Modifier.width(11.dp))
-
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = provider.displayName,
+                        text = "Streaming source",
+                        color = AliflixContentTertiary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp,
+                    )
+                    Text(
+                        text = selectedProvider.displayName,
                         color = AliflixContentPrimary,
                         fontSize = 14.sp,
-                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-
-                if (selected) {
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(AliflixAccentPrimary),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = "Selected provider",
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp),
+                Icon(
+                    imageVector = Icons.Rounded.ExpandMore,
+                    contentDescription = "Choose streaming source",
+                    tint = AliflixAccentSecondary,
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier
+                .widthIn(min = 250.dp)
+                .background(AliflixSurfaceRaised),
+        ) {
+            providers.forEach { provider ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = provider.displayName,
+                            color = AliflixContentPrimary,
+                            fontWeight = if (provider == selectedProvider) {
+                                FontWeight.Bold
+                            } else {
+                                FontWeight.Medium
+                            },
                         )
-                    }
-                }
-
-                if (onEditProviderUrl != null) {
-                    IconButton(
-                        onClick = { onEditProviderUrl(provider) },
-                        modifier = Modifier.size(48.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Edit,
-                            contentDescription = "Edit ${provider.displayName} URL",
-                            tint = if (selected) AliflixContentPrimary else AliflixContentSecondary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                } else {
-                    Spacer(Modifier.width(8.dp))
-                }
+                    },
+                    leadingIcon = {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (provider == selectedProvider) {
+                                        AliflixAccentPrimary
+                                    } else {
+                                        AliflixSurfacePressed
+                                    },
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = provider.displayName.take(1).uppercase(),
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                            )
+                        }
+                    },
+                    trailingIcon = if (provider == selectedProvider) {
+                        {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = "Selected source",
+                                tint = AliflixAccentSecondary,
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelectProvider(provider)
+                    },
+                )
             }
         }
     }
@@ -4698,7 +4658,7 @@ private fun DetailScreen(
                                 "Play S${mainEpisode.seasonNumber} E${mainEpisode.number}"
                             } else {
                                 "Play"
-                            } + " \u2022 " + selectedProvider.displayName,
+                            },
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -5656,9 +5616,9 @@ private fun EpisodeRow(
                     tint = Color.Black,
                 )
             }
-            if (progress != null && progress.positionSeconds > 0.0) {
+            if (shouldShowPlaybackProgressRing(progress)) {
                 PlaybackProgressRing(
-                    fraction = progress.progressFraction.toFloat(),
+                    fraction = progress!!.progressFraction.toFloat(),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(6.dp),
@@ -5712,10 +5672,8 @@ private fun EpisodeRow(
                     "English episode summary is not available yet."
                 },
                 color = Color.White.copy(alpha = 0.66f),
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
             )
             EpisodeRatingPill(
                 source = "IMDb",
@@ -5725,6 +5683,9 @@ private fun EpisodeRow(
         }
     }
 }
+
+internal fun shouldShowPlaybackProgressRing(progress: PlaybackProgress?): Boolean =
+    progress != null && (progress.positionSeconds > 0.0 || progress.completed)
 
 @Composable
 private fun PlaybackProgressRing(

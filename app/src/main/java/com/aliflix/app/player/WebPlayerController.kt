@@ -84,6 +84,7 @@ class WebPlayerController(
     private var moviepireEpisodeBootstrapReloads = 0
     private var playerVisible = false
     private var nativeFullscreenRequested = false
+    private var orientationBeforeFullscreen = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -279,14 +280,21 @@ class WebPlayerController(
         }
     }
 
-    fun requestMoviepireFullscreen() {
-        val selection = activeSelection ?: return
-        val view = webView ?: return
-        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
+    fun requestMoviepireFullscreen(): Boolean {
+        val selection = activeSelection ?: return false
+        val view = webView ?: return false
+        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return false
+        if (nativeFullscreenRequested) {
+            exitNativeFullscreenMode()
+            view.requestLayout()
+            return false
+        }
+        orientationBeforeFullscreen = activity.requestedOrientation
         nativeFullscreenRequested = true
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         setSystemBarsVisible(activity, false)
         view.requestLayout()
+        return true
     }
 
     fun handleBack(): Boolean {
@@ -412,7 +420,7 @@ class WebPlayerController(
                         val selection = activeSelection ?: return
                         if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
                         if (!isApprovedMoviepireProgressOrigin(sourceOrigin, selection)) return
-                        handlePlaybackMessage(view, selection, message.data)
+                        handlePlaybackMessage(view, selection, message.data, replyProxy)
                     }
                 },
             )
@@ -443,6 +451,7 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
         raw: String?,
+        replyProxy: JavaScriptReplyProxy,
     ) {
         if (!isActiveSelection(view, selection) || raw.isNullOrBlank()) return
         val payload = runCatching { JSONObject(raw) }.getOrNull() ?: return
@@ -457,7 +466,6 @@ class WebPlayerController(
         ) {
             return
         }
-        latestPositionSeconds = position.coerceAtMost(duration)
         latestDurationSeconds = duration
         when (event) {
             "play" -> _playing.value = true
@@ -473,7 +481,7 @@ class WebPlayerController(
                 playbackSeekEligible(seek, duration, switchingServer) &&
                 position < seek - SEEK_RESTORE_TOLERANCE_SECONDS
             ) {
-                postSeekToMoviepirePlayer(view, seek)
+                postSeekToMoviepirePlayer(view, seek, replyProxy)
             }
             if (position >= seek - SEEK_RESTORE_TOLERANCE_SECONDS) {
                 pendingSeekSeconds = null
@@ -481,6 +489,16 @@ class WebPlayerController(
                 _switchingMoviepireServer.value = false
             }
         }
+        // A newly-created server frame normally reports 0 before it can accept a seek. Never let
+        // that bootstrap position overwrite the durable resume point. The exact frame that emitted
+        // this event receives the seek above and its later progress event confirms restoration.
+        val stillRestoring = playbackRestoreStillPending(
+            reportedPositionSeconds = position,
+            pendingSeekSeconds = pendingSeekSeconds,
+        )
+        if (stillRestoring) return
+
+        latestPositionSeconds = position.coerceAtMost(duration)
         val now = SystemClock.elapsedRealtime()
         val urgent = event in setOf("pause", "ended", "seeked")
         if (urgent || now - lastLocalProgressWriteAt >= LOCAL_PROGRESS_INTERVAL_MILLIS) {
@@ -507,8 +525,19 @@ class WebPlayerController(
         lastLocalProgressWriteAt = SystemClock.elapsedRealtime()
     }
 
-    private fun postSeekToMoviepirePlayer(view: WebView, seconds: Double) {
+    private fun postSeekToMoviepirePlayer(
+        view: WebView,
+        seconds: Double,
+        replyProxy: JavaScriptReplyProxy? = null,
+    ) {
         if (!seconds.isFinite() || seconds < 0.0) return
+        val command = JSONObject()
+            .put("type", "aliflix-seek")
+            .put("seconds", seconds)
+            .toString()
+        // WebKit replies to the precise origin/frame that reported its video state. This avoids
+        // relying on how deeply a particular Moviepire server nests its actual player iframe.
+        replyProxy?.let { proxy -> runCatching { proxy.postMessage(command) } }
         view.evaluateJavascript(
             """
             (() => {
@@ -1753,6 +1782,7 @@ class WebPlayerController(
         }
         customView = view
         customViewCallback = callback
+        orientationBeforeFullscreen = activity.requestedOrientation
         nativeFullscreenRequested = true
         val decor = activity.window.decorView as FrameLayout
         val container = FrameLayout(activity).apply {
@@ -1793,7 +1823,8 @@ class WebPlayerController(
 
     private fun exitNativeFullscreenMode() {
         nativeFullscreenRequested = false
-        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        activity.requestedOrientation = orientationBeforeFullscreen
+        orientationBeforeFullscreen = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         setSystemBarsVisible(activity, !playerVisible)
     }
 
@@ -1839,6 +1870,12 @@ internal fun playbackSeekEligible(
     val minimum = if (switchingServer) 1.0 else PlaybackProgress.RESUME_MINIMUM_SECONDS
     return positionSeconds >= minimum && positionSeconds < durationSeconds
 }
+
+internal fun playbackRestoreStillPending(
+    reportedPositionSeconds: Double,
+    pendingSeekSeconds: Double?,
+): Boolean = pendingSeekSeconds != null &&
+    reportedPositionSeconds < pendingSeekSeconds - 3.0
 
 internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
     !BuildConfig.IS_TV &&
@@ -2038,6 +2075,8 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
 
       let activeVideo = null;
       let lastTimeUpdateSentAt = 0;
+      let pendingSeekSeconds = null;
+      let seekGeneration = 0;
       const minimumDurationSeconds = 60;
       const validNumber = (value) => Number.isFinite(value) && value >= 0;
       const videoScore = (video) => {
@@ -2055,10 +2094,53 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
         }
         return activeVideo === video;
       };
+      const seekActiveVideo = () => {
+        const video = activeVideo && activeVideo.isConnected
+          ? activeVideo
+          : document.querySelector("video");
+        const seconds = pendingSeekSeconds;
+        if (!video || !validNumber(seconds) ||
+            !Number.isFinite(video.duration) || video.duration <= 0) return false;
+        activate(video);
+        let target = Math.min(seconds, Math.max(0, video.duration - 0.25));
+        try {
+          if (video.seekable && video.seekable.length > 0) {
+            const firstStart = video.seekable.start(0);
+            if (target < firstStart) target = firstStart;
+          }
+          if (Math.abs(video.currentTime - target) <= 2.5) {
+            pendingSeekSeconds = null;
+            return true;
+          }
+          video.currentTime = target;
+          return true;
+        } catch (_) {
+          return false;
+        }
+      };
+      const requestSeek = (seconds) => {
+        if (!validNumber(seconds)) return;
+        pendingSeekSeconds = seconds;
+        const generation = ++seekGeneration;
+        [0, 100, 300, 700, 1400, 2600, 4500, 7500, 11000].forEach((delay) => {
+          window.setTimeout(() => {
+            if (generation === seekGeneration && pendingSeekSeconds !== null) {
+              seekActiveVideo();
+            }
+          }, delay);
+        });
+      };
       const post = (event, video) => {
         if (!video || !validNumber(video.currentTime) ||
             !Number.isFinite(video.duration) || video.duration < minimumDurationSeconds ||
             !activate(video)) return;
+        if (pendingSeekSeconds !== null) {
+          if (Math.abs(video.currentTime - pendingSeekSeconds) <= 2.5) {
+            pendingSeekSeconds = null;
+          } else {
+            seekActiveVideo();
+          }
+        }
         try {
           bridge.postMessage(JSON.stringify({
             event,
@@ -2077,12 +2159,21 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
         if (!video || video.dataset.aliflixProgressAttached === "true") return;
         video.dataset.aliflixProgressAttached = "true";
         activate(video);
-        video.addEventListener("loadedmetadata", (event) => post("loadedmetadata", event.currentTarget));
+        video.addEventListener("loadedmetadata", (event) => {
+          seekActiveVideo();
+          post("loadedmetadata", event.currentTarget);
+        });
         video.addEventListener("timeupdate", onTimeUpdate);
+        ["durationchange", "canplay", "progress", "playing"].forEach((eventName) => {
+          video.addEventListener(eventName, seekActiveVideo);
+        });
         ["play", "pause", "seeking", "seeked", "ended"].forEach((eventName) => {
           video.addEventListener(eventName, (event) => post(eventName, event.currentTarget));
         });
-        if (video.readyState >= 1) post("loadedmetadata", video);
+        if (video.readyState >= 1) {
+          seekActiveVideo();
+          post("loadedmetadata", video);
+        }
       };
       const scan = () => document.querySelectorAll("video").forEach(attach);
       new MutationObserver(scan).observe(document.documentElement || document, {
@@ -2092,19 +2183,24 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
       document.addEventListener("DOMContentLoaded", scan, { once: true });
       scan();
 
+      const receiveSeek = (raw) => {
+        let data = raw;
+        if (typeof raw === "string") {
+          try { data = JSON.parse(raw); } catch (_) { return; }
+        }
+        if (!data || data.type !== "aliflix-seek") return;
+        requestSeek(Number(data.seconds));
+      };
+      bridge.onmessage = (event) => receiveSeek(event.data);
       window.addEventListener("message", (event) => {
         const data = event.data;
         if (!data || data.type !== "aliflix-seek") return;
-        const seconds = Number(data.seconds);
-        if (!validNumber(seconds)) return;
-        const video = activeVideo || document.querySelector("video");
-        if (!video) return;
-        const seek = () => {
-          if (!Number.isFinite(video.duration) || video.duration <= 0) return false;
-          video.currentTime = Math.min(seconds, Math.max(0, video.duration - 0.25));
-          return true;
-        };
-        if (!seek()) video.addEventListener("loadedmetadata", seek, { once: true });
+        receiveSeek(data);
+        // Relay down through arbitrary iframe depth. Android also replies directly to the exact
+        // frame that reported progress, while this path covers players that become ready first.
+        document.querySelectorAll("iframe").forEach((frame) => {
+          try { frame.contentWindow?.postMessage(data, "*"); } catch (_) {}
+        });
       });
       return true;
     })();

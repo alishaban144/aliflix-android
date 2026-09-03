@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.48"
+      - "release/v3.1.49"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.48"
+        description: "Release tag, for example v3.1.49"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "138"
-  RELEASE_VERSION_NAME: "3.1.48"
+  RELEASE_VERSION_CODE: "139"
+  RELEASE_VERSION_NAME: "3.1.49"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Fixes Moviepire fullscreen by preserving its existing full-viewport player unchanged and applying landscape only at the Android screen level."
+            "releaseNotes": "Makes Moviepire resume reliable across app restarts and server changes, adds complete episode progress visibility, streamlines source selection, and fixes fullscreen exit."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Fixes Moviepire fullscreen by preserving its existing full-viewport player unchanged and applying landscape only at the Android screen level."
+          body: "Makes Moviepire resume reliable across app restarts and server changes, adds complete episode progress visibility, streamlines source selection, and fixes fullscreen exit."
           files: |
             aliflix-mobile.apk
             update-mobile.json
