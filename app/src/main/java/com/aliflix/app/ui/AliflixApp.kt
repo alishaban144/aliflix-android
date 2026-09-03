@@ -177,7 +177,6 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.aliflix.app.AliflixViewModel
-import com.aliflix.app.account.AccountActionResult
 import com.aliflix.app.account.AccountState
 import com.aliflix.app.account.AccountSyncState
 import com.aliflix.app.DetailUiState
@@ -1100,7 +1099,10 @@ fun AliflixApp(
                                         seasonNumber = episode.seasonNumber,
                                         episodeNumber = episode.number,
                                         episodeTitle = episode.title,
-                                        availableEpisodes = targetDetail.episodes,
+                                        availableEpisodes = playerEpisodesFor(
+                                            detail = targetDetail,
+                                            selectedEpisode = episode,
+                                        ),
                                     ),
                                     requestedProvider = detailProvider,
                                 )
@@ -1212,7 +1214,6 @@ fun AliflixApp(
                             viewModel::setAiRecommendationsEnabled,
                         recommendationAiModel = recommendationAiModel,
                         onSetRecommendationAiModel = viewModel::setRecommendationAiModel,
-                        onSubmitFeedback = viewModel::submitFeedback,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
                 }
@@ -2481,9 +2482,8 @@ private fun RecentRail(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(items, key = { it.key }) { item ->
-                val progress = playbackProgress.values
-                    .filter { it.media.key == item.key && it.positionSeconds > 0.0 }
-                    .maxByOrNull(PlaybackProgress::updatedAtMillis)
+                val progressPresentation = recentPlaybackPresentation(item, playbackProgress)
+                val progress = progressPresentation?.progress
                 val interactionSource = remember { MutableInteractionSource() }
                 val pressed by interactionSource.collectIsPressedAsState()
                 val cardScale by animateFloatAsState(
@@ -2570,12 +2570,23 @@ private fun RecentRail(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = buildList {
+                            text = progressPresentation?.episodeDescription ?: buildList {
                                 add(if (item.type == MediaType.MOVIE) "Movie" else "Series")
                                 if (item.year.isNotBlank()) add(item.year)
                             }.joinToString("  •  "),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (progressPresentation?.episodeDescription != null) {
+                                AliflixAccentSecondary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             fontSize = 11.sp,
+                            fontWeight = if (progressPresentation?.episodeDescription != null) {
+                                FontWeight.Bold
+                            } else {
+                                FontWeight.Normal
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -3021,16 +3032,9 @@ private fun MobileSettingsDialog(
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onClearRecent: () -> Unit,
-    onSubmitFeedback: suspend (String) -> AccountActionResult,
     onDismiss: () -> Unit,
 ) {
     var showClearConfirmation by remember { mutableStateOf(false) }
-    var feedbackExpanded by rememberSaveable { mutableStateOf(false) }
-    var feedbackText by rememberSaveable { mutableStateOf("") }
-    var feedbackBusy by remember { mutableStateOf(false) }
-    var feedbackMessage by remember { mutableStateOf<String?>(null) }
-    var feedbackError by remember { mutableStateOf(false) }
-    val feedbackScope = rememberCoroutineScope()
 
     if (showClearConfirmation) {
         AlertDialog(
@@ -3491,112 +3495,6 @@ private fun MobileSettingsDialog(
                     }
                 }
 
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "Feedback",
-                        color = AliflixContentPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(AliflixSurfaceSecondary)
-                            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { feedbackExpanded = !feedbackExpanded }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "Share your feedback and help us improve",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                Text(
-                                    "Send a private message to the Aliflix developer",
-                                    color = AliflixMuted,
-                                    fontSize = 11.sp,
-                                )
-                            }
-                            Icon(
-                                if (feedbackExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                                contentDescription = if (feedbackExpanded) "Hide feedback form" else "Open feedback form",
-                                tint = AliflixContentSecondary,
-                            )
-                        }
-                        if (feedbackExpanded) {
-                            OutlinedTextField(
-                                value = feedbackText,
-                                onValueChange = { value ->
-                                    if (value.length <= 2_000) feedbackText = value
-                                    feedbackMessage = null
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("settings-feedback-input"),
-                                enabled = !feedbackBusy,
-                                minLines = 4,
-                                maxLines = 7,
-                                label = { Text("Your feedback") },
-                                supportingText = { Text("${feedbackText.length}/2000") },
-                                shape = RoundedCornerShape(14.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AliflixAccentSecondary,
-                                    unfocusedBorderColor = AliflixBorderStrong,
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
-                                    cursorColor = AliflixAccentSecondary,
-                                ),
-                            )
-                            feedbackMessage?.let { message ->
-                                Text(
-                                    text = message,
-                                    color = if (feedbackError) AliflixError else AliflixGreen,
-                                    fontSize = 11.sp,
-                                )
-                            }
-                            Button(
-                                onClick = {
-                                    feedbackScope.launch {
-                                        feedbackBusy = true
-                                        feedbackMessage = null
-                                        val result = onSubmitFeedback(feedbackText)
-                                        feedbackBusy = false
-                                        feedbackError = !result.succeeded
-                                        feedbackMessage = result.message
-                                        if (result.succeeded) feedbackText = ""
-                                    }
-                                },
-                                enabled = !feedbackBusy && feedbackText.trim().length >= 3,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 46.dp)
-                                    .testTag("settings-feedback-submit"),
-                                shape = RoundedCornerShape(14.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
-                            ) {
-                                if (feedbackBusy) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp,
-                                        color = Color.White,
-                                    )
-                                } else {
-                                    Text("Submit feedback", fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -3629,7 +3527,6 @@ private fun MySpaceScreen(
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
-    onSubmitFeedback: suspend (String) -> AccountActionResult,
     modifier: Modifier = Modifier,
 ) {
     val pagerState = rememberPagerState(
@@ -3701,7 +3598,6 @@ private fun MySpaceScreen(
             onDownloadUpdate = onDownloadUpdate,
             onInstallUpdate = onInstallUpdate,
             onClearRecent = onClearRecent,
-            onSubmitFeedback = onSubmitFeedback,
             onDismiss = { showSettingsWindow = false },
         )
     }
@@ -5859,6 +5755,77 @@ private fun PlaybackProgressRing(
             useCenter = false,
             style = Stroke(width = 2.6.dp.toPx()),
         )
+    }
+}
+
+internal data class RecentPlaybackPresentation(
+    val progress: PlaybackProgress,
+    val episodeDescription: String?,
+)
+
+/** Resolves a recent card to the latest exact movie/episode progress entry for that title. */
+internal fun recentPlaybackPresentation(
+    item: Media,
+    playbackProgress: Map<String, PlaybackProgress>,
+): RecentPlaybackPresentation? {
+    val progress = playbackProgress.values
+        .asSequence()
+        .filter { candidate ->
+            candidate.media.key == item.key &&
+                candidate.positionSeconds > 0.0 &&
+                candidate.durationSeconds > 0.0 &&
+                (
+                    item.type != MediaType.TV ||
+                        (candidate.seasonNumber != null && candidate.episodeNumber != null)
+                    )
+        }
+        .maxWithOrNull(
+            compareBy<PlaybackProgress>(PlaybackProgress::updatedAtMillis)
+                .thenBy(PlaybackProgress::positionSeconds),
+        ) ?: return null
+    val episodeDescription = if (item.type == MediaType.TV) {
+        val season = progress.seasonNumber ?: return null
+        val episode = progress.episodeNumber ?: return null
+        buildString {
+            append("S")
+            append(season.toString().padStart(2, '0'))
+            append("  •  E")
+            append(episode.toString().padStart(2, '0'))
+            progress.episodeTitle
+                ?.trim()
+                ?.takeIf(String::isNotBlank)
+                ?.let { title ->
+                    append("  •  ")
+                    append(title)
+                }
+        }
+    } else {
+        null
+    }
+    return RecentPlaybackPresentation(progress, episodeDescription)
+}
+
+internal fun playerEpisodesFor(
+    detail: DetailUiState,
+    selectedEpisode: Episode,
+): List<Episode> {
+    val loaded = detail.episodes.filter { it.seasonNumber == selectedEpisode.seasonNumber }
+    if (loaded.isNotEmpty()) return loaded
+    val episodeCount = detail.seasons
+        .firstOrNull { it.number == selectedEpisode.seasonNumber }
+        ?.episodeCount
+        ?.coerceAtLeast(selectedEpisode.number)
+        ?: selectedEpisode.number
+    return (1..episodeCount).map { number ->
+        if (number == selectedEpisode.number) {
+            selectedEpisode
+        } else {
+            Episode(
+                seasonNumber = selectedEpisode.seasonNumber,
+                number = number,
+                title = "Episode $number",
+            )
+        }
     }
 }
 

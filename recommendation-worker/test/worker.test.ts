@@ -62,31 +62,6 @@ describe('Cloudflare Worker', () => {
     expect(response.status).toBe(413);
   });
 
-  it('accepts feedback through the private email binding without returning its destination', async () => {
-    const send = vi.fn(async () => ({ messageId: 'feedback-1' }));
-    const response = await worker.fetch(new Request('http://localhost/v3/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: '<Great app>\nPlease add profiles.', appVersion: '3.1.42' }),
-    }), {
-      ...env,
-      FEEDBACK_EMAIL: { send },
-      FEEDBACK_DESTINATION_EMAIL: 'private@example.com',
-      FEEDBACK_FROM_EMAIL: 'feedback@example.org',
-    });
-
-    const responseCopy = response.clone();
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ accepted: true });
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({
-      to: 'private@example.com',
-      subject: 'New Aliflix feedback',
-      text: expect.stringContaining('Please add profiles.'),
-      html: expect.stringContaining('&lt;Great app&gt;'),
-    }));
-    expect(await responseCopy.text()).not.toContain('private@example.com');
-  });
-
   it('fills the requested continuation page when the first fresh batch is useful but sparse', async () => {
     const reservations = [1, 2];
     let totalCount = 20;

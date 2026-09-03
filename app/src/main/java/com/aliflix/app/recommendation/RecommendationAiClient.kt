@@ -75,20 +75,6 @@ class RecommendationAiClient(
         V3TvNetworkFeed.fromJson(JSONObject(getJson("$baseUrl/v3/tv-networks?region=$safeRegion")))
     }
 
-    suspend fun submitFeedback(message: String, appVersion: String) = withContext(ioDispatcher) {
-        val body = JSONObject()
-            .put("message", message.trim())
-            .put("appVersion", appVersion.trim())
-        val response = JSONObject(postJson("$baseUrl/v3/feedback", body))
-        if (!response.optBoolean("accepted")) {
-            throw RecommendationAiClientException(
-                code = "FEEDBACK_REJECTED",
-                retryable = false,
-                message = "Feedback could not be submitted.",
-            )
-        }
-    }
-
     private suspend fun getJson(url: String): String = suspendCancellableCoroutine { continuation ->
         var connection: HttpURLConnection? = null
         try {

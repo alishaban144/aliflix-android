@@ -852,22 +852,6 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     suspend fun searchCompanies(query: String): List<com.aliflix.app.recommendation.ProductionCompanyFilter> =
         aiClient.searchCompanies(query.trim())
 
-    suspend fun submitFeedback(message: String): AccountActionResult = runCatching {
-        require(message.trim().length >= 3) { "Enter a little more detail before submitting." }
-        aiClient.submitFeedback(message, BuildConfig.VERSION_NAME)
-        AccountActionResult(succeeded = true, message = "Thank you. Your feedback was sent.")
-    }.getOrElse { error ->
-        val clientError = error as? com.aliflix.app.recommendation.RecommendationAiClientException
-        AccountActionResult(
-            succeeded = false,
-            message = when (clientError?.code) {
-                "FEEDBACK_NOT_CONFIGURED" -> "Feedback delivery is not configured yet."
-                "RATE_LIMITED" -> "Please wait a moment before sending more feedback."
-                else -> error.message ?: "Feedback could not be sent. Please try again."
-            },
-        )
-    }
-
     fun selectSearchMode(mode: SearchMode) {
         if (mode == SearchMode.AI && !recommendationStore.enabled.value) return
         if (_search.value.mode == mode) return

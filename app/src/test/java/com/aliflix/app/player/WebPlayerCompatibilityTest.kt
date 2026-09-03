@@ -109,6 +109,8 @@ class WebPlayerCompatibilityTest {
         assertTrue(script.contains("option.value"))
         assertTrue(script.contains("aliflixWrapperControls"))
         assertTrue(script.contains("a[download]"))
+        assertTrue(script.contains("document.querySelectorAll(downloadSelector)"))
+        assertTrue(script.contains("target.querySelector(\"iframe,video\")"))
         assertTrue(script.contains("display\", \"none\""))
         assertFalse(script.contains("querySelectorAll(\"button\")"))
     }
@@ -141,8 +143,19 @@ class WebPlayerCompatibilityTest {
             "ended",
             "AliflixPlaybackProgress",
             "aliflix-seek",
+            "minimumDurationSeconds = 60",
+            "videoScore",
+            "activeVideo.isConnected",
         ).forEach { marker -> assertTrue(marker, script.contains(marker)) }
         assertFalse(script.contains("contentDocument"))
         assertFalse(script.contains("addJavascriptInterface"))
+    }
+
+    @Test
+    fun serverSwitchRestoresEarlyPlaybackWithoutWeakeningNormalResumeThreshold() {
+        assertTrue(playbackSeekEligible(10.0, 2_400.0, switchingServer = true))
+        assertFalse(playbackSeekEligible(10.0, 2_400.0, switchingServer = false))
+        assertTrue(playbackSeekEligible(25.0, 2_400.0, switchingServer = false))
+        assertFalse(playbackSeekEligible(2_400.0, 2_400.0, switchingServer = true))
     }
 }

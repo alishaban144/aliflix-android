@@ -205,8 +205,6 @@ export interface SecretBindings {
   TMDB_API_KEY?: string;
   TMDB_READ_ACCESS_TOKEN?: string;
   CURSOR_SIGNING_SECRET: string;
-  FEEDBACK_DESTINATION_EMAIL?: string;
-  FEEDBACK_FROM_EMAIL?: string;
 }
 
 export type RecommendationEnv = Omit<Env, 'GEMINI_GENERATION_MODEL' | 'AI_GENERATION_MODEL'> & {
