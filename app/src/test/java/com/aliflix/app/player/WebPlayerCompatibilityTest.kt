@@ -108,6 +108,7 @@ class WebPlayerCompatibilityTest {
         assertTrue(script.contains("aliflixServerKey"))
         assertTrue(script.contains("option.value"))
         assertTrue(script.contains("aliflixWrapperControls"))
+        assertTrue(script.contains("aliflixPlayerFrame"))
         assertTrue(script.contains("a[download]"))
         assertTrue(script.contains("document.querySelectorAll(downloadSelector)"))
         assertTrue(script.contains("target.querySelector(\"iframe,video\")"))
@@ -143,15 +144,31 @@ class WebPlayerCompatibilityTest {
             "ended",
             "AliflixPlaybackProgress",
             "aliflix-seek",
-            "aliflix-fullscreen",
-            "video.requestFullscreen",
-            "webkitEnterFullscreen",
             "minimumDurationSeconds = 60",
             "videoScore",
             "activeVideo.isConnected",
         ).forEach { marker -> assertTrue(marker, script.contains(marker)) }
         assertFalse(script.contains("contentDocument"))
         assertFalse(script.contains("addJavascriptInterface"))
+        assertFalse(script.contains("requestFullscreen"))
+    }
+
+    @Test
+    fun fullscreenExpandsOnlyTheVerifiedMoviepirePlayerFrame() {
+        val enter = moviepireFrameFullscreenScript(enable = true)
+        val exit = moviepireFrameFullscreenScript(enable = false)
+
+        listOf(
+            "data-aliflix-player-frame",
+            "data-aliflix-server-select",
+            "100vw",
+            "100vh",
+            "__aliflixFullscreenLayout",
+        ).forEach { marker -> assertTrue(marker, enter.contains(marker)) }
+        assertTrue(exit.contains("element.style.cssText = state.elementStyle"))
+        assertFalse(enter.contains("requestFullscreen"))
+        assertFalse(enter.contains("webkitEnterFullscreen"))
+        assertFalse(enter.contains("document.querySelectorAll(\"iframe\")"))
     }
 
     @Test
