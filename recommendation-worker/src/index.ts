@@ -4,6 +4,7 @@ import { ParsedRecommendationRequest, RecommendationRequestSchema } from './sche
 import { ContinuationReservation, createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
 import { RecommendationEnv, RecommendationResponse, RecommendationResult, ServiceError } from './types';
 import { companySearch, editorialPicks, homeFeed, personCredits, titleDetails, titleSearch, tvNetworkFeed } from './catalog';
+import { downloadSubdlSubtitle, searchSubdlSubtitles } from './subdl';
 
 export { RecommendationSession };
 
@@ -223,7 +224,21 @@ export default {
         geminiConfigured: Boolean(env.GEMINI_API_KEY),
         groqConfigured: Boolean(env.GROQ_API_KEY),
         tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN),
+        subdlConfigured: Boolean(env.SUBDL_API_KEY),
       });
+    }
+    if (url.pathname === '/v3/subtitles' && request.method === 'GET') {
+      try {
+        await enforceRateLimit(request, env);
+        return json(await searchSubdlSubtitles(env, url));
+      } catch (error) { return errorResponse(error); }
+    }
+    const subtitleDownloadMatch = /^\/v3\/subtitles\/download\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+    if (subtitleDownloadMatch && request.method === 'GET') {
+      try {
+        await enforceRateLimit(request, env);
+        return await downloadSubdlSubtitle(env, subtitleDownloadMatch[1]);
+      } catch (error) { return errorResponse(error); }
     }
     const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);
     const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);

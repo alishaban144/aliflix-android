@@ -204,6 +204,7 @@ export interface SecretBindings {
   GROQ_API_KEY?: string;
   TMDB_API_KEY?: string;
   TMDB_READ_ACCESS_TOKEN?: string;
+  SUBDL_API_KEY?: string;
   CURSOR_SIGNING_SECRET: string;
 }
 

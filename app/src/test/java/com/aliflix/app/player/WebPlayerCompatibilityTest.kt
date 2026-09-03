@@ -156,6 +156,16 @@ class WebPlayerCompatibilityTest {
             "visibilitychange",
             "sustainCastPlayback",
             "video.play()",
+            "aliflix-subtitles",
+            "aliflix-subtitles-clear",
+            "video.addTextTrack",
+            "window.VTTCue",
+            "video::cue",
+            "subtitleDelaySeconds",
+            "subtitleFontPercent",
+            "subtitleLanguage",
+            "subtitleLabel",
+            "applySubtitles(video)",
         ).forEach { marker -> assertTrue(marker, script.contains(marker)) }
         assertFalse(script.contains("contentDocument"))
         assertFalse(script.contains("addJavascriptInterface"))

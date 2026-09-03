@@ -6,6 +6,7 @@ describe('Cloudflare Worker', () => {
     GEMINI_API_KEY: 'test-key',
     GROQ_API_KEY: 'groq-test-key',
     TMDB_API_KEY: 'test-key',
+    SUBDL_API_KEY: 'subdl-test-key',
     CURSOR_SIGNING_SECRET: 'cursor-secret',
     RECOMMENDATION_RATE_LIMITER: { limit: async () => ({ success: true }) },
   };
@@ -26,6 +27,7 @@ describe('Cloudflare Worker', () => {
       geminiConfigured: true,
       groqConfigured: true,
       tmdbConfigured: true,
+      subdlConfigured: true,
     });
   });
 

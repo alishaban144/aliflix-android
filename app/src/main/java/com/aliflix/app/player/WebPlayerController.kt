@@ -92,6 +92,12 @@ class WebPlayerController(
     private var castRouteWasConnected = false
     private var castRouteCallbackRegistered = false
     private var activePlayerReplyProxy: JavaScriptReplyProxy? = null
+    private var activeSubtitleContentKey: String? = null
+    private var activeSubtitleCuesJson: String? = null
+    private var activeSubtitleDelaySeconds = 0.0
+    private var activeSubtitleFontPercent = 100
+    private var activeSubtitleLanguage = ""
+    private var activeSubtitleLabel = "Aliflix"
     private val mediaRouter by lazy(LazyThreadSafetyMode.NONE) {
         activity.getSystemService(MediaRouter::class.java)
     }
@@ -142,7 +148,10 @@ class WebPlayerController(
 
     fun viewFor(selection: PlaybackSelection): WebView {
         val view = webView ?: createWebView().also { webView = it }
-        if (activeSelection?.key != selection.key) flushProgress(urgentCloudSync = true)
+        if (activeSelection?.key != selection.key) {
+            flushProgress(urgentCloudSync = true)
+            if (activeSubtitleContentKey != subtitleContentKey(selection)) clearSubtitles()
+        }
         activeSelection = selection
         configureMobileMoviepireDocumentStartProtection(view, selection)
         val defaultKey = selection.key
@@ -170,6 +179,7 @@ class WebPlayerController(
     fun prepareSelection(selection: PlaybackSelection) {
         if (activeSelection?.key == selection.key) return
         flushProgress(urgentCloudSync = true)
+        if (activeSubtitleContentKey != subtitleContentKey(selection)) clearSubtitles()
         activeSelection = selection
         pendingSeekSeconds = null
         pendingServerKey = null
@@ -188,6 +198,94 @@ class WebPlayerController(
     fun startOver(selection: PlaybackSelection) {
         pendingSeekSeconds = 0.0
         playbackProgressStore.startOver(selection)
+    }
+
+    fun setSubtitles(
+        selection: PlaybackSelection,
+        cues: List<SubtitleCue>,
+        delaySeconds: Double,
+        fontPercent: Int,
+        languageCode: String,
+        label: String,
+    ) {
+        if (
+            BuildConfig.IS_TV || !selection.source.provider.usesMoviepire ||
+            activeSelection?.let(::subtitleContentKey) != subtitleContentKey(selection)
+        ) return
+
+        val cueArray = JSONArray()
+        cues.asSequence().take(MAX_SUBTITLE_CUES).forEach { cue ->
+            if (
+                cue.startSeconds.isFinite() && cue.endSeconds.isFinite() &&
+                cue.startSeconds >= 0.0 && cue.endSeconds > cue.startSeconds && cue.text.isNotBlank()
+            ) {
+                cueArray.put(
+                    JSONArray()
+                        .put(cue.startSeconds)
+                        .put(cue.endSeconds)
+                        .put(cue.text.take(MAX_SUBTITLE_CUE_TEXT_LENGTH)),
+                )
+            }
+        }
+        if (cueArray.length() == 0) return
+        activeSubtitleContentKey = subtitleContentKey(selection)
+        activeSubtitleCuesJson = cueArray.toString()
+        activeSubtitleDelaySeconds = delaySeconds.coerceIn(-SUBTITLE_DELAY_LIMIT_SECONDS, SUBTITLE_DELAY_LIMIT_SECONDS)
+        activeSubtitleFontPercent = fontPercent.coerceIn(MIN_SUBTITLE_FONT_PERCENT, MAX_SUBTITLE_FONT_PERCENT)
+        activeSubtitleLanguage = languageCode.lowercase().take(8)
+        activeSubtitleLabel = label.take(80).ifBlank { "Aliflix" }
+        postActiveSubtitles()
+    }
+
+    fun updateSubtitlePresentation(delaySeconds: Double, fontPercent: Int) {
+        if (activeSubtitleCuesJson == null) return
+        activeSubtitleDelaySeconds = delaySeconds.coerceIn(-SUBTITLE_DELAY_LIMIT_SECONDS, SUBTITLE_DELAY_LIMIT_SECONDS)
+        activeSubtitleFontPercent = fontPercent.coerceIn(MIN_SUBTITLE_FONT_PERCENT, MAX_SUBTITLE_FONT_PERCENT)
+        postActiveSubtitles()
+    }
+
+    fun clearSubtitles() {
+        val hadSubtitles = activeSubtitleCuesJson != null
+        activeSubtitleContentKey = null
+        activeSubtitleCuesJson = null
+        activeSubtitleDelaySeconds = 0.0
+        activeSubtitleFontPercent = 100
+        activeSubtitleLanguage = ""
+        activeSubtitleLabel = "Aliflix"
+        if (hadSubtitles) {
+            postSubtitleCommand(JSONObject().put("type", "aliflix-subtitles-clear").toString())
+        }
+    }
+
+    private fun postActiveSubtitles(replyProxy: JavaScriptReplyProxy? = null) {
+        val cues = activeSubtitleCuesJson ?: return
+        val language = JSONObject.quote(activeSubtitleLanguage)
+        val label = JSONObject.quote(activeSubtitleLabel)
+        val command = """{"type":"aliflix-subtitles","cues":$cues,"delaySeconds":$activeSubtitleDelaySeconds,"fontPercent":$activeSubtitleFontPercent,"language":$language,"label":$label}"""
+        postSubtitleCommand(command, replyProxy)
+    }
+
+    private fun postSubtitleCommand(
+        command: String,
+        replyProxy: JavaScriptReplyProxy? = null,
+    ) {
+        val view = webView ?: return
+        (replyProxy ?: activePlayerReplyProxy)?.let { proxy ->
+            runCatching { proxy.postMessage(command) }
+        }
+        view.evaluateJavascript(
+            """
+            (() => {
+              const message = $command;
+              window.postMessage(message, "*");
+              document.querySelectorAll("iframe").forEach(frame => {
+                try { frame.contentWindow?.postMessage(message, "*"); } catch (_) {}
+              });
+              return true;
+            })();
+            """.trimIndent(),
+            null,
+        )
     }
 
     fun selectMoviepireServer(option: MoviepireServerOption) {
@@ -371,6 +469,8 @@ class WebPlayerController(
         loadedKey = null
         activeSelection = null
         activePlayerReplyProxy = null
+        activeSubtitleContentKey = null
+        activeSubtitleCuesJson = null
         _switchingMoviepireServer.value = false
     }
 
@@ -612,6 +712,11 @@ class WebPlayerController(
             }
         }
         activePlayerReplyProxy = replyProxy
+        if (event in setOf("loadedmetadata", "play")) {
+            // A different Moviepire server can replace the entire player frame. Reapply the
+            // text track to the exact frame that has just reported its real video clock.
+            postActiveSubtitles(replyProxy)
+        }
         if (
             castBackgroundPlaybackRequested &&
             event in setOf("loadedmetadata", "play", "pause")
@@ -2004,6 +2109,11 @@ class WebPlayerController(
         const val MOVIEPIRE_EPISODE_RESOLUTION_RETRY_MILLIS = 450L
         const val MAX_MOVIEPIRE_EPISODE_RESOLUTION_ATTEMPTS = 32
         const val MAX_MOVIEPIRE_EPISODE_BOOTSTRAP_RELOADS = 1
+        const val MAX_SUBTITLE_CUES = 6_000
+        const val MAX_SUBTITLE_CUE_TEXT_LENGTH = 500
+        const val SUBTITLE_DELAY_LIMIT_SECONDS = 10.0
+        const val MIN_SUBTITLE_FONT_PERCENT = 70
+        const val MAX_SUBTITLE_FONT_PERCENT = 180
     }
 }
 
@@ -2239,6 +2349,12 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
       let castKeepAliveActive = false;
       let castShouldPlay = false;
       let castGeneration = 0;
+      let subtitleCues = [];
+      let subtitleDelaySeconds = 0;
+      let subtitleFontPercent = 100;
+      let subtitleLanguage = "";
+      let subtitleLabel = "Aliflix";
+      const subtitleTracks = new WeakMap();
       const minimumDurationSeconds = 60;
       const validNumber = (value) => Number.isFinite(value) && value >= 0;
       const videoScore = (video) => {
@@ -2316,6 +2432,82 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
           }, delay);
         });
       };
+      const ensureSubtitleStyle = () => {
+        let style = document.getElementById("aliflix-native-subtitle-style");
+        if (!style) {
+          style = document.createElement("style");
+          style.id = "aliflix-native-subtitle-style";
+          (document.head || document.documentElement).appendChild(style);
+        }
+        style.textContent = `video::cue {
+          color: #ffffff;
+          background-color: rgba(8, 6, 16, 0.82);
+          font-size: ${'$'}{subtitleFontPercent}%;
+          font-family: system-ui, sans-serif;
+          font-weight: 650;
+          text-shadow: 0 1px 3px rgba(0, 0, 0, 0.96);
+        }`;
+      };
+      const clearVideoSubtitles = (video) => {
+        const previous = subtitleTracks.get(video);
+        if (!previous) return;
+        try {
+          previous.mode = "disabled";
+          Array.from(previous.cues || []).forEach((cue) => previous.removeCue(cue));
+        } catch (_) {}
+        subtitleTracks.delete(video);
+      };
+      const applySubtitles = (video) => {
+        if (!video) return;
+        clearVideoSubtitles(video);
+        ensureSubtitleStyle();
+        if (!Array.isArray(subtitleCues) || subtitleCues.length === 0) return;
+        const Cue = window.VTTCue || window.TextTrackCue;
+        if (typeof Cue !== "function" || typeof video.addTextTrack !== "function") return;
+        try {
+          const track = video.addTextTrack("subtitles", subtitleLabel, subtitleLanguage);
+          track.mode = "showing";
+          subtitleCues.forEach((raw, index) => {
+            if (!Array.isArray(raw) || raw.length < 3) return;
+            const start = Number(raw[0]) + subtitleDelaySeconds;
+            const end = Number(raw[1]) + subtitleDelaySeconds;
+            const text = String(raw[2] || "").slice(0, 500);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end <= 0 || !text) return;
+            const cue = new Cue(Math.max(0, start), Math.max(0.01, end), text);
+            cue.id = `aliflix-${'$'}{index}`;
+            try {
+              cue.snapToLines = true;
+              cue.line = -3;
+              cue.position = 50;
+              cue.align = "center";
+            } catch (_) {}
+            track.addCue(cue);
+          });
+          subtitleTracks.set(video, track);
+        } catch (_) {}
+      };
+      const applySubtitlesToAllVideos = () => {
+        document.querySelectorAll("video").forEach(applySubtitles);
+      };
+      const setSubtitles = (data) => {
+        const rawCues = Array.isArray(data.cues) ? data.cues.slice(0, 6000) : [];
+        subtitleCues = rawCues.filter((cue) =>
+          Array.isArray(cue) && cue.length >= 3 &&
+          Number.isFinite(Number(cue[0])) && Number.isFinite(Number(cue[1])) &&
+          Number(cue[1]) > Number(cue[0]) && String(cue[2] || "").length > 0
+        );
+        const delay = Number(data.delaySeconds);
+        subtitleDelaySeconds = Number.isFinite(delay) ? Math.max(-10, Math.min(10, delay)) : 0;
+        const font = Number(data.fontPercent);
+        subtitleFontPercent = Number.isFinite(font) ? Math.max(70, Math.min(180, font)) : 100;
+        subtitleLanguage = String(data.language || "").slice(0, 8).toLowerCase();
+        subtitleLabel = String(data.label || "Aliflix").slice(0, 80);
+        applySubtitlesToAllVideos();
+      };
+      const clearSubtitles = () => {
+        subtitleCues = [];
+        document.querySelectorAll("video").forEach(clearVideoSubtitles);
+      };
       const post = (event, video) => {
         if (!video || !validNumber(video.currentTime) ||
             !Number.isFinite(video.duration) || video.duration < minimumDurationSeconds ||
@@ -2345,6 +2537,7 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
         if (!video || video.dataset.aliflixProgressAttached === "true") return;
         video.dataset.aliflixProgressAttached = "true";
         activate(video);
+        applySubtitles(video);
         video.addEventListener("loadedmetadata", (event) => {
           seekActiveVideo();
           post("loadedmetadata", event.currentTarget);
@@ -2389,6 +2582,14 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
         }
         if (data.type === "aliflix-cast-keepalive") {
           setCastKeepAlive(data.active, data.shouldPlay);
+          return true;
+        }
+        if (data.type === "aliflix-subtitles") {
+          setSubtitles(data);
+          return true;
+        }
+        if (data.type === "aliflix-subtitles-clear") {
+          clearSubtitles();
           return true;
         }
         return false;

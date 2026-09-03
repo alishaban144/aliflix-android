@@ -22,3 +22,6 @@ recommendation-worker/node_modules/
 recommendation-worker/dist/
 recommendation-worker/coverage/
 recommendation-worker/.wrangler/
+recommendation-worker/.dev.vars
+recommendation-worker/.env
+recommendation-worker/.env.*
