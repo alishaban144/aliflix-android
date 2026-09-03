@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -86,8 +87,7 @@ fun WebPlayerScreen(
     val moviepireServers by controller.moviepireServers.collectAsState()
     val switchingMoviepireServer by controller.switchingMoviepireServer.collectAsState()
     val playing by controller.playing.collectAsState()
-    val nativeMoviepire = selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE
-    val nativePhoneMoviepire = nativeMoviepire && !BuildConfig.IS_TV
+    val nativePhoneMoviepire = selection.source.provider.usesMoviepire && !BuildConfig.IS_TV
     val playerAccent = if (nativePhoneMoviepire) AliflixAccentPrimary else AliflixRed
     val resumableProgress = remember(selection.key) {
         controller.savedProgressFor(selection)?.takeIf { it.resumeEligible }
@@ -300,6 +300,10 @@ fun WebPlayerScreen(
                     },
                     onSelectEpisode = onSelectEpisode,
                     onClose = onClose,
+                    onFullscreen = {
+                        controlsVisible = false
+                        controller.requestMoviepireFullscreen()
+                    },
                     onCast = controller::openCastPicker,
                 )
             }
@@ -324,6 +328,7 @@ private fun NativeMoviepireTopBar(
     onSelectServer: (MoviepireServerOption) -> Unit,
     onSelectEpisode: (Episode) -> Unit,
     onClose: () -> Unit,
+    onFullscreen: () -> Unit,
     onCast: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -381,6 +386,9 @@ private fun NativeMoviepireTopBar(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+            PlayerIconButton(onClick = onFullscreen) {
+                Icon(Icons.Rounded.Fullscreen, contentDescription = "Play fullscreen")
             }
             PlayerIconButton(onClick = onCast) {
                 Icon(Icons.Rounded.Cast, contentDescription = "Cast screen")

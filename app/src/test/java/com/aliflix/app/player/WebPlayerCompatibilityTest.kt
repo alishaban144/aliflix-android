@@ -11,13 +11,13 @@ import org.junit.Test
 
 class WebPlayerCompatibilityTest {
     @Test
-    fun nativeTvBootstrapsThroughMoviepireSeriesPageWhileMoviesStayDirect() {
+    fun moviepireTvBootstrapsThroughSeriesPageWhileMoviesStayDirect() {
         val series = Media(id = 86831, type = MediaType.TV, title = "Love, Death & Robots")
         val episode = PlaybackSelection(
             media = series,
             seasonNumber = 1,
             episodeNumber = 4,
-            source = PlaybackSource.moviepireNative(),
+            source = PlaybackSource.moviepire(),
         )
         val movie = episode.copy(media = Media(27205, MediaType.MOVIE, "Inception"))
 
@@ -143,6 +143,9 @@ class WebPlayerCompatibilityTest {
             "ended",
             "AliflixPlaybackProgress",
             "aliflix-seek",
+            "aliflix-fullscreen",
+            "video.requestFullscreen",
+            "webkitEnterFullscreen",
             "minimumDurationSeconds = 60",
             "videoScore",
             "activeVideo.isConnected",

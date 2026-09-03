@@ -42,7 +42,7 @@ class MediaTest {
             tvSelection.entryUrl,
         )
 
-        val nativeTvSelection = tvSelection.copy(source = PlaybackSource.moviepireNative())
+        val nativeTvSelection = tvSelection.copy(source = PlaybackSource.moviepire())
         assertEquals(tvSelection.entryUrl, nativeTvSelection.entryUrl)
         assertEquals(2, nativeTvSelection.seasonNumber)
         assertEquals(3, nativeTvSelection.episodeNumber)
@@ -129,7 +129,6 @@ class MediaTest {
         assertEquals(
             listOf(
                 PlaybackProviderId.MOVIEPIRE,
-                PlaybackProviderId.MOVIEPIRE_NATIVE,
                 PlaybackProviderId.RAMOFLIX,
                 PlaybackProviderId.DORABY,
             ),
@@ -150,20 +149,17 @@ class MediaTest {
     }
 
     @Test
-    fun moviepireNativeIsTheOnlyBetaPlaybackProvider() {
-        assertEquals(
-            listOf(PlaybackProviderId.MOVIEPIRE_NATIVE),
-            PlaybackProviderId.entries.filter(PlaybackProviderId::isBeta),
-        )
+    fun moviepireIsTheSingleNonBetaMoviepireProvider() {
+        assertEquals("Moviepire", PlaybackProviderId.MOVIEPIRE.displayName)
         assertFalse(PlaybackProviderId.MOVIEPIRE.isBeta)
-        assertNotEquals(PlaybackProviderId.MOVIEPIRE, PlaybackProviderId.MOVIEPIRE_NATIVE)
+        assertEquals(emptyList<PlaybackProviderId>(), PlaybackProviderId.entries.filter(PlaybackProviderId::isBeta))
     }
 
     @Test
-    fun moviepireNativeUsesConfiguredMoviepireBaseUrlWithoutChangingNormalMoviepire() {
+    fun moviepireUsesConfiguredMoviepireBaseUrl() {
         val media = Media(id = 27205, type = MediaType.MOVIE, title = "Inception")
         val preferences = PlaybackPreferences(
-            generalProvider = PlaybackProviderId.MOVIEPIRE_NATIVE,
+            generalProvider = PlaybackProviderId.MOVIEPIRE,
             moviepireBaseUrl = "https://moviepire-mirror.example/",
         )
 
@@ -172,6 +168,16 @@ class MediaTest {
             preferences.sourceFor(media).buildEntryUrl(media),
         )
         assertEquals(PlaybackProviderId.MOVIEPIRE, PlaybackSource.moviepire().provider)
+    }
+
+    @Test
+    fun legacyMoviepireNativePreferenceMigratesToMoviepire() {
+        listOf("MOVIEPIRE_NATIVE", "Moviepire Native").forEach { storedValue ->
+            assertEquals(
+                PlaybackProviderId.MOVIEPIRE,
+                PlaybackProviderId.fromStoredValue(storedValue),
+            )
+        }
     }
 
     @Test

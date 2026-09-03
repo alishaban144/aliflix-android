@@ -30,7 +30,7 @@ class PlaybackProgressStoreTest {
             source = PlaybackSource.moviepire(),
         )
         val nativeMirror = normal.copy(
-            source = PlaybackSource.moviepireNative("https://mirror.example/"),
+            source = PlaybackSource.moviepire("https://mirror.example/"),
         )
 
         assertEquals(playbackProgressKey(normal), playbackProgressKey(nativeMirror))

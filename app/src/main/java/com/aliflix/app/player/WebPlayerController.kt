@@ -83,6 +83,7 @@ class WebPlayerController(
     private var serverSwitchStartedAt = 0L
     private var moviepireEpisodeBootstrapReloads = 0
     private var playerVisible = false
+    private var nativeFullscreenRequested = false
 
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -155,7 +156,7 @@ class WebPlayerController(
     fun selectMoviepireServer(option: MoviepireServerOption) {
         val selection = activeSelection ?: return
         val view = webView ?: return
-        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE) return
+        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
         if (_moviepireServers.value.none { it.key == option.key }) return
         if (option.selected || _moviepireServers.value.any { it.key == option.key && it.selected }) {
             return
@@ -232,7 +233,11 @@ class WebPlayerController(
     fun setVisible(visible: Boolean) {
         if (playerVisible && !visible) flushProgress(urgentCloudSync = true)
         playerVisible = visible
-        setSystemBarsVisible(activity, !visible)
+        if (!visible && (customView != null || nativeFullscreenRequested)) {
+            hideCustomView()
+        } else {
+            setSystemBarsVisible(activity, !visible)
+        }
         webView?.let {
             it.visibility = if (visible) View.VISIBLE else View.INVISIBLE
             if (visible) {
@@ -274,9 +279,63 @@ class WebPlayerController(
         }
     }
 
+    fun requestMoviepireFullscreen() {
+        val selection = activeSelection ?: return
+        val view = webView ?: return
+        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
+        nativeFullscreenRequested = true
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        setSystemBarsVisible(activity, false)
+        view.evaluateJavascript(
+            """
+            (() => {
+              const frames = Array.from(document.querySelectorAll("iframe"))
+                .filter(frame => {
+                  const rect = frame.getBoundingClientRect();
+                  return rect.width > 0 && rect.height > 0;
+                })
+                .sort((left, right) => {
+                  const a = left.getBoundingClientRect();
+                  const b = right.getBoundingClientRect();
+                  return (b.width * b.height) - (a.width * a.height);
+                });
+              const frame = frames[0];
+              if (frame && !window.__aliflixFullscreenLayout) {
+                window.__aliflixFullscreenLayout = {
+                  frame,
+                  frameStyle: frame.style.cssText,
+                  bodyOverflow: document.body?.style.overflow || "",
+                  rootOverflow: document.documentElement.style.overflow || ""
+                };
+                frame.style.setProperty("position", "fixed", "important");
+                frame.style.setProperty("inset", "0", "important");
+                frame.style.setProperty("width", "100vw", "important");
+                frame.style.setProperty("height", "100vh", "important");
+                frame.style.setProperty("max-width", "none", "important");
+                frame.style.setProperty("max-height", "none", "important");
+                frame.style.setProperty("z-index", "2147483647", "important");
+                if (document.body) document.body.style.overflow = "hidden";
+                document.documentElement.style.overflow = "hidden";
+              }
+              const message = { type: "aliflix-fullscreen" };
+              window.postMessage(message, "*");
+              document.querySelectorAll("iframe").forEach(frame => {
+                try { frame.contentWindow?.postMessage(message, "*"); } catch (_) {}
+              });
+              return true;
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
     fun handleBack(): Boolean {
         if (customView != null) {
             hideCustomView()
+            return true
+        }
+        if (nativeFullscreenRequested) {
+            exitNativeFullscreenMode()
             return true
         }
         return false
@@ -346,7 +405,7 @@ class WebPlayerController(
         }
 
         val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
-        val nativeMode = selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE
+        val nativeMode = !BuildConfig.IS_TV && selection.source.provider.usesMoviepire
         if (
             moviepireDocumentStartScriptHandler != null &&
             moviepireProtectedSourceHost == sourceHost &&
@@ -391,7 +450,7 @@ class WebPlayerController(
                         replyProxy: JavaScriptReplyProxy,
                     ) {
                         val selection = activeSelection ?: return
-                        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE) return
+                        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
                         if (!isApprovedMoviepireProgressOrigin(sourceOrigin, selection)) return
                         handlePlaybackMessage(view, selection, message.data)
                     }
@@ -477,7 +536,7 @@ class WebPlayerController(
 
     private fun flushProgress(urgentCloudSync: Boolean) {
         val selection = activeSelection ?: return
-        if (selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE) return
+        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
         if (latestDurationSeconds <= 0.0) return
         playbackProgressStore.savePlayerProgress(
             selection = selection,
@@ -576,7 +635,7 @@ class WebPlayerController(
                     _error.value = null
                     view?.alpha = 1f
                     val selection = activeSelection
-                    if (selection?.source?.provider == PlaybackProviderId.MOVIEPIRE_NATIVE) {
+                    if (!BuildConfig.IS_TV && selection?.source?.provider?.usesMoviepire == true) {
                         _moviepireServers.value = emptyList()
                     }
                     if (
@@ -1448,11 +1507,9 @@ class WebPlayerController(
     ) {
         when (selection.source.provider) {
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
-            PlaybackProviderId.MOVIEPIRE,
-            PlaybackProviderId.MOVIEPIRE_NATIVE,
-            -> {
+            PlaybackProviderId.MOVIEPIRE -> {
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)
-                if (selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE) {
+                if (!BuildConfig.IS_TV) {
                     discoverMoviepireServers(view, selection)
                 }
             }
@@ -1532,7 +1589,8 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ) {
         if (
-            selection.source.provider != PlaybackProviderId.MOVIEPIRE_NATIVE ||
+            BuildConfig.IS_TV ||
+            !selection.source.provider.usesMoviepire ||
             !isActiveSelection(view, selection) ||
             !isMoviepireWrapper(view)
         ) {
@@ -1576,9 +1634,7 @@ class WebPlayerController(
         if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
         if (!isActiveSelection(view, selection)) return
         view.evaluateJavascript(
-            mobileMoviepireAdShieldScript() + if (
-                selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE
-            ) {
+            mobileMoviepireAdShieldScript() + if (!BuildConfig.IS_TV) {
                 "\n" + mobileMoviepireProgressBridgeScript()
             } else {
                 ""
@@ -1737,6 +1793,7 @@ class WebPlayerController(
         }
         customView = view
         customViewCallback = callback
+        nativeFullscreenRequested = true
         val decor = activity.window.decorView as FrameLayout
         val container = FrameLayout(activity).apply {
             setBackgroundColor(Color.BLACK)
@@ -1761,15 +1818,35 @@ class WebPlayerController(
     }
 
     private fun hideCustomView() {
-        val view = customView ?: return
-        (view.parent as? ViewGroup)?.removeView(view)
-        customViewContainer?.let { container ->
-            (container.parent as? ViewGroup)?.removeView(container)
+        customView?.let { view ->
+            (view.parent as? ViewGroup)?.removeView(view)
+            customViewContainer?.let { container ->
+                (container.parent as? ViewGroup)?.removeView(container)
+            }
+            customViewCallback?.onCustomViewHidden()
         }
         customView = null
         customViewContainer = null
-        customViewCallback?.onCustomViewHidden()
         customViewCallback = null
+        exitNativeFullscreenMode()
+    }
+
+    private fun exitNativeFullscreenMode() {
+        webView?.evaluateJavascript(
+            """
+            (() => {
+              const state = window.__aliflixFullscreenLayout;
+              if (!state) return false;
+              if (state.frame?.isConnected) state.frame.style.cssText = state.frameStyle;
+              if (document.body) document.body.style.overflow = state.bodyOverflow;
+              document.documentElement.style.overflow = state.rootOverflow;
+              delete window.__aliflixFullscreenLayout;
+              return true;
+            })();
+            """.trimIndent(),
+            null,
+        )
+        nativeFullscreenRequested = false
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         setSystemBarsVisible(activity, !playerVisible)
     }
@@ -1819,7 +1896,7 @@ internal fun playbackSeekEligible(
 
 internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
     !BuildConfig.IS_TV &&
-        selection.source.provider == PlaybackProviderId.MOVIEPIRE_NATIVE &&
+        selection.source.provider.usesMoviepire &&
         selection.media.type == MediaType.TV
 
 internal fun mobileMoviepireEpisodeBootstrapUrl(selection: PlaybackSelection): String? =
@@ -2071,7 +2148,37 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
 
       window.addEventListener("message", (event) => {
         const data = event.data;
-        if (!data || data.type !== "aliflix-seek") return;
+        if (!data) return;
+        if (data.type === "aliflix-fullscreen") {
+          document.querySelectorAll("iframe").forEach(frame => {
+            try { frame.contentWindow?.postMessage(data, "*"); } catch (_) {}
+          });
+          const video = activeVideo || document.querySelector("video");
+          if (video) {
+            const request = video.requestFullscreen || video.webkitRequestFullscreen ||
+              video.webkitEnterFullscreen;
+            if (typeof request === "function") {
+              try {
+                const result = request.call(video);
+                if (result && typeof result.catch === "function") result.catch(() => {});
+              } catch (_) {}
+              return;
+            }
+          }
+          const fullscreenControl = Array.from(
+            document.querySelectorAll('button,[role="button"]')
+          ).find(control => {
+            const label = [
+              control.getAttribute("aria-label"),
+              control.getAttribute("title"),
+              control.dataset?.title
+            ].filter(Boolean).join(" ");
+            return /(?:^|\s)full\s*screen(?:\s|$)/i.test(label);
+          });
+          fullscreenControl?.click();
+          return;
+        }
+        if (data.type !== "aliflix-seek") return;
         const seconds = Number(data.seconds);
         if (!validNumber(seconds)) return;
         const video = activeVideo || document.querySelector("video");
