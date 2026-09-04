@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.57"
+      - "release/v3.1.58"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.57"
+        description: "Release tag, for example v3.1.58"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "147"
-  RELEASE_VERSION_NAME: "3.1.57"
+  RELEASE_VERSION_CODE: "148"
+  RELEASE_VERSION_NAME: "3.1.58"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Keeps the real Moviepire player visible in Picture-in-Picture during app-only casting, preserves subtitles and background controls, and removes the forced fullscreen manipulation that could produce a blank video."
+            "releaseNotes": "Keeps the same Moviepire player and subtitles running on a cast route's external display without Picture-in-Picture, and adds synced preferred subtitle language and auto-display settings."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Keeps the real Moviepire player visible in Picture-in-Picture during app-only casting, preserves subtitles and background controls, and removes the forced fullscreen manipulation that could produce a blank video."
+          body: "Keeps the same Moviepire player and subtitles running on a cast route's external display without Picture-in-Picture, and adds synced preferred subtitle language and auto-display settings."
           files: |
             aliflix-mobile.apk
             update-mobile.json

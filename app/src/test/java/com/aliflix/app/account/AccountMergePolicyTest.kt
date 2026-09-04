@@ -77,9 +77,17 @@ class AccountMergePolicyTest {
 
     @Test
     fun newerCloudSettingsWinButLegacyExplicitLocalPreferencesAreProtected() {
-        val cloud = settings(provider = "RAMOFLIX", updatedAt = 9_000L)
+        val cloud = settings(
+            provider = "RAMOFLIX",
+            updatedAt = 9_000L,
+            subtitleLanguage = "AR",
+            autoSubtitles = true,
+        )
         val ordinaryLocal = settings(provider = "MOVIEPIRE", updatedAt = 8_000L)
-        assertSame(cloud, AccountMergePolicy.resolveSettings(ordinaryLocal, cloud))
+        val resolved = AccountMergePolicy.resolveSettings(ordinaryLocal, cloud)
+        assertSame(cloud, resolved)
+        assertEquals("AR", resolved.preferredSubtitleLanguage)
+        assertEquals(true, resolved.autoDisplaySubtitles)
 
         val legacyExplicit = settings(
             provider = "DORABY",
@@ -134,6 +142,8 @@ class AccountMergePolicyTest {
         provider: String,
         updatedAt: Long,
         explicit: Boolean = false,
+        subtitleLanguage: String = "EN",
+        autoSubtitles: Boolean = false,
     ) = AccountSettingsSnapshot(
         generalProvider = provider,
         ramoflixUrl = "https://ramoflix.example/",
@@ -142,6 +152,8 @@ class AccountMergePolicyTest {
         askAliflixEnabled = true,
         recommendationAiModel = "groq-qwen-3.8-27b",
         updatedAtMillis = updatedAt,
+        preferredSubtitleLanguage = subtitleLanguage,
+        autoDisplaySubtitles = autoSubtitles,
         hasExplicitLocalValues = explicit,
     )
 }

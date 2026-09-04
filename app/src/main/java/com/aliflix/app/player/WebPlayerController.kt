@@ -3,8 +3,9 @@ package com.aliflix.app.player
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.PictureInPictureParams
+import android.app.Presentation
 import android.content.Intent
+import android.content.MutableContextWrapper
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -12,10 +13,10 @@ import android.media.MediaRouter
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
-import android.util.Rational
 import android.view.InputDevice
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.JsPromptResult
@@ -104,8 +105,10 @@ class WebPlayerController(
     private var castRouteCallbackRegistered = false
     private var castHandoffStartedAt = 0L
     private var pendingCastPickerAfterPermission = false
-    private var inPictureInPictureMode = false
-    private var castPictureInPictureParams: PictureInPictureParams? = null
+    private var localPlayerHost: FrameLayout? = null
+    private var castPresentation: Presentation? = null
+    private var castPresentationDisplayId: Int? = null
+    private var activeCastRoute: MediaRouter.RouteInfo? = null
     private var activePlayerReplyProxy: JavaScriptReplyProxy? = null
     private var activeSubtitleContentKey: String? = null
     private var activeSubtitleCuesJson: String? = null
@@ -127,7 +130,9 @@ class WebPlayerController(
         ) {
             if (type and MediaRouter.ROUTE_TYPE_LIVE_VIDEO == 0) return
             castRouteWasConnected = true
+            activeCastRoute = info
             beginCastBackgroundPlayback()
+            scheduleCastPresentationAttach(info)
         }
 
         override fun onRouteUnselected(
@@ -136,12 +141,25 @@ class WebPlayerController(
             info: MediaRouter.RouteInfo,
         ) {
             if (type and MediaRouter.ROUTE_TYPE_LIVE_VIDEO == 0 || !castRouteWasConnected) return
+            if (activeCastRoute == info) activeCastRoute = null
             activity.window.decorView.postDelayed(
                 {
                     if (!hasSelectedRemoteDisplayRoute()) stopCastBackgroundPlayback()
                 },
                 CAST_ROUTE_DISCONNECT_GRACE_MILLIS,
             )
+        }
+
+        override fun onRoutePresentationDisplayChanged(
+            router: MediaRouter,
+            info: MediaRouter.RouteInfo,
+        ) {
+            if (!castBackgroundPlaybackRequested) return
+            val selected = selectedRemoteDisplayRoute() ?: return
+            if (selected == info) {
+                activeCastRoute = info
+                scheduleCastPresentationAttach(info)
+            }
         }
     }
 
@@ -171,7 +189,10 @@ class WebPlayerController(
         CastSessionKeepAlive.setPlaybackCommandHandler(castPlaybackCommandHandler)
     }
 
-    fun viewFor(selection: PlaybackSelection): WebView {
+    fun viewFor(selection: PlaybackSelection): FrameLayout {
+        val host = localPlayerHost ?: FrameLayout(activity).apply {
+            setBackgroundColor(Color.BLACK)
+        }.also { localPlayerHost = it }
         val view = webView ?: createWebView().also { webView = it }
         if (activeSelection?.key != selection.key) {
             flushProgress(urgentCloudSync = true)
@@ -194,8 +215,9 @@ class WebPlayerController(
             view.stopLoading()
             loadSelection(view, selection)
         }
-        (view.parent as? ViewGroup)?.removeView(view)
-        return view
+        if (castPresentation?.isShowing != true) attachPlayerView(host, activity)
+        (host.parent as? ViewGroup)?.removeView(host)
+        return host
     }
 
     fun savedProgressFor(selection: PlaybackSelection): PlaybackProgress? =
@@ -459,6 +481,11 @@ class WebPlayerController(
     }
 
     private fun launchCastPicker() {
+        if (customView != null) {
+            hideCustomView()
+        } else if (nativeFullscreenRequested) {
+            exitNativeFullscreenMode()
+        }
         registerCastRouteCallback()
         beginCastBackgroundPlayback()
         activity.window.decorView.postDelayed(
@@ -528,6 +555,7 @@ class WebPlayerController(
             destroy()
         }
         webView = null
+        localPlayerHost = null
         loadedKey = null
         activeSelection = null
         activePlayerReplyProxy = null
@@ -540,6 +568,7 @@ class WebPlayerController(
         appInBackground = true
         flushProgress(urgentCloudSync = true)
         if (shouldKeepCastPlaybackAlive(castBackgroundPlaybackRequested, playerVisible)) {
+            attachSelectedCastPresentation()
             sustainCastPlayback()
             scheduleCastKeepAliveWatchdog()
         }
@@ -548,6 +577,7 @@ class WebPlayerController(
     fun onAppForeground() {
         appInBackground = false
         if (shouldKeepCastPlaybackAlive(castBackgroundPlaybackRequested, playerVisible)) {
+            attachSelectedCastPresentation()
             sustainCastPlayback()
             scheduleCastKeepAliveWatchdog()
         }
@@ -557,30 +587,13 @@ class WebPlayerController(
         if (!shouldKeepCastPlaybackAlive(castBackgroundPlaybackRequested, playerVisible)) return
         sustainCastPlayback()
         scheduleCastKeepAliveWatchdog()
-        enterCastPictureInPictureIfNeeded()
-    }
-
-    fun onPictureInPictureModeChanged(inPictureInPictureMode: Boolean) {
-        this.inPictureInPictureMode = inPictureInPictureMode
-        if (inPictureInPictureMode && shouldKeepCastPlaybackAlive(
-                castBackgroundPlaybackRequested,
-                playerVisible,
-            )
-        ) {
-            _castPresentationActive.value = true
-            sustainCastPlayback()
-            activePlayerReplyProxy?.let(::postActiveSubtitles)
-            scheduleCastKeepAliveWatchdog()
-        } else if (!castBackgroundPlaybackRequested) {
-            _castPresentationActive.value = false
-        }
     }
 
     private fun beginCastBackgroundPlayback() {
         if (BuildConfig.IS_TV || !playerVisible || activeSelection == null) return
         val selection = activeSelection ?: return
         if (castBackgroundPlaybackRequested) {
-            prepareCastPictureInPicture()
+            attachSelectedCastPresentation()
             updateCastNotification()
             sustainCastPlayback()
             scheduleCastKeepAliveWatchdog()
@@ -588,8 +601,6 @@ class WebPlayerController(
         }
         castShouldContinuePlaying = castShouldContinuePlaying || _playing.value
         castHandoffStartedAt = SystemClock.elapsedRealtime()
-        _castPresentationActive.value = true
-        prepareCastPictureInPicture()
         castBackgroundPlaybackRequested = CastSessionKeepAlive.start(
             context = activity,
             title = selection.media.title,
@@ -597,11 +608,11 @@ class WebPlayerController(
             playing = castShouldContinuePlaying,
         )
         if (castBackgroundPlaybackRequested) {
+            attachSelectedCastPresentation()
             sustainCastPlayback()
             scheduleCastKeepAliveWatchdog()
         } else {
-            _castPresentationActive.value = false
-            disableCastPictureInPictureAutoEnter()
+            dismissCastPresentation()
         }
     }
 
@@ -614,8 +625,9 @@ class WebPlayerController(
         castBackgroundPlaybackRequested = false
         castShouldContinuePlaying = false
         castRouteWasConnected = false
+        activeCastRoute = null
+        dismissCastPresentation()
         _castPresentationActive.value = false
-        disableCastPictureInPictureAutoEnter()
     }
 
     private fun sustainCastPlayback() {
@@ -641,68 +653,134 @@ class WebPlayerController(
         view.postDelayed(castKeepAliveWatchdog, CAST_KEEP_ALIVE_INTERVAL_MILLIS)
     }
 
-    private fun prepareCastPictureInPicture() {
-        if (!castPictureInPictureAvailable()) return
-        val params = PictureInPictureParams.Builder()
-            .setAspectRatio(CAST_PICTURE_IN_PICTURE_ASPECT_RATIO)
-            .apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    setAutoEnterEnabled(true)
-                    // A WebView can contain a separately composited, cross-origin video surface.
-                    // Ask Android to cross-fade PiP resizes instead of stretching that surface,
-                    // which avoids the black-frame failure seen with forced fullscreen resizing.
-                    setSeamlessResizeEnabled(false)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    activeSelection?.let { selection ->
-                        setTitle(selection.media.title)
-                        setSubtitle(castNotificationSubtitle(selection))
-                    }
-                }
-            }
-            .build()
-        castPictureInPictureParams = params
-        runCatching { activity.setPictureInPictureParams(params) }
+    @Suppress("DEPRECATION")
+    private fun attachSelectedCastPresentation(): Boolean {
+        val route = activeCastRoute ?: selectedRemoteDisplayRoute() ?: return false
+        activeCastRoute = route
+        return attachCastPresentation(route)
     }
 
-    private fun enterCastPictureInPictureIfNeeded() {
-        if (!shouldEnterCastPictureInPicture(
+    @Suppress("DEPRECATION")
+    private fun scheduleCastPresentationAttach(route: MediaRouter.RouteInfo) {
+        if (attachCastPresentation(route)) return
+        CAST_PRESENTATION_ATTACH_DELAYS_MILLIS.forEach { delay ->
+            activity.window.decorView.postDelayed(
+                {
+                    if (
+                        castBackgroundPlaybackRequested &&
+                        playerVisible &&
+                        activeCastRoute == route &&
+                        castPresentation?.isShowing != true
+                    ) {
+                        attachCastPresentation(route)
+                    }
+                },
+                delay,
+            )
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun attachCastPresentation(route: MediaRouter.RouteInfo): Boolean {
+        val display = route.presentationDisplay
+        if (!shouldUseCastPresentation(
                 castRequested = castBackgroundPlaybackRequested,
                 playerVisible = playerVisible,
                 isTv = BuildConfig.IS_TV,
-                featureAvailable = activity.packageManager.hasSystemFeature(
-                    PackageManager.FEATURE_PICTURE_IN_PICTURE,
-                ),
-                alreadyInPictureInPicture = inPictureInPictureMode,
+                presentationDisplayAvailable = display != null,
             )
-        ) return
-        prepareCastPictureInPicture()
-        castPictureInPictureParams?.let { params ->
-            runCatching { activity.enterPictureInPictureMode(params) }
-        }
-    }
-
-    private fun disableCastPictureInPictureAutoEnter() {
+        ) return false
+        display ?: return false
+        val view = webView ?: return false
         if (
-            BuildConfig.IS_TV ||
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            castPictureInPictureParams == null
-        ) return
-        runCatching {
-            val params = PictureInPictureParams.Builder()
-                .setAspectRatio(CAST_PICTURE_IN_PICTURE_ASPECT_RATIO)
-                .setAutoEnterEnabled(false)
-                .build()
-            castPictureInPictureParams = params
-            activity.setPictureInPictureParams(params)
+            castPresentation?.isShowing == true &&
+            castPresentationDisplayId == display.displayId
+        ) {
+            return true
+        }
+
+        dismissCastPresentation(returnToLocalPlayer = false)
+        val presentation = Presentation(activity, display)
+        val host = FrameLayout(presentation.context).apply {
+            setBackgroundColor(Color.BLACK)
+        }
+        presentation.setContentView(host)
+        presentation.setOnDismissListener {
+            if (castPresentation === presentation) {
+                castPresentation = null
+                castPresentationDisplayId = null
+                _castPresentationActive.value = false
+                attachPlayerViewToLocalHost()
+                activeCastRoute
+                    ?.takeIf { castBackgroundPlaybackRequested && playerVisible }
+                    ?.let(::scheduleCastPresentationAttach)
+            }
+        }
+        return runCatching {
+            presentation.show()
+            presentation.window?.apply {
+                addFlags(
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN or
+                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                        WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                )
+                setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                )
+                decorView.setBackgroundColor(Color.BLACK)
+            }
+            castPresentation = presentation
+            castPresentationDisplayId = display.displayId
+            attachPlayerView(host, presentation.context)
+            _castPresentationActive.value = true
+            view.visibility = View.VISIBLE
+            view.onResume()
+            view.resumeTimers()
+            activePlayerReplyProxy?.let(::postActiveSubtitles)
+            sustainCastPlayback()
+            true
+        }.getOrElse {
+            presentation.setOnDismissListener(null)
+            runCatching { presentation.dismiss() }
+            castPresentation = null
+            castPresentationDisplayId = null
+            _castPresentationActive.value = false
+            attachPlayerViewToLocalHost()
+            false
         }
     }
 
-    private fun castPictureInPictureAvailable(): Boolean =
-        !BuildConfig.IS_TV &&
-            playerVisible &&
-            activeSelection?.source?.provider?.usesMoviepire == true &&
-            activity.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    private fun dismissCastPresentation(returnToLocalPlayer: Boolean = true) {
+        val presentation = castPresentation
+        castPresentation = null
+        castPresentationDisplayId = null
+        presentation?.setOnDismissListener(null)
+        runCatching { presentation?.dismiss() }
+        _castPresentationActive.value = false
+        if (returnToLocalPlayer) attachPlayerViewToLocalHost()
+    }
+
+    private fun attachPlayerViewToLocalHost() {
+        val host = localPlayerHost ?: return
+        attachPlayerView(host, activity)
+    }
+
+    private fun attachPlayerView(host: FrameLayout, displayContext: android.content.Context) {
+        val view = webView ?: return
+        if (view.parent !== host) {
+            (view.parent as? ViewGroup)?.removeView(view)
+            host.removeAllViews()
+            (view.context as? MutableContextWrapper)?.baseContext = displayContext
+            host.addView(
+                view,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+    }
 
     private fun handleCastPlaybackCommand(command: CastPlaybackCommand) {
         if (!castBackgroundPlaybackRequested || !playerVisible) return
@@ -814,9 +892,14 @@ class WebPlayerController(
 
     @Suppress("DEPRECATION")
     private fun hasSelectedRemoteDisplayRoute(): Boolean = runCatching {
-        val selected = mediaRouter.getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_VIDEO)
-        selected != mediaRouter.defaultRoute && selected.isEnabled
+        selectedRemoteDisplayRoute() != null
     }.getOrDefault(false)
+
+    @Suppress("DEPRECATION")
+    private fun selectedRemoteDisplayRoute(): MediaRouter.RouteInfo? = runCatching {
+        mediaRouter.getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_VIDEO)
+            .takeIf { selected -> selected != mediaRouter.defaultRoute && selected.isEnabled }
+    }.getOrNull()
 
     private fun loadSelection(
         view: WebView,
@@ -1080,7 +1163,7 @@ class WebPlayerController(
         val cookieManager = CookieManager.getInstance().apply {
             setAcceptCookie(true)
         }
-        return object : WebView(activity) {
+        return object : WebView(MutableContextWrapper(activity)) {
             override fun dispatchKeyEvent(event: KeyEvent): Boolean {
                 if (BuildConfig.IS_TV && event.action == KeyEvent.ACTION_DOWN) {
                     when (event.keyCode) {
@@ -2384,7 +2467,7 @@ class WebPlayerController(
         const val SUBTITLE_DELAY_LIMIT_SECONDS = 10.0
         const val MIN_SUBTITLE_FONT_PERCENT = 70
         const val MAX_SUBTITLE_FONT_PERCENT = 180
-        val CAST_PICTURE_IN_PICTURE_ASPECT_RATIO = Rational(16, 9)
+        val CAST_PRESENTATION_ATTACH_DELAYS_MILLIS = longArrayOf(180L, 500L, 1_200L, 2_500L, 4_500L)
     }
 }
 
@@ -2424,17 +2507,15 @@ internal fun shouldPreserveCastPlaybackIntent(
     insideCastHandoff: Boolean,
 ): Boolean = castRequested && (appInBackground || documentHidden || insideCastHandoff)
 
-internal fun shouldEnterCastPictureInPicture(
+internal fun shouldUseCastPresentation(
     castRequested: Boolean,
     playerVisible: Boolean,
     isTv: Boolean,
-    featureAvailable: Boolean,
-    alreadyInPictureInPicture: Boolean,
+    presentationDisplayAvailable: Boolean,
 ): Boolean = castRequested &&
     playerVisible &&
     !isTv &&
-    featureAvailable &&
-    !alreadyInPictureInPicture
+    presentationDisplayAvailable
 
 internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
     !BuildConfig.IS_TV &&

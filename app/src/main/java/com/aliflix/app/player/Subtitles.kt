@@ -3,6 +3,7 @@ package com.aliflix.app.player
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.SubtitleLanguage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -37,6 +38,39 @@ internal fun subtitleContentKey(selection: PlaybackSelection): String = when (se
     MediaType.MOVIE -> "movie:${selection.media.id}"
     MediaType.TV -> "tv:${selection.media.id}:s${selection.seasonNumber ?: 1}:e${selection.episodeNumber ?: 1}"
 }
+
+internal fun preferredSubtitleTrack(
+    tracks: List<SubtitleTrack>,
+    language: SubtitleLanguage,
+): SubtitleTrack? = tracks.asSequence()
+    .filter { track ->
+        canonicalSubtitleLanguageCode(track.languageCode) == language.code ||
+            track.languageName.equals(language.displayName, ignoreCase = true)
+    }
+    .sortedWith(
+        compareBy<SubtitleTrack>(SubtitleTrack::hearingImpaired)
+            .thenBy { track -> track.format !in setOf("srt", "vtt") }
+            .thenBy(SubtitleTrack::id),
+    )
+    .firstOrNull()
+
+private fun canonicalSubtitleLanguageCode(value: String): String {
+    val normalized = value.trim().substringBefore('-').uppercase()
+    return SUBTITLE_LANGUAGE_ALIASES[normalized] ?: normalized
+}
+
+private val SUBTITLE_LANGUAGE_ALIASES = mapOf(
+    "ENG" to "EN", "ARA" to "AR", "GER" to "DE", "DEU" to "DE",
+    "SPA" to "ES", "FRE" to "FR", "FRA" to "FR", "ITA" to "IT",
+    "POR" to "PT", "TUR" to "TR", "DUT" to "NL", "NLD" to "NL",
+    "POL" to "PL", "RUS" to "RU", "UKR" to "UK", "PER" to "FA",
+    "FAS" to "FA", "HIN" to "HI", "IND" to "ID", "CHI" to "ZH",
+    "ZHO" to "ZH", "JPN" to "JA", "KOR" to "KO", "GRE" to "EL",
+    "ELL" to "EL", "SWE" to "SV", "DAN" to "DA", "NOR" to "NO",
+    "FIN" to "FI", "RUM" to "RO", "RON" to "RO", "CZE" to "CS",
+    "CES" to "CS", "HUN" to "HU", "HEB" to "HE", "VIE" to "VI",
+    "THA" to "TH", "BEN" to "BN", "URD" to "UR",
+)
 
 class SubdlSubtitleRepository(
     baseUrl: String = BuildConfig.RECOMMENDATION_AI_BASE_URL,

@@ -13,6 +13,7 @@ import com.aliflix.app.data.mergePlaybackProgress
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.defaultGeneralPlaybackProvider
 import com.aliflix.app.recommendation.RecommendationAiModel
 import com.aliflix.app.recommendation.RecommendationStore
@@ -532,6 +533,8 @@ class FirebaseAccountSyncRepository(
                 playbackRepository.updatedAtMillis.value,
                 recommendationStore.updatedAtMillis.value,
             ),
+            preferredSubtitleLanguage = playback.preferredSubtitleLanguage.code,
+            autoDisplaySubtitles = playback.autoDisplaySubtitles,
             hasExplicitLocalValues = playbackRepository.hasExplicitValues ||
                 recommendationStore.hasExplicitValues,
         )
@@ -549,6 +552,10 @@ class FirebaseAccountSyncRepository(
                 ?: PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
             dorabyBaseUrl = RamoflixConfig.normalizeBaseUrl(settings.dorabyUrl)
                 ?: PlaybackProviderId.DORABY.defaultBaseUrl,
+            preferredSubtitleLanguage = SubtitleLanguage.fromCode(
+                settings.preferredSubtitleLanguage,
+            ),
+            autoDisplaySubtitles = settings.autoDisplaySubtitles,
         )
         playbackRepository.applySyncedPreferences(playback, settings.updatedAtMillis)
         recommendationStore.applySyncedSettings(
@@ -588,6 +595,8 @@ class FirebaseAccountSyncRepository(
         "customDorabyUrl" to settings.dorabyUrl,
         "askAliflixEnabled" to settings.askAliflixEnabled,
         "recommendationAiModel" to settings.recommendationAiModel,
+        "preferredSubtitleLanguage" to settings.preferredSubtitleLanguage,
+        "autoDisplaySubtitles" to settings.autoDisplaySubtitles,
         "updatedAt" to FieldValue.serverTimestamp(),
         "updatedAtMillis" to settings.updatedAtMillis,
     )
@@ -706,6 +715,8 @@ private fun DocumentSnapshot.toSettingsSnapshot(): AccountSettingsSnapshot = Acc
     askAliflixEnabled = getBoolean("askAliflixEnabled") ?: true,
     recommendationAiModel = getString("recommendationAiModel")
         ?: RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue,
+    preferredSubtitleLanguage = getString("preferredSubtitleLanguage") ?: "EN",
+    autoDisplaySubtitles = getBoolean("autoDisplaySubtitles") ?: false,
     updatedAtMillis = getTimestamp("updatedAt")?.toDate()?.time
         ?: getLong("updatedAtMillis")
         ?: 0L,

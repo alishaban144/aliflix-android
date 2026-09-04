@@ -73,6 +73,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.Episode
 import com.aliflix.app.ui.theme.AliflixBlack
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
@@ -92,6 +93,8 @@ fun WebPlayerScreen(
     controller: WebPlayerController,
     onClose: () -> Unit,
     onSelectEpisode: (Episode) -> Unit = {},
+    preferredSubtitleLanguage: SubtitleLanguage = SubtitleLanguage.ENGLISH,
+    autoDisplayPreferredSubtitles: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val loading by controller.loading.collectAsState()
@@ -123,6 +126,7 @@ fun WebPlayerScreen(
     var activeSubtitleCues by remember(selection.key) { mutableStateOf<List<SubtitleCue>>(emptyList()) }
     var subtitleDelayTenths by remember(selection.key) { mutableStateOf(0) }
     var subtitleFontPercent by remember(selection.key) { mutableStateOf(100) }
+    var autoSubtitleAttemptedLanguage by remember(selection.key) { mutableStateOf<String?>(null) }
     val subtitleRepository = remember { SubdlSubtitleRepository() }
     val subtitleScope = rememberCoroutineScope()
 
@@ -151,6 +155,44 @@ fun WebPlayerScreen(
             .onSuccess { subtitleTracks = it }
             .onFailure { subtitleSearchError = it.message ?: "Subtitles are temporarily unavailable" }
         subtitleSearching = false
+    }
+
+    LaunchedEffect(
+        nativePhoneMoviepire,
+        autoDisplayPreferredSubtitles,
+        preferredSubtitleLanguage,
+        subtitleTracks,
+        selection.key,
+    ) {
+        val tracks = subtitleTracks ?: return@LaunchedEffect
+        if (
+            !nativePhoneMoviepire ||
+            !autoDisplayPreferredSubtitles ||
+            subtitleTrackLoading ||
+            autoSubtitleAttemptedLanguage == preferredSubtitleLanguage.code
+        ) return@LaunchedEffect
+        val track = preferredSubtitleTrack(tracks, preferredSubtitleLanguage)
+            ?: return@LaunchedEffect
+        autoSubtitleAttemptedLanguage = preferredSubtitleLanguage.code
+        subtitleTrackLoading = true
+        subtitleTrackError = null
+        subtitleRepository.download(track)
+            .onSuccess { cues ->
+                selectedSubtitleTrack = track
+                activeSubtitleCues = cues
+                controller.setSubtitles(
+                    selection = selection,
+                    cues = cues,
+                    delaySeconds = subtitleDelayTenths / 10.0,
+                    fontPercent = subtitleFontPercent,
+                    languageCode = track.languageCode,
+                    label = track.languageName,
+                )
+            }
+            .onFailure {
+                subtitleTrackError = it.message ?: "This subtitle could not be loaded"
+            }
+        subtitleTrackLoading = false
     }
 
     LaunchedEffect(castPresentationActive) {

@@ -3,11 +3,38 @@ package com.aliflix.app.player
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.SubtitleLanguage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SubtitlesTest {
+    @Test
+    fun preferredLanguageSelectsTheBestMatchingTrack() {
+        val hearingImpaired = subtitleTrack("hi", "ENG", "English", hearingImpaired = true)
+        val ordinaryAss = subtitleTrack("ass", "English", "English", format = "ass")
+        val ordinarySrt = subtitleTrack("srt", "EN", "English", format = "srt")
+
+        assertEquals(
+            ordinarySrt,
+            preferredSubtitleTrack(
+                listOf(hearingImpaired, ordinaryAss, ordinarySrt),
+                SubtitleLanguage.ENGLISH,
+            ),
+        )
+        assertEquals(
+            "de",
+            preferredSubtitleTrack(
+                listOf(subtitleTrack("de", "GER", "German")),
+                SubtitleLanguage.GERMAN,
+            )?.id,
+        )
+        assertEquals(
+            null,
+            preferredSubtitleTrack(listOf(ordinarySrt), SubtitleLanguage.ARABIC),
+        )
+    }
+
     @Test
     fun subtitleIdentityUsesExactMovieOrEpisodeAndNeverServer() {
         val movie = PlaybackSelection(Media(27205, MediaType.MOVIE, "Inception"))
@@ -80,4 +107,22 @@ class SubtitlesTest {
         assertEquals(1, cues.size)
         assertEquals("Visible caption", cues.single().text)
     }
+
+    private fun subtitleTrack(
+        id: String,
+        code: String,
+        name: String,
+        hearingImpaired: Boolean = false,
+        format: String = "srt",
+    ) = SubtitleTrack(
+        id = id,
+        languageCode = code,
+        languageName = name,
+        releaseName = id,
+        fileName = "$id.$format",
+        hearingImpaired = hearingImpaired,
+        format = format,
+        fps = null,
+        downloadToken = "abcdefgh",
+    )
 }

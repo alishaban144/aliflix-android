@@ -66,6 +66,8 @@ data class AccountSettingsSnapshot(
     val askAliflixEnabled: Boolean,
     val recommendationAiModel: String,
     val updatedAtMillis: Long,
+    val preferredSubtitleLanguage: String = "EN",
+    val autoDisplaySubtitles: Boolean = false,
     val hasExplicitLocalValues: Boolean = false,
 )
 

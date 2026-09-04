@@ -241,32 +241,45 @@ class WebPlayerCompatibilityTest {
     }
 
     @Test
-    fun castUsesPictureInPictureToKeepTheRealWebViewVisibleOnBackgrounding() {
+    fun castUsesTheRoutesExternalDisplayAndNeverPictureInPicture() {
         assertTrue(
-            shouldEnterCastPictureInPicture(
+            shouldUseCastPresentation(
                 castRequested = true,
                 playerVisible = true,
                 isTv = false,
-                featureAvailable = true,
-                alreadyInPictureInPicture = false,
+                presentationDisplayAvailable = true,
             ),
         )
         assertFalse(
-            shouldEnterCastPictureInPicture(
+            shouldUseCastPresentation(
                 castRequested = true,
                 playerVisible = true,
                 isTv = false,
-                featureAvailable = true,
-                alreadyInPictureInPicture = true,
+                presentationDisplayAvailable = false,
             ),
         )
         assertFalse(
-            shouldEnterCastPictureInPicture(
+            shouldUseCastPresentation(
+                castRequested = false,
+                playerVisible = true,
+                isTv = false,
+                presentationDisplayAvailable = true,
+            ),
+        )
+        assertFalse(
+            shouldUseCastPresentation(
+                castRequested = true,
+                playerVisible = false,
+                isTv = false,
+                presentationDisplayAvailable = true,
+            ),
+        )
+        assertFalse(
+            shouldUseCastPresentation(
                 castRequested = true,
                 playerVisible = true,
                 isTv = true,
-                featureAvailable = true,
-                alreadyInPictureInPicture = false,
+                presentationDisplayAvailable = true,
             ),
         )
     }

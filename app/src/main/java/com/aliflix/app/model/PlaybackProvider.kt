@@ -69,6 +69,52 @@ internal fun mobileGeneralPlaybackProviders(): List<PlaybackProviderId> = buildL
     )
 }
 
+enum class SubtitleLanguage(
+    val code: String,
+    val displayName: String,
+) {
+    ENGLISH("EN", "English"),
+    ARABIC("AR", "Arabic"),
+    GERMAN("DE", "German"),
+    SPANISH("ES", "Spanish"),
+    FRENCH("FR", "French"),
+    ITALIAN("IT", "Italian"),
+    PORTUGUESE("PT", "Portuguese"),
+    TURKISH("TR", "Turkish"),
+    DUTCH("NL", "Dutch"),
+    POLISH("PL", "Polish"),
+    RUSSIAN("RU", "Russian"),
+    UKRAINIAN("UK", "Ukrainian"),
+    PERSIAN("FA", "Persian"),
+    HINDI("HI", "Hindi"),
+    INDONESIAN("ID", "Indonesian"),
+    CHINESE("ZH", "Chinese"),
+    JAPANESE("JA", "Japanese"),
+    KOREAN("KO", "Korean"),
+    GREEK("EL", "Greek"),
+    SWEDISH("SV", "Swedish"),
+    DANISH("DA", "Danish"),
+    NORWEGIAN("NO", "Norwegian"),
+    FINNISH("FI", "Finnish"),
+    ROMANIAN("RO", "Romanian"),
+    CZECH("CS", "Czech"),
+    HUNGARIAN("HU", "Hungarian"),
+    HEBREW("HE", "Hebrew"),
+    VIETNAMESE("VI", "Vietnamese"),
+    THAI("TH", "Thai"),
+    BENGALI("BN", "Bengali"),
+    URDU("UR", "Urdu");
+
+    companion object {
+        fun fromCode(value: String?): SubtitleLanguage {
+            val normalized = value.orEmpty().trim().substringBefore('-').uppercase()
+            return entries.firstOrNull { language ->
+                language.code == normalized || language.name == normalized
+            } ?: ENGLISH
+        }
+    }
+}
+
 data class PlaybackSource(
     val provider: PlaybackProviderId,
     val baseUrl: String = provider.defaultBaseUrl,
@@ -130,6 +176,8 @@ data class PlaybackPreferences(
     val ramoflixConfig: RamoflixConfig = RamoflixConfig(),
     val dorabyBaseUrl: String = PlaybackProviderId.DORABY.defaultBaseUrl,
     val moviepireBaseUrl: String = PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
+    val preferredSubtitleLanguage: SubtitleLanguage = SubtitleLanguage.ENGLISH,
+    val autoDisplaySubtitles: Boolean = false,
 ) {
     val safeGeneralProvider: PlaybackProviderId
         get() = generalProvider.takeIf(PlaybackProviderId::supportsGeneralPlayback)

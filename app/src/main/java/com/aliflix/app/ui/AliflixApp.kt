@@ -114,6 +114,8 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -197,6 +199,7 @@ import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.mobileGeneralPlaybackProviders
 import com.aliflix.app.player.WebPlayerController
 import com.aliflix.app.player.WebPlayerScreen
@@ -1214,6 +1217,11 @@ fun AliflixApp(
                             viewModel::setAiRecommendationsEnabled,
                         recommendationAiModel = recommendationAiModel,
                         onSetRecommendationAiModel = viewModel::setRecommendationAiModel,
+                        preferredSubtitleLanguage = playbackPreferences.preferredSubtitleLanguage,
+                        onSelectPreferredSubtitleLanguage =
+                            viewModel::selectPreferredSubtitleLanguage,
+                        autoDisplaySubtitles = playbackPreferences.autoDisplaySubtitles,
+                        onSetAutoDisplaySubtitles = viewModel::setAutoDisplaySubtitles,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                     )
                 }
@@ -1250,6 +1258,8 @@ fun AliflixApp(
                                 requestedProvider = selection.source.provider,
                             )
                         },
+                        preferredSubtitleLanguage = playbackPreferences.preferredSubtitleLanguage,
+                        autoDisplayPreferredSubtitles = playbackPreferences.autoDisplaySubtitles,
                     )
                 }
             }
@@ -2981,6 +2991,10 @@ private fun MobileSettingsDialog(
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
     recommendationAiModel: RecommendationAiModel,
     onSetRecommendationAiModel: (RecommendationAiModel) -> Unit,
+    preferredSubtitleLanguage: SubtitleLanguage,
+    onSelectPreferredSubtitleLanguage: (SubtitleLanguage) -> Unit,
+    autoDisplaySubtitles: Boolean,
+    onSetAutoDisplaySubtitles: (Boolean) -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3186,6 +3200,116 @@ private fun MobileSettingsDialog(
                                     },
                                 )
                             }
+                        }
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Subtitles",
+                        color = AliflixContentPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(AliflixSurfaceSecondary)
+                            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp)),
+                    ) {
+                        var languageExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { languageExpanded = true }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "Language",
+                                    color = AliflixContentPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    text = preferredSubtitleLanguage.displayName,
+                                    color = AliflixAccentSecondary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDropDown,
+                                    contentDescription = "Choose subtitle language",
+                                    tint = AliflixContentSecondary,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = languageExpanded,
+                                onDismissRequest = { languageExpanded = false },
+                                modifier = Modifier.background(AliflixSurfaceRaised),
+                            ) {
+                                SubtitleLanguage.entries.forEach { language ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = language.displayName,
+                                                color = AliflixContentPrimary,
+                                                fontWeight = if (language == preferredSubtitleLanguage) {
+                                                    FontWeight.Bold
+                                                } else {
+                                                    FontWeight.Normal
+                                                },
+                                            )
+                                        },
+                                        trailingIcon = if (language == preferredSubtitleLanguage) {
+                                            {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = AliflixAccentSecondary,
+                                                )
+                                            }
+                                        } else {
+                                            null
+                                        },
+                                        onClick = {
+                                            onSelectPreferredSubtitleLanguage(language)
+                                            languageExpanded = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .toggleable(
+                                    value = autoDisplaySubtitles,
+                                    role = Role.Checkbox,
+                                    onValueChange = onSetAutoDisplaySubtitles,
+                                )
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "Auto display",
+                                color = AliflixContentPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Checkbox(
+                                checked = autoDisplaySubtitles,
+                                onCheckedChange = null,
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = AliflixAccentPrimary,
+                                    checkmarkColor = Color.White,
+                                    uncheckedColor = AliflixContentSecondary,
+                                ),
+                            )
                         }
                     }
                 }
@@ -3477,6 +3601,10 @@ private fun MySpaceScreen(
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
     recommendationAiModel: RecommendationAiModel,
     onSetRecommendationAiModel: (RecommendationAiModel) -> Unit,
+    preferredSubtitleLanguage: SubtitleLanguage,
+    onSelectPreferredSubtitleLanguage: (SubtitleLanguage) -> Unit,
+    autoDisplaySubtitles: Boolean,
+    onSetAutoDisplaySubtitles: (Boolean) -> Unit,
     updateUi: MobileUpdateUiState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -3547,6 +3675,10 @@ private fun MySpaceScreen(
             onSetAiRecommendationsEnabled = onSetAiRecommendationsEnabled,
             recommendationAiModel = recommendationAiModel,
             onSetRecommendationAiModel = onSetRecommendationAiModel,
+            preferredSubtitleLanguage = preferredSubtitleLanguage,
+            onSelectPreferredSubtitleLanguage = onSelectPreferredSubtitleLanguage,
+            autoDisplaySubtitles = autoDisplaySubtitles,
+            onSetAutoDisplaySubtitles = onSetAutoDisplaySubtitles,
             updateUi = updateUi,
             onCheckForUpdates = onCheckForUpdates,
             onDownloadUpdate = onDownloadUpdate,

@@ -93,6 +93,8 @@ private fun AccountSettingsSnapshot.toJson() = JSONObject()
     .put("dorabyUrl", dorabyUrl)
     .put("askAliflixEnabled", askAliflixEnabled)
     .put("recommendationAiModel", recommendationAiModel)
+    .put("preferredSubtitleLanguage", preferredSubtitleLanguage)
+    .put("autoDisplaySubtitles", autoDisplaySubtitles)
     .put("updatedAtMillis", updatedAtMillis)
     .put("hasExplicitLocalValues", hasExplicitLocalValues)
 
@@ -118,6 +120,8 @@ private fun JSONObject.toSettingsSnapshot() = AccountSettingsSnapshot(
     askAliflixEnabled = optBoolean("askAliflixEnabled", true),
     recommendationAiModel = optString("recommendationAiModel"),
     updatedAtMillis = optLong("updatedAtMillis").coerceAtLeast(0L),
+    preferredSubtitleLanguage = optString("preferredSubtitleLanguage", "EN"),
+    autoDisplaySubtitles = optBoolean("autoDisplaySubtitles", false),
     hasExplicitLocalValues = optBoolean("hasExplicitLocalValues"),
 )
 

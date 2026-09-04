@@ -6,6 +6,7 @@ import androidx.core.content.edit
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.defaultGeneralPlaybackProvider
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -36,6 +37,8 @@ class PlaybackProviderRepository(context: Context) {
             KEY_CUSTOM_MOVIEPIRE_URL,
             KEY_CUSTOM_DORABY_URL,
             KEY_GENERAL_PROVIDER_ID,
+            KEY_PREFERRED_SUBTITLE_LANGUAGE,
+            KEY_AUTO_DISPLAY_SUBTITLES,
             KEY_LEGACY_ACTIVE_SOURCE_ID,
         ).any(prefs::contains)
 
@@ -93,6 +96,18 @@ class PlaybackProviderRepository(context: Context) {
         recordLocalChange()
     }
 
+    fun selectPreferredSubtitleLanguage(language: SubtitleLanguage) {
+        prefs.edit { putString(KEY_PREFERRED_SUBTITLE_LANGUAGE, language.code) }
+        _preferences.value = _preferences.value.copy(preferredSubtitleLanguage = language)
+        recordLocalChange()
+    }
+
+    fun setAutoDisplaySubtitles(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_AUTO_DISPLAY_SUBTITLES, enabled) }
+        _preferences.value = _preferences.value.copy(autoDisplaySubtitles = enabled)
+        recordLocalChange()
+    }
+
     /** Applies cloud/account-scope settings without creating a write-back loop. */
     fun applySyncedPreferences(value: PlaybackPreferences, updatedAtMillis: Long) {
         val provider = value.safeGeneralProvider
@@ -103,6 +118,8 @@ class PlaybackProviderRepository(context: Context) {
             putString(KEY_CUSTOM_RAMOFLIX_URL, value.ramoflixConfig.baseUrl)
             putString(KEY_CUSTOM_MOVIEPIRE_URL, value.moviepireBaseUrl)
             putString(KEY_CUSTOM_DORABY_URL, value.dorabyBaseUrl)
+            putString(KEY_PREFERRED_SUBTITLE_LANGUAGE, value.preferredSubtitleLanguage.code)
+            putBoolean(KEY_AUTO_DISPLAY_SUBTITLES, value.autoDisplaySubtitles)
             putLong(KEY_UPDATED_AT_MILLIS, _updatedAtMillis.value)
             remove(KEY_LEGACY_ACTIVE_SOURCE_ID)
             remove(KEY_LEGACY_CUSTOM_BCINE_URL)
@@ -158,6 +175,10 @@ class PlaybackProviderRepository(context: Context) {
                 ?: PlaybackProviderId.MOVIEPIRE.defaultBaseUrl,
             dorabyBaseUrl = normalizedDorabyUrl
                 ?: PlaybackProviderId.DORABY.defaultBaseUrl,
+            preferredSubtitleLanguage = SubtitleLanguage.fromCode(
+                prefs.getString(KEY_PREFERRED_SUBTITLE_LANGUAGE, null),
+            ),
+            autoDisplaySubtitles = prefs.getBoolean(KEY_AUTO_DISPLAY_SUBTITLES, false),
         )
     }
 
@@ -168,6 +189,8 @@ class PlaybackProviderRepository(context: Context) {
         const val KEY_LEGACY_CUSTOM_BCINE_URL = "custom_url_bcine"
         const val KEY_CUSTOM_DORABY_URL = "custom_url_doraby"
         const val KEY_GENERAL_PROVIDER_ID = "general_provider_id"
+        const val KEY_PREFERRED_SUBTITLE_LANGUAGE = "preferred_subtitle_language"
+        const val KEY_AUTO_DISPLAY_SUBTITLES = "auto_display_subtitles"
         const val KEY_LEGACY_ACTIVE_SOURCE_ID = "active_source_id"
         const val KEY_UPDATED_AT_MILLIS = "updated_at_millis"
     }

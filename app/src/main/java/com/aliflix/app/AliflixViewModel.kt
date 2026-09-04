@@ -22,6 +22,7 @@ import com.aliflix.app.model.MediaCreator
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackPreferences
 import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.Season
 import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationDispatchers
@@ -554,6 +555,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         playbackProviderRepository.updateMoviepireUrl(newUrl)
 
     fun resetMoviepireUrl() = playbackProviderRepository.resetMoviepireUrl()
+
+    fun selectPreferredSubtitleLanguage(language: SubtitleLanguage) =
+        playbackProviderRepository.selectPreferredSubtitleLanguage(language)
+
+    fun setAutoDisplaySubtitles(enabled: Boolean) =
+        playbackProviderRepository.setAutoDisplaySubtitles(enabled)
 
     fun updateDorabyUrl(newUrl: String) =
         playbackProviderRepository.updateDorabyUrl(newUrl)
