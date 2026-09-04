@@ -100,6 +100,7 @@ fun WebPlayerScreen(
     val moviepireServers by controller.moviepireServers.collectAsState()
     val switchingMoviepireServer by controller.switchingMoviepireServer.collectAsState()
     val playing by controller.playing.collectAsState()
+    val castPresentationActive by controller.castPresentationActive.collectAsState()
     val nativePhoneMoviepire = selection.source.provider.usesMoviepire && !BuildConfig.IS_TV
     val playerAccent = if (nativePhoneMoviepire) AliflixAccentPrimary else AliflixRed
     val resumableProgress = remember(selection.key) {
@@ -150,6 +151,15 @@ fun WebPlayerScreen(
             .onSuccess { subtitleTracks = it }
             .onFailure { subtitleSearchError = it.message ?: "Subtitles are temporarily unavailable" }
         subtitleSearching = false
+    }
+
+    LaunchedEffect(castPresentationActive) {
+        if (castPresentationActive) {
+            controlsVisible = false
+            serverMenuExpanded = false
+            episodeMenuExpanded = false
+            subtitleDialogVisible = false
+        }
     }
 
     LaunchedEffect(

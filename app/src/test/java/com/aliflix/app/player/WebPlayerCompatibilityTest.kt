@@ -137,6 +137,7 @@ class WebPlayerCompatibilityTest {
         listOf(
             "document.querySelectorAll(\"video\")",
             "loadedmetadata",
+            "post(\"playing\"",
             "timeupdate",
             "pause",
             "seeked",
@@ -156,6 +157,12 @@ class WebPlayerCompatibilityTest {
             "visibilitychange",
             "sustainCastPlayback",
             "video.play()",
+            "aliflix-playback-control",
+            "controlPlayback",
+            "video.pause()",
+            "documentHidden",
+            "aliflix-player-cast-presentation",
+            "object-fit: contain",
             "aliflix-subtitles",
             "aliflix-subtitles-clear",
             "video.addTextTrack",
@@ -195,5 +202,58 @@ class WebPlayerCompatibilityTest {
         assertTrue(shouldKeepCastPlaybackAlive(castRequested = true, playerVisible = true))
         assertFalse(shouldKeepCastPlaybackAlive(castRequested = false, playerVisible = true))
         assertFalse(shouldKeepCastPlaybackAlive(castRequested = true, playerVisible = false))
+    }
+
+    @Test
+    fun castHandoffAndHiddenDocumentPausesDoNotErasePlaybackIntent() {
+        assertTrue(
+            shouldPreserveCastPlaybackIntent(
+                castRequested = true,
+                appInBackground = false,
+                documentHidden = false,
+                insideCastHandoff = true,
+            ),
+        )
+        assertTrue(
+            shouldPreserveCastPlaybackIntent(
+                castRequested = true,
+                appInBackground = true,
+                documentHidden = false,
+                insideCastHandoff = false,
+            ),
+        )
+        assertTrue(
+            shouldPreserveCastPlaybackIntent(
+                castRequested = true,
+                appInBackground = false,
+                documentHidden = true,
+                insideCastHandoff = false,
+            ),
+        )
+        assertFalse(
+            shouldPreserveCastPlaybackIntent(
+                castRequested = true,
+                appInBackground = false,
+                documentHidden = false,
+                insideCastHandoff = false,
+            ),
+        )
+    }
+
+    @Test
+    fun castPresentationTargetsOnlyTheLargestDetectedPlayerFrame() {
+        val script = moviepirePresentationScript(enabled = true)
+
+        listOf(
+            "querySelectorAll(\"iframe[src], video\")",
+            "visibleArea",
+            "data-aliflix-cast-presentation-target",
+            "position: fixed",
+            "width: 100vw",
+            "height: 100vh",
+            "object-fit: contain",
+        ).forEach { marker -> assertTrue(marker, script.contains(marker)) }
+        assertFalse(script.contains("querySelectorAll(\"button\")"))
+        assertFalse(script.contains("iframe.contentDocument"))
     }
 }

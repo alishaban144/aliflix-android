@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.55"
+      - "release/v3.1.56"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.55"
+        description: "Release tag, for example v3.1.56"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "145"
-  RELEASE_VERSION_NAME: "3.1.55"
+  RELEASE_VERSION_CODE: "146"
+  RELEASE_VERSION_NAME: "3.1.56"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Fixes subtitle loading on Android, expands exact TV episode results with matching season-pack files, and makes the full scrollable subtitle catalogue visible in the player."
+            "releaseNotes": "Keeps Moviepire casting playing while Aliflix is in the background, adds persistent notification play and pause controls, and expands cast playback to a landscape full-frame presentation."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Fixes subtitle loading on Android, expands exact TV episode results with matching season-pack files, and makes the full scrollable subtitle catalogue visible in the player."
+          body: "Keeps Moviepire casting playing while Aliflix is in the background, adds persistent notification play and pause controls, and expands cast playback to a landscape full-frame presentation."
           files: |
             aliflix-mobile.apk
             update-mobile.json
