@@ -273,9 +273,25 @@ private fun parseSubtitleTimestamp(value: String): Double? {
 
 private fun parseAssTimestamp(value: String): Double? = parseSubtitleTimestamp(value.trim())
 
-private fun sanitizeSubtitleText(value: String): String = value
+private fun stripAssOverrideTags(value: String): String {
+    val sanitized = StringBuilder(value.length)
+    var index = 0
+    while (index < value.length) {
+        if (value[index] == '{' && index + 1 < value.length && value[index + 1] == '\\') {
+            val closingBrace = value.indexOf('}', startIndex = index + 2)
+            if (closingBrace >= 0) {
+                index = closingBrace + 1
+                continue
+            }
+        }
+        sanitized.append(value[index])
+        index += 1
+    }
+    return sanitized.toString()
+}
+
+private fun sanitizeSubtitleText(value: String): String = stripAssOverrideTags(value)
     .replace(Regex("(?i)<br\\s*/?>"), "\n")
-    .replace(Regex("\\{\\\\[^}]+}"), "")
     .replace(Regex("<[^>]+>"), "")
     .replace("&nbsp;", " ", ignoreCase = true)
     .replace("&amp;", "&", ignoreCase = true)

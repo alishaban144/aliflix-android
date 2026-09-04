@@ -66,4 +66,18 @@ class SubtitlesTest {
         assertEquals("Top\nline", cues.single().text)
         assertTrue(cues.single().endSeconds > cues.single().startSeconds)
     }
+
+    @Test
+    fun removesMultipleAssOverrideBlocksFromTimedTextWithoutUsingPlatformRegexEscapes() {
+        val cues = parseTimedTextSubtitleCues(
+            """
+            1
+            00:00:01,000 --> 00:00:03,000
+            {\an8}{\bord2}Visible <i>caption</i>
+            """.trimIndent(),
+        )
+
+        assertEquals(1, cues.size)
+        assertEquals("Visible caption", cues.single().text)
+    }
 }

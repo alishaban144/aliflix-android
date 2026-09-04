@@ -7,6 +7,8 @@ const SUBDL_DOWNLOAD_ORIGIN = 'https://dl.subdl.com';
 const SUBDL_TIMEOUT_MILLIS = 12_000;
 const MAX_SUBDL_JSON_BYTES = 1_048_576;
 const MAX_SUBTITLE_FILE_BYTES = 8_388_608;
+const MAX_TRACKS_PER_SEARCH = 30;
+const MAX_COMBINED_TRACKS = 60;
 
 interface SubdlSearchDocument {
   status?: boolean;
@@ -262,7 +264,7 @@ export function parseSubdlSearchDocument(
       ...(candidate.fps ? { fps: candidate.fps } : {}),
       downloadToken,
     });
-    if (tracks.length >= 30) break;
+    if (tracks.length >= MAX_TRACKS_PER_SEARCH) break;
   }
   return tracks;
 }
@@ -279,6 +281,31 @@ async function fetchWithTimeout(url: URL, init: RequestInit): Promise<Response> 
     throw new ServiceError('SUBDL_UNAVAILABLE', 'SubDL is temporarily unavailable', 502, true);
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function fetchSubdlSearchDocument(url: URL, key: string): Promise<SubdlSearchDocument> {
+  const response = await fetchWithTimeout(url, {
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${key}`,
+    },
+  });
+  if (!response.ok) {
+    throw new ServiceError('SUBDL_UNAVAILABLE', 'SubDL could not search for subtitles', 502, response.status >= 500);
+  }
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (contentLength > MAX_SUBDL_JSON_BYTES) {
+    throw new ServiceError('SUBDL_INVALID_RESPONSE', 'SubDL returned an invalid response', 502, true);
+  }
+  const raw = await response.text();
+  if (raw.length > MAX_SUBDL_JSON_BYTES) {
+    throw new ServiceError('SUBDL_INVALID_RESPONSE', 'SubDL returned an invalid response', 502, true);
+  }
+  try {
+    return JSON.parse(raw) as SubdlSearchDocument;
+  } catch {
+    throw new ServiceError('SUBDL_INVALID_RESPONSE', 'SubDL returned an invalid response', 502, true);
   }
 }
 
@@ -313,41 +340,52 @@ export async function searchSubdlSubtitles(
   const upstreamUrl = new URL(SUBDL_SEARCH_URL);
   upstreamUrl.searchParams.set('imdb_id', imdbId);
   upstreamUrl.searchParams.set('type', mediaType);
-  upstreamUrl.searchParams.set('subs_per_page', '30');
+  upstreamUrl.searchParams.set('subs_per_page', String(MAX_TRACKS_PER_SEARCH));
   upstreamUrl.searchParams.set('unpack', '1');
   if (season !== undefined && episode !== undefined) {
     upstreamUrl.searchParams.set('season', String(season));
     upstreamUrl.searchParams.set('episode', String(episode));
   }
 
-  const response = await fetchWithTimeout(upstreamUrl, {
-    headers: {
-      accept: 'application/json',
-      authorization: `Bearer ${key}`,
-    },
-  });
-  if (!response.ok) {
-    throw new ServiceError('SUBDL_UNAVAILABLE', 'SubDL could not search for subtitles', 502, response.status >= 500);
+  const searchUrls = [upstreamUrl];
+  if (mediaType === 'tv') {
+    const seasonPackUrl = new URL(upstreamUrl);
+    seasonPackUrl.searchParams.delete('episode');
+    seasonPackUrl.searchParams.set('full_season', '1');
+    searchUrls.push(seasonPackUrl);
   }
-  const contentLength = Number(response.headers.get('content-length') || 0);
-  if (contentLength > MAX_SUBDL_JSON_BYTES) {
-    throw new ServiceError('SUBDL_INVALID_RESPONSE', 'SubDL returned an invalid response', 502, true);
+
+  const searchResults = await Promise.allSettled(
+    searchUrls.map(url => fetchSubdlSearchDocument(url, key)),
+  );
+  const documents = searchResults.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+  if (documents.length === 0) {
+    throw (searchResults[0] as PromiseRejectedResult).reason;
   }
-  const raw = await response.text();
-  if (raw.length > MAX_SUBDL_JSON_BYTES) {
-    throw new ServiceError('SUBDL_INVALID_RESPONSE', 'SubDL returned an invalid response', 502, true);
+
+  const tracks: SubtitleTrackResponse[] = [];
+  const seenTrackIds = new Set<string>();
+  let parseFailure: unknown;
+  for (const document of documents) {
+    try {
+      for (const track of parseSubdlSearchDocument(document, mediaType, tmdbId, season, episode, imdbId)) {
+        if (seenTrackIds.has(track.id)) continue;
+        seenTrackIds.add(track.id);
+        tracks.push(track);
+        if (tracks.length >= MAX_COMBINED_TRACKS) break;
+      }
+    } catch (error) {
+      parseFailure ??= error;
+    }
+    if (tracks.length >= MAX_COMBINED_TRACKS) break;
   }
-  let document: SubdlSearchDocument;
-  try {
-    document = JSON.parse(raw) as SubdlSearchDocument;
-  } catch {
-    throw new ServiceError('SUBDL_INVALID_RESPONSE', 'SubDL returned an invalid response', 502, true);
-  }
+  if (tracks.length === 0 && parseFailure) throw parseFailure;
+
   return {
     mediaKey: mediaType === 'movie'
       ? `movie:${tmdbId}`
       : `tv:${tmdbId}:s${season}:e${episode}`,
-    tracks: parseSubdlSearchDocument(document, mediaType, tmdbId, season, episode, imdbId),
+    tracks,
   };
 }
 

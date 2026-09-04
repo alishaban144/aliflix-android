@@ -54,7 +54,7 @@ describe('SubDL subtitle proxy', () => {
     expect(JSON.stringify(body)).not.toContain('private-subdl-key');
   });
 
-  it('searches TV subtitles by exact TMDB season and episode without exposing the key', async () => {
+  it('combines direct and season-pack files while retaining the exact TV episode', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       if (url.hostname === 'api.themoviedb.org') {
@@ -68,20 +68,35 @@ describe('SubDL subtitle proxy', () => {
       expect(url.searchParams.has('tmdb_id')).toBe(false);
       expect(url.searchParams.get('type')).toBe('tv');
       expect(url.searchParams.get('season')).toBe('1');
-      expect(url.searchParams.get('episode')).toBe('8');
       expect(url.searchParams.get('unpack')).toBe('1');
+      const seasonPack = url.searchParams.get('full_season') === '1';
+      if (seasonPack) {
+        expect(url.searchParams.has('episode')).toBe(false);
+        return new Response(JSON.stringify({
+          status: true,
+          results: [{ imdb_id: 'tt0773262', tmdb_id: 1405, type: 'tv', name: 'Dexter' }],
+          subtitles: [{
+            release_name: 'Dexter.S01.1080p',
+            full_season: true,
+            lang: 'english',
+            unpack_files: [
+              { name: 'Dexter.S01E07.srt', season: 1, episode: 7, url: '/subtitle/pack/e7' },
+              { name: 'Dexter.S01E08.srt', season: 1, episode: 8, url: '/subtitle/pack/e8' },
+            ],
+          }],
+        }), { headers: { 'content-type': 'application/json' } });
+      }
+      expect(url.searchParams.get('episode')).toBe('8');
       expect(url.searchParams.has('full_season')).toBe(false);
       return new Response(JSON.stringify({
         status: true,
         results: [{ imdb_id: 'tt0773262', tmdb_id: 1405, type: 'tv', name: 'Dexter' }],
         subtitles: [{
-          release_name: 'Dexter.S01.1080p',
-          full_season: true,
+          name: 'Dexter.S01E08.direct.srt',
+          season: 1,
+          episode: 8,
           lang: 'english',
-          unpack_files: [
-            { name: 'Dexter.S01E07.srt', season: 1, episode: 7, url: '/subtitle/parent/e7' },
-            { name: 'Dexter.S01E08.srt', season: 1, episode: 8, url: '/subtitle/parent/e8' },
-          ],
+          url: '/subtitle/direct/e8',
         }],
       }), { headers: { 'content-type': 'application/json' } });
     });
@@ -92,10 +107,13 @@ describe('SubDL subtitle proxy', () => {
     const body: any = await response.json();
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(body.mediaKey).toBe('tv:1405:s1:e8');
-    expect(body.tracks).toHaveLength(1);
-    expect(body.tracks[0].fileName).toBe('Dexter.S01E08.srt');
+    expect(body.tracks).toHaveLength(2);
+    expect(body.tracks.map((track: any) => track.fileName)).toEqual([
+      'Dexter.S01E08.direct.srt',
+      'Dexter.S01E08.srt',
+    ]);
     expect(JSON.stringify(body)).not.toContain('private-subdl-key');
   });
 

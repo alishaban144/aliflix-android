@@ -734,7 +734,11 @@ private fun SubtitleDialog(
                             fontSize = 20.sp,
                         )
                         Text(
-                            text = "Exact title and episode match • SubDL",
+                            text = if (!searching && searchError == null && tracks.isNotEmpty()) {
+                                "${tracks.size} exact ${if (tracks.size == 1) "match" else "matches"} • SubDL"
+                            } else {
+                                "Exact title and episode match • SubDL"
+                            },
                             color = AliflixContentSecondary,
                             fontSize = 11.sp,
                         )
@@ -825,8 +829,7 @@ private fun SubtitleDialog(
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f, fill = false)
-                                .heightIn(max = 300.dp),
+                                .weight(1f),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             item(key = "off") {
