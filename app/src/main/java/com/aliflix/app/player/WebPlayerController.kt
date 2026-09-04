@@ -1164,6 +1164,21 @@ class WebPlayerController(
             setAcceptCookie(true)
         }
         return object : WebView(MutableContextWrapper(activity)) {
+            override fun onWindowVisibilityChanged(visibility: Int) {
+                // App-only screen sharing can keep this task on the remote display while Android
+                // marks its phone window hidden. Passing that hidden state into Chromium suspends
+                // the real video even though casting is active. Keep the renderer foreground-
+                // visible only for the explicit cast session; normal lifecycle behavior is
+                // unchanged before casting and immediately restored when casting stops.
+                super.onWindowVisibilityChanged(
+                    castAwareWebViewWindowVisibility(
+                        requestedVisibility = visibility,
+                        castRequested = castBackgroundPlaybackRequested,
+                        playerVisible = playerVisible,
+                    ),
+                )
+            }
+
             override fun dispatchKeyEvent(event: KeyEvent): Boolean {
                 if (BuildConfig.IS_TV && event.action == KeyEvent.ACTION_DOWN) {
                     when (event.keyCode) {
@@ -2516,6 +2531,16 @@ internal fun shouldUseCastPresentation(
     playerVisible &&
     !isTv &&
     presentationDisplayAvailable
+
+internal fun castAwareWebViewWindowVisibility(
+    requestedVisibility: Int,
+    castRequested: Boolean,
+    playerVisible: Boolean,
+): Int = if (shouldKeepCastPlaybackAlive(castRequested, playerVisible)) {
+    View.VISIBLE
+} else {
+    requestedVisibility
+}
 
 internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
     !BuildConfig.IS_TV &&

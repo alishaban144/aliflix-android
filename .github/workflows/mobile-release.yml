@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.58"
+      - "release/v3.1.59"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.58"
+        description: "Release tag, for example v3.1.59"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "148"
-  RELEASE_VERSION_NAME: "3.1.58"
+  RELEASE_VERSION_CODE: "149"
+  RELEASE_VERSION_NAME: "3.1.59"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -218,7 +218,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Keeps the same Moviepire player and subtitles running on a cast route's external display without Picture-in-Picture, and adds synced preferred subtitle language and auto-display settings."
+            "releaseNotes": "Keeps the same Moviepire player and subtitles active when Aliflix leaves the phone foreground, without Picture-in-Picture, and adds synced preferred subtitle language and auto-display settings."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +229,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Keeps the same Moviepire player and subtitles running on a cast route's external display without Picture-in-Picture, and adds synced preferred subtitle language and auto-display settings."
+          body: "Keeps the same Moviepire player and subtitles active when Aliflix leaves the phone foreground, without Picture-in-Picture, and adds synced preferred subtitle language and auto-display settings."
           files: |
             aliflix-mobile.apk
             update-mobile.json

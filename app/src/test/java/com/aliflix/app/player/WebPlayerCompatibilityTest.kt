@@ -282,5 +282,21 @@ class WebPlayerCompatibilityTest {
                 presentationDisplayAvailable = true,
             ),
         )
+        assertEquals(
+            android.view.View.VISIBLE,
+            castAwareWebViewWindowVisibility(
+                requestedVisibility = android.view.View.GONE,
+                castRequested = true,
+                playerVisible = true,
+            ),
+        )
+        assertEquals(
+            android.view.View.GONE,
+            castAwareWebViewWindowVisibility(
+                requestedVisibility = android.view.View.GONE,
+                castRequested = false,
+                playerVisible = true,
+            ),
+        )
     }
 }
