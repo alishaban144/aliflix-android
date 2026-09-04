@@ -3,6 +3,7 @@ package com.aliflix.app.player
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -11,6 +12,7 @@ import android.media.MediaRouter
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
+import android.util.Rational
 import android.view.InputDevice
 import android.view.View
 import android.view.ViewGroup
@@ -100,9 +102,10 @@ class WebPlayerController(
     private var appInBackground = false
     private var castRouteWasConnected = false
     private var castRouteCallbackRegistered = false
-    private var castFullscreenRequested = false
     private var castHandoffStartedAt = 0L
     private var pendingCastPickerAfterPermission = false
+    private var inPictureInPictureMode = false
+    private var castPictureInPictureParams: PictureInPictureParams? = null
     private var activePlayerReplyProxy: JavaScriptReplyProxy? = null
     private var activeSubtitleContentKey: String? = null
     private var activeSubtitleCuesJson: String? = null
@@ -472,7 +475,7 @@ class WebPlayerController(
                     ).show()
                 }
             },
-            CAST_PRESENTATION_SETTLE_MILLIS,
+            CAST_PICKER_LAUNCH_DELAY_MILLIS,
         )
     }
 
@@ -489,7 +492,6 @@ class WebPlayerController(
         nativeFullscreenRequested = true
         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         setSystemBarsVisible(activity, false)
-        applyMoviepirePresentationMode(enabled = true)
         view.requestLayout()
         return true
     }
@@ -538,7 +540,6 @@ class WebPlayerController(
         appInBackground = true
         flushProgress(urgentCloudSync = true)
         if (shouldKeepCastPlaybackAlive(castBackgroundPlaybackRequested, playerVisible)) {
-            enterCastPresentationMode()
             sustainCastPlayback()
             scheduleCastKeepAliveWatchdog()
         }
@@ -554,16 +555,32 @@ class WebPlayerController(
 
     fun onUserLeavingApp() {
         if (!shouldKeepCastPlaybackAlive(castBackgroundPlaybackRequested, playerVisible)) return
-        enterCastPresentationMode()
         sustainCastPlayback()
         scheduleCastKeepAliveWatchdog()
+        enterCastPictureInPictureIfNeeded()
+    }
+
+    fun onPictureInPictureModeChanged(inPictureInPictureMode: Boolean) {
+        this.inPictureInPictureMode = inPictureInPictureMode
+        if (inPictureInPictureMode && shouldKeepCastPlaybackAlive(
+                castBackgroundPlaybackRequested,
+                playerVisible,
+            )
+        ) {
+            _castPresentationActive.value = true
+            sustainCastPlayback()
+            activePlayerReplyProxy?.let(::postActiveSubtitles)
+            scheduleCastKeepAliveWatchdog()
+        } else if (!castBackgroundPlaybackRequested) {
+            _castPresentationActive.value = false
+        }
     }
 
     private fun beginCastBackgroundPlayback() {
         if (BuildConfig.IS_TV || !playerVisible || activeSelection == null) return
         val selection = activeSelection ?: return
         if (castBackgroundPlaybackRequested) {
-            enterCastPresentationMode()
+            prepareCastPictureInPicture()
             updateCastNotification()
             sustainCastPlayback()
             scheduleCastKeepAliveWatchdog()
@@ -571,7 +588,8 @@ class WebPlayerController(
         }
         castShouldContinuePlaying = castShouldContinuePlaying || _playing.value
         castHandoffStartedAt = SystemClock.elapsedRealtime()
-        enterCastPresentationMode()
+        _castPresentationActive.value = true
+        prepareCastPictureInPicture()
         castBackgroundPlaybackRequested = CastSessionKeepAlive.start(
             context = activity,
             title = selection.media.title,
@@ -581,6 +599,9 @@ class WebPlayerController(
         if (castBackgroundPlaybackRequested) {
             sustainCastPlayback()
             scheduleCastKeepAliveWatchdog()
+        } else {
+            _castPresentationActive.value = false
+            disableCastPictureInPictureAutoEnter()
         }
     }
 
@@ -594,12 +615,7 @@ class WebPlayerController(
         castShouldContinuePlaying = false
         castRouteWasConnected = false
         _castPresentationActive.value = false
-        if (castFullscreenRequested) {
-            castFullscreenRequested = false
-            exitNativeFullscreenMode()
-        } else {
-            applyMoviepirePresentationMode(enabled = nativeFullscreenRequested)
-        }
+        disableCastPictureInPictureAutoEnter()
     }
 
     private fun sustainCastPlayback() {
@@ -625,19 +641,68 @@ class WebPlayerController(
         view.postDelayed(castKeepAliveWatchdog, CAST_KEEP_ALIVE_INTERVAL_MILLIS)
     }
 
-    private fun enterCastPresentationMode() {
-        if (BuildConfig.IS_TV || activeSelection?.source?.provider?.usesMoviepire != true) return
-        if (!nativeFullscreenRequested) {
-            orientationBeforeFullscreen = activity.requestedOrientation
-            nativeFullscreenRequested = true
-            castFullscreenRequested = true
-        }
-        _castPresentationActive.value = true
-        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        setSystemBarsVisible(activity, false)
-        applyMoviepirePresentationMode(enabled = true)
-        webView?.requestLayout()
+    private fun prepareCastPictureInPicture() {
+        if (!castPictureInPictureAvailable()) return
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(CAST_PICTURE_IN_PICTURE_ASPECT_RATIO)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setAutoEnterEnabled(true)
+                    // A WebView can contain a separately composited, cross-origin video surface.
+                    // Ask Android to cross-fade PiP resizes instead of stretching that surface,
+                    // which avoids the black-frame failure seen with forced fullscreen resizing.
+                    setSeamlessResizeEnabled(false)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    activeSelection?.let { selection ->
+                        setTitle(selection.media.title)
+                        setSubtitle(castNotificationSubtitle(selection))
+                    }
+                }
+            }
+            .build()
+        castPictureInPictureParams = params
+        runCatching { activity.setPictureInPictureParams(params) }
     }
+
+    private fun enterCastPictureInPictureIfNeeded() {
+        if (!shouldEnterCastPictureInPicture(
+                castRequested = castBackgroundPlaybackRequested,
+                playerVisible = playerVisible,
+                isTv = BuildConfig.IS_TV,
+                featureAvailable = activity.packageManager.hasSystemFeature(
+                    PackageManager.FEATURE_PICTURE_IN_PICTURE,
+                ),
+                alreadyInPictureInPicture = inPictureInPictureMode,
+            )
+        ) return
+        prepareCastPictureInPicture()
+        castPictureInPictureParams?.let { params ->
+            runCatching { activity.enterPictureInPictureMode(params) }
+        }
+    }
+
+    private fun disableCastPictureInPictureAutoEnter() {
+        if (
+            BuildConfig.IS_TV ||
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            castPictureInPictureParams == null
+        ) return
+        runCatching {
+            val params = PictureInPictureParams.Builder()
+                .setAspectRatio(CAST_PICTURE_IN_PICTURE_ASPECT_RATIO)
+                .setAutoEnterEnabled(false)
+                .build()
+            castPictureInPictureParams = params
+            activity.setPictureInPictureParams(params)
+        }
+    }
+
+    private fun castPictureInPictureAvailable(): Boolean =
+        !BuildConfig.IS_TV &&
+            playerVisible &&
+            activeSelection?.source?.provider?.usesMoviepire == true &&
+            activity.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
 
     private fun handleCastPlaybackCommand(command: CastPlaybackCommand) {
         if (!castBackgroundPlaybackRequested || !playerVisible) return
@@ -1016,14 +1081,6 @@ class WebPlayerController(
             setAcceptCookie(true)
         }
         return object : WebView(activity) {
-            override fun onWindowVisibilityChanged(visibility: Int) {
-                val keepRendererVisible =
-                    shouldKeepCastPlaybackAlive(castBackgroundPlaybackRequested, playerVisible) &&
-                        visibility != View.VISIBLE
-                super.onWindowVisibilityChanged(if (keepRendererVisible) View.VISIBLE else visibility)
-                if (keepRendererVisible) scheduleCastKeepAliveWatchdog()
-            }
-
             override fun dispatchKeyEvent(event: KeyEvent): Boolean {
                 if (BuildConfig.IS_TV && event.action == KeyEvent.ACTION_DOWN) {
                     when (event.keyCode) {
@@ -1967,9 +2024,6 @@ class WebPlayerController(
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)
                 if (!BuildConfig.IS_TV) {
                     discoverMoviepireServers(view, selection)
-                    if (nativeFullscreenRequested || castBackgroundPlaybackRequested) {
-                        applyMoviepirePresentationMode(enabled = true)
-                    }
                 }
             }
             PlaybackProviderId.DORABY -> { /* Doraby webpage loads directly */ }
@@ -2296,27 +2350,6 @@ class WebPlayerController(
         activity.requestedOrientation = orientationBeforeFullscreen
         orientationBeforeFullscreen = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         setSystemBarsVisible(activity, !playerVisible)
-        applyMoviepirePresentationMode(enabled = false)
-    }
-
-    private fun applyMoviepirePresentationMode(enabled: Boolean) {
-        val view = webView ?: return
-        val selection = activeSelection ?: return
-        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
-        view.evaluateJavascript(moviepirePresentationScript(enabled), null)
-        if (enabled) {
-            view.postDelayed(
-                {
-                    if (
-                        isActiveSelection(view, selection) &&
-                        (nativeFullscreenRequested || castBackgroundPlaybackRequested)
-                    ) {
-                        view.evaluateJavascript(moviepirePresentationScript(enabled = true), null)
-                    }
-                },
-                CAST_PRESENTATION_RETRY_MILLIS,
-            )
-        }
     }
 
     private fun setSystemBarsVisible(activity: Activity, visible: Boolean) {
@@ -2341,8 +2374,7 @@ class WebPlayerController(
         const val CAST_ROUTE_DISCONNECT_GRACE_MILLIS = 2_000L
         const val CAST_HANDOFF_GRACE_MILLIS = 12_000L
         const val CAST_KEEP_ALIVE_INTERVAL_MILLIS = 3_500L
-        const val CAST_PRESENTATION_SETTLE_MILLIS = 220L
-        const val CAST_PRESENTATION_RETRY_MILLIS = 650L
+        const val CAST_PICKER_LAUNCH_DELAY_MILLIS = 120L
         const val CAST_NOTIFICATION_PERMISSION_REQUEST_CODE = 4102
         const val MOVIEPIRE_EPISODE_RESOLUTION_RETRY_MILLIS = 450L
         const val MAX_MOVIEPIRE_EPISODE_RESOLUTION_ATTEMPTS = 32
@@ -2352,6 +2384,7 @@ class WebPlayerController(
         const val SUBTITLE_DELAY_LIMIT_SECONDS = 10.0
         const val MIN_SUBTITLE_FONT_PERCENT = 70
         const val MAX_SUBTITLE_FONT_PERCENT = 180
+        val CAST_PICTURE_IN_PICTURE_ASPECT_RATIO = Rational(16, 9)
     }
 }
 
@@ -2391,78 +2424,17 @@ internal fun shouldPreserveCastPlaybackIntent(
     insideCastHandoff: Boolean,
 ): Boolean = castRequested && (appInBackground || documentHidden || insideCastHandoff)
 
-/** Expands only the detected Moviepire wrapper player; embedded player controls stay untouched. */
-internal fun moviepirePresentationScript(enabled: Boolean): String =
-    """
-    (() => {
-      const enabled = $enabled;
-      const styleId = "aliflix-cast-presentation-style";
-      const targetAttribute = "data-aliflix-cast-presentation-target";
-      const oldTarget = document.querySelector("[" + targetAttribute + "]");
-      if (!enabled) {
-        oldTarget?.removeAttribute(targetAttribute);
-        document.documentElement.classList.remove("aliflix-cast-presentation");
-        document.getElementById(styleId)?.remove();
-        return "disabled";
-      }
-
-      const visibleArea = (element) => {
-        const rect = element.getBoundingClientRect();
-        const style = getComputedStyle(element);
-        if (style.display === "none" || style.visibility === "hidden") return 0;
-        return Math.max(0, rect.width) * Math.max(0, rect.height);
-      };
-      const candidates = Array.from(document.querySelectorAll("iframe[src], video"))
-        .filter((element) => visibleArea(element) >= 10_000)
-        .sort((left, right) => visibleArea(right) - visibleArea(left));
-      const target = candidates[0];
-      if (!target) return "waiting";
-      if (oldTarget && oldTarget !== target) oldTarget.removeAttribute(targetAttribute);
-      target.setAttribute(targetAttribute, "true");
-      document.documentElement.classList.add("aliflix-cast-presentation");
-
-      let style = document.getElementById(styleId);
-      if (!style) {
-        style = document.createElement("style");
-        style.id = styleId;
-        (document.head || document.documentElement).appendChild(style);
-      }
-      style.textContent = `
-        html.aliflix-cast-presentation,
-        html.aliflix-cast-presentation body {
-          width: 100% !important;
-          height: 100% !important;
-          min-width: 100% !important;
-          min-height: 100% !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          overflow: hidden !important;
-          background: #000 !important;
-        }
-        [${'$'}{targetAttribute}] {
-          position: fixed !important;
-          inset: 0 !important;
-          z-index: 2147483646 !important;
-          display: block !important;
-          width: 100vw !important;
-          height: 100vh !important;
-          min-width: 100vw !important;
-          min-height: 100vh !important;
-          max-width: none !important;
-          max-height: none !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          border: 0 !important;
-          transform: none !important;
-          background: #000 !important;
-        }
-        video[${'$'}{targetAttribute}] {
-          object-fit: contain !important;
-        }
-      `;
-      return target.tagName.toLowerCase();
-    })();
-    """.trimIndent()
+internal fun shouldEnterCastPictureInPicture(
+    castRequested: Boolean,
+    playerVisible: Boolean,
+    isTv: Boolean,
+    featureAvailable: Boolean,
+    alreadyInPictureInPicture: Boolean,
+): Boolean = castRequested &&
+    playerVisible &&
+    !isTv &&
+    featureAvailable &&
+    !alreadyInPictureInPicture
 
 internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
     !BuildConfig.IS_TV &&
@@ -2758,38 +2730,9 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
           return false;
         }
       };
-      const setCastPresentation = (active) => {
-        const styleId = "aliflix-player-cast-presentation";
-        document.getElementById(styleId)?.remove();
-        if (active !== true) return;
-        const style = document.createElement("style");
-        style.id = styleId;
-        style.textContent = `
-          html, body {
-            width: 100% !important;
-            height: 100% !important;
-            min-width: 100% !important;
-            min-height: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            overflow: hidden !important;
-            background: #000 !important;
-          }
-          video {
-            width: 100vw !important;
-            height: 100vh !important;
-            max-width: none !important;
-            max-height: none !important;
-            margin: 0 !important;
-            object-fit: contain !important;
-          }
-        `;
-        (document.head || document.documentElement).appendChild(style);
-      };
       const setCastKeepAlive = (active, shouldPlay) => {
         castKeepAliveActive = active === true;
         castShouldPlay = castKeepAliveActive && shouldPlay === true;
-        setCastPresentation(castKeepAliveActive);
         const generation = ++castGeneration;
         [0, 120, 400, 1000, 2500, 5000].forEach((delay) => {
           window.setTimeout(() => {

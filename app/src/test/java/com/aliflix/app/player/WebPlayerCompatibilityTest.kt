@@ -161,8 +161,6 @@ class WebPlayerCompatibilityTest {
             "controlPlayback",
             "video.pause()",
             "documentHidden",
-            "aliflix-player-cast-presentation",
-            "object-fit: contain",
             "aliflix-subtitles",
             "aliflix-subtitles-clear",
             "video.addTextTrack",
@@ -179,6 +177,8 @@ class WebPlayerCompatibilityTest {
         assertFalse(script.contains("aliflix-fullscreen"))
         assertFalse(script.contains("requestFullscreen"))
         assertFalse(script.contains("document.hidden ="))
+        assertFalse(script.contains("aliflix-player-cast-presentation"))
+        assertFalse(script.contains("video {\n            width: 100vw"))
     }
 
     @Test
@@ -241,19 +241,33 @@ class WebPlayerCompatibilityTest {
     }
 
     @Test
-    fun castPresentationTargetsOnlyTheLargestDetectedPlayerFrame() {
-        val script = moviepirePresentationScript(enabled = true)
-
-        listOf(
-            "querySelectorAll(\"iframe[src], video\")",
-            "visibleArea",
-            "data-aliflix-cast-presentation-target",
-            "position: fixed",
-            "width: 100vw",
-            "height: 100vh",
-            "object-fit: contain",
-        ).forEach { marker -> assertTrue(marker, script.contains(marker)) }
-        assertFalse(script.contains("querySelectorAll(\"button\")"))
-        assertFalse(script.contains("iframe.contentDocument"))
+    fun castUsesPictureInPictureToKeepTheRealWebViewVisibleOnBackgrounding() {
+        assertTrue(
+            shouldEnterCastPictureInPicture(
+                castRequested = true,
+                playerVisible = true,
+                isTv = false,
+                featureAvailable = true,
+                alreadyInPictureInPicture = false,
+            ),
+        )
+        assertFalse(
+            shouldEnterCastPictureInPicture(
+                castRequested = true,
+                playerVisible = true,
+                isTv = false,
+                featureAvailable = true,
+                alreadyInPictureInPicture = true,
+            ),
+        )
+        assertFalse(
+            shouldEnterCastPictureInPicture(
+                castRequested = true,
+                playerVisible = true,
+                isTv = true,
+                featureAvailable = true,
+                alreadyInPictureInPicture = false,
+            ),
+        )
     }
 }

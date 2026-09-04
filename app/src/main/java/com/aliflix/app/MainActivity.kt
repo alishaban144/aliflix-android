@@ -1,5 +1,6 @@
 package com.aliflix.app
 
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -65,6 +66,14 @@ class MainActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         playerController.onUserLeavingApp()
         super.onUserLeaveHint()
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        playerController.onPictureInPictureModeChanged(isInPictureInPictureMode)
     }
 
     override fun onRequestPermissionsResult(
