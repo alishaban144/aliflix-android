@@ -52,35 +52,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    override fun onStart() {
-        super.onStart()
-        playerController.onAppForeground()
-    }
-
     override fun onStop() {
         playerController.onAppBackground()
         super.onStop()
-    }
-
-    override fun onUserLeaveHint() {
-        playerController.onUserLeavingApp()
-        super.onUserLeaveHint()
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<String>,
-        grantResults: IntArray,
-    ) {
-        if (
-            playerController.onNotificationPermissionResult(
-                requestCode = requestCode,
-                permissionGranted = grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED,
-            )
-        ) {
-            return
-        }
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
 }

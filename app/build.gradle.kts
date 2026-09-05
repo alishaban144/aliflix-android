@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 149
-val mobileVersionName = "3.1.59"
+val mobileVersionCode = 150
+val mobileVersionName = "3.1.60"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
 val releaseKeystorePassword = System.getenv("ALIFLIX_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("ALIFLIX_KEY_ALIAS")
@@ -161,6 +161,9 @@ dependencies {
     add("mobileImplementation", "com.google.android.libraries.identity.googleid:googleid:1.2.0")
     add("mobileImplementation", "com.google.firebase:firebase-firestore")
     add("mobileImplementation", "org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
+    listOf("exoplayer", "exoplayer-hls", "session", "ui", "cast").forEach { module ->
+        add("mobileImplementation", "androidx.media3:media3-$module:1.11.0")
+    }
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")

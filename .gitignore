@@ -18,6 +18,7 @@ node_modules/
 .gradle-agent/
 **/.gradle-agent/
 scratch/
+.validation/
 recommendation-worker/node_modules/
 recommendation-worker/dist/
 recommendation-worker/coverage/

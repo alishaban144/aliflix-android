@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.StrictMode
 
 class AliflixApplication : Application() {
+    val playbackProgressStore by lazy { com.aliflix.app.data.PlaybackProgressStore(this) }
     override fun onCreate() {
         super.onCreate()
         runCatching {

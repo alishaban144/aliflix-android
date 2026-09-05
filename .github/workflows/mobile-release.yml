@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.59"
+      - "release/v3.1.60"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.59"
+        description: "Release tag, for example v3.1.60"
         required: true
         type: string
       notes:
@@ -21,11 +21,45 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "149"
-  RELEASE_VERSION_NAME: "3.1.59"
+  RELEASE_VERSION_CODE: "150"
+  RELEASE_VERSION_NAME: "3.1.60"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
+  playback-device-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          chmod +x gradlew
+      - name: Verify native background playback and browser handoff on Android 15
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back none
+          script: ./gradlew connectedMobileDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest --no-daemon --console=plain
+      - name: Upload playback test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playback-device-test-reports
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+
   worker-checks:
     runs-on: ubuntu-latest
     steps:
@@ -90,7 +124,7 @@ jobs:
             --yes
 
   release:
-    needs: [worker-checks, deploy-recommendations]
+    needs: [worker-checks, deploy-recommendations, playback-device-tests]
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -180,6 +214,8 @@ jobs:
           chmod +x gradlew
           ./gradlew \
             testMobileDebugUnitTest \
+            lintMobileDebug \
+            assembleTvDebug \
             packageMobileRelease
 
       - name: Verify release APK integrity
@@ -218,7 +254,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Keeps the same Moviepire player and subtitles active when Aliflix leaves the phone foreground, without Picture-in-Picture, and adds synced preferred subtitle language and auto-display settings."
+            "releaseNotes": "Replaces browser keep-alive casting with service-owned native video, direct Google Cast, full-screen wireless-display output, and notification playback controls. Preserves playback position and selected subtitles. Use Cast video to TV, or Wireless display for TVs that expose a separate display. Ordinary screen mirroring without a separate display cannot show independent video while other phone apps are in use."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -229,7 +265,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Keeps the same Moviepire player and subtitles active when Aliflix leaves the phone foreground, without Picture-in-Picture, and adds synced preferred subtitle language and auto-display settings."
+          body: "Replaces browser keep-alive casting with service-owned native video, direct Google Cast, full-screen wireless-display output, and notification playback controls. Preserves playback position and selected subtitles. Use Cast video to TV, or Wireless display for TVs that expose a separate display. Ordinary screen mirroring without a separate display cannot show independent video while other phone apps are in use."
           files: |
             aliflix-mobile.apk
             update-mobile.json

@@ -8,12 +8,16 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application>
-        <service
-            android:name=".player.CastPlaybackService"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback"
-            android:stopWithTask="false" />
-
+        <meta-data android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="androidx.media3.cast.DefaultCastOptionsProvider" />
+        <receiver android:name="androidx.mediarouter.media.MediaTransferReceiver" android:exported="true" />
+        <activity android:name=".player.NativePlayerActivity"
+            android:theme="@style/Theme.Aliflix.NativePlayer" android:launchMode="singleTask"
+            android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <service android:name=".player.NativePlaybackService" android:exported="false"
+            android:foregroundServiceType="mediaPlayback" android:stopWithTask="false">
+            <intent-filter><action android:name="androidx.media3.session.MediaSessionService" /></intent-filter>
+        </service>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.update-files"

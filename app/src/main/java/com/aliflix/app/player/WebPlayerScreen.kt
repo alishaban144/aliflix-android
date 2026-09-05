@@ -103,7 +103,6 @@ fun WebPlayerScreen(
     val moviepireServers by controller.moviepireServers.collectAsState()
     val switchingMoviepireServer by controller.switchingMoviepireServer.collectAsState()
     val playing by controller.playing.collectAsState()
-    val castPresentationActive by controller.castPresentationActive.collectAsState()
     val nativePhoneMoviepire = selection.source.provider.usesMoviepire && !BuildConfig.IS_TV
     val playerAccent = if (nativePhoneMoviepire) AliflixAccentPrimary else AliflixRed
     val resumableProgress = remember(selection.key) {
@@ -193,15 +192,6 @@ fun WebPlayerScreen(
                 subtitleTrackError = it.message ?: "This subtitle could not be loaded"
             }
         subtitleTrackLoading = false
-    }
-
-    LaunchedEffect(castPresentationActive) {
-        if (castPresentationActive) {
-            controlsVisible = false
-            serverMenuExpanded = false
-            episodeMenuExpanded = false
-            subtitleDialogVisible = false
-        }
     }
 
     LaunchedEffect(
@@ -565,7 +555,7 @@ private fun NativeMoviepireTopBar(
                 Icon(Icons.Rounded.Subtitles, contentDescription = "Subtitles")
             }
             PlayerIconButton(onClick = onCast) {
-                Icon(Icons.Rounded.Cast, contentDescription = "Cast screen")
+                Icon(Icons.Rounded.Cast, contentDescription = "Cast video to TV")
             }
         }
         Row(
@@ -1089,7 +1079,7 @@ private fun BoxScope.ExistingPlayerTopControls(
                 .padding(top = 44.dp, end = 16.dp),
         ) {
             PlayerIconButton(onClick = controller::openCastPicker) {
-                Icon(Icons.Rounded.Cast, contentDescription = "Cast screen")
+                Icon(Icons.Rounded.Cast, contentDescription = "Cast video to TV")
             }
         }
     }

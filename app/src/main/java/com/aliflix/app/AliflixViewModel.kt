@@ -173,7 +173,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     )
     private val library = LibraryStore(application)
     private val playbackProviderRepository = PlaybackProviderRepository(application)
-    val playbackProgressStore = PlaybackProgressStore(application)
+    val playbackProgressStore = (application as AliflixApplication).playbackProgressStore
     private val recommendationStore = RecommendationStore(
         context = application,
     )

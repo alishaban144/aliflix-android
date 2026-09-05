@@ -3,7 +3,7 @@ package com.aliflix.app.player
 import java.net.URI
 
 object PlaybackNavigationPolicy {
-    private val defaultApprovedPlaybackHosts = setOf(
+    internal val defaultApprovedPlaybackHosts = setOf(
         "ramoflix.net",
         "moviepire.ru",
         "doraby.com",

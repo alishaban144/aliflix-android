@@ -152,10 +152,6 @@ class WebPlayerCompatibilityTest {
             "video.seekable.length",
             "11000",
             "frame.contentWindow?.postMessage",
-            "aliflix-cast-keepalive",
-            "castKeepAliveActive",
-            "visibilitychange",
-            "sustainCastPlayback",
             "video.play()",
             "aliflix-playback-control",
             "controlPlayback",
@@ -197,106 +193,4 @@ class WebPlayerCompatibilityTest {
         assertFalse(playbackRestoreStillPending(0.0, null))
     }
 
-    @Test
-    fun castKeepAliveRequiresAnOpenPlayerAndExplicitCastRequest() {
-        assertTrue(shouldKeepCastPlaybackAlive(castRequested = true, playerVisible = true))
-        assertFalse(shouldKeepCastPlaybackAlive(castRequested = false, playerVisible = true))
-        assertFalse(shouldKeepCastPlaybackAlive(castRequested = true, playerVisible = false))
-    }
-
-    @Test
-    fun castHandoffAndHiddenDocumentPausesDoNotErasePlaybackIntent() {
-        assertTrue(
-            shouldPreserveCastPlaybackIntent(
-                castRequested = true,
-                appInBackground = false,
-                documentHidden = false,
-                insideCastHandoff = true,
-            ),
-        )
-        assertTrue(
-            shouldPreserveCastPlaybackIntent(
-                castRequested = true,
-                appInBackground = true,
-                documentHidden = false,
-                insideCastHandoff = false,
-            ),
-        )
-        assertTrue(
-            shouldPreserveCastPlaybackIntent(
-                castRequested = true,
-                appInBackground = false,
-                documentHidden = true,
-                insideCastHandoff = false,
-            ),
-        )
-        assertFalse(
-            shouldPreserveCastPlaybackIntent(
-                castRequested = true,
-                appInBackground = false,
-                documentHidden = false,
-                insideCastHandoff = false,
-            ),
-        )
-    }
-
-    @Test
-    fun castUsesTheRoutesExternalDisplayAndNeverPictureInPicture() {
-        assertTrue(
-            shouldUseCastPresentation(
-                castRequested = true,
-                playerVisible = true,
-                isTv = false,
-                presentationDisplayAvailable = true,
-            ),
-        )
-        assertFalse(
-            shouldUseCastPresentation(
-                castRequested = true,
-                playerVisible = true,
-                isTv = false,
-                presentationDisplayAvailable = false,
-            ),
-        )
-        assertFalse(
-            shouldUseCastPresentation(
-                castRequested = false,
-                playerVisible = true,
-                isTv = false,
-                presentationDisplayAvailable = true,
-            ),
-        )
-        assertFalse(
-            shouldUseCastPresentation(
-                castRequested = true,
-                playerVisible = false,
-                isTv = false,
-                presentationDisplayAvailable = true,
-            ),
-        )
-        assertFalse(
-            shouldUseCastPresentation(
-                castRequested = true,
-                playerVisible = true,
-                isTv = true,
-                presentationDisplayAvailable = true,
-            ),
-        )
-        assertEquals(
-            android.view.View.VISIBLE,
-            castAwareWebViewWindowVisibility(
-                requestedVisibility = android.view.View.GONE,
-                castRequested = true,
-                playerVisible = true,
-            ),
-        )
-        assertEquals(
-            android.view.View.GONE,
-            castAwareWebViewWindowVisibility(
-                requestedVisibility = android.view.View.GONE,
-                castRequested = false,
-                playerVisible = true,
-            ),
-        )
-    }
 }

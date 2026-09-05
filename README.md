@@ -7,11 +7,11 @@
 
 Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by selectable Groq or Gemini interpretation and authoritative TMDB metadata.
 
-This source tree targets **Aliflix 3.1.41** (`versionCode 131`) for Android 10 and newer.
+This source tree targets **Aliflix 3.1.60** (`versionCode 150`) for Android 10 and newer.
 
 [Download the latest mobile APK](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk) | [View release notes](https://github.com/alishaban144/aliflix-android/releases/latest)
 
-> Aliflix does not host, upload, relay, or sell video content. Playback availability and content are controlled by the provider selected by the user.
+> Aliflix does not host, upload, or sell video content. Playback availability and content are controlled by the provider selected by the user. During video casting, the phone can relay the selected stream over the local network to preserve required provider headers.
 
 ## Highlights
 
