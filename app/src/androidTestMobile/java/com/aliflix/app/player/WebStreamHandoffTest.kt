@@ -16,6 +16,7 @@ import kotlin.concurrent.thread
 
 class WebStreamHandoffTest {
     @Test fun actualIframeVideoAndBlobManifestCanBeHandedToNativePlayback() {
+        grantNativeFixtureNetworkPermission()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val videoBytes = instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() }
         val server = ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))

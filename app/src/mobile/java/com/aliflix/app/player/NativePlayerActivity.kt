@@ -17,6 +17,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.FragmentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.Lifecycle
 import androidx.media3.common.DeviceInfo
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -42,6 +44,20 @@ class NativePlayerActivity : FragmentActivity() {
     private lateinit var controls: PlayerControlView
     private lateinit var status: TextView
     private lateinit var castButton: MediaRouteButton
+    private var requestAccepted = false
+    private var castConfigured = false
+    private val networkPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            enablePlayback()
+            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) connectController()
+        } else {
+            status.text = "Allow Nearby devices in Aliflix's app permissions to send video to your TV. Tap Cast to open app settings."
+            status.visibility = View.VISIBLE
+            castButton.setOnClickListener {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
+            }
+        }
+    }
     private val displays by lazy { getSystemService(DisplayManager::class.java) }
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = updateOutput()
@@ -58,6 +74,7 @@ class NativePlayerActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestAccepted = savedInstanceState?.getBoolean("requestAccepted") == true
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_FULLSCREEN)
         val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
         video = SurfaceView(this)
@@ -77,7 +94,7 @@ class NativePlayerActivity : FragmentActivity() {
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(8, 12, 8, 8) }
         bar.addView(Button(this).apply { text = "Back"; setOnClickListener { finish() } })
         castButton = MediaRouteButton(this).apply { contentDescription = "Cast video to TV" }
-        runCatching { CastButtonFactory.setUpMediaRouteButton(this, castButton) }
+        castButton.setOnClickListener { networkPermission.launch(LOCAL_NETWORK_PERMISSION) }
         bar.addView(castButton, LinearLayout.LayoutParams(56.dp, 48.dp))
         bar.addView(Button(this).apply {
             text = "Wireless display"
@@ -95,10 +112,31 @@ class NativePlayerActivity : FragmentActivity() {
         })
         root.addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
         setContentView(root)
-        if (savedInstanceState == null) acceptRequest(intent)
+        if (hasLocalNetworkAccess()) enablePlayback()
+        else networkPermission.launch(LOCAL_NETWORK_PERMISSION)
     }
 
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); acceptRequest(intent) }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent); setIntent(intent); requestAccepted = false
+        if (hasLocalNetworkAccess()) enablePlayback()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("requestAccepted", requestAccepted)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun hasLocalNetworkAccess(): Boolean = android.os.Build.VERSION.SDK_INT < 37 ||
+        checkSelfPermission(LOCAL_NETWORK_PERMISSION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun enablePlayback() {
+        if (!castConfigured) {
+            castButton.setOnClickListener(null)
+            runCatching { CastButtonFactory.setUpMediaRouteButton(this, castButton) }
+            castConfigured = true
+        }
+        if (!requestAccepted) { acceptRequest(intent); requestAccepted = true }
+    }
 
     private fun acceptRequest(intent: Intent) {
         val raw = nativeRequestPayload(this, intent) ?: return
@@ -113,6 +151,11 @@ class NativePlayerActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        if (hasLocalNetworkAccess()) { enablePlayback(); connectController() }
+    }
+
+    private fun connectController() {
+        if (controllerFuture != null) return
         displays.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         val future = MediaController.Builder(this, SessionToken(this, ComponentName(this, NativePlaybackService::class.java))).buildAsync()
         controllerFuture = future
@@ -156,5 +199,9 @@ class NativePlayerActivity : FragmentActivity() {
     private fun sendSurface(clear: Boolean = false) {
         val surface = video.holder.surface.takeIf { !clear && it.isValid }
         controller?.sendCustomCommand(SessionCommand(NativePlaybackService.ACTION_PHONE_SURFACE, Bundle.EMPTY), Bundle().apply { putParcelable("surface", surface) })
+    }
+
+    private companion object {
+        const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
     }
 }

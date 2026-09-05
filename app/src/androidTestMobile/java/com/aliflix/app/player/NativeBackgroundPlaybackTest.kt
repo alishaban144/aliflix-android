@@ -25,6 +25,7 @@ class NativeBackgroundPlaybackTest {
     private val context = instrumentation.targetContext
 
     @Test fun videoAndNotificationsSurviveBackgroundRecreationAndActivityDestruction() {
+        grantNativeFixtureNetworkPermission()
         val asset = instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() }
         val server = FixtureServer(asset)
         val frames = ConcurrentHashMap.newKeySet<Long>()
@@ -153,4 +154,15 @@ class NativeBackgroundPlaybackTest {
         }
         override fun close() { socket.close() }
     }
+}
+
+/** Grants the real Android 17 LAN permission without changing the app's audio-focus identity. */
+internal fun grantNativeFixtureNetworkPermission() {
+    if (android.os.Build.VERSION.SDK_INT < 37) return
+    val instrumentation = InstrumentationRegistry.getInstrumentation()
+    instrumentation.uiAutomation.executeShellCommand(
+        "pm grant ${instrumentation.targetContext.packageName} android.permission.ACCESS_LOCAL_NETWORK",
+    ).use { java.io.FileInputStream(it.fileDescriptor).readBytes() }
+    assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED,
+        instrumentation.targetContext.checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK"))
 }

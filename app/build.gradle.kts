@@ -161,6 +161,7 @@ dependencies {
     add("mobileImplementation", "com.google.android.libraries.identity.googleid:googleid:1.2.0")
     add("mobileImplementation", "com.google.firebase:firebase-firestore")
     add("mobileImplementation", "org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
+    add("mobileImplementation", "androidx.fragment:fragment-ktx:1.8.9")
     listOf("exoplayer", "exoplayer-hls", "session", "ui", "cast").forEach { module ->
         add("mobileImplementation", "androidx.media3:media3-$module:1.11.0")
     }

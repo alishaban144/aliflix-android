@@ -6,6 +6,8 @@ The Cast action now hands the current stream, playback position, required reques
 
 Google Cast transfers playback to the receiver. A session-scoped LAN relay preserves upstream headers, rewrites HLS master/variant/audio/key URLs, serves selected WebVTT subtitles, and supports range requests. Resource URLs use an unpredictable session token and registered resource IDs; clients cannot supply arbitrary upstream URLs. Browser cookies remain on the phone. The relay stops with the playback service.
 
+On Android 17 and newer, the player requests Nearby devices (`ACCESS_LOCAL_NETWORK`) before starting receiver discovery or the relay. This app targets SDK 37, so the relay's incoming LAN connections require that runtime grant. Denial leaves the request pending and shows how to grant access; playback and SDK initialization wait for permission.
+
 Wireless-display receivers that expose an Android presentation display receive video on that display, with its own aspect-correct surface and subtitles. Plain phone-screen mirroring without a presentation display cannot show an independent video while the phone shows another app. For that hardware, select a Google Cast receiver using the video player's Cast button. The implementation does not use PiP, hidden-API visibility tricks, or automatic JavaScript replay loops.
 
 ## Verification
@@ -20,7 +22,7 @@ Run the device regression with:
 ./gradlew connectedMobileDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest
 ```
 
-The release workflow requires these emulator tests before publishing, together with Android unit tests, lint, a TV build, Worker checks, and signed-APK integrity checks.
+The release workflow requires these emulator tests on Android 15 and 17 before publishing, together with Android unit tests, lint, a TV build, Worker checks, and signed-APK integrity checks. Android 17 test setup grants the actual local-network permission; it does not disable the platform's LAN restrictions.
 
 The generated test asset was created with:
 
