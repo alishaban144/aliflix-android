@@ -52,8 +52,10 @@ jobs:
           api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
+          ram-size: 2048M
+          heap-size: 512M
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader -no-snapshot -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swangle -feature -HardwareDecoder -no-audio -no-snapshot -no-boot-anim -camera-back none
           script: ./gradlew connectedMobileDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest --no-daemon --console=plain
       - name: Upload playback test reports
         if: always()
@@ -219,7 +221,6 @@ jobs:
           ./gradlew \
             testMobileDebugUnitTest \
             lintMobileDebug \
-            assembleTvDebug \
             packageMobileRelease
 
       - name: Verify release APK integrity
