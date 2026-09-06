@@ -57,6 +57,8 @@ jobs:
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
             .validation/emulator.log
+            .validation/device-logcat.txt
+            .validation/instrumentation.txt
 
   worker-checks:
     runs-on: ubuntu-latest
