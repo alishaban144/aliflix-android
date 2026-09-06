@@ -19,6 +19,8 @@ if [ "$API" = 37.0 ]; then
   emulator_options=(-memory 3072 -cores 4)
   # Linux host DMA readback conflicts with API 37's mapper.ranchu, aborting SurfaceFlinger.
   emulator_features+=,-GLDirectMem
+  # gfxstream initializes its own feature controls from the environment, not the CLI override.
+  export ANDROID_EMULATOR_FEATURES="$emulator_features"
 fi
 emulator -avd casting-phone -port 5554 -no-window -gpu swangle -feature "$emulator_features" \
   "${emulator_options[@]}" \
