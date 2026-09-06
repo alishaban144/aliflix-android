@@ -14,8 +14,13 @@ printf 'hw.cpu.ncore=2\nhw.ramSize=2048M\nhw.heapSize=512M\n' >> "$ANDROID_AVD_H
 echo 'disk.dataPartition.size=6G' >> "$ANDROID_AVD_HOME/casting-phone.avd/config.ini"
 adb start-server
 emulator_options=()
-if [ "$API" = 37.0 ]; then emulator_options=(-memory 3072 -cores 4); fi
-emulator -avd casting-phone -port 5554 -no-window -gpu swangle -feature -HardwareDecoder \
+emulator_features=-HardwareDecoder
+if [ "$API" = 37.0 ]; then
+  emulator_options=(-memory 3072 -cores 4)
+  # Linux host DMA readback conflicts with API 37's mapper.ranchu, aborting SurfaceFlinger.
+  emulator_features+=,-GLDirectMem
+fi
+emulator -avd casting-phone -port 5554 -no-window -gpu swangle -feature "$emulator_features" \
   "${emulator_options[@]}" \
   -no-audio -no-snapshot -no-boot-anim -camera-back none -no-metrics \
   > .validation/emulator.log 2>&1 &

@@ -22,7 +22,7 @@ Run the device regression with:
 ./gradlew connectedMobileDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest
 ```
 
-The release workflow requires these phone-emulator tests on Android 15 and 17 before publishing, together with Android unit tests, lint, Worker checks, and signed-APK integrity checks. Android 17 test setup grants the actual local-network permission; it does not disable the platform's LAN restrictions. Linux CI uses software decoding because the emulator's Goldfish hardware decoder loses color buffers on the virtual presentation display. The same real decoded-frame assertions remain required.
+The release workflow requires these phone-emulator tests on Android 15 and 17 before publishing, together with Android unit tests, lint, Worker checks, and signed-APK integrity checks. Android 17 test setup grants the actual local-network permission; it does not disable the platform's LAN restrictions. Linux CI uses software decoding because the emulator's Goldfish hardware decoder loses color buffers on the virtual presentation display. API 37 also disables emulator `GLDirectMem`: its mapper.ranchu aborts SurfaceFlinger when the Linux host advertises DMA color-buffer readback, causing repeated Android restarts before app installation. The same real decoded-frame assertions remain required.
 
 The generated test asset was created with:
 
