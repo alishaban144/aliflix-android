@@ -8,11 +8,15 @@ export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 mkdir -p "$ANDROID_AVD_HOME" .validation
 (yes | sdkmanager --licenses >/dev/null) || true
 sdkmanager --install "platforms;android-$API" "build-tools;37.0.0" platform-tools emulator "system-images;android-$API;google_apis;x86_64" >/dev/null
-echo no | avdmanager create avd --name casting-phone --package "system-images;android-$API;google_apis;x86_64" --device pixel_6
-echo 'vm.heapSize=512' >> "$ANDROID_AVD_HOME/casting-phone.avd/config.ini"
+echo no | avdmanager create avd --name casting-phone --package "system-images;android-$API;google_apis;x86_64"
+# The generic phone profile avoids the Pixel profile's broken Linux virtual-display buffers.
+printf 'hw.cpu.ncore=2\nhw.ramSize=2048M\nhw.heapSize=512M\n' >> "$ANDROID_AVD_HOME/casting-phone.avd/config.ini"
 adb start-server
-emulator -avd casting-phone -port 5554 -no-window -gpu swangle -feature -HardwareDecoder \
-  -memory 4096 -cores 4 -no-audio -no-snapshot -no-boot-anim -camera-back none -no-metrics \
+emulator_options=()
+if [ "$API" = 37.0 ]; then emulator_options=(-memory 3072 -cores 4); fi
+emulator -avd casting-phone -port 5554 -no-window -gpu swangle -feature -HardwareDecoder -partition-size 8192 \
+  "${emulator_options[@]}" \
+  -no-audio -no-snapshot -no-boot-anim -camera-back none -no-metrics \
   > .validation/emulator.log 2>&1 &
 emulator_pid=$!
 trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
