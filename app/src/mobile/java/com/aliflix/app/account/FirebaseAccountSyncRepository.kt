@@ -31,6 +31,7 @@ import com.google.firebase.firestore.Source
 import com.google.firebase.Timestamp
 import java.util.Date
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -73,6 +74,7 @@ class FirebaseAccountSyncRepository(
     override val state: StateFlow<AccountSyncState> = _state.asStateFlow()
     private val retrySignal = Channel<Unit>(capacity = Channel.CONFLATED)
     private val closed = AtomicBoolean(false)
+    private val confirmedProgress = mutableMapOf<String, PlaybackProgress>()
     private val deletingUid = MutableStateFlow<String?>(null)
     private val pausedDeletionUid = MutableStateFlow<String?>(null)
 
@@ -176,6 +178,12 @@ class FirebaseAccountSyncRepository(
             launch { collectLibraryMutations(uid) },
             launch { collectSettingsMutations(uid) },
             launch { collectPlaybackProgressMutations(uid) },
+            launch {
+                while (true) {
+                    kotlinx.coroutines.delay(PROGRESS_CLOUD_INTERVAL_MILLIS)
+                    playbackProgressStore.snapshot().forEach { writeProgressIfNewer(uid, it).observeWriteResult(uid) }
+                }
+            },
         )
         val listeners = mutableListOf<ListenerRegistration>()
         var retryDelayMillis = 2_000L
@@ -192,7 +200,10 @@ class FirebaseAccountSyncRepository(
                     retrySignal.receive()
                     continue
                 } catch (cancelled: CancellationException) {
-                    throw cancelled
+                    if (cancelled !is TimeoutCancellationException) throw cancelled
+                    _state.value = AccountSyncState.Error(syncErrorMessage(cancelled))
+                    withTimeoutOrNull(retryDelayMillis) { retrySignal.receive() }
+                    retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(60_000L)
                 } catch (error: Exception) {
                     _state.value = AccountSyncState.Error(syncErrorMessage(error))
                     val manuallyRetried = withTimeoutOrNull(retryDelayMillis) {
@@ -269,10 +280,7 @@ class FirebaseAccountSyncRepository(
             )
         }
         playbackProgress.forEach { progress ->
-            writes += PendingSet(
-                user.collection(PROGRESS).document(progress.key),
-                progressDocument(progress, useServerTimestamp = false),
-            )
+            writeProgressIfNewer(uid, progress).await()
         }
         writes += PendingSet(
             reference = user.collection(SETTINGS).document(MAIN_DOCUMENT),
@@ -437,12 +445,28 @@ class FirebaseAccountSyncRepository(
                         progress.updatedAtMillis - lastWrite >= PROGRESS_CLOUD_INTERVAL_MILLIS
                     ) {
                         lastCloudWriteAt[progress.key] = progress.updatedAtMillis
-                        userDocument(uid).collection(PROGRESS).document(progress.key)
-                            .set(progressDocument(progress, useServerTimestamp = true))
-                            .observeWriteResult(uid)
+                        writeProgressIfNewer(uid, progress).observeWriteResult(uid)
                     }
                 }
             }
+        }
+    }
+
+    // Compare playback timestamps atomically. Offline state is already durable in the
+    // existing progress store and retried by this session/startup, never a blind queued set.
+    private fun writeProgressIfNewer(uid: String, progress: PlaybackProgress): Task<Boolean> {
+        val cacheKey = "$uid:${progress.key}"
+        if (confirmedProgress[cacheKey] == progress) return com.google.android.gms.tasks.Tasks.forResult(false)
+        val document = userDocument(uid).collection(PROGRESS).document(progress.key)
+        return firestore.runTransaction { transaction ->
+            val remote = transaction.get(document).toPlaybackProgress()
+            val winner = mergePlaybackProgress(listOf(progress), listOfNotNull(remote)).firstOrNull()
+            if (winner == progress && remote != progress) {
+                transaction.set(document, progressDocument(progress, useServerTimestamp = false))
+                true
+            } else false
+        }.addOnSuccessListener {
+            if (accountRepository.uid == uid) confirmedProgress[cacheKey] = progress
         }
     }
 
@@ -616,6 +640,8 @@ class FirebaseAccountSyncRepository(
         "positionSeconds" to progress.positionSeconds,
         "durationSeconds" to progress.durationSeconds,
         "completed" to progress.completed,
+        "completionVersion" to 2,
+        "explicitlyRestarted" to progress.explicitlyRestarted,
         "updatedAt" to if (useServerTimestamp) {
             FieldValue.serverTimestamp()
         } else {
@@ -678,25 +704,27 @@ private fun QuerySnapshot.toRecentList(): List<RecentMediaEntry> = documents.map
 }.sortedByDescending(RecentMediaEntry::lastPlayedAtMillis)
     .take(AccountMergePolicy.MAX_RECENT)
 
-private fun QuerySnapshot.toPlaybackProgressList(): List<PlaybackProgress> = documents.mapNotNull { document ->
-    val media = document.getString("mediaJson")?.let { raw ->
-        runCatching { Media.fromJson(org.json.JSONObject(raw)) }.getOrNull()
-    } ?: return@mapNotNull null
-    val progress = PlaybackProgress(
-        key = document.getString("progressKey") ?: document.id,
+private fun QuerySnapshot.toPlaybackProgressList(): List<PlaybackProgress> =
+    documents.mapNotNull { it.toPlaybackProgress() }.sortedByDescending(PlaybackProgress::updatedAtMillis)
+
+private fun DocumentSnapshot.toPlaybackProgress(): PlaybackProgress? = runCatching {
+    val media = getString("mediaJson")?.let { Media.fromJson(org.json.JSONObject(it)) } ?: return null
+    val position = getDouble("positionSeconds") ?: return null
+    val duration = getDouble("durationSeconds") ?: return null
+    PlaybackProgress(
+        key = getString("progressKey") ?: id,
         media = media,
-        seasonNumber = document.getLong("seasonNumber")?.toInt(),
-        episodeNumber = document.getLong("episodeNumber")?.toInt(),
-        episodeTitle = document.getString("episodeTitle"),
-        positionSeconds = document.getDouble("positionSeconds") ?: return@mapNotNull null,
-        durationSeconds = document.getDouble("durationSeconds") ?: return@mapNotNull null,
-        updatedAtMillis = document.getTimestamp("updatedAt")?.toDate()?.time
-            ?: document.getLong("updatedAtMillis")
-            ?: 0L,
-        completed = document.getBoolean("completed") ?: false,
-    )
-    progress.takeIf { it.key == document.id && isValidPlaybackProgress(it) }
-}.sortedByDescending(PlaybackProgress::updatedAtMillis)
+        seasonNumber = getLong("seasonNumber")?.toInt(),
+        episodeNumber = getLong("episodeNumber")?.toInt(),
+        episodeTitle = getString("episodeTitle"),
+        positionSeconds = position,
+        durationSeconds = duration,
+        updatedAtMillis = getLong("updatedAtMillis") ?: getTimestamp("updatedAt")?.toDate()?.time ?: 0L,
+        completed = getBoolean("completed") == true &&
+            ((getLong("completionVersion") ?: 0) >= 2 || com.aliflix.app.data.playbackCompleted(position, duration)),
+        explicitlyRestarted = getBoolean("explicitlyRestarted") == true,
+    ).takeIf { it.key == id && isValidPlaybackProgress(it) }
+}.getOrNull()
 
 private fun DocumentSnapshot.toMedia(): Media? {
     val raw = getString("mediaJson") ?: return null

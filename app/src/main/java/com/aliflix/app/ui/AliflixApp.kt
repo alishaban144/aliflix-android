@@ -803,7 +803,7 @@ fun AliflixApp(
         requestedProvider: PlaybackProviderId? = null,
     ) {
         viewModel.markPlayed(selection.media)
-        playerSelection = selection.copy(
+        playerSelection = viewModel.playbackProgressStore.resumeSelection(selection).copy(
             source = playbackPreferences.sourceFor(
                 media = selection.media,
                 requestedProvider = requestedProvider,
@@ -963,6 +963,9 @@ fun AliflixApp(
             )
             AnimatedContent(
                 targetState = animatedDestination,
+                // Scroll/metadata changes update this destination; only navigation creates
+                // another SaveableStateProvider. Concurrent copies of one key crash Compose.
+                contentKey = { it.saveKey },
                 transitionSpec = {
                     val motion = mobileNavigationMotion(
                         initialDepth = initialState.stackDepth,
@@ -4667,7 +4670,7 @@ internal fun shouldShowOverviewExpansion(
     }
 
 @Composable
-private fun DetailScreen(
+internal fun DetailScreen(
     state: DetailUiState,
     inMyList: Boolean,
     liked: Boolean,
@@ -4891,7 +4894,7 @@ private fun DetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             contentPadding = PaddingValues(end = 4.dp),
                         ) {
-                            items(item.creators, key = { creator -> creator.tmdbId }) { creator ->
+                            items(item.creators.distinctBy { it.tmdbId }, key = { creator -> creator.tmdbId }) { creator ->
                                 DetailCreatorCard(
                                     creator = creator,
                                     onClick = { onOpenCreator(creator) },
@@ -5052,7 +5055,7 @@ private fun DetailScreen(
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(state.seasons, key = { it.number }) { season ->
+                        items(state.seasons.distinctBy { it.number }, key = { it.number }) { season ->
                             val selected = season.number == state.selectedSeason
                             AssistChip(
                                 onClick = { onSelectSeason(season.number) },
@@ -5104,7 +5107,7 @@ private fun DetailScreen(
                 }
             } else {
                 items(
-                    items = state.episodes,
+                    items = state.episodes.distinctBy { it.seasonNumber to it.number },
                     key = { episode -> "${episode.seasonNumber}:${episode.number}" },
                 ) { episode ->
                     EpisodeRow(

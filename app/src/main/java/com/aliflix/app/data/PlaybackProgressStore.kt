@@ -24,6 +24,7 @@ data class PlaybackProgress(
     val durationSeconds: Double,
     val updatedAtMillis: Long,
     val completed: Boolean,
+    val explicitlyRestarted: Boolean = false,
 ) {
     val progressFraction: Double
         get() = if (durationSeconds > 0.0) {
@@ -33,14 +34,8 @@ data class PlaybackProgress(
         }
 
     val resumeEligible: Boolean
-        get() = !completed &&
-            positionSeconds >= RESUME_MINIMUM_SECONDS &&
-            (durationSeconds <= 0.0 || progressFraction < COMPLETION_FRACTION)
+        get() = !completed && positionSeconds.isFinite() && positionSeconds > 0.0
 
-    companion object {
-        const val RESUME_MINIMUM_SECONDS = 25.0
-        const val COMPLETION_FRACTION = 0.92
-    }
 }
 
 sealed interface PlaybackProgressMutation {
@@ -66,17 +61,32 @@ class PlaybackProgressStore(context: Context) {
     fun progressFor(selection: PlaybackSelection): PlaybackProgress? =
         _entries.value[playbackProgressKey(selection)]
 
+    fun resumeSelection(selection: PlaybackSelection): PlaybackSelection {
+        if (selection.media.type != MediaType.TV || selection.seasonNumber != null || selection.episodeNumber != null) return selection
+        val latest = _entries.value.values.filter { it.media.key == selection.media.key && it.resumeEligible }
+            .maxByOrNull { it.updatedAtMillis } ?: return selection
+        return selection.copy(seasonNumber = latest.seasonNumber, episodeNumber = latest.episodeNumber,
+            episodeTitle = latest.episodeTitle)
+    }
+
+    @Synchronized
     fun savePlayerProgress(
         selection: PlaybackSelection,
         positionSeconds: Double,
         durationSeconds: Double,
         urgentCloudSync: Boolean,
         nowMillis: Long = System.currentTimeMillis(),
+        ended: Boolean = false,
     ): PlaybackProgress? {
-        if (!positionSeconds.isFinite() || positionSeconds < 0.0) return null
+        if (!positionSeconds.isFinite() || positionSeconds <= 0.0) return null
         if (!durationSeconds.isFinite() || durationSeconds <= 0.0) return null
         if (durationSeconds > MAX_REASONABLE_DURATION_SECONDS) return null
+        if (positionSeconds > durationSeconds + 1.0) return null
+        val previous = progressFor(selection)
+        if (previous != null && nowMillis < previous.updatedAtMillis) return null
         val safePosition = positionSeconds.coerceAtMost(durationSeconds)
+        if (previous != null && previous.positionSeconds == safePosition &&
+            previous.durationSeconds == durationSeconds && previous.completed == ended) return previous
         val progress = PlaybackProgress(
             key = playbackProgressKey(selection),
             media = selection.media,
@@ -86,12 +96,13 @@ class PlaybackProgressStore(context: Context) {
             positionSeconds = safePosition,
             durationSeconds = durationSeconds,
             updatedAtMillis = nowMillis.coerceAtLeast(0L),
-            completed = playbackCompleted(safePosition, durationSeconds),
+            completed = ended && safePosition > 0.0,
         )
         put(progress, emitMutation = true, urgentCloudSync = urgentCloudSync)
         return progress
     }
 
+    @Synchronized
     fun startOver(
         selection: PlaybackSelection,
         nowMillis: Long = System.currentTimeMillis(),
@@ -101,6 +112,7 @@ class PlaybackProgressStore(context: Context) {
             current.copy(
                 positionSeconds = 0.0,
                 completed = false,
+                explicitlyRestarted = true,
                 updatedAtMillis = nowMillis.coerceAtLeast(0L),
             ),
             emitMutation = true,
@@ -112,6 +124,7 @@ class PlaybackProgressStore(context: Context) {
         .sortedByDescending(PlaybackProgress::updatedAtMillis)
 
     /** Applies an account/cloud snapshot without producing a write-back mutation. */
+    @Synchronized
     fun applySyncedEntries(entries: List<PlaybackProgress>) {
         val normalized = entries
             .filter(::isValidPlaybackProgress)
@@ -178,18 +191,22 @@ internal fun PlaybackProgress.toJson(): JSONObject = JSONObject()
     .put("durationSeconds", durationSeconds)
     .put("updatedAtMillis", updatedAtMillis)
     .put("completed", completed)
+    .put("completionVersion", 2)
+    .put("explicitlyRestarted", explicitlyRestarted)
 
 internal fun playbackProgressFromJson(json: JSONObject): PlaybackProgress? = runCatching {
     PlaybackProgress(
         key = json.getString("key"),
         media = Media.fromJson(json.getJSONObject("media")),
-        seasonNumber = json.optInt("seasonNumber").takeIf { json.has("seasonNumber") && it > 0 },
+        seasonNumber = json.optInt("seasonNumber").takeIf { !json.isNull("seasonNumber") && it >= 0 },
         episodeNumber = json.optInt("episodeNumber").takeIf { json.has("episodeNumber") && it > 0 },
         episodeTitle = json.optString("episodeTitle").takeIf(String::isNotBlank),
         positionSeconds = json.getDouble("positionSeconds"),
         durationSeconds = json.getDouble("durationSeconds"),
         updatedAtMillis = json.getLong("updatedAtMillis"),
-        completed = json.optBoolean("completed"),
+        completed = json.optBoolean("completed") &&
+            (json.optInt("completionVersion") >= 2 || playbackCompleted(json.getDouble("positionSeconds"), json.getDouble("durationSeconds"))),
+        explicitlyRestarted = json.optBoolean("explicitlyRestarted"),
     )
 }.getOrNull()
 
@@ -209,13 +226,13 @@ internal fun isValidPlaybackProgress(progress: PlaybackProgress): Boolean =
 
 internal fun playbackCompleted(positionSeconds: Double, durationSeconds: Double): Boolean =
     positionSeconds.isFinite() && durationSeconds.isFinite() && durationSeconds > 0.0 &&
-        positionSeconds.coerceAtLeast(0.0) / durationSeconds >= PlaybackProgress.COMPLETION_FRACTION
+        positionSeconds >= durationSeconds
 
 internal fun mergePlaybackProgress(
     local: List<PlaybackProgress>,
     cloud: List<PlaybackProgress>,
 ): List<PlaybackProgress> = (local + cloud)
-    .filter(::isValidPlaybackProgress)
+    .filter { isValidPlaybackProgress(it) && (it.positionSeconds > 0.0 || it.explicitlyRestarted) }
     .groupBy(PlaybackProgress::key)
     .values
     .mapNotNull { versions ->

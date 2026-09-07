@@ -45,7 +45,11 @@ class NativeBackgroundPlaybackTest {
                 if (lastFrame.getAndSet(hash) != hash) frames.incrementAndGet()
             }
         }, Handler(imageThread.looper))
-        val request = NativePlaybackRequest(server.url, "video/mp4", "https://fixture.aliflix.test/", "Aliflix runtime test", "", "Background casting verification", 3000, true)
+        val progressSelection = com.aliflix.app.model.PlaybackSelection(
+            com.aliflix.app.model.Media(2147482999, com.aliflix.app.model.MediaType.MOVIE, "Playback fixture"))
+        val progressStore = (context.applicationContext as com.aliflix.app.AliflixApplication).playbackProgressStore
+        val request = NativePlaybackRequest(server.url, "video/mp4", "https://fixture.aliflix.test/", "Aliflix runtime test", "", "Background casting verification", 3000, true,
+            selectionJson = progressSelection.nativeJson())
         var scenario: ActivityScenario<NativePlayerActivity>? = null
         var display: android.hardware.display.VirtualDisplay? = null
         val requestFile = java.io.File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json")
@@ -99,6 +103,11 @@ class NativeBackgroundPlaybackTest {
             sendNotificationAction("pause")
             await { session.playbackState?.state == PlaybackState.STATE_PAUSED }
             val paused = position(session)
+            await("Pause persists the service clock") {
+                val saved = progressStore.progressFor(progressSelection)
+                saved != null && kotlin.math.abs(saved.positionSeconds * 1000 - paused) < 300
+            }
+            assertTrue(progressStore.progressFor(progressSelection)!!.resumeEligible)
             Thread.sleep(3500)
             assertTrue("Pause must stay paused without a JavaScript watchdog restarting it", kotlin.math.abs(position(session) - paused) < 300)
             sendNotificationAction("play")

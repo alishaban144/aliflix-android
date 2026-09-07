@@ -5,7 +5,7 @@ import org.junit.Test
 
 class NativePlaybackRequestTest {
     @Test fun handoffPreservesStreamCredentialsPositionPauseAndSubtitles() {
-        val input = NativePlaybackRequest("https://cdn.example/a.m3u8?token=x%2Fy", "application/x-mpegURL", "https://player.example/watch", "UA", "session=test", "Film", 42001, false, "WEBVTT\n\n", "selection")
+        val input = NativePlaybackRequest("https://cdn.example/a.m3u8?token=x%2Fy", "application/x-mpegURL", "https://player.example/watch", "UA", "session=test", "Film", 42001, false, "WEBVTT\n\n", "selection", "de", "German")
         assertEquals(input, NativePlaybackRequest.fromJson(input.toJson()))
     }
 

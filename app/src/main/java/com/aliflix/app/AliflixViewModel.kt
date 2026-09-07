@@ -39,6 +39,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -1025,56 +1026,43 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 } else {
                     tmdbDetails?.toMedia(item) ?: item
                 }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (_detail.value.item?.key != item.key) return@launch
                 _detail.value = _detail.value.copy(
                     item = authoritativeItem,
                     recommendations = tmdbRecommendations.ifEmpty { _detail.value.recommendations },
                 )
 
-                val seasonsRequest = async {
-                    if (authoritativeItem.type == MediaType.TV) {
-                        client.seasons(authoritativeItem)
-                    } else {
-                        emptyList()
-                    }
-                }
-
+                // Catch inside the child: a failed launch/async otherwise cancels the parent
+                // outside its try block and reaches Android's uncaught exception handler.
                 episodeJob = launch {
-                    val seasons = seasonsRequest.await()
-                    val selectedSeason = seasons.firstOrNull()?.number ?: 1
-                    _detail.value = _detail.value.copy(
-                        seasons = seasons,
-                        selectedSeason = selectedSeason,
-                        episodesLoading = authoritativeItem.type == MediaType.TV,
-                    )
-                    
-                    if (authoritativeItem.type == MediaType.TV) {
-                        val currentItem = _detail.value.item ?: authoritativeItem
-                        val episodes = client.episodes(currentItem, selectedSeason) { progress ->
-                            val current = _detail.value
-                            if (
-                                current.item?.key == currentItem.key &&
-                                current.selectedSeason == selectedSeason
-                            ) {
-                                _detail.value = current.copy(
-                                    episodes = progress,
-                                    episodesLoading = false,
-                                )
+                    try {
+                        val seasons = if (authoritativeItem.type == MediaType.TV) client.seasons(authoritativeItem) else emptyList()
+                        if (_detail.value.item?.key != item.key) return@launch
+                        val savedSeason = playbackProgressStore.entries.value.values
+                            .filter { it.media.key == item.key }.maxByOrNull { it.updatedAtMillis }?.seasonNumber
+                        val selectedSeason = seasons.firstOrNull { it.number == savedSeason }?.number
+                            ?: seasons.firstOrNull { it.number > 0 }?.number ?: 1
+                        _detail.value = _detail.value.copy(seasons = seasons.distinctBy { it.number },
+                            selectedSeason = selectedSeason, episodesLoading = authoritativeItem.type == MediaType.TV)
+                        if (authoritativeItem.type == MediaType.TV) {
+                            fun publish(episodes: List<Episode>) {
+                                val current = _detail.value
+                                if (current.item?.key == item.key && current.selectedSeason == selectedSeason)
+                                    _detail.value = current.copy(episodes = episodes.distinctBy { it.seasonNumber to it.number }, episodesLoading = false)
                             }
+                            publish(client.episodes(authoritativeItem, selectedSeason) { publish(it) })
                         }
-                        val current = _detail.value
-                        if (
-                            current.item?.key == currentItem.key &&
-                            current.selectedSeason == selectedSeason
-                        ) {
-                            _detail.value = current.copy(
-                                episodes = episodes,
-                                episodesLoading = false,
-                            )
-                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        if (_detail.value.item?.key == item.key) _detail.value = _detail.value.copy(
+                            episodesLoading = false, error = error.message ?: "Episodes could not be loaded.")
                     }
                 }
 
                 client.details(authoritativeItem) { details, recommendations ->
+                    if (_detail.value.item?.key != item.key) return@details
                     val displayDetails = if (!BuildConfig.IS_TV) {
                         authoritativeItem.mergeStableMobileDetailUpdate(details)
                     } else {
@@ -1113,7 +1101,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         }
         val current = _detail.value
         val item = current.item ?: return
-        if (item.type != MediaType.TV || number == current.selectedSeason) return
+        if (item.type != MediaType.TV || (number == current.selectedSeason && current.episodes.isNotEmpty())) return
         episodeJob?.cancel()
         _detail.value = current.copy(
             selectedSeason = number,

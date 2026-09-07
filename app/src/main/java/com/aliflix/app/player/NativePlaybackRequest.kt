@@ -15,12 +15,15 @@ internal data class NativePlaybackRequest(
     val playing: Boolean,
     val subtitlesVtt: String = "",
     val selectionJson: String = "",
+    val subtitleLanguage: String = "en",
+    val subtitleLabel: String = "Aliflix subtitles",
 ) {
     fun toJson(): String = JSONObject().apply {
         put("url", url); put("mimeType", mimeType); put("referer", referer)
         put("userAgent", userAgent); put("cookie", cookie); put("title", title)
         put("positionMs", positionMs); put("playing", playing); put("subtitlesVtt", subtitlesVtt)
         put("selectionJson", selectionJson)
+        put("subtitleLanguage", subtitleLanguage); put("subtitleLabel", subtitleLabel)
     }.toString()
 
     companion object {
@@ -34,6 +37,8 @@ internal data class NativePlaybackRequest(
                 json.optLong("positionMs").coerceAtLeast(0), json.optBoolean("playing", true),
                 json.optString("subtitlesVtt"),
                 json.optString("selectionJson"),
+                json.optString("subtitleLanguage", "en"),
+                json.optString("subtitleLabel", "Aliflix subtitles"),
             )
         }
     }

@@ -5,12 +5,12 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.63"
+      - "release/v3.1.64"
       - "release/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.63"
+        description: "Release tag, for example v3.1.64"
         required: true
         type: string
       notes:
@@ -22,11 +22,30 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "153"
-  RELEASE_VERSION_NAME: "3.1.63"
+  RELEASE_VERSION_CODE: "154"
+  RELEASE_VERSION_NAME: "3.1.64"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
+  changed-paths:
+    runs-on: ubuntu-latest
+    outputs:
+      worker: ${{ steps.paths.outputs.worker }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$(git describe --tags --abbrev=0 "${GITHUB_SHA}^")"
+          if git diff --quiet "$BASE" "$GITHUB_SHA" -- recommendation-worker; then
+            echo 'worker=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'worker=true' >> "$GITHUB_OUTPUT"
+          fi
+
   playback-device-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -62,6 +81,8 @@ jobs:
             .validation/instrumentation.txt
 
   worker-checks:
+    needs: changed-paths
+    if: needs.changed-paths.outputs.worker == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -133,7 +154,11 @@ jobs:
           done
 
   release:
-    needs: [worker-checks, deploy-recommendations, playback-device-tests]
+    needs: [changed-paths, worker-checks, deploy-recommendations, playback-device-tests]
+    if: >-
+      always() && needs.changed-paths.result == 'success' && needs.playback-device-tests.result == 'success' &&
+      (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
+      (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -263,7 +288,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Cinematic Intelligence purple/lilac visual identity, redesigned unified action panel, remote-first Android TV experience with accelerated D-pad timeline scrubbing, 0ms instant cached startup, elevated portrait subtitles, and simultaneous mobile & TV releases."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Critical fixes for series detail navigation and TV episode loading, exact movie and episode resume including late playback, automatic Firebase progress reconciliation and offline retry, neutral stream loading messages, and Google Cast subtitle language and media handoff preservation."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -311,7 +336,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Cinematic Intelligence purple/lilac visual identity, unified mobile detail action panel, remote-first Android TV experience with accelerated D-pad timeline scrubbing, 0ms instant cached startup, elevated portrait subtitles, and simultaneous mobile & TV releases."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Critical fixes for series detail navigation and TV episode loading, exact movie and episode resume including late playback, automatic Firebase progress reconciliation and offline retry, neutral stream loading messages, and Google Cast subtitle language and media handoff preservation."
           files: |
             aliflix-mobile.apk
             aliflix-tv.apk

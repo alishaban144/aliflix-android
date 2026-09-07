@@ -49,9 +49,7 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.model.PlaybackSource
-import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaQueueItem
-import com.google.android.gms.cast.MediaTrack
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONObject
@@ -123,7 +121,8 @@ class NativePlaybackService : MediaSessionService() {
             CastPlayer.Builder(this).setLocalPlayer(localPlayer)
                 .setRemotePlayer(RemoteCastPlayer.Builder(this).setMediaItemConverter(relayConverter()).build())
                 .build()
-        }.getOrDefault(localPlayer)
+        }.onFailure { android.util.Log.e("AliflixCast", "Google Cast initialization failed", it) }
+            .getOrDefault(localPlayer)
         player.addListener(object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
                 if (releasing) return
@@ -132,7 +131,7 @@ class NativePlaybackService : MediaSessionService() {
                 hasSelectedAudio = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
                 updateWifiLock()
                 updateDisplay()
-                if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) || events.contains(Player.EVENT_IS_PLAYING_CHANGED)) saveProgress(true)
+                if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) || events.contains(Player.EVENT_IS_PLAYING_CHANGED) || events.contains(Player.EVENT_POSITION_DISCONTINUITY) || events.contains(Player.EVENT_DEVICE_INFO_CHANGED)) saveProgress(true)
             }
         })
         val activity = PendingIntent.getActivity(this, 0, Intent(this, NativePlayerActivity::class.java),
@@ -149,6 +148,7 @@ class NativePlaybackService : MediaSessionService() {
                 }
                 override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
                     if (command.customAction == ACTION_STOP_CAST && controller.packageName == packageName) {
+                        saveProgress(true)
                         castingSuppressed = true
                         if (player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) {
                             runCatching { com.google.android.gms.cast.framework.CastContext.getSharedInstance(this@NativePlaybackService).sessionManager.endCurrentSession(true) }
@@ -214,6 +214,7 @@ class NativePlaybackService : MediaSessionService() {
         player.stop(); player.clearMediaItems()
         relay?.close(); relay = null
         request = next
+        relay = runCatching { CastStreamRelay(next, lanAddress()) }.getOrNull()
         playbackReady = false; playbackFailure = null; hasSelectedAudio = false
         activeRequest = next
         activeStreamUrl = next.url
@@ -235,7 +236,7 @@ class NativePlaybackService : MediaSessionService() {
         if (next.subtitlesVtt.isNotBlank()) {
             val file = java.io.File(cacheDir, "native-playback-subtitles.vtt").apply { writeText(next.subtitlesVtt) }
             itemBuilder.setSubtitleConfigurations(listOf(MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(file))
-                .setMimeType("text/vtt").setLabel("Aliflix subtitles").setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()))
+                .setMimeType("text/vtt").setLanguage(next.subtitleLanguage).setLabel(next.subtitleLabel).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()))
         }
         originalItem = itemBuilder.build()
         player.setMediaItem(checkNotNull(originalItem), next.positionMs)
@@ -253,33 +254,9 @@ class NativePlaybackService : MediaSessionService() {
             val builder = item.buildUpon().setUri(currentRelay.streamUrl)
             if (current.subtitlesVtt.isNotBlank()) builder.setSubtitleConfigurations(listOf(
                 MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(currentRelay.subtitleUrl))
-                    .setMimeType("text/vtt").setLabel("Aliflix subtitles").setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()))
+                    .setMimeType("text/vtt").setLanguage(current.subtitleLanguage).setLabel(current.subtitleLabel).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()))
             val queueItem = delegate.toMediaQueueItem(builder.build())
-            val mediaInfo = queueItem.media
-            if (current.subtitlesVtt.isNotBlank() && mediaInfo != null) {
-                val trackId = 1L
-                val castSubtitleTrack = MediaTrack.Builder(trackId, MediaTrack.TYPE_TEXT)
-                    .setName("Aliflix subtitles")
-                    .setSubtype(MediaTrack.SUBTYPE_SUBTITLES)
-                    .setContentId(currentRelay.subtitleUrl)
-                    .setContentType("text/vtt")
-                    .setLanguage("en")
-                    .build()
-                val updatedMediaInfo = MediaInfo.Builder(mediaInfo.contentId)
-                    .setStreamType(mediaInfo.streamType)
-                    .setContentType(mediaInfo.contentType)
-                    .setMetadata(mediaInfo.metadata)
-                    .setStreamDuration(mediaInfo.streamDuration)
-                    .setMediaTracks(listOf(castSubtitleTrack))
-                    .build()
-                return MediaQueueItem.Builder(updatedMediaInfo)
-                    .setActiveTrackIds(longArrayOf(trackId))
-                    .setAutoplay(queueItem.autoplay)
-                    .setPreloadTime(queueItem.preloadTime)
-                    .setStartTime(queueItem.startTime)
-                    .build()
-            }
-            return queueItem
+            return withCastSubtitles(queueItem, current, currentRelay.subtitleUrl)
         }
     }
 
@@ -372,9 +349,10 @@ class NativePlaybackService : MediaSessionService() {
 
     private fun saveProgress(urgent: Boolean) {
         val current = selection ?: return
+        if (player.currentMediaItem?.mediaId != current.key || player.playbackState !in setOf(Player.STATE_READY, Player.STATE_ENDED)) return
         val duration = player.duration
         if (duration <= 0) return
-        (application as AliflixApplication).playbackProgressStore.savePlayerProgress(current, player.currentPosition / 1000.0, duration / 1000.0, urgent)
+        (application as AliflixApplication).playbackProgressStore.savePlayerProgress(current, player.currentPosition / 1000.0, duration / 1000.0, urgent, ended = player.playbackState == Player.STATE_ENDED)
     }
 
     override fun onDestroy() {

@@ -156,7 +156,7 @@ class NativePlayerActivity : FragmentActivity() {
                             intent.putExtra("selection", selection!!.nativeJson())
                             triedServers.clear()
                             recoveryCount = 0
-                            prepareSelection(positionMs = 0)
+                            prepareSelection()
                         }
                     },
                     onReceiver = ::openReceiverPicker,
@@ -243,7 +243,8 @@ class NativePlayerActivity : FragmentActivity() {
 
     private fun prepareSelection(positionMs: Long? = null) {
         val current = selection ?: return
-        val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition
+        recordCurrentProgress(urgent = true)
+        val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition?.takeIf { it > 0 }
             ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
         controller?.pause()
@@ -277,8 +278,11 @@ class NativePlayerActivity : FragmentActivity() {
                 resolver = adapter
                 var server = ""
                 try {
-                    val resolved = adapter.resolve(current, resume, triedServers) { label -> server = label; ui = ui.copy(server = label, stage = "Opening $label") }
-                    val request = resolved.copy(subtitlesVtt = withTimeoutOrNull(1500) { initialSubtitles.await() }.orEmpty())
+                    val resolved = adapter.resolve(current, resume, triedServers) { label -> server = label; ui = ui.copy(server = label, stage = "Preparing your video") }
+                    val vtt = withTimeoutOrNull(1500) { initialSubtitles.await() }.orEmpty()
+                    val request = resolved.copy(subtitlesVtt = vtt,
+                        subtitleLanguage = ui.activeSubtitleTrack?.languageCode?.lowercase() ?: "en",
+                        subtitleLabel = ui.activeSubtitleTrack?.languageName ?: "Aliflix subtitles")
                     adapter.close(); resolver = null; hideSystemBars()
                     ui = ui.copy(stage = "Preparing your video")
                     startNative(request)
@@ -314,7 +318,17 @@ class NativePlayerActivity : FragmentActivity() {
                     if (server.isBlank()) break // A failed provider page cannot supply another server.
                 }
             }
-            initialSubtitles.cancel()
+            if (success && NativePlaybackService.activeRequest?.subtitlesVtt.isNullOrBlank()) {
+                val lateVtt = initialSubtitles.await()
+                val active = NativePlaybackService.activeRequest
+                if (lateVtt.isNotBlank() && active != null && selection?.key == current.key) {
+                    startNative(active.copy(subtitlesVtt = lateVtt,
+                        subtitleLanguage = ui.activeSubtitleTrack?.languageCode?.lowercase() ?: "en",
+                        subtitleLabel = ui.activeSubtitleTrack?.languageName ?: "Aliflix subtitles",
+                        positionMs = controller?.currentPosition?.takeIf { it > 0 } ?: active.positionMs,
+                        playing = controller?.playWhenReady ?: active.playing))
+                }
+            } else initialSubtitles.cancel()
             if (!success) ui = ui.copy(stage = null, error = "We couldn't prepare this title. Check your connection and try again. Some servers may be unavailable.")
         }
     }
@@ -360,11 +374,11 @@ class NativePlayerActivity : FragmentActivity() {
                 val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
                 activeSubtitleCuesJson = json
                 val vtt = nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
-                startNative(request.copy(subtitlesVtt = vtt,
+                startNative(request.copy(subtitlesVtt = vtt, subtitleLanguage = track.languageCode.lowercase(), subtitleLabel = track.languageName,
                     positionMs = controller?.currentPosition ?: request.positionMs, playing = controller?.playWhenReady ?: true))
                 controller?.sendCustomCommand(
-                    SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle().apply { putBoolean("enabled", true) }),
-                    Bundle.EMPTY
+                    SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle.EMPTY),
+                    Bundle().apply { putBoolean("enabled", true) }
                 )
                 ui = ui.copy(activeSubtitleTrack = track, message = "${track.languageName} subtitles enabled")
             }.onFailure { ui = ui.copy(subtitleError = "This subtitle couldn't load. Try another version.") }
@@ -382,8 +396,8 @@ class NativePlayerActivity : FragmentActivity() {
             startNative(req.copy(subtitlesVtt = "", positionMs = pos, playing = playing))
         }
         controller?.sendCustomCommand(
-            SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle().apply { putBoolean("enabled", false) }),
-            Bundle.EMPTY
+            SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle.EMPTY),
+            Bundle().apply { putBoolean("enabled", false) }
         )
     }
 
@@ -464,10 +478,11 @@ class NativePlayerActivity : FragmentActivity() {
     private fun recordCurrentProgress(urgent: Boolean = true) {
         val sel = selection ?: return
         val c = controller ?: return
+        if (c.currentMediaItem?.mediaId != sel.key || c.playbackState !in setOf(Player.STATE_READY, Player.STATE_ENDED)) return
         val dur = c.duration.toDouble() / 1000.0
         val pos = c.currentPosition.toDouble() / 1000.0
         if (dur > 0.0 && pos >= 0.0) {
-            progress.savePlayerProgress(sel, pos, dur, urgentCloudSync = urgent)
+            progress.savePlayerProgress(sel, pos, dur, urgentCloudSync = urgent, ended = c.playbackState == Player.STATE_ENDED)
         }
     }
 

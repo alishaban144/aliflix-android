@@ -103,6 +103,7 @@ class WebPlayerController(
     private var moviepireMessageListenerInstalled = false
     private var latestPositionSeconds = 0.0
     private var latestDurationSeconds = 0.0
+    private var latestPlaybackEnded = false
     private var lastLocalProgressWriteAt = 0L
     private var pendingSeekSeconds: Double? = null
     private var pendingServerKey: String? = null
@@ -153,8 +154,10 @@ class WebPlayerController(
         if (loadedKey != defaultKey) {
             nativeStream = null
             loadedKey = defaultKey
+            pendingSeekSeconds = playbackProgressStore.progressFor(selection)?.takeIf { it.resumeEligible }?.positionSeconds
             latestPositionSeconds = 0.0
             latestDurationSeconds = 0.0
+            latestPlaybackEnded = false
             lastLocalProgressWriteAt = 0L
             _moviepireServers.value = emptyList()
             _switchingMoviepireServer.value = false
@@ -178,7 +181,10 @@ class WebPlayerController(
         flushProgress(urgentCloudSync = true)
         if (activeSubtitleContentKey != subtitleContentKey(selection)) clearSubtitles()
         activeSelection = selection
-        pendingSeekSeconds = null
+        pendingSeekSeconds = playbackProgressStore.progressFor(selection)?.takeIf { it.resumeEligible }?.positionSeconds
+        latestPositionSeconds = 0.0
+        latestDurationSeconds = 0.0
+        latestPlaybackEnded = false
         pendingServerKey = null
         _switchingMoviepireServer.value = false
         webView?.apply {
@@ -577,7 +583,18 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
-        if (BuildConfig.IS_TV) return
+        if (BuildConfig.IS_TV) {
+            val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
+            if (moviepireDocumentStartScriptHandler != null && moviepireProtectedSourceHost == sourceHost) return
+            moviepireDocumentStartScriptHandler?.remove()
+            moviepireProtectedSourceHost = sourceHost
+            installMoviepireMessageListener(view, sourceHost)
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                moviepireDocumentStartScriptHandler = WebViewCompat.addDocumentStartJavaScript(
+                    view, mobileMoviepireProgressBridgeScript(), nativePlaybackOriginRules(sourceHost))
+            }
+            return
+        }
         if (!selection.source.provider.usesMoviepire) {
             val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
             if (moviepireDocumentStartScriptHandler != null && moviepireProtectedSourceHost == sourceHost && !moviepireProtectedNativeMode) return
@@ -646,7 +663,6 @@ class WebPlayerController(
                         replyProxy: JavaScriptReplyProxy,
                     ) {
                         val selection = activeSelection ?: return
-                        if (BuildConfig.IS_TV) return
                         if (!isApprovedMoviepireProgressOrigin(sourceOrigin, selection)) return
                         handlePlaybackMessage(view, selection, message.data, replyProxy)
                     }
@@ -737,6 +753,7 @@ class WebPlayerController(
         if (stillRestoring) return
 
         latestPositionSeconds = position.coerceAtMost(duration)
+        latestPlaybackEnded = event == "ended" || (latestPlaybackEnded && event == "pause")
         // The browser is paused after handoff; only the native owner may persist its clock.
         if (NativePlaybackLauncher.ownsStream(nativeStream?.optString("url"))) return
         val now = SystemClock.elapsedRealtime()
@@ -747,6 +764,7 @@ class WebPlayerController(
                 positionSeconds = latestPositionSeconds,
                 durationSeconds = latestDurationSeconds,
                 urgentCloudSync = urgent,
+                ended = latestPlaybackEnded,
             )
             lastLocalProgressWriteAt = now
         }
@@ -756,13 +774,13 @@ class WebPlayerController(
         if (nativePreparation) return
         val selection = activeSelection ?: return
         if (NativePlaybackLauncher.ownsStream(nativeStream?.optString("url"))) return
-        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
         if (latestDurationSeconds <= 0.0) return
         playbackProgressStore.savePlayerProgress(
             selection = selection,
             positionSeconds = latestPositionSeconds,
             durationSeconds = latestDurationSeconds,
             urgentCloudSync = urgentCloudSync,
+            ended = latestPlaybackEnded,
         )
         lastLocalProgressWriteAt = SystemClock.elapsedRealtime()
     }
@@ -2082,7 +2100,7 @@ class WebPlayerController(
         const val MAX_REASONABLE_VIDEO_DURATION_SECONDS = 7 * 24 * 60 * 60.0
         const val SERVER_SWITCH_SEEK_DELAY_MILLIS = 350L
         const val SERVER_SWITCH_UI_TIMEOUT_MILLIS = 12_000L
-        const val SEEK_RESTORE_TOLERANCE_SECONDS = 3.0
+        const val SEEK_RESTORE_TOLERANCE_SECONDS = 0.05
         const val MOVIEPIRE_EPISODE_RESOLUTION_RETRY_MILLIS = 450L
         const val MAX_MOVIEPIRE_EPISODE_RESOLUTION_ATTEMPTS = 32
         const val MAX_MOVIEPIRE_EPISODE_BOOTSTRAP_RELOADS = 1
@@ -2108,15 +2126,14 @@ internal fun playbackSeekEligible(
     switchingServer: Boolean,
 ): Boolean {
     if (!positionSeconds.isFinite() || !durationSeconds.isFinite()) return false
-    val minimum = if (switchingServer) 1.0 else PlaybackProgress.RESUME_MINIMUM_SECONDS
-    return positionSeconds >= minimum && positionSeconds < durationSeconds
+    return positionSeconds > 0.0 && positionSeconds <= durationSeconds
 }
 
 internal fun playbackRestoreStillPending(
     reportedPositionSeconds: Double,
     pendingSeekSeconds: Double?,
 ): Boolean = pendingSeekSeconds != null &&
-    reportedPositionSeconds < pendingSeekSeconds - 3.0
+    reportedPositionSeconds < pendingSeekSeconds - 0.05
 
 internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
     !BuildConfig.IS_TV &&
@@ -2355,7 +2372,7 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
             const firstStart = video.seekable.start(0);
             if (target < firstStart) target = firstStart;
           }
-          if (Math.abs(video.currentTime - target) <= 2.5) {
+          if (Math.abs(video.currentTime - target) <= 0.05) {
             pendingSeekSeconds = null;
             return true;
           }
@@ -2476,7 +2493,7 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
             !Number.isFinite(video.duration) || video.duration < minimumDurationSeconds ||
             !activate(video)) return;
         if (pendingSeekSeconds !== null) {
-          if (Math.abs(video.currentTime - pendingSeekSeconds) <= 2.5) {
+          if (Math.abs(video.currentTime - pendingSeekSeconds) <= 0.05) {
             pendingSeekSeconds = null;
           } else {
             seekActiveVideo();

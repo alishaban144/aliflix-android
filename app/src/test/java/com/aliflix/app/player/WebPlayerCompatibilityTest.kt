@@ -179,18 +179,19 @@ class WebPlayerCompatibilityTest {
     }
 
     @Test
-    fun serverSwitchRestoresEarlyPlaybackWithoutWeakeningNormalResumeThreshold() {
+    fun serverSwitchAndNormalResumeRestoreAnyValidPositivePosition() {
         assertTrue(playbackSeekEligible(10.0, 2_400.0, switchingServer = true))
-        assertFalse(playbackSeekEligible(10.0, 2_400.0, switchingServer = false))
+        assertTrue(playbackSeekEligible(10.0, 2_400.0, switchingServer = false))
         assertTrue(playbackSeekEligible(25.0, 2_400.0, switchingServer = false))
-        assertFalse(playbackSeekEligible(2_400.0, 2_400.0, switchingServer = true))
+        assertTrue(playbackSeekEligible(2_400.0, 2_400.0, switchingServer = true))
     }
 
     @Test
     fun initialServerPositionCannotReplaceResumePointBeforeSeekIsConfirmed() {
         assertTrue(playbackRestoreStillPending(0.0, 1_337.0))
         assertTrue(playbackRestoreStillPending(1_300.0, 1_337.0))
-        assertFalse(playbackRestoreStillPending(1_334.0, 1_337.0))
+        assertTrue(playbackRestoreStillPending(1_334.0, 1_337.0))
+        assertFalse(playbackRestoreStillPending(1_337.0, 1_337.0))
         assertFalse(playbackRestoreStillPending(0.0, null))
     }
 

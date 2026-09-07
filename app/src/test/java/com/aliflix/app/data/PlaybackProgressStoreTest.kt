@@ -44,12 +44,31 @@ class PlaybackProgressStoreTest {
     }
 
     @Test
-    fun completionAndResumeThresholdsAreDeterministic() {
-        assertFalse(playbackCompleted(919.0, 1_000.0))
-        assertTrue(playbackCompleted(920.0, 1_000.0))
-        assertFalse(progress(position = 24.0).resumeEligible)
-        assertTrue(progress(position = 25.0).resumeEligible)
-        assertFalse(progress(position = 920.0, completed = true).resumeEligible)
+    fun lateAndShortProgressRemainsResumable() {
+        for (position in listOf(0.5, 24.0, 919.0, 920.0, 950.0, 980.0)) {
+            assertFalse(playbackCompleted(position, 1_000.0))
+            assertTrue(progress(position = position).resumeEligible)
+        }
+        assertTrue(playbackCompleted(1_000.0, 1_000.0))
+        assertFalse(progress(position = 1_000.0, completed = true).resumeEligible)
+    }
+
+    @Test
+    fun newerZeroAndInvalidSnapshotsCannotEraseRealProgress() {
+        val saved = progress(updatedAt = 1000, position = 980.0)
+        val zero = progress(updatedAt = 2000, position = 0.0)
+        val invalid = progress(updatedAt = 3000, position = Double.NaN)
+        assertEquals(saved, mergePlaybackProgress(listOf(saved), listOf(zero, invalid)).single())
+        val rewind = progress(updatedAt = 2000, position = 120.0)
+        assertEquals(rewind, mergePlaybackProgress(listOf(saved), listOf(rewind)).single())
+    }
+
+    @Test
+    fun legacyThresholdCompletionIsMigratedWithoutLosingPosition() {
+        val old = progress(position = 980.0, completed = true).toJson().apply { remove("completionVersion") }
+        val restored = playbackProgressFromJson(old)!!
+        assertEquals(980.0, restored.positionSeconds, 0.0)
+        assertTrue(restored.resumeEligible)
     }
 
     @Test

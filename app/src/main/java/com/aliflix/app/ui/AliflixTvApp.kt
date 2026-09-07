@@ -56,6 +56,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -190,7 +191,7 @@ fun AliflixTvApp(
         requestedProvider: PlaybackProviderId? = null,
     ) {
         viewModel.markPlayed(selection.media)
-        playerSelection = selection.copy(
+        playerSelection = viewModel.playbackProgressStore.resumeSelection(selection).copy(
             source = playbackPreferences.sourceFor(
                 media = selection.media,
                 requestedProvider = requestedProvider,
@@ -1570,7 +1571,7 @@ private fun TvUpdatePanel(
 }
 
 @Composable
-private fun TvDetailScreen(
+internal fun TvDetailScreen(
     state: DetailUiState,
     inMyList: Boolean,
     isFavorite: Boolean,
@@ -1604,14 +1605,18 @@ private fun TvDetailScreen(
         ?: initialProvider
 
     LaunchedEffect(item.key) {
-        primaryPlayFocus.requestFocus()
+        // The target is inside nested lazy content and may not be attached in the
+        // first composition (especially when returning from playback).
+        withFrameNanos { }
+        runCatching { primaryPlayFocus.requestFocus() }
     }
     LaunchedEffect(playerVisible) {
         if (playerVisible) {
             restorePlayerFocus = true
         } else if (restorePlayerFocus) {
             restorePlayerFocus = false
-            primaryPlayFocus.requestFocus()
+            withFrameNanos { }
+            runCatching { primaryPlayFocus.requestFocus() }
         }
     }
 
@@ -1780,7 +1785,7 @@ private fun TvDetailScreen(
                             contentPadding = PaddingValues(horizontal = 46.dp, vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(11.dp),
                         ) {
-                            items(state.seasons, key = { it.number }) { season ->
+                            items(state.seasons.distinctBy { it.number }, key = { it.number }) { season ->
                                 TvTextButton(
                                     label = season.title,
                                     selected = season.number == state.selectedSeason,
@@ -1805,7 +1810,7 @@ private fun TvDetailScreen(
                             contentPadding = PaddingValues(horizontal = 46.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                         ) {
-                            items(state.episodes, key = { "${it.seasonNumber}:${it.number}" }) { episode ->
+                            items(state.episodes.distinctBy { it.seasonNumber to it.number }, key = { "${it.seasonNumber}:${it.number}" }) { episode ->
                                 TvEpisodeCard(
                                     episode = episode,
                                     onClick = {

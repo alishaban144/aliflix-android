@@ -144,7 +144,7 @@ fun WebPlayerScreen(
         controller.savedProgressFor(selection)?.takeIf { it.resumeEligible }
     }
     var resumeDecisionMade by remember(selection.key) {
-        mutableStateOf(resumableProgress == null)
+        mutableStateOf(true)
     }
     var serverMenuExpanded by remember(selection.key) { mutableStateOf(false) }
     var episodeMenuExpanded by remember(selection.key) { mutableStateOf(false) }
