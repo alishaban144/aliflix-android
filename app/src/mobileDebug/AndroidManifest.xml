@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Compose's test host must survive the previous landscape player's rotation.
+             Its content is installed by the test rule, not restored by Activity.onCreate. -->
+        <activity android:name="androidx.activity.ComponentActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+    </application>
+</manifest>
