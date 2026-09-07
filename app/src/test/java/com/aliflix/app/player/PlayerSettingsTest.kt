@@ -13,8 +13,15 @@ class PlayerSettingsTest {
         assertEquals(0.5f, settings.subtitleBackgroundOpacity, 0.01f)
         assertEquals(0, settings.subtitleDelayTenths)
         assertEquals(0.0, settings.subtitleDelaySeconds, 0.001)
+        assertEquals(0, settings.subtitleVerticalOffsetDp)
         assertEquals(1.0f, settings.playbackSpeed, 0.01f)
         assertFalse(settings.resizeModeZoom)
+    }
+
+    @Test
+    fun subtitleVerticalOffsetStoresExactValue() {
+        assertEquals(20, PlayerSettings(subtitleVerticalOffsetDp = 20).subtitleVerticalOffsetDp)
+        assertEquals(-15, PlayerSettings(subtitleVerticalOffsetDp = -15).subtitleVerticalOffsetDp)
     }
 
     @Test

@@ -5569,23 +5569,23 @@ private fun DetailRatingsStrip(
     val presentation = externalRatingsPresentation(item)
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(AliflixSurfaceSecondary.copy(alpha = 0.7f))
-            .border(BorderStroke(1.dp, AliflixBorderSubtle), RoundedCornerShape(10.dp))
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .border(BorderStroke(1.dp, AliflixBorderSubtle), RoundedCornerShape(12.dp))
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // IMDb
         Row(
+            modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            horizontalArrangement = Arrangement.Center,
         ) {
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .background(Color(0xFFF5C518))
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                    .padding(horizontal = 4.dp, vertical = 1.5.dp),
             ) {
                 Text(
                     text = "IMDb",
@@ -5594,55 +5594,69 @@ private fun DetailRatingsStrip(
                     fontWeight = FontWeight.Black,
                 )
             }
-            Text(
-                text = presentation.imdb,
-                color = AliflixContentPrimary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-            )
+            Spacer(modifier = Modifier.width(6.dp))
+            if (presentation.loading || presentation.imdb == "Loading...") {
+                AbstractRatingLoader(accentColor = Color(0xFFF5C518))
+            } else {
+                Text(
+                    text = presentation.imdb,
+                    color = AliflixContentPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+            }
         }
 
         Box(
             modifier = Modifier
                 .width(1.dp)
-                .height(10.dp)
+                .height(14.dp)
                 .background(AliflixBorderSubtle),
         )
 
         // Rotten Tomatoes
         Row(
+            modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            horizontalArrangement = Arrangement.Center,
         ) {
             Text(
                 text = "🍅",
                 fontSize = 10.sp,
             )
-            Text(
-                text = presentation.rottenTomatoes,
-                color = AliflixContentPrimary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-            )
+            Spacer(modifier = Modifier.width(5.dp))
+            if (presentation.loading || presentation.rottenTomatoes == "Loading...") {
+                AbstractRatingLoader(accentColor = Color(0xFFFA3A45))
+            } else {
+                Text(
+                    text = presentation.rottenTomatoes,
+                    color = AliflixContentPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+            }
         }
 
         Box(
             modifier = Modifier
                 .width(1.dp)
-                .height(10.dp)
+                .height(14.dp)
                 .background(AliflixBorderSubtle),
         )
 
         // TMDB
         Row(
+            modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            horizontalArrangement = Arrangement.Center,
         ) {
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .background(Color(0xFF01B4E4))
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                    .padding(horizontal = 4.dp, vertical = 1.5.dp),
             ) {
                 Text(
                     text = "TMDB",
@@ -5651,11 +5665,53 @@ private fun DetailRatingsStrip(
                     fontWeight = FontWeight.Black,
                 )
             }
-            Text(
-                text = presentation.tmdb,
-                color = AliflixContentPrimary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
+            Spacer(modifier = Modifier.width(6.dp))
+            if (presentation.loading || presentation.tmdb == "Loading...") {
+                AbstractRatingLoader(accentColor = Color(0xFF01B4E4))
+            } else {
+                Text(
+                    text = presentation.tmdb,
+                    color = AliflixContentPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AbstractRatingLoader(
+    accentColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val transition = rememberInfiniteTransition(label = "rating-loader")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2 * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "phase",
+    )
+
+    Row(
+        modifier = modifier.height(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        listOf(0, 1, 2).forEach { index ->
+            val factor = ((kotlin.math.sin(phase + index * 1.1) + 1.0) / 2.0).toFloat()
+            val barHeight = 3.5.dp + (6.5.dp * factor)
+            val alpha = 0.35f + 0.65f * factor
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(barHeight)
+                    .clip(RoundedCornerShape(1.5.dp))
+                    .background(accentColor.copy(alpha = alpha)),
             )
         }
     }

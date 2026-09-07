@@ -5,12 +5,12 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.65"
+      - "release/v3.1.66"
       - "release/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.65"
+        description: "Release tag, for example v3.1.66"
         required: true
         type: string
       notes:
@@ -22,8 +22,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "155"
-  RELEASE_VERSION_NAME: "3.1.65"
+  RELEASE_VERSION_CODE: "156"
+  RELEASE_VERSION_NAME: "3.1.66"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -288,7 +288,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Increased player option button spacing to eliminate icon crowding, restored on-demand streaming server switching with a dedicated server selection sheet in the player menu, and streamlined the show details screen by removing redundant source selectors."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Expanded show details ratings strip across full card width with modern abstract loading indicators, positioned subtitles directly beneath the video in portrait mode, and added vertical subtitle placement controls in audio & subtitles settings."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -336,7 +336,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Increased player option button spacing to eliminate icon crowding, restored on-demand streaming server switching with a dedicated server selection sheet in the player menu, and streamlined the show details screen by removing redundant source selectors."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Expanded show details ratings strip across full card width with modern abstract loading indicators, positioned subtitles directly beneath the video in portrait mode, and added vertical subtitle placement controls in audio & subtitles settings."
           files: |
             aliflix-mobile.apk
             aliflix-tv.apk

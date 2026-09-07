@@ -64,6 +64,7 @@ class NativePlayerActivity : FragmentActivity() {
     private lateinit var video: SurfaceView
     private lateinit var videoFrame: AspectRatioFrameLayout
     private lateinit var subtitles: SubtitleView
+    private lateinit var playerRoot: FrameLayout
     private val progress get() = (application as AliflixApplication).playbackProgressStore
     private val settingsStore get() = (application as AliflixApplication).playerSettingsStore
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
@@ -84,6 +85,7 @@ class NativePlayerActivity : FragmentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
         val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
+        playerRoot = root
         resolverHost = FrameLayout(this).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS }
         root.addView(resolverHost, FrameLayout.LayoutParams(-1, -1))
         receiverButton = androidx.mediarouter.app.MediaRouteButton(this).apply {
@@ -102,6 +104,9 @@ class NativePlayerActivity : FragmentActivity() {
         videoFrame = AspectRatioFrameLayout(this).apply {
             resizeMode = if (settingsStore.settings.value.resizeModeZoom) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
             addView(video, FrameLayout.LayoutParams(-1, -1))
+            addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                updateSubtitlePadding(lastControlsVisible)
+            }
         }
         root.addView(videoFrame, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         subtitles = SubtitleView(this)
@@ -129,6 +134,7 @@ class NativePlayerActivity : FragmentActivity() {
                     onFit = { fill ->
                         settingsStore.updateResizeModeZoom(fill)
                         videoFrame.resizeMode = if (fill) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        videoFrame.post { updateSubtitlePadding(lastControlsVisible) }
                     },
                     onRotate = {
                         requestedOrientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
@@ -138,6 +144,10 @@ class NativePlayerActivity : FragmentActivity() {
                     onSubtitle = ::applySubtitle,
                     onSubtitleDisable = ::disableSubtitles,
                     onSubtitleDelayChange = ::updateSubtitleDelay,
+                    onSubtitleVerticalOffsetChange = { offsetDp ->
+                        settingsStore.updateSubtitleVerticalOffsetDp(offsetDp)
+                        updateSubtitlePadding(lastControlsVisible)
+                    },
                     onSubtitleFontSizeChange = { sizeSp ->
                         settingsStore.updateSubtitleFontSize(sizeSp)
                         applySubtitleStyle()
@@ -449,15 +459,49 @@ class NativePlayerActivity : FragmentActivity() {
 
     private var volumeAccumulator = 0f
 
-    private fun updateSubtitlePadding(controlsVisible: Boolean) {
+    private var lastControlsVisible = true
+
+    private fun updateSubtitlePadding(controlsVisible: Boolean = lastControlsVisible) {
+        lastControlsVisible = controlsVisible
+        if (!::subtitles.isInitialized) return
         val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-        val bottomDp = if (isPortrait) {
-            if (controlsVisible) 175 else 72
-        } else {
-            if (controlsVisible) 56 else 16
-        }
         val density = resources.displayMetrics.density
-        val bottomPx = (bottomDp * density).toInt()
+        val offsetPx = (settingsStore.settings.value.subtitleVerticalOffsetDp * density).toInt()
+
+        val bottomPx = if (isPortrait) {
+            val rootH = if (::playerRoot.isInitialized && playerRoot.height > 0) {
+                playerRoot.height
+            } else {
+                resources.displayMetrics.heightPixels
+            }
+            val vfHeight = if (::videoFrame.isInitialized && videoFrame.height > 0) {
+                videoFrame.height
+            } else {
+                val size = controller?.videoSize
+                if (size != null && size.height > 0 && resources.displayMetrics.widthPixels > 0) {
+                    val aspect = (size.width.toFloat() * size.pixelWidthHeightRatio) / size.height
+                    (resources.displayMetrics.widthPixels / aspect).toInt()
+                } else {
+                    0
+                }
+            }
+            val spaceBelowPx = if (vfHeight > 0 && rootH > vfHeight) {
+                (rootH - vfHeight) / 2
+            } else {
+                0
+            }
+
+            if (spaceBelowPx > (40 * density)) {
+                // Directly under the video in portrait letterbox space
+                (spaceBelowPx - (32 * density).toInt() + offsetPx).coerceAtLeast((16 * density).toInt())
+            } else {
+                val baseDp = if (controlsVisible) 100 else 40
+                ((baseDp * density).toInt() + offsetPx).coerceAtLeast(0)
+            }
+        } else {
+            val baseDp = if (controlsVisible) 56 else 16
+            ((baseDp * density).toInt() + offsetPx).coerceAtLeast(0)
+        }
         val horizontalPx = (16 * density).toInt()
         subtitles.setPadding(horizontalPx, 0, horizontalPx, bottomPx)
     }
@@ -579,6 +623,12 @@ class NativePlayerActivity : FragmentActivity() {
     override fun onDestroy() {
         recordCurrentProgress(urgent = true)
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); subtitleSyncDebounceJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
+    }
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::playerRoot.isInitialized) {
+            playerRoot.post { updateSubtitlePadding(lastControlsVisible) }
+        }
     }
     private fun sendSurface(clear: Boolean = false) {
         val surface = video.holder.surface.takeIf { !clear && it.isValid }

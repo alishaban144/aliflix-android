@@ -100,6 +100,7 @@ internal fun NativePlayerScreen(
     onSubtitle: (SubtitleTrack) -> Unit = {},
     onSubtitleDisable: () -> Unit = {},
     onSubtitleDelayChange: (Int) -> Unit = {},
+    onSubtitleVerticalOffsetChange: (Int) -> Unit = {},
     onSubtitleFontSizeChange: (Float) -> Unit = {},
     onSubtitleOpacityChange: (Float) -> Unit = {},
     onSpeedChange: (Float) -> Unit = {},
@@ -845,6 +846,48 @@ internal fun NativePlayerScreen(
                                         colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
                                     ) {
                                         Text("+0.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Subtitle Vertical Placement
+                        Text("SUBTITLE POSITION", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.White.copy(alpha = 0.05f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column {
+                                    Text("Vertical Shift", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                    val offsetDp = settings.subtitleVerticalOffsetDp
+                                    val offsetText = if (offsetDp == 0) "Default" else if (offsetDp > 0) "+${offsetDp}dp (Up)" else "${offsetDp}dp (Down)"
+                                    Text(offsetText, color = if (offsetDp != 0) AliflixAccentSecondary else Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    FilledTonalIconButton(
+                                        onClick = { onSubtitleVerticalOffsetChange(settings.subtitleVerticalOffsetDp - 10) },
+                                        modifier = Modifier.size(38.dp),
+                                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
+                                    ) {
+                                        Icon(Icons.Default.ArrowDownward, contentDescription = "Move subtitles down", modifier = Modifier.size(16.dp))
+                                    }
+                                    if (settings.subtitleVerticalOffsetDp != 0) {
+                                        TextButton(onClick = { onSubtitleVerticalOffsetChange(0) }) {
+                                            Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
+                                        }
+                                    }
+                                    FilledTonalIconButton(
+                                        onClick = { onSubtitleVerticalOffsetChange(settings.subtitleVerticalOffsetDp + 10) },
+                                        modifier = Modifier.size(38.dp),
+                                        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
+                                    ) {
+                                        Icon(Icons.Default.ArrowUpward, contentDescription = "Move subtitles up", modifier = Modifier.size(16.dp))
                                     }
                                 }
                             }

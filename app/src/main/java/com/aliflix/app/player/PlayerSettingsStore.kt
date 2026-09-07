@@ -10,6 +10,7 @@ data class PlayerSettings(
     val subtitleFontSizeSp: Float = DEFAULT_SUBTITLE_FONT_SIZE_SP,
     val subtitleBackgroundOpacity: Float = DEFAULT_SUBTITLE_BACKGROUND_OPACITY,
     val subtitleDelayTenths: Int = 0,
+    val subtitleVerticalOffsetDp: Int = 0,
     val playbackSpeed: Float = 1.0f,
     val resizeModeZoom: Boolean = false,
 ) {
@@ -48,6 +49,12 @@ class PlayerSettingsStore(context: Context) {
         preferences.edit { putInt(KEY_SUBTITLE_DELAY_TENTHS, clamped) }
     }
 
+    fun updateSubtitleVerticalOffsetDp(offsetDp: Int) {
+        val clamped = offsetDp.coerceIn(-200, 200)
+        update { it.copy(subtitleVerticalOffsetDp = clamped) }
+        preferences.edit { putInt(KEY_SUBTITLE_VERTICAL_OFFSET, clamped) }
+    }
+
     fun updatePlaybackSpeed(speed: Float) {
         val safeSpeed = if (speed in listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)) speed else 1.0f
         update { it.copy(playbackSpeed = safeSpeed) }
@@ -70,6 +77,8 @@ class PlayerSettingsStore(context: Context) {
             .coerceIn(0f, 1f),
         subtitleDelayTenths = preferences.getInt(KEY_SUBTITLE_DELAY_TENTHS, 0)
             .coerceIn(-600, 600),
+        subtitleVerticalOffsetDp = preferences.getInt(KEY_SUBTITLE_VERTICAL_OFFSET, 0)
+            .coerceIn(-200, 200),
         playbackSpeed = preferences.getFloat(KEY_PLAYBACK_SPEED, 1.0f).let {
             if (it in listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)) it else 1.0f
         },
@@ -81,6 +90,7 @@ class PlayerSettingsStore(context: Context) {
         private const val KEY_SUBTITLE_FONT_SIZE = "subtitle_font_size_sp"
         private const val KEY_SUBTITLE_BG_OPACITY = "subtitle_bg_opacity"
         private const val KEY_SUBTITLE_DELAY_TENTHS = "subtitle_delay_tenths"
+        private const val KEY_SUBTITLE_VERTICAL_OFFSET = "subtitle_vertical_offset_dp"
         private const val KEY_PLAYBACK_SPEED = "playback_speed"
         private const val KEY_RESIZE_MODE_ZOOM = "resize_mode_zoom"
     }
