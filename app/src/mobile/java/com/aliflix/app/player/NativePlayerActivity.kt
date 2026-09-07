@@ -408,7 +408,7 @@ class NativePlayerActivity : FragmentActivity() {
     private fun applySubtitle(track: SubtitleTrack) {
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
-            ui = ui.copy(subtitleLoading = true)
+            ui = ui.copy(subtitleLoading = true, subtitleError = null)
             val result = SubdlSubtitleRepository().download(track)
             ensureActive()
             result.onSuccess { cues ->
@@ -422,8 +422,10 @@ class NativePlayerActivity : FragmentActivity() {
                     SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle.EMPTY),
                     Bundle().apply { putBoolean("enabled", true) }
                 )
-                ui = ui.copy(activeSubtitleTrack = track, message = "${track.languageName} subtitles enabled")
-            }.onFailure { ui = ui.copy(subtitleError = "This subtitle couldn't load. Try another version.") }
+                ui = ui.copy(activeSubtitleTrack = track, subtitleError = null, message = "${track.languageName} subtitles enabled")
+            }.onFailure {
+                ui = ui.copy(subtitleError = it.message?.takeIf { msg -> msg.isNotBlank() } ?: "This subtitle couldn't load. Try another version.")
+            }
             ui = ui.copy(subtitleLoading = false)
         }
     }

@@ -108,6 +108,28 @@ class SubtitlesTest {
         assertEquals("Visible caption", cues.single().text)
     }
 
+    @Test
+    fun directSubtitleUrlResolvesBase64SubdlTokensAndDirectUrls() {
+        // Base64url token for "/subtitle/w9xUEm0pCZY/Fts8HZ5q9v"
+        val token = "L3N1YnRpdGxlL3c5eFVFbTBwQ1pZL0Z0czhIWjVxOXY"
+        assertEquals(
+            "https://dl.subdl.com/subtitle/w9xUEm0pCZY/Fts8HZ5q9v",
+            directSubtitleUrl(token),
+        )
+
+        // Raw path
+        assertEquals(
+            "https://dl.subdl.com/subtitle/test1234",
+            directSubtitleUrl("/subtitle/test1234"),
+        )
+
+        // Direct HTTPS URL
+        assertEquals(
+            "https://dl.subdl.com/subtitle/test.srt",
+            directSubtitleUrl("https://dl.subdl.com/subtitle/test.srt"),
+        )
+    }
+
     private fun subtitleTrack(
         id: String,
         code: String,

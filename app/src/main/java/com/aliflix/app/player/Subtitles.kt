@@ -110,12 +110,35 @@ class SubdlSubtitleRepository(
                     downloadToken = token,
                 )
             }.distinctBy(SubtitleTrack::id)
+             .sortedWith(
+                 compareBy<SubtitleTrack> { track ->
+                     if (track.languageCode.equals("EN", ignoreCase = true) ||
+                         track.languageName.equals("EN", ignoreCase = true) ||
+                         track.languageName.equals("English", ignoreCase = true)) 0 else 1
+                 }.thenBy { it.languageName }
+             )
         }
     }
 
     suspend fun download(track: SubtitleTrack): Result<List<SubtitleCue>> = runCatching {
         withContext(Dispatchers.IO) {
-            val response = readBytes("$baseUrl/v3/subtitles/download/${track.downloadToken}")
+            val directUrl = directSubtitleUrl(track.downloadToken)
+            val workerUrl = "$baseUrl/v3/subtitles/download/${track.downloadToken}"
+            val response = try {
+                if (directUrl != null) {
+                    try {
+                        readBytes(directUrl)
+                    } catch (_: Exception) {
+                        readBytes(workerUrl)
+                    }
+                } else {
+                    readBytes(workerUrl)
+                }
+            } catch (e: Exception) {
+                if (directUrl != null) {
+                    readBytes(directUrl)
+                } else throw e
+            }
             val subtitleBytes = if (response.isZip()) {
                 extractSubtitleFromZip(response, track.fileName)
             } else {
@@ -139,23 +162,33 @@ class SubdlSubtitleRepository(
 
     private fun readText(url: String): String = decodeSubtitleText(readBytes(url))
 
-    private fun readBytes(url: String): ByteArray {
+    private fun readBytes(url: String, redirectCount: Int = 0): ByteArray {
+        if (redirectCount > 5) throw SubtitleException("Too many redirects downloading subtitle")
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = NETWORK_TIMEOUT_MILLIS
             readTimeout = NETWORK_TIMEOUT_MILLIS
-            setRequestProperty("Accept", "application/json, application/zip, text/plain, text/vtt")
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+            setRequestProperty("Accept", "application/json, application/zip, text/plain, text/vtt, application/octet-stream, */*")
             setRequestProperty("Accept-Encoding", "identity")
         }
         try {
             val status = connection.responseCode
+            if (status in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_SEE_OTHER, 307, 308)) {
+                val redirectUrl = connection.getHeaderField("Location")
+                if (!redirectUrl.isNullOrBlank()) {
+                    val target = URL(URL(url), redirectUrl).toString()
+                    return readBytes(target, redirectCount + 1)
+                }
+            }
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val bytes = stream?.use(::readBounded) ?: ByteArray(0)
             if (status !in 200..299) {
                 val message = runCatching {
                     JSONObject(decodeSubtitleText(bytes)).optJSONObject("error")?.optString("message")
                 }.getOrNull().takeUnless(String?::isNullOrBlank)
-                throw SubtitleException(message ?: "Subtitles are temporarily unavailable")
+                throw SubtitleException(message ?: "Subtitles are temporarily unavailable ($status)")
             }
             return bytes
         } finally {
@@ -180,6 +213,27 @@ class SubdlSubtitleRepository(
     private companion object {
         const val NETWORK_TIMEOUT_MILLIS = 15_000
         const val MAX_SUBTITLE_BYTES = 8 * 1024 * 1024
+    }
+}
+
+internal fun directSubtitleUrl(token: String): String? {
+    if (token.startsWith("https://") || token.startsWith("http://")) return token
+    if (token.startsWith("/subtitle/")) return "https://dl.subdl.com$token"
+    return try {
+        val normalized = token.replace('-', '+').replace('_', '/')
+        val padded = when (normalized.length % 4) {
+            2 -> "$normalized=="
+            3 -> "$normalized="
+            else -> normalized
+        }
+        val decoded = String(java.util.Base64.getDecoder().decode(padded), Charsets.UTF_8).trim()
+        if (decoded.startsWith("/subtitle/") || decoded.startsWith("/")) {
+            "https://dl.subdl.com" + if (decoded.startsWith("/")) decoded else "/$decoded"
+        } else if (decoded.startsWith("https://") || decoded.startsWith("http://")) {
+            decoded
+        } else null
+    } catch (_: Exception) {
+        null
     }
 }
 

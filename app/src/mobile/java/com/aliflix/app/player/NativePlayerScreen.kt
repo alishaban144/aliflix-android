@@ -968,12 +968,21 @@ internal fun NativePlayerScreen(
                             Text("No external subtitles found for this title.", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                         }
                         var language by remember { mutableStateOf<String?>(null) }
-                        val languages = state.subtitleTracks.map { it.languageName }.distinct()
+                        val languages = remember(state.subtitleTracks) {
+                            state.subtitleTracks.map { it.languageName }.distinct().sortedWith(
+                                compareBy<String> { name ->
+                                    if (name.equals("EN", ignoreCase = true) || name.equals("English", ignoreCase = true)) 0 else 1
+                                }.thenBy { it }
+                            )
+                        }
                         if (languages.isNotEmpty()) {
+                            val activeLanguage = language?.takeIf { l -> languages.any { it.equals(l, ignoreCase = true) } }
+                                ?: state.activeSubtitleTrack?.languageName?.takeIf { l -> languages.any { it.equals(l, ignoreCase = true) } }
+                                ?: languages.firstOrNull()
                             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 languages.forEach { name ->
                                     FilterChip(
-                                        selected = (language ?: languages.firstOrNull()) == name,
+                                        selected = activeLanguage?.equals(name, ignoreCase = true) == true,
                                         onClick = { language = name },
                                         label = { Text(name) },
                                         colors = FilterChipDefaults.filterChipColors(
@@ -984,7 +993,7 @@ internal fun NativePlayerScreen(
                                     )
                                 }
                             }
-                            state.subtitleTracks.filter { it.languageName == (language ?: languages.firstOrNull()) }.forEach { track ->
+                            state.subtitleTracks.filter { it.languageName.equals(activeLanguage, ignoreCase = true) }.forEach { track ->
                                 SheetOption(track.languageName, track.releaseName, selected = state.activeSubtitleTrack?.id == track.id) {
                                     player?.let { it.trackSelectionParameters = it.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build() }
                                     onSubtitle(track)

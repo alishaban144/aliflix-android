@@ -5,12 +5,12 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.66"
+      - "release/v3.1.67"
       - "release/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.66"
+        description: "Release tag, for example v3.1.67"
         required: true
         type: string
       notes:
@@ -22,8 +22,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "156"
-  RELEASE_VERSION_NAME: "3.1.66"
+  RELEASE_VERSION_CODE: "157"
+  RELEASE_VERSION_NAME: "3.1.67"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -288,7 +288,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Expanded show details ratings strip across full card width with modern abstract loading indicators, positioned subtitles directly beneath the video in portrait mode, and added vertical subtitle placement controls in audio & subtitles settings."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Fixed subtitle download failures by implementing direct SubDL downloading with fallback, and prioritized English (EN) subtitles as the first option by default in player subtitle controls."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -336,7 +336,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Expanded show details ratings strip across full card width with modern abstract loading indicators, positioned subtitles directly beneath the video in portrait mode, and added vertical subtitle placement controls in audio & subtitles settings."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Fixed subtitle download failures by implementing direct SubDL downloading with fallback, and prioritized English (EN) subtitles as the first option by default in player subtitle controls."
           files: |
             aliflix-mobile.apk
             aliflix-tv.apk
