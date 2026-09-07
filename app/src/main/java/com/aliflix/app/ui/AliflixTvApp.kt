@@ -105,9 +105,11 @@ import com.aliflix.app.update.AppUpdateManager
 import com.aliflix.app.update.InstallLaunchResult
 import com.aliflix.app.update.UpdateCheckResult
 import com.aliflix.app.update.UpdateInfo
+import com.aliflix.app.ui.theme.AliflixAccentPrimary
+import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBlack
+import com.aliflix.app.ui.theme.AliflixError
 import com.aliflix.app.ui.theme.AliflixMuted
-import com.aliflix.app.ui.theme.AliflixRed
 import com.aliflix.app.ui.theme.AliflixSurface
 import com.aliflix.app.ui.theme.AliflixSurfaceRaised
 import kotlinx.coroutines.launch
@@ -200,7 +202,10 @@ fun AliflixTvApp(
         item: Media,
         requestedProvider: PlaybackProviderId? = null,
     ) = play(
-        selection = PlaybackSelection(item),
+        selection = PlaybackSelection(
+            media = item,
+            availableEpisodes = detail.episodes,
+        ),
         requestedProvider = requestedProvider,
     )
     fun playEpisode(
@@ -213,6 +218,7 @@ fun AliflixTvApp(
             seasonNumber = episode.seasonNumber,
             episodeNumber = episode.number,
             episodeTitle = episode.title,
+            availableEpisodes = detail.episodes,
         ),
         requestedProvider = requestedProvider,
     )
@@ -396,6 +402,9 @@ fun AliflixTvApp(
                     visible = playerVisible,
                     controller = playerController,
                     onClose = { playerVisible = false },
+                    onSelectEpisode = { episode ->
+                        playEpisode(selection.media, episode, selection.source.provider)
+                    },
                 )
             }
         }
@@ -456,7 +465,7 @@ private fun TvNavigation(
             modifier = Modifier
                 .size(42.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(AliflixRed),
+                .background(AliflixAccentPrimary),
             contentAlignment = Alignment.Center,
         ) {
             Text("A", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black)
@@ -789,13 +798,13 @@ private fun TvSearchScreen(
                 .onFocusChanged { searchFocused = it.isFocused }
                 .border(
                     if (searchFocused) 3.dp else 0.dp,
-                    if (searchFocused) AliflixRed else Color.Transparent,
+                    if (searchFocused) AliflixAccentPrimary else Color.Transparent,
                     RoundedCornerShape(12.dp),
                 ),
         )
         when {
             state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = AliflixRed)
+                CircularProgressIndicator(color = AliflixAccentPrimary)
             }
             state.query.isBlank() -> TvHint(
                 "Press OK on the search box to use the TV keyboard or voice input.",
@@ -982,7 +991,7 @@ private fun TvLibraryRail(
             Icon(
                 imageVector = collection.icon,
                 contentDescription = null,
-                tint = AliflixRed,
+                tint = AliflixAccentPrimary,
                 modifier = Modifier.size(22.dp),
             )
             Text(
@@ -1161,7 +1170,7 @@ private fun TvPlaybackProviderPanel(
             Icon(
                 imageVector = Icons.Rounded.Movie,
                 contentDescription = null,
-                tint = AliflixRed,
+                tint = AliflixAccentPrimary,
                 modifier = Modifier.size(29.dp),
             )
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -1246,7 +1255,7 @@ private fun TvProviderOption(
                 .background(
                     when {
                         focused -> Color.White
-                        selected -> AliflixRed.copy(alpha = 0.24f)
+                        selected -> AliflixAccentPrimary.copy(alpha = 0.24f)
                         else -> Color.Black.copy(alpha = 0.25f)
                     },
                 )
@@ -1258,7 +1267,7 @@ private fun TvProviderOption(
                     },
                     color = when {
                         focused -> Color.White
-                        selected -> AliflixRed
+                        selected -> AliflixAccentPrimary
                         else -> Color.White.copy(alpha = 0.08f)
                     },
                     shape = RoundedCornerShape(11.dp),
@@ -1271,7 +1280,7 @@ private fun TvProviderOption(
             Icon(
                 imageVector = if (selected) Icons.Default.Check else Icons.Rounded.Movie,
                 contentDescription = null,
-                tint = if (focused) Color.Black else if (selected) AliflixRed else AliflixMuted,
+                tint = if (focused) Color.Black else if (selected) AliflixAccentPrimary else AliflixMuted,
                 modifier = Modifier.size(20.dp),
             )
             Column(
@@ -1295,13 +1304,13 @@ private fun TvProviderOption(
                                 .clip(CircleShape)
                                 .background(
                                     if (focused) Color.Black.copy(alpha = 0.15f)
-                                    else AliflixRed.copy(alpha = 0.22f),
+                                    else AliflixAccentPrimary.copy(alpha = 0.22f),
                                 )
                                 .padding(horizontal = 4.dp, vertical = 1.dp),
                         ) {
                             Text(
                                 text = "BETA",
-                                color = if (focused) Color.Black else AliflixRed,
+                                color = if (focused) Color.Black else AliflixAccentPrimary,
                                 fontSize = 7.sp,
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 0.4.sp,
@@ -1416,7 +1425,7 @@ private fun TvProviderUrlDialog(
                         unfocusedLabelColor = AliflixMuted,
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent,
-                        errorIndicatorColor = AliflixRed,
+                        errorIndicatorColor = AliflixError,
                     ),
                     shape = RoundedCornerShape(11.dp),
                     modifier = Modifier
@@ -1426,7 +1435,7 @@ private fun TvProviderUrlDialog(
                         .border(
                             width = if (fieldFocused) 3.dp else 1.dp,
                             color = if (fieldFocused) {
-                                AliflixRed
+                                AliflixAccentPrimary
                             } else {
                                 Color.White.copy(alpha = 0.08f)
                             },
@@ -1490,7 +1499,7 @@ private fun TvUpdatePanel(
         Icon(
             imageVector = Icons.Rounded.SystemUpdate,
             contentDescription = null,
-            tint = AliflixRed,
+            tint = AliflixAccentPrimary,
             modifier = Modifier.size(32.dp),
         )
         Column(
@@ -1526,14 +1535,14 @@ private fun TvUpdatePanel(
             state.busy -> {
                 if (state.progress == null) {
                     CircularProgressIndicator(
-                        color = AliflixRed,
+                        color = AliflixAccentPrimary,
                         trackColor = Color.White.copy(alpha = 0.12f),
                         modifier = Modifier.size(38.dp),
                     )
                 } else {
                     CircularProgressIndicator(
                         progress = { state.progress / 100f },
-                        color = AliflixRed,
+                        color = AliflixAccentPrimary,
                         trackColor = Color.White.copy(alpha = 0.12f),
                         modifier = Modifier.size(38.dp),
                     )
@@ -1645,13 +1654,6 @@ private fun TvDetailScreen(
                         .padding(start = 46.dp, top = 26.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    TvActionButton(
-                        label = "Back",
-                        icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                        compact = true,
-                        onClick = onBack,
-                    )
-                    Spacer(Modifier.height(18.dp))
                     Text(
                         item.title,
                         color = Color.White,
@@ -1756,7 +1758,7 @@ private fun TvDetailScreen(
                     }
                     if (state.loading) {
                         CircularProgressIndicator(
-                            color = AliflixRed,
+                            color = AliflixAccentPrimary,
                             modifier = Modifier.size(26.dp),
                             strokeWidth = 3.dp,
                         )
@@ -1796,7 +1798,7 @@ private fun TvDetailScreen(
                                 .height(130.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            CircularProgressIndicator(color = AliflixRed)
+                            CircularProgressIndicator(color = AliflixAccentPrimary)
                         }
                     } else if (state.episodes.isNotEmpty()) {
                         LazyRow(
@@ -1915,13 +1917,13 @@ private fun TvActionButton(
                 when {
                     focused -> Color.White
                     !enabled -> Color.White.copy(alpha = 0.06f)
-                    primary -> AliflixRed
+                    primary -> AliflixAccentPrimary
                     else -> Color.White.copy(alpha = 0.16f)
                 },
             )
             .border(
                 if (focused) 3.dp else 0.dp,
-                if (focused) AliflixRed else Color.Transparent,
+                if (focused) AliflixAccentPrimary else Color.Transparent,
                 RoundedCornerShape(10.dp),
             )
             .clickable(enabled = enabled, onClick = onClick)
@@ -1985,7 +1987,7 @@ private fun TvTextButton(
                 when {
                     focused -> Color.White
                     !enabled -> Color.White.copy(alpha = 0.05f)
-                    selected -> AliflixRed
+                    selected -> AliflixAccentPrimary
                     else -> AliflixSurfaceRaised
                 },
             )
@@ -2001,7 +2003,7 @@ private fun TvLoading(label: String) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        CircularProgressIndicator(color = AliflixRed)
+        CircularProgressIndicator(color = AliflixAccentPrimary)
         Spacer(Modifier.height(15.dp))
         Text(label, color = AliflixMuted)
     }

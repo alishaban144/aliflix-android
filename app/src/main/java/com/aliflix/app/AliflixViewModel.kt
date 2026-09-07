@@ -568,15 +568,13 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun resetDorabyUrl() = playbackProviderRepository.resetDorabyUrl()
 
     init {
-        if (!BuildConfig.IS_TV) {
-            viewModelScope.launch {
-                val cached = homeSnapshotStore.loadSnapshot()
-                if (cached != null && _home.value.content == null) {
-                    _home.value = _home.value.copy(
-                        content = cached.content,
-                        editorialPicks = cached.editorialPicks,
-                    )
-                }
+        viewModelScope.launch {
+            val cached = homeSnapshotStore.loadSnapshot()
+            if (cached != null && _home.value.content == null) {
+                _home.value = _home.value.copy(
+                    content = cached.content,
+                    editorialPicks = cached.editorialPicks,
+                )
             }
         }
         refreshHome()
@@ -708,9 +706,18 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 .fold(
                     onSuccess = {
                         lastHomeRefreshAt = System.currentTimeMillis()
+                        val content = it
+                        viewModelScope.launch {
+                            homeSnapshotStore.saveSnapshot(
+                                PersistedHomeSnapshot(
+                                    content = content,
+                                    editorialPicks = editorialPicks,
+                                )
+                            )
+                        }
                         HomeUiState(
                             loading = false,
-                            content = it,
+                            content = content,
                             editorialPicks = editorialPicks,
                         )
                     },

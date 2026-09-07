@@ -219,18 +219,18 @@ private val AliflixMobileTypography = Typography(
 )
 
 private val AliflixLegacyColors = darkColorScheme(
-    primary = AliflixRed,
+    primary = AliflixAccentPrimary,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFF55121E),
-    onPrimaryContainer = Color(0xFFFFD9DE),
+    primaryContainer = AliflixAccentPrimaryContainer,
+    onPrimaryContainer = Color(0xFFD5CCE8),
     background = AliflixBlack,
     onBackground = Color.White,
     surface = AliflixSurface,
     onSurface = Color.White,
     surfaceVariant = AliflixSurfaceRaised,
     onSurfaceVariant = AliflixMuted,
-    secondary = AliflixIce,
-    onSecondary = Color(0xFF07151D),
+    secondary = AliflixAccentSecondary,
+    onSecondary = Color(0xFF17121F),
     outline = Color(0xFF363A45),
 )
 

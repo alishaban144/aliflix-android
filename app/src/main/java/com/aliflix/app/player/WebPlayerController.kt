@@ -504,6 +504,29 @@ class WebPlayerController(
         }
     }
 
+    val currentPositionSeconds: Double get() = latestPositionSeconds
+    val durationSeconds: Double get() = latestDurationSeconds
+
+    fun play() {
+        postPlaybackControl(true)
+    }
+
+    fun pause() {
+        postPlaybackControl(false)
+    }
+
+    fun togglePlayPause() {
+        postPlaybackControl(!_playing.value)
+    }
+
+    fun seekTo(seconds: Double) {
+        val view = webView ?: return
+        val maxDur = latestDurationSeconds.takeIf { it > 0.0 } ?: Double.MAX_VALUE
+        val target = seconds.coerceIn(0.0, maxDur)
+        latestPositionSeconds = target
+        postSeekToMoviepirePlayer(view, target, activePlayerReplyProxy)
+    }
+
     private fun postPlaybackControl(shouldPlay: Boolean) {
         val view = webView ?: return
         val command = JSONObject()
@@ -780,7 +803,7 @@ class WebPlayerController(
         }
         return object : WebView(MutableContextWrapper(activity)) {
             override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-                if (BuildConfig.IS_TV && event.action == KeyEvent.ACTION_DOWN) {
+                if (BuildConfig.IS_TV) {
                     when (event.keyCode) {
                         KeyEvent.KEYCODE_DPAD_CENTER,
                         KeyEvent.KEYCODE_ENTER,
@@ -789,25 +812,15 @@ class WebPlayerController(
                         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                         KeyEvent.KEYCODE_MEDIA_PLAY,
                         KeyEvent.KEYCODE_MEDIA_PAUSE,
-                        -> {
-                            if (event.repeatCount == 0) {
-                                activateTvPlayerSelection(this)
-                            }
-                            return true
-                        }
                         KeyEvent.KEYCODE_DPAD_LEFT,
                         KeyEvent.KEYCODE_DPAD_RIGHT,
                         KeyEvent.KEYCODE_DPAD_UP,
                         KeyEvent.KEYCODE_DPAD_DOWN,
-                        -> {
-                            if (isMoviepireWrapper(this)) {
-                                return super.dispatchKeyEvent(event)
-                            }
-                            if (event.repeatCount == 0) {
-                                moveTvWebFocus(this, event.keyCode)
-                            }
-                            return true
-                        }
+                        KeyEvent.KEYCODE_MEDIA_REWIND,
+                        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+                        KeyEvent.KEYCODE_BACK,
+                        KeyEvent.KEYCODE_ESCAPE,
+                        -> return false
                     }
                 }
                 return super.dispatchKeyEvent(event)

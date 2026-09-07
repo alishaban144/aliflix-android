@@ -114,6 +114,7 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
@@ -137,6 +138,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -215,7 +217,9 @@ import com.aliflix.app.ui.home.HomeSkeleton
 import com.aliflix.app.ui.launch.AliflixHeatmapLogo
 import com.aliflix.app.ui.launch.AliflixLaunchOverlay
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
+import com.aliflix.app.ui.theme.AliflixAccentPrimaryContainer
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
+import com.aliflix.app.ui.theme.AliflixSurfacePrimary
 import com.aliflix.app.ui.theme.AliflixAccentPrimary as AliflixRed
 import com.aliflix.app.ui.theme.AliflixAccentSecondary as AliflixIce
 import com.aliflix.app.ui.theme.AliflixBackgroundBase as AliflixBlack
@@ -301,7 +305,11 @@ internal fun mobileAnimatedDetailState(
 internal sealed interface MobileDestination {
     data class Root(val tab: AppTab) : MobileDestination
 
-    data class Detail(val item: Media) : MobileDestination
+    data class Detail(
+        val item: Media,
+        val firstVisibleItemIndex: Int = 0,
+        val firstVisibleItemScrollOffset: Int = 0,
+    ) : MobileDestination
 
     data class Genre(
         val name: String,
@@ -325,6 +333,8 @@ private data class MobileAnimatedDestination(
     val stackDepth: Int,
     val rootTab: AppTab,
     val detailItem: Media? = null,
+    val detailScrollIndex: Int = 0,
+    val detailScrollOffset: Int = 0,
     val genreName: String? = null,
     val genreMediaType: MediaType? = null,
     val accountRoute: AccountRoute? = null,
@@ -372,6 +382,11 @@ private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>
                         is MobileDestination.Detail -> JSONObject()
                             .put("kind", "detail")
                             .put("item", destination.item.toJson())
+                            .put("firstVisibleItemIndex", destination.firstVisibleItemIndex)
+                            .put(
+                                "firstVisibleItemScrollOffset",
+                                destination.firstVisibleItemScrollOffset,
+                            )
                         is MobileDestination.Genre -> JSONObject()
                             .put("kind", "genre")
                             .put("name", destination.name)
@@ -415,7 +430,11 @@ private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>
                         )
                         "detail" -> add(
                             MobileDestination.Detail(
-                                Media.fromJson(value.getJSONObject("item")),
+                                item = Media.fromJson(value.getJSONObject("item")),
+                                firstVisibleItemIndex =
+                                    value.optInt("firstVisibleItemIndex").coerceAtLeast(0),
+                                firstVisibleItemScrollOffset =
+                                    value.optInt("firstVisibleItemScrollOffset").coerceAtLeast(0),
                             ),
                         )
                         "genre" -> add(
@@ -520,6 +539,9 @@ fun AliflixApp(
     var detailStateSnapshots by remember {
         mutableStateOf<Map<String, DetailUiState>>(emptyMap())
     }
+    val detailScrollPositions = remember {
+        mutableStateMapOf<String, Pair<Int, Int>>()
+    }
     val currentDestination = destinationStack.last()
     val currentDestinationKey = mobileDestinationSaveKey(destinationStack)
     val destinationStateHolder = rememberSaveableStateHolder()
@@ -568,6 +590,13 @@ fun AliflixApp(
 
     fun captureDetailStateSnapshot() {
         val destination = destinationStack.lastOrNull() as? MobileDestination.Detail ?: return
+        val savedScroll = detailScrollPositions[currentDestinationKey]
+        if (savedScroll != null && (savedScroll.first != destination.firstVisibleItemIndex || savedScroll.second != destination.firstVisibleItemScrollOffset)) {
+            destinationStack = destinationStack.dropLast(1) + destination.copy(
+                firstVisibleItemIndex = savedScroll.first,
+                firstVisibleItemScrollOffset = savedScroll.second,
+            )
+        }
         if (
             detail.item?.key == destination.item.key &&
             (!detail.loading || currentDestinationKey !in detailStateSnapshots)
@@ -636,14 +665,18 @@ fun AliflixApp(
             is MobileDestination.Root -> Unit
         }
         destinationStack = popMobileDestinationStack(destinationStack)
-        when (val destination = destinationStack.last()) {
+        val destination = destinationStack.last()
+        val destinationKey = mobileDestinationSaveKey(destinationStack)
+        when (destination) {
             is MobileDestination.Root -> {
                 viewModel.closeDetails()
                 viewModel.closeGenre()
                 viewModel.closePerson()
             }
             is MobileDestination.Detail -> {
-                viewModel.openDetails(destination.item)
+                if (destinationKey !in detailStateSnapshots && detail.item?.key != destination.item.key) {
+                    viewModel.openDetails(destination.item)
+                }
             }
             is MobileDestination.Genre -> {
                 if (
@@ -667,7 +700,7 @@ fun AliflixApp(
         when (val destination = currentDestination) {
             is MobileDestination.Root -> Unit
             is MobileDestination.Detail -> {
-                if (detail.item?.key != destination.item.key) {
+                if (currentDestinationKey !in detailStateSnapshots && detail.item?.key != destination.item.key) {
                     viewModel.openDetails(destination.item)
                 }
             }
@@ -913,12 +946,16 @@ fun AliflixApp(
                     AppTab.MY_SPACE -> AppScreen.MY_SPACE
                 }
             }
+            val currentDetailDestination = currentDestination as? MobileDestination.Detail
+            val savedDetailScroll = detailScrollPositions[currentDestinationKey]
             val animatedDestination = MobileAnimatedDestination(
                 screen = screen,
                 saveKey = currentDestinationKey,
                 stackDepth = destinationStack.size,
                 rootTab = selectedTab,
-                detailItem = (currentDestination as? MobileDestination.Detail)?.item,
+                detailItem = currentDetailDestination?.item,
+                detailScrollIndex = savedDetailScroll?.first ?: currentDetailDestination?.firstVisibleItemIndex ?: 0,
+                detailScrollOffset = savedDetailScroll?.second ?: currentDetailDestination?.firstVisibleItemScrollOffset ?: 0,
                 genreName = (currentDestination as? MobileDestination.Genre)?.name,
                 genreMediaType =
                     (currentDestination as? MobileDestination.Genre)?.mediaType,
@@ -1128,6 +1165,11 @@ fun AliflixApp(
                             },
                             onOpenGenre = ::openGenreFromDetails,
                             onOpenCreator = ::openCreatorFromDetails,
+                            initialFirstVisibleItemIndex = targetDestination.detailScrollIndex,
+                            initialFirstVisibleItemScrollOffset = targetDestination.detailScrollOffset,
+                            onScrollPositionChanged = { index, offset ->
+                                detailScrollPositions[targetDestination.saveKey] = index to offset
+                            },
                         )
                     }
 
@@ -4642,6 +4684,9 @@ private fun DetailScreen(
     onSelectProvider: (PlaybackProviderId) -> Unit,
     onOpenGenre: (String, MediaType) -> Unit = { _, _ -> },
     onOpenCreator: (MediaCreator) -> Unit = {},
+    initialFirstVisibleItemIndex: Int = 0,
+    initialFirstVisibleItemScrollOffset: Int = 0,
+    onScrollPositionChanged: (Int, Int) -> Unit = { _, _ -> },
 ) {
     val item = state.item ?: return
     val latestEpisodeProgress = playbackProgress.values
@@ -4658,7 +4703,17 @@ private fun DetailScreen(
     } ?: state.episodes.firstOrNull()
     val configuration = LocalConfiguration.current
     val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else 500.dp
-    val detailListState = rememberLazyListState()
+    val detailListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = initialFirstVisibleItemIndex,
+        initialFirstVisibleItemScrollOffset = initialFirstVisibleItemScrollOffset,
+    )
+    LaunchedEffect(detailListState) {
+        snapshotFlow { detailListState.firstVisibleItemIndex to detailListState.firstVisibleItemScrollOffset }
+            .distinctUntilChanged()
+            .collect { (index, offset) ->
+                onScrollPositionChanged(index, offset)
+            }
+    }
     var overviewExpanded by rememberSaveable(item.key) { mutableStateOf(false) }
     var castExpanded by rememberSaveable(item.key) { mutableStateOf(false) }
     val overview = item.overview.ifBlank { "No overview is available yet." }
@@ -4768,61 +4823,17 @@ private fun DetailScreen(
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Button(
-                        onClick = {
-                            if (item.type == MediaType.TV && mainEpisode != null) {
-                                onPlayEpisode(item, mainEpisode)
-                            } else {
-                                onPlay(item)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = AliflixAccentPrimary,
-                            contentColor = AliflixContentPrimary,
-                        ),
-                        shape = RoundedCornerShape(18.dp),
-                    ) {
-                        Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = if (
-                                item.type == MediaType.TV &&
-                                mainEpisode != null
-                            ) {
-                                "Play S${mainEpisode.seasonNumber} E${mainEpisode.number}"
-                            } else {
-                                "Play"
-                            },
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    AnimatedMyListButton(
-                        inMyList = inMyList,
-                        onClick = { onToggleMyList(item) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp),
-                    )
-                    AnimatedFavoriteButton(
-                        liked = liked,
-                        onClick = { onToggleLike(item) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp),
-                    )
-                }
-                RatingsRow(item = item)
-                PlaybackProviderSelector(
+                DetailCinematicActionPanel(
+                    item = item,
+                    mainEpisode = mainEpisode,
+                    inMyList = inMyList,
+                    liked = liked,
+                    latestProgress = if (item.type == MediaType.TV) latestEpisodeProgress else playbackProgress[playbackProgressKey(PlaybackSelection(item))],
                     selectedProvider = selectedProvider,
+                    onPlay = onPlay,
+                    onPlayEpisode = onPlayEpisode,
+                    onToggleMyList = onToggleMyList,
+                    onToggleLike = onToggleLike,
                     onSelectProvider = onSelectProvider,
                 )
                 DetailInfoSection(title = "About") {
@@ -5059,12 +5070,12 @@ private fun DetailScreen(
                                     )
                                 },
                                 colors = AssistChipDefaults.assistChipColors(
-                                    containerColor = if (selected) AliflixRed else AliflixSurfaceRaised,
+                                    containerColor = if (selected) AliflixAccentPrimary else AliflixSurfaceRaised,
                                     labelColor = Color.White,
                                 ),
                                 border = AssistChipDefaults.assistChipBorder(
                                     enabled = true,
-                                    borderColor = if (selected) AliflixRed
+                                    borderColor = if (selected) AliflixAccentPrimary
                                     else Color.White.copy(alpha = 0.10f),
                                 ),
                             )
@@ -5081,7 +5092,7 @@ private fun DetailScreen(
                             .padding(30.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CircularProgressIndicator(color = AliflixRed)
+                        CircularProgressIndicator(color = AliflixAccentPrimary)
                     }
                 }
             } else if (state.episodes.isEmpty()) {
@@ -5127,7 +5138,7 @@ private fun DetailScreen(
                         .padding(32.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator(color = AliflixRed)
+                    CircularProgressIndicator(color = AliflixAccentPrimary)
                 }
             }
         }
@@ -5531,6 +5542,394 @@ private fun displayLanguageName(code: String): String {
     return runCatching {
         Locale.forLanguageTag(normalized).getDisplayLanguage(Locale.getDefault())
     }.getOrNull()?.takeIf { it.isNotBlank() } ?: normalized.uppercase(Locale.ROOT)
+}
+
+@Composable
+private fun DetailCinematicActionPanel(
+    item: Media,
+    mainEpisode: Episode?,
+    inMyList: Boolean,
+    liked: Boolean,
+    latestProgress: PlaybackProgress?,
+    selectedProvider: PlaybackProviderId,
+    onPlay: (Media) -> Unit,
+    onPlayEpisode: (Media, Episode) -> Unit,
+    onToggleMyList: (Media) -> Unit,
+    onToggleLike: (Media) -> Unit,
+    onSelectProvider: (PlaybackProviderId) -> Unit,
+) {
+    val progressRatio = latestProgress?.progressFraction?.toFloat() ?: 0f
+    val isPartiallyWatched = latestProgress?.resumeEligible == true
+
+    val ctaText = if (item.type == MediaType.TV && mainEpisode != null) {
+        if (isPartiallyWatched) "Resume S${mainEpisode.seasonNumber} E${mainEpisode.number}"
+        else "Play S${mainEpisode.seasonNumber} E${mainEpisode.number}"
+    } else {
+        if (isPartiallyWatched) "Resume" else "Play"
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = AliflixSurfacePrimary.copy(alpha = 0.88f),
+        border = BorderStroke(1.dp, AliflixBorderSubtle),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            // Top row: CTA (weight 1) + Liked + My List
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    onClick = {
+                        if (item.type == MediaType.TV && mainEpisode != null) {
+                            onPlayEpisode(item, mainEpisode)
+                        } else {
+                            onPlay(item)
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(54.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AliflixAccentPrimary,
+                        contentColor = AliflixContentPrimary,
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = ctaText,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (isPartiallyWatched) {
+                            Spacer(Modifier.height(3.dp))
+                            LinearProgressIndicator(
+                                progress = { progressRatio },
+                                modifier = Modifier
+                                    .fillMaxWidth(0.72f)
+                                    .height(3.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = Color.White,
+                                trackColor = Color.White.copy(alpha = 0.35f),
+                            )
+                        }
+                    }
+                }
+
+                // Compact Liked button
+                Surface(
+                    onClick = { onToggleLike(item) },
+                    modifier = Modifier.size(54.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (liked) AliflixAccentPrimaryContainer else AliflixSurfaceSecondary,
+                    border = BorderStroke(
+                        1.dp,
+                        if (liked) AliflixAccentPrimary else AliflixBorderSubtle,
+                    ),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                            contentDescription = if (liked) "Liked" else "Like",
+                            tint = if (liked) AliflixAccentSecondary else AliflixContentSecondary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                }
+
+                // Compact My List button
+                Surface(
+                    onClick = { onToggleMyList(item) },
+                    modifier = Modifier.size(54.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (inMyList) AliflixAccentPrimaryContainer else AliflixSurfaceSecondary,
+                    border = BorderStroke(
+                        1.dp,
+                        if (inMyList) AliflixAccentPrimary else AliflixBorderSubtle,
+                    ),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = if (inMyList) Icons.Filled.Check else Icons.Filled.Add,
+                            contentDescription = if (inMyList) "In My List" else "Add to My List",
+                            tint = if (inMyList) AliflixAccentSecondary else AliflixContentSecondary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                }
+            }
+
+            // Subtle divider
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.8.dp)
+                    .background(AliflixBorderSubtle.copy(alpha = 0.6f)),
+            )
+
+            // Bottom row: Ratings strip on left, Compact provider selector on right
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DetailRatingsStrip(
+                    item = item,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(8.dp))
+                CompactPlaybackProviderSelector(
+                    selectedProvider = selectedProvider,
+                    onSelectProvider = onSelectProvider,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailRatingsStrip(
+    item: Media,
+    modifier: Modifier = Modifier,
+) {
+    val presentation = externalRatingsPresentation(item)
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(AliflixSurfaceSecondary.copy(alpha = 0.7f))
+            .border(BorderStroke(1.dp, AliflixBorderSubtle), RoundedCornerShape(10.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // IMDb
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color(0xFFF5C518))
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
+            ) {
+                Text(
+                    text = "IMDb",
+                    color = Color.Black,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Black,
+                )
+            }
+            Text(
+                text = presentation.imdb,
+                color = AliflixContentPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .height(10.dp)
+                .background(AliflixBorderSubtle),
+        )
+
+        // Rotten Tomatoes
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                text = "🍅",
+                fontSize = 10.sp,
+            )
+            Text(
+                text = presentation.rottenTomatoes,
+                color = AliflixContentPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .height(10.dp)
+                .background(AliflixBorderSubtle),
+        )
+
+        // TMDB
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color(0xFF01B4E4))
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
+            ) {
+                Text(
+                    text = "TMDB",
+                    color = Color.Black,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Black,
+                )
+            }
+            Text(
+                text = presentation.tmdb,
+                color = AliflixContentPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactPlaybackProviderSelector(
+    selectedProvider: PlaybackProviderId,
+    onSelectProvider: (PlaybackProviderId) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val providers = mobileGeneralPlaybackProviders()
+    var expanded by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(10.dp)
+
+    Box(modifier = modifier) {
+        Surface(
+            modifier = Modifier
+                .clip(shape)
+                .clickable { expanded = true },
+            shape = shape,
+            color = AliflixSurfaceSecondary.copy(alpha = 0.7f),
+            border = BorderStroke(1.dp, AliflixBorderSubtle),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    AliflixAccentPrimary,
+                                    AliflixAccentSecondary,
+                                ),
+                            ),
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = selectedProvider.displayName.take(1).uppercase(),
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                    )
+                }
+                Text(
+                    text = selectedProvider.displayName,
+                    color = AliflixContentPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+                Icon(
+                    imageVector = Icons.Rounded.ExpandMore,
+                    contentDescription = "Choose streaming source",
+                    tint = AliflixAccentSecondary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier
+                .widthIn(min = 180.dp)
+                .background(AliflixSurfaceRaised),
+        ) {
+            providers.forEach { provider ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = provider.displayName,
+                            color = AliflixContentPrimary,
+                            fontWeight = if (provider == selectedProvider) {
+                                FontWeight.Bold
+                            } else {
+                                FontWeight.Medium
+                            },
+                        )
+                    },
+                    leadingIcon = {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (provider == selectedProvider) {
+                                        AliflixAccentPrimary
+                                    } else {
+                                        AliflixSurfacePressed
+                                    },
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = provider.displayName.take(1).uppercase(),
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    },
+                    trailingIcon = if (provider == selectedProvider) {
+                        {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = "Active",
+                                tint = AliflixAccentSecondary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    } else null,
+                    onClick = {
+                        onSelectProvider(provider)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable

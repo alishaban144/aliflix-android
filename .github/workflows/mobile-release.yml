@@ -5,12 +5,12 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.62"
+      - "release/v3.1.63"
       - "release/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.62"
+        description: "Release tag, for example v3.1.63"
         required: true
         type: string
       notes:
@@ -22,8 +22,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "152"
-  RELEASE_VERSION_NAME: "3.1.62"
+  RELEASE_VERSION_CODE: "153"
+  RELEASE_VERSION_NAME: "3.1.63"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -147,9 +147,19 @@ jobs:
             sed -nE 's/^val mobileVersionName[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' \
               app/build.gradle.kts
           )"
+          TV_GRADLE_VERSION_CODE="$(
+            sed -nE 's/^val tvVersionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' \
+              app/build.gradle.kts
+          )"
+          TV_GRADLE_VERSION_NAME="$(
+            sed -nE 's/^val tvVersionName[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' \
+              app/build.gradle.kts
+          )"
 
           test "$GRADLE_VERSION_CODE" = "$RELEASE_VERSION_CODE"
           test "$GRADLE_VERSION_NAME" = "$RELEASE_VERSION_NAME"
+          test "$TV_GRADLE_VERSION_CODE" = "$RELEASE_VERSION_CODE"
+          test "$TV_GRADLE_VERSION_NAME" = "$RELEASE_VERSION_NAME"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             test "$REQUESTED_TAG" = "$EXPECTED_TAG"
           elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
@@ -204,7 +214,7 @@ jobs:
           echo "Expected certificate SHA256: $EXPECTED_MOBILE_SIGNER_SHA256"
           test "$KEYSTORE_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
-      - name: Test and build mobile only
+      - name: Test and build mobile and TV releases
         env:
           ALIFLIX_KEYSTORE_FILE: ${{ runner.temp }}/aliflix-release.jks
           ALIFLIX_KEYSTORE_PASSWORD: ${{ secrets.ALIFLIX_KEYSTORE_PASSWORD }}
@@ -215,49 +225,80 @@ jobs:
           chmod +x gradlew
           ./gradlew \
             testMobileDebugUnitTest \
+            testTvDebugUnitTest \
             lintMobileDebug \
-            packageMobileRelease
+            packageMobileRelease \
+            packageTvRelease
 
-      - name: Verify release APK integrity
+      - name: Verify release APKs integrity
         run: |
           set -euo pipefail
-          APK_PATH="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
-          test -s "$APK_PATH"
-          unzip -tq "$APK_PATH"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
-          APK_CERT_OUTPUT="$("$APKSIGNER" verify --print-certs "$APK_PATH" 2>&1)"
-          APK_CERT_SHA256="$(
-            printf '%s\n' "$APK_CERT_OUTPUT" \
-              | awk 'BEGIN { IGNORECASE = 1 } /certificate SHA-256 digest:/ { line = $0; sub(/^.*digest:[[:space:]]*/, "", line); gsub(/[[:space:]:]/, "", line); print tolower(line) }' \
-              | sort -u
-          )"
-          if [ -z "$APK_CERT_SHA256" ]; then
-            printf '%s\n' "$APK_CERT_OUTPUT"
-            exit 1
-          fi
-          echo "APK signer certificate SHA256: $APK_CERT_SHA256"
-          test "$APK_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
-      - name: Build mobile update manifest
+          for FLAVOR in mobile tv; do
+            APK_PATH="app/build/outputs/apk/${FLAVOR}/release/app-${FLAVOR}-release.apk"
+            echo "Verifying $APK_PATH..."
+            test -s "$APK_PATH"
+            unzip -tq "$APK_PATH"
+            APK_CERT_OUTPUT="$("$APKSIGNER" verify --print-certs "$APK_PATH" 2>&1)"
+            APK_CERT_SHA256="$(
+              printf '%s\n' "$APK_CERT_OUTPUT" \
+                | awk 'BEGIN { IGNORECASE = 1 } /certificate SHA-256 digest:/ { line = $0; sub(/^.*digest:[[:space:]]*/, "", line); gsub(/[[:space:]:]/, "", line); print tolower(line) }' \
+                | sort -u
+            )"
+            if [ -z "$APK_CERT_SHA256" ]; then
+              printf '%s\n' "$APK_CERT_OUTPUT"
+              exit 1
+            fi
+            echo "$FLAVOR APK signer certificate SHA256: $APK_CERT_SHA256"
+            test "$APK_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
+          done
+
+      - name: Build update manifests
         run: |
           set -euo pipefail
-          APK_PATH="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
-          SHA256="$(sha256sum "$APK_PATH" | awk '{print $1}')"
-          SIZE="$(stat -c %s "$APK_PATH")"
-          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/aliflix-mobile.apk"
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Cinematic Intelligence purple/lilac visual identity, redesigned unified action panel, remote-first Android TV experience with accelerated D-pad timeline scrubbing, 0ms instant cached startup, elevated portrait subtitles, and simultaneous mobile & TV releases."
+
+          # Mobile APK and manifest
+          MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
+          MOBILE_SHA256="$(sha256sum "$MOBILE_APK" | awk '{print $1}')"
+          MOBILE_SIZE="$(stat -c %s "$MOBILE_APK")"
+          MOBILE_DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/aliflix-mobile.apk"
 
           cat <<EOF > update-mobile.json
           {
             "versionCode": ${RELEASE_VERSION_CODE},
             "versionName": "${RELEASE_VERSION_NAME}",
-            "apkUrl": "${DOWNLOAD_URL}",
-            "sha256": "${SHA256}",
-            "sizeBytes": ${SIZE},
-            "releaseNotes": "10/10 Aliflix cinematic video player overhaul with dark elegant surfaces, Aliflix-red accents, and smooth micro-interactions. Real Google Cast device chooser with synchronized subtitle tracks (MediaTrack) on TV. Subtitle synchronization adjustment with exact 0.1s (-/+) increments, font size and background opacity customization. Persisted settings across app restarts (subtitles, speed, fit/fill). Vertical swipe gestures for brightness & volume with HUD indicators, two-finger pinch-to-fill, countdown next-episode card with auto-play & cancel, in-player buffering glow ring, and server fallback retry."
+            "apkUrl": "${MOBILE_DOWNLOAD_URL}",
+            "sha256": "${MOBILE_SHA256}",
+            "sizeBytes": ${MOBILE_SIZE},
+            "minimumSdk": 29,
+            "notes": "${RELEASE_NOTES}",
+            "releaseNotes": "${RELEASE_NOTES}"
           }
           EOF
-          cp "$APK_PATH" aliflix-mobile.apk
+          cp "$MOBILE_APK" aliflix-mobile.apk
+
+          # TV APK and manifest
+          TV_APK="app/build/outputs/apk/tv/release/app-tv-release.apk"
+          TV_SHA256="$(sha256sum "$TV_APK" | awk '{print $1}')"
+          TV_SIZE="$(stat -c %s "$TV_APK")"
+          TV_DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/aliflix-tv.apk"
+
+          cat <<EOF > update-tv.json
+          {
+            "versionCode": ${RELEASE_VERSION_CODE},
+            "versionName": "${RELEASE_VERSION_NAME}-tv",
+            "apkUrl": "${TV_DOWNLOAD_URL}",
+            "sha256": "${TV_SHA256}",
+            "sizeBytes": ${TV_SIZE},
+            "minimumSdk": 30,
+            "notes": "${RELEASE_NOTES}",
+            "releaseNotes": "${RELEASE_NOTES}"
+          }
+          EOF
+          cp "$TV_APK" aliflix-tv.apk
 
       - name: Create or update release
         uses: softprops/action-gh-release@v2
@@ -265,7 +306,9 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "10/10 Aliflix cinematic video player overhaul with dark elegant surfaces, Aliflix-red accents, and smooth micro-interactions. Real Google Cast device chooser with synchronized subtitle tracks (MediaTrack) on TV. Subtitle synchronization adjustment with exact 0.1s (-/+) increments, font size and background opacity customization. Persisted settings across app restarts (subtitles, speed, fit/fill). Vertical swipe gestures for brightness & volume with HUD indicators, two-finger pinch-to-fill, countdown next-episode card with auto-play & cancel, in-player buffering glow ring, and server fallback retry."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Cinematic Intelligence purple/lilac visual identity, unified mobile detail action panel, remote-first Android TV experience with accelerated D-pad timeline scrubbing, 0ms instant cached startup, elevated portrait subtitles, and simultaneous mobile & TV releases."
           files: |
             aliflix-mobile.apk
+            aliflix-tv.apk
             update-mobile.json
+            update-tv.json

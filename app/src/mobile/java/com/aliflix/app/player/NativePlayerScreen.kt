@@ -40,6 +40,10 @@ import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
 import com.aliflix.app.model.Episode
 import com.aliflix.app.ui.launch.AnimatedAliflixHeatmapLogo
+import com.aliflix.app.ui.theme.AliflixAccentPrimary
+import com.aliflix.app.ui.theme.AliflixAccentPrimaryContainer
+import com.aliflix.app.ui.theme.AliflixAccentSecondary
+import com.aliflix.app.ui.theme.AliflixError
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -66,7 +70,6 @@ internal data class NativePlayerUi(
 )
 
 private val PlayerInk = Color(0xFF07080C)
-private val AliflixRed = Color(0xFFFF4057)
 private val AliflixSurface = Color(0xFF10131A)
 private val AliflixSurfaceElevated = Color(0xFF181C26)
 
@@ -102,10 +105,10 @@ internal fun NativePlayerScreen(
     onReceiver: () -> Unit = {},
     onBrightnessSwipe: (Float) -> Float = { 0.5f },
     onVolumeSwipe: (Float) -> Float = { 0.5f },
+    onControlsVisibilityChanged: (Boolean) -> Unit = {},
 ) {
     var controls by remember { mutableStateOf(true) }
     var interaction by remember { mutableIntStateOf(0) }
-    var locked by rememberSaveable { mutableStateOf(false) }
     var fill by rememberSaveable { mutableStateOf(settings.resizeModeZoom) }
     var sheet by remember { mutableStateOf<String?>(null) }
     var seek by remember { mutableStateOf<Float?>(null) }
@@ -114,6 +117,7 @@ internal fun NativePlayerScreen(
     val coroutineScope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
+    LaunchedEffect(controls) { onControlsVisibilityChanged(controls) }
     LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it) } }
     val preparing = state.stage != null || (!state.ready && state.error == null && player?.mediaItemCount != 0)
     val playing = player?.isPlaying == true
@@ -143,8 +147,8 @@ internal fun NativePlayerScreen(
         }
     }
 
-    LaunchedEffect(playing, controls, interaction, sheet, locked) {
-        if (playing && controls && sheet == null && !locked) {
+    LaunchedEffect(playing, controls, interaction, sheet) {
+        if (playing && controls && sheet == null) {
             delay(4500)
             controls = false
         }
@@ -154,8 +158,8 @@ internal fun NativePlayerScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .pointerInput(locked, preparing, state.error) {
-                if (locked || preparing || state.error != null) return@pointerInput
+            .pointerInput(preparing, state.error) {
+                if (preparing || state.error != null) return@pointerInput
                 detectTransformGestures { _, _, zoomChange, _ ->
                     if (zoomChange > 1.15f && !fill) {
                         fill = true
@@ -168,8 +172,8 @@ internal fun NativePlayerScreen(
                     }
                 }
             }
-            .pointerInput(locked, preparing, state.error) {
-                if (locked || preparing || state.error != null) return@pointerInput
+            .pointerInput(preparing, state.error) {
+                if (preparing || state.error != null) return@pointerInput
                 detectTapGestures(
                     onTap = {
                         controls = !controls
@@ -187,10 +191,15 @@ internal fun NativePlayerScreen(
                     }
                 )
             }
-            .pointerInput(locked, preparing, state.error) {
-                if (locked || preparing || state.error != null) return@pointerInput
+            .pointerInput(preparing, state.error) {
+                if (preparing || state.error != null) return@pointerInput
+                var dragStartedInValidZone = false
                 detectVerticalDragGestures(
+                    onDragStart = { offset ->
+                        dragStartedInValidZone = offset.y in (size.height * 0.20f)..(size.height * 0.80f)
+                    },
                     onVerticalDrag = { change, dragAmount ->
+                        if (!dragStartedInValidZone) return@detectVerticalDragGestures
                         change.consume()
                         val isLeft = change.position.x < size.width / 2
                         val delta = -dragAmount / (size.height * 0.7f)
@@ -237,10 +246,10 @@ internal fun NativePlayerScreen(
                 }
                 LinearProgressIndicator(
                     Modifier.width(180.dp).height(3.dp).clip(CircleShape),
-                    color = AliflixRed,
+                    color = AliflixAccentPrimary,
                     trackColor = Color.White.copy(alpha = 0.12f)
                 )
-                Text(state.stage ?: "Preparing your video", color = AliflixRed, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(state.stage ?: "Preparing your video", color = AliflixAccentSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Text("Sit back. We'll start when it's ready.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
             }
         }
@@ -259,7 +268,7 @@ internal fun NativePlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Icon(Icons.Default.CloudOff, contentDescription = null, tint = AliflixRed, modifier = Modifier.size(42.dp))
+                    Icon(Icons.Default.CloudOff, contentDescription = null, tint = AliflixError, modifier = Modifier.size(42.dp))
                     Text("Playback Problem", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     Text(state.error, color = Color.White.copy(alpha = 0.75f), textAlign = TextAlign.Center, fontSize = 13.sp)
                     Row(
@@ -277,7 +286,7 @@ internal fun NativePlayerScreen(
                         }
                         Button(
                             onClick = onRetry,
-                            colors = ButtonDefaults.buttonColors(containerColor = AliflixRed),
+                            colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp), tint = Color.White)
@@ -294,11 +303,11 @@ internal fun NativePlayerScreen(
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = Color(0xE610131A),
-                border = BorderStroke(1.dp, AliflixRed.copy(alpha = 0.4f)),
+                border = BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.4f)),
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 80.dp).padding(horizontal = 24.dp)
             ) {
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Default.CastConnected, null, tint = AliflixRed, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Default.CastConnected, null, tint = AliflixAccentSecondary, modifier = Modifier.size(22.dp))
                     Column {
                         Text("Playing on your TV", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Text("Use other apps. Control playback from this screen.", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
@@ -307,107 +316,87 @@ internal fun NativePlayerScreen(
             }
         }
 
-        if (locked) {
-            if (controls) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color.Black.copy(alpha = 0.65f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
-                    modifier = Modifier.align(Alignment.CenterEnd).padding(24.dp).clickable { locked = false; interaction++ }
-                ) {
-                    Box(Modifier.padding(14.dp)) {
-                        Icon(Icons.Default.LockOpen, "Unlock controls", tint = Color.White, modifier = Modifier.size(24.dp))
-                    }
-                }
-            }
-        } else {
-            // TOP CONTROLS BAR (NO ALIFLIX WORDMARK)
-            AnimatedVisibility(
-                visible = controls,
-                enter = fadeIn(tween(180)),
-                exit = fadeOut(tween(220)),
-                modifier = Modifier.align(Alignment.TopCenter)
+        // TOP CONTROLS BAR (NO ALIFLIX WORDMARK)
+        AnimatedVisibility(
+            visible = controls,
+            enter = fadeIn(tween(180)),
+            exit = fadeOut(tween(220)),
+            modifier = Modifier.align(Alignment.TopCenter)
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.88f), Color.Black.copy(alpha = 0.4f), Color.Transparent)))
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.88f), Color.Black.copy(alpha = 0.4f), Color.Transparent)))
-                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
                 ) {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(22.dp))
-                    }
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(22.dp))
+                }
 
-                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(
+                        state.title,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (state.detail.isNotBlank()) {
                         Text(
-                            state.title,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
+                            state.detail,
+                            color = Color.White.copy(alpha = 0.65f),
+                            fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (state.detail.isNotBlank()) {
-                            Text(
-                                state.detail,
-                                color = Color.White.copy(alpha = 0.65f),
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (state.episodes.isNotEmpty()) {
+                        IconButton(
+                            onClick = { sheet = "Episodes"; interaction++ },
+                            modifier = Modifier.size(40.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
+                        ) {
+                            Icon(Icons.Default.VideoLibrary, "Episodes", tint = Color.White, modifier = Modifier.size(20.dp))
                         }
                     }
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    // Google Cast Button (Official Cast Picker)
+                    if (state.external) {
+                        IconButton(
+                            onClick = { sheet = "CastOptions"; interaction++ },
+                            modifier = Modifier.size(40.dp).background(AliflixAccentPrimaryContainer, CircleShape)
+                        ) {
+                            Icon(Icons.Default.CastConnected, "Cast active", tint = AliflixAccentSecondary, modifier = Modifier.size(20.dp))
+                        }
+                    } else {
+                        IconButton(
+                            onClick = { onReceiver(); interaction++ },
+                            modifier = Modifier.size(40.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
+                        ) {
+                            Icon(Icons.Default.Cast, "Cast to TV", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { sheet = "More"; interaction++ },
+                        modifier = Modifier.size(40.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
                     ) {
-                        if (state.episodes.isNotEmpty()) {
-                            PlayerActionChip(
-                                icon = Icons.Default.VideoLibrary,
-                                label = "Episodes",
-                                onClick = { sheet = "Episodes"; interaction++ }
-                            )
-                        }
-
-                        // Google Cast Button (Official Cast Picker)
-                        if (state.external) {
-                            IconButton(
-                                onClick = { sheet = "CastOptions"; interaction++ },
-                                modifier = Modifier.size(40.dp).background(AliflixRed.copy(alpha = 0.2f), CircleShape)
-                            ) {
-                                Icon(Icons.Default.CastConnected, "Cast active", tint = AliflixRed, modifier = Modifier.size(20.dp))
-                            }
-                        } else {
-                            IconButton(
-                                onClick = { onReceiver(); interaction++ },
-                                modifier = Modifier.size(40.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
-                            ) {
-                                Icon(Icons.Default.Cast, "Cast to TV", tint = Color.White, modifier = Modifier.size(20.dp))
-                            }
-                        }
-
-                        IconButton(
-                            onClick = { locked = true; interaction++ },
-                            modifier = Modifier.size(40.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
-                        ) {
-                            Icon(Icons.Default.Lock, "Lock controls", tint = Color.White, modifier = Modifier.size(20.dp))
-                        }
-
-                        IconButton(
-                            onClick = { sheet = "More"; interaction++ },
-                            modifier = Modifier.size(40.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
-                        ) {
-                            Icon(Icons.Default.MoreVert, "More", tint = Color.White, modifier = Modifier.size(20.dp))
-                        }
+                        Icon(Icons.Default.MoreVert, "More", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                 }
             }
+        }
 
             // CENTER CONTROLS (Tapping video hides/shows ALL including these)
             if (!preparing && state.error == null) {
@@ -436,10 +425,10 @@ internal fun NativePlayerScreen(
                             }
                         }
 
-                        // Play/Pause button in Aliflix Red
+                        // Play/Pause button in Aliflix Accent
                         Surface(
                             shape = CircleShape,
-                            color = AliflixRed,
+                            color = AliflixAccentPrimary,
                             border = BorderStroke(2.dp, Color.White.copy(alpha = 0.25f)),
                             shadowElevation = 10.dp,
                             modifier = Modifier.size(76.dp).clickable {
@@ -497,11 +486,11 @@ internal fun NativePlayerScreen(
                             modifier = Modifier
                                 .size(64.dp)
                                 .graphicsLayer { scaleX = pulseScale; scaleY = pulseScale; alpha = pulseAlpha }
-                                .background(AliflixRed, CircleShape)
+                                .background(AliflixAccentPrimary, CircleShape)
                         )
                         CircularProgressIndicator(
                             modifier = Modifier.size(52.dp),
-                            color = AliflixRed,
+                            color = AliflixAccentPrimary,
                             strokeWidth = 3.dp,
                             trackColor = Color.White.copy(alpha = 0.15f)
                         )
@@ -543,13 +532,13 @@ internal fun NativePlayerScreen(
                             Slider(
                                 value = seek ?: position.toFloat(),
                                 onValueChange = { seek = it; interaction++ },
-                                thumb = { Box(Modifier.size(14.dp).background(Color.White, CircleShape).border(2.dp, AliflixRed, CircleShape)) },
+                                thumb = { Box(Modifier.size(14.dp).background(Color.White, CircleShape).border(2.dp, AliflixAccentPrimary, CircleShape)) },
                                 track = { SliderDefaults.Track(it, modifier = Modifier.height(4.dp), thumbTrackGapSize = 0.dp, drawStopIndicator = null) },
                                 onValueChangeFinished = { seek?.let { player?.seekTo(it.toLong()) }; seek = null },
                                 valueRange = 0f..duration.coerceAtLeast(1).toFloat(),
                                 enabled = player?.isCurrentMediaItemSeekable == true,
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = AliflixRed, inactiveTrackColor = Color.Transparent)
+                                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = AliflixAccentPrimary, inactiveTrackColor = Color.Transparent)
                             )
                         }
 
@@ -600,7 +589,6 @@ internal fun NativePlayerScreen(
                     }
                 }
             }
-        }
 
         // NEXT EPISODE COUNTDOWN CARD
         AnimatedVisibility(
@@ -615,7 +603,7 @@ internal fun NativePlayerScreen(
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = Color(0xF212151E),
-                border = BorderStroke(1.dp, AliflixRed.copy(alpha = 0.6f)),
+                border = BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.6f)),
                 shadowElevation = 16.dp,
                 modifier = Modifier.widthIn(max = 360.dp)
             ) {
@@ -628,7 +616,7 @@ internal fun NativePlayerScreen(
                         val sec = (remainingMs / 1000).toInt().coerceIn(1, 25)
                         CircularProgressIndicator(
                             progress = { (remainingMs.toFloat() / 25_000f).coerceIn(0f, 1f) },
-                            color = AliflixRed,
+                            color = AliflixAccentPrimary,
                             trackColor = Color.White.copy(alpha = 0.15f),
                             modifier = Modifier.size(36.dp),
                             strokeWidth = 3.dp,
@@ -636,12 +624,12 @@ internal fun NativePlayerScreen(
                         Text("$sec", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                     Column(Modifier.weight(1f)) {
-                        Text("UP NEXT", color = AliflixRed, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.sp)
+                        Text("UP NEXT", color = AliflixAccentSecondary, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.sp)
                         Text("E${next!!.number} · ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     IconButton(
                         onClick = { next?.let { onEpisode(it) } },
-                        modifier = Modifier.size(36.dp).background(AliflixRed, CircleShape)
+                        modifier = Modifier.size(36.dp).background(AliflixAccentPrimary, CircleShape)
                     ) {
                         Icon(Icons.Default.PlayArrow, contentDescription = "Play Now", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
@@ -657,7 +645,7 @@ internal fun NativePlayerScreen(
 
         // Intro / Skip Segment Button
         val segment = state.segments.firstOrNull { it.isActive(position, duration) }
-        if (!locked && !preparing && state.error == null && sheet == null && player?.isCurrentMediaItemSeekable == true && !showCountdown) {
+        if (!preparing && state.error == null && sheet == null && player?.isCurrentMediaItemSeekable == true && !showCountdown) {
             AnimatedVisibility(
                 segment != null,
                 enter = fadeIn(),
@@ -671,7 +659,7 @@ internal fun NativePlayerScreen(
                     Button(
                         onClick = { player.seekTo(marker.endMs); interaction++ },
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = AliflixRed, contentColor = Color.White),
+                        colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary, contentColor = Color.White),
                         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
                     ) {
                         Text(marker.kind.label, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
@@ -701,13 +689,13 @@ internal fun NativePlayerScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(item.icon, contentDescription = null, tint = AliflixRed, modifier = Modifier.size(34.dp))
+                        Icon(item.icon, contentDescription = null, tint = AliflixAccentSecondary, modifier = Modifier.size(34.dp))
                         Text(item.text, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                         if (item.progress != null) {
                             LinearProgressIndicator(
                                 progress = { item.progress },
                                 modifier = Modifier.width(110.dp).height(4.dp).clip(CircleShape),
-                                color = AliflixRed,
+                                color = AliflixAccentPrimary,
                                 trackColor = Color.White.copy(alpha = 0.15f),
                             )
                         }
@@ -747,10 +735,6 @@ internal fun NativePlayerScreen(
                     "More" -> {
                         SheetOption("Playback Speed", "${player?.playbackParameters?.speed ?: 1f}×") {
                             sheet = "Speed"
-                        }
-                        SheetOption("Lock Controls", "Prevent accidental touches on screen") {
-                            locked = true
-                            sheet = null
                         }
                         SheetOption("Server · ${state.server}", "Switch to another available server") {
                             sheet = null
@@ -808,7 +792,7 @@ internal fun NativePlayerScreen(
 
                     "Audio & subtitles" -> {
                         // Subtitle Sync / Delay
-                        Text("SUBTITLE SYNC", color = AliflixRed, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = Color.White.copy(alpha = 0.05f),
@@ -823,7 +807,7 @@ internal fun NativePlayerScreen(
                                     Text("Time Offset", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp)
                                     val offsetSec = settings.subtitleDelaySeconds
                                     val offsetText = if (offsetSec == 0.0) "0.0s" else if (offsetSec > 0) "+%.1fs".format(Locale.ROOT, offsetSec) else "%.1fs".format(Locale.ROOT, offsetSec)
-                                    Text(offsetText, color = if (offsetSec != 0.0) AliflixRed else Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text(offsetText, color = if (offsetSec != 0.0) AliflixAccentSecondary else Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     FilledTonalIconButton(
@@ -835,7 +819,7 @@ internal fun NativePlayerScreen(
                                     }
                                     if (settings.subtitleDelayTenths != 0) {
                                         TextButton(onClick = { onSubtitleDelayChange(0) }) {
-                                            Text("Reset", color = AliflixRed, fontSize = 11.sp)
+                                            Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
                                         }
                                     }
                                     FilledTonalIconButton(
@@ -850,7 +834,7 @@ internal fun NativePlayerScreen(
                         }
 
                         // Subtitle Size Selection
-                        Text("SUBTITLE SIZE", color = AliflixRed, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
+                        Text("SUBTITLE SIZE", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(13f to "Small", 16f to "Normal", 19f to "Medium", 23f to "Large").forEach { (size, label) ->
                                 FilterChip(
@@ -858,8 +842,8 @@ internal fun NativePlayerScreen(
                                     onClick = { onSubtitleFontSizeChange(size) },
                                     label = { Text(label, fontSize = 12.sp) },
                                     colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = AliflixRed.copy(alpha = 0.2f),
-                                        selectedLabelColor = AliflixRed,
+                                        selectedContainerColor = AliflixAccentPrimaryContainer,
+                                        selectedLabelColor = AliflixAccentSecondary,
                                         labelColor = Color.White
                                     )
                                 )
@@ -867,7 +851,7 @@ internal fun NativePlayerScreen(
                         }
 
                         // Subtitle Background Opacity
-                        Text("BACKGROUND OPACITY", color = AliflixRed, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
+                        Text("BACKGROUND OPACITY", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(0f to "0%", 0.25f to "25%", 0.5f to "50%", 0.75f to "75%", 1f to "100%").forEach { (op, label) ->
                                 FilterChip(
@@ -875,8 +859,8 @@ internal fun NativePlayerScreen(
                                     onClick = { onSubtitleOpacityChange(op) },
                                     label = { Text(label, fontSize = 12.sp) },
                                     colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = AliflixRed.copy(alpha = 0.2f),
-                                        selectedLabelColor = AliflixRed,
+                                        selectedContainerColor = AliflixAccentPrimaryContainer,
+                                        selectedLabelColor = AliflixAccentSecondary,
                                         labelColor = Color.White
                                     )
                                 )
@@ -900,11 +884,11 @@ internal fun NativePlayerScreen(
                         }
 
                         Spacer(Modifier.height(4.dp))
-                        Text("AUDIO", color = AliflixRed, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         TrackOptions(player, C.TRACK_TYPE_AUDIO) { }
 
                         Spacer(Modifier.height(4.dp))
-                        Text("SUBTITLES", color = AliflixRed, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        Text("SUBTITLES", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         SheetOption(
                             "Off",
                             selected = player?.trackSelectionParameters?.disabledTrackTypes?.contains(C.TRACK_TYPE_TEXT) == true && state.activeSubtitleTrack == null
@@ -916,10 +900,10 @@ internal fun NativePlayerScreen(
 
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("More Subtitles", Modifier.weight(1f), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            TextButton(onClick = onSubtitleSearch) { Text("Search", color = AliflixRed) }
+                            TextButton(onClick = onSubtitleSearch) { Text("Search", color = AliflixAccentSecondary) }
                         }
-                        if (state.subtitleLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = AliflixRed)
-                        state.subtitleError?.let { Text(it, color = AliflixRed, fontSize = 13.sp) }
+                        if (state.subtitleLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = AliflixAccentPrimary)
+                        state.subtitleError?.let { Text(it, color = AliflixError, fontSize = 13.sp) }
                         if (!state.subtitleLoading && state.subtitleTracks.isEmpty()) {
                             Text("No external subtitles found for this title.", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                         }
@@ -933,8 +917,8 @@ internal fun NativePlayerScreen(
                                         onClick = { language = name },
                                         label = { Text(name) },
                                         colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = AliflixRed.copy(alpha = 0.2f),
-                                            selectedLabelColor = AliflixRed,
+                                            selectedContainerColor = AliflixAccentPrimaryContainer,
+                                            selectedLabelColor = AliflixAccentSecondary,
                                             labelColor = Color.White
                                         )
                                     )
@@ -976,7 +960,7 @@ private fun PlayerActionChip(
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = Color.White.copy(alpha = 0.08f),
-        border = BorderStroke(1.dp, if (badgeActive) AliflixRed.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.12f)),
+        border = BorderStroke(1.dp, if (badgeActive) AliflixAccentPrimary.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.12f)),
         modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)
     ) {
         Row(
@@ -984,10 +968,10 @@ private fun PlayerActionChip(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Icon(icon, contentDescription = null, tint = if (badgeActive) AliflixRed else Color.White, modifier = Modifier.size(16.dp))
+            Icon(icon, contentDescription = null, tint = if (badgeActive) AliflixAccentSecondary else Color.White, modifier = Modifier.size(16.dp))
             Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             if (badgeActive) {
-                Box(Modifier.size(6.dp).background(AliflixRed, CircleShape))
+                Box(Modifier.size(6.dp).background(AliflixAccentPrimary, CircleShape))
             }
         }
     }
@@ -1002,9 +986,9 @@ private fun PlayerActionButton(
 ) {
     IconButton(
         onClick = onClick,
-        modifier = Modifier.size(38.dp).background(if (active) AliflixRed.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f), CircleShape)
+        modifier = Modifier.size(38.dp).background(if (active) AliflixAccentPrimaryContainer else Color.White.copy(alpha = 0.08f), CircleShape)
     ) {
-        Icon(icon, contentDescription = label, tint = if (active) AliflixRed else Color.White, modifier = Modifier.size(20.dp))
+        Icon(icon, contentDescription = label, tint = if (active) AliflixAccentSecondary else Color.White, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -1019,19 +1003,19 @@ private fun SheetOption(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) AliflixRed.copy(alpha = 0.12f) else Color.Transparent)
+            .background(if (selected) AliflixAccentPrimaryContainer else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, color = if (selected) AliflixRed else Color.White, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+            Text(title, color = if (selected) AliflixAccentSecondary else Color.White, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
             if (subtitle.isNotBlank()) {
                 Text(subtitle, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         if (selected) {
-            Icon(Icons.Default.Check, "Selected", tint = AliflixRed, modifier = Modifier.size(20.dp))
+            Icon(Icons.Default.Check, "Selected", tint = AliflixAccentSecondary, modifier = Modifier.size(20.dp))
         }
     }
 }

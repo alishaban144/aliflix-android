@@ -2,6 +2,7 @@ package com.aliflix.app.player
 
 import android.content.ComponentName
 import android.content.Intent
+import android.content.res.Configuration
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.os.Bundle
@@ -161,6 +162,7 @@ class NativePlayerActivity : FragmentActivity() {
                     onReceiver = ::openReceiverPicker,
                     onBrightnessSwipe = ::adjustBrightness,
                     onVolumeSwipe = ::adjustVolume,
+                    onControlsVisibilityChanged = ::updateSubtitlePadding,
                 )
             } }
         }, FrameLayout.LayoutParams(-1, -1))
@@ -399,6 +401,21 @@ class NativePlayerActivity : FragmentActivity() {
         }
     }
 
+    private var volumeAccumulator = 0f
+
+    private fun updateSubtitlePadding(controlsVisible: Boolean) {
+        val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+        val bottomDp = if (isPortrait) {
+            if (controlsVisible) 175 else 72
+        } else {
+            if (controlsVisible) 56 else 16
+        }
+        val density = resources.displayMetrics.density
+        val bottomPx = (bottomDp * density).toInt()
+        val horizontalPx = (16 * density).toInt()
+        subtitles.setPadding(horizontalPx, 0, horizontalPx, bottomPx)
+    }
+
     private fun applySubtitleStyle() {
         val sizeSp = settingsStore.settings.value.subtitleFontSizeSp
         val bgOpacity = settingsStore.settings.value.subtitleBackgroundOpacity
@@ -414,6 +431,7 @@ class NativePlayerActivity : FragmentActivity() {
             null
         )
         subtitles.setStyle(style)
+        updateSubtitlePadding(controlsVisible = true)
     }
 
     private fun adjustBrightness(delta: Float): Float {
@@ -432,16 +450,15 @@ class NativePlayerActivity : FragmentActivity() {
     private fun adjustVolume(delta: Float): Float {
         val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        val step = (delta * max * 1.5f).toInt()
-        val target = if (step != 0) {
-            (current + step).coerceIn(0, max)
-        } else if (delta > 0) {
-            (current + 1).coerceIn(0, max)
-        } else if (delta < 0) {
-            (current - 1).coerceIn(0, max)
-        } else current
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
-        return target.toFloat() / max.coerceAtLeast(1)
+        volumeAccumulator += delta * max * 1.2f
+        if (kotlin.math.abs(volumeAccumulator) >= 1.0f) {
+            val step = volumeAccumulator.toInt()
+            volumeAccumulator -= step
+            val target = (current + step).coerceIn(0, max)
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+            return target.toFloat() / max.coerceAtLeast(1)
+        }
+        return current.toFloat() / max.coerceAtLeast(1)
     }
 
     private fun recordCurrentProgress(urgent: Boolean = true) {
