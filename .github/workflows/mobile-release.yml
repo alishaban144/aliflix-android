@@ -119,10 +119,18 @@ jobs:
               <<<"$UPLOAD_OUTPUT"
           )"
           test -n "$CANDIDATE_ID"
-          npx wrangler versions deploy \
-            "${CANDIDATE_ID}@100%" \
-            --message "Aliflix ${RELEASE_VERSION_NAME} release" \
-            --yes
+          for i in 1 2 3 4 5; do
+            sleep 3
+            if npx wrangler versions deploy "${CANDIDATE_ID}@100%" --message "Aliflix ${RELEASE_VERSION_NAME} release" --yes; then
+              break
+            fi
+            if [ "$i" -eq 5 ]; then
+              echo "Deployment failed after 5 attempts."
+              exit 1
+            fi
+            echo "Retrying deployment in 5s (attempt $i/5)..."
+            sleep 2
+          done
 
   release:
     needs: [worker-checks, deploy-recommendations, playback-device-tests]
