@@ -117,6 +117,7 @@ class NativePlayerActivity : FragmentActivity() {
                     onBack = { finish() },
                     onRetry = { triedServers.clear(); recoveryCount = 0; prepareSelection() },
                     onServer = { prepareSelection() },
+                    onSelectServer = ::selectServer,
                     onStop = ::stopPlayback,
                     onStopCast = {
                         controller?.sendCustomCommand(SessionCommand(NativePlaybackService.ACTION_STOP_CAST, Bundle.EMPTY), Bundle.EMPTY)
@@ -236,19 +237,47 @@ class NativePlayerActivity : FragmentActivity() {
                 if (selection?.key == current.key) ui = ui.copy(segments = markers)
             } }
         }
-        selection?.let { ui = ui.copy(title = it.media.title, detail = if (it.media.type == com.aliflix.app.model.MediaType.TV)
-            "S${it.seasonNumber ?: 1} · E${it.episodeNumber ?: 1}${it.episodeTitle?.let { title -> " · $title" }.orEmpty()}" else it.media.year,
-            artwork = it.media.backdropUrl, episodes = it.availableEpisodes, episodeNumber = it.episodeNumber) }
+        selection?.let {
+            val servers = if (it.source.provider.usesMoviepire) listOf("Vid", "Mist", "Mistify", "Flix", "Peach") else listOf(it.source.provider.displayName)
+            ui = ui.copy(
+                title = it.media.title,
+                detail = if (it.media.type == com.aliflix.app.model.MediaType.TV)
+                    "S${it.seasonNumber ?: 1} · E${it.episodeNumber ?: 1}${it.episodeTitle?.let { title -> " · $title" }.orEmpty()}" else it.media.year,
+                artwork = it.media.backdropUrl,
+                episodes = it.availableEpisodes,
+                episodeNumber = it.episodeNumber,
+                availableServers = servers,
+            )
+        }
     }
 
-    private fun prepareSelection(positionMs: Long? = null) {
+    private fun selectServer(serverName: String) {
+        if (serverName.equals(ui.server, ignoreCase = true) && controller?.playbackState == Player.STATE_READY) return
+        recordCurrentProgress(urgent = true)
+        ui = ui.copy(server = serverName, message = "Switching to $serverName…")
+        prepareSelection(preferredServer = serverName)
+    }
+
+    private fun prepareSelection(positionMs: Long? = null, preferredServer: String? = null) {
         val current = selection ?: return
         recordCurrentProgress(urgent = true)
         val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition?.takeIf { it > 0 }
             ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
         controller?.pause()
-        ui = ui.copy(stage = "Finding the best stream", error = null, ready = false, subtitleTracks = emptyList(), message = null)
+        if (preferredServer != null) {
+            triedServers.remove(preferredServer)
+        }
+        val defaultServers = if (current.source.provider.usesMoviepire) listOf("Vid", "Mist", "Mistify", "Flix", "Peach") else listOf(current.source.provider.displayName)
+        ui = ui.copy(
+            stage = "Preparing your video",
+            error = null,
+            ready = false,
+            server = preferredServer ?: ui.server,
+            availableServers = defaultServers,
+            subtitleTracks = emptyList(),
+            message = null,
+        )
         updateSelectionUi()
         preparation = lifecycleScope.launch {
             val initialSubtitles = async {
@@ -278,7 +307,10 @@ class NativePlayerActivity : FragmentActivity() {
                 resolver = adapter
                 var server = ""
                 try {
-                    val resolved = adapter.resolve(current, resume, triedServers) { label -> server = label; ui = ui.copy(server = label, stage = "Preparing your video") }
+                    val resolved = adapter.resolve(current, resume, triedServers, preferredServer = if (attempt == 0) preferredServer else null) { label ->
+                        server = label
+                        ui = ui.copy(server = label, stage = "Preparing your video")
+                    }
                     val vtt = withTimeoutOrNull(1500) { initialSubtitles.await() }.orEmpty()
                     val request = resolved.copy(subtitlesVtt = vtt,
                         subtitleLanguage = ui.activeSubtitleTrack?.languageCode?.lowercase() ?: "en",

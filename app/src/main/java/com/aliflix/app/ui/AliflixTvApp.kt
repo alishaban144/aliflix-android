@@ -1588,21 +1588,7 @@ internal fun TvDetailScreen(
     val item = state.item ?: return
     val primaryPlayFocus = remember(item.key) { FocusRequester() }
     var restorePlayerFocus by remember(item.key) { mutableStateOf(false) }
-    val playbackProviders = remember {
-        listOf(
-            PlaybackProviderId.RAMOFLIX,
-            PlaybackProviderId.DORABY,
-            PlaybackProviderId.MOVIEPIRE,
-        )
-    }
-    val initialProvider = generalProvider.takeIf { it in playbackProviders }
-        ?: PlaybackProviderId.RAMOFLIX
-    var selectedProviderName by rememberSaveable(item.key) {
-        mutableStateOf(initialProvider.name)
-    }
-    val selectedProvider = PlaybackProviderId.fromStoredValue(selectedProviderName)
-        ?.takeIf { provider -> provider in playbackProviders }
-        ?: initialProvider
+
 
     LaunchedEffect(item.key) {
         // The target is inside nested lazy content and may not be attached in the
@@ -1685,30 +1671,6 @@ internal fun TvDetailScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Text(
-                        "Playback source",
-                        color = AliflixMuted,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        items(
-                            items = playbackProviders,
-                            key = { provider -> provider.name },
-                        ) { provider ->
-                            TvTextButton(
-                                label = provider.displayName,
-                                selected = provider == selectedProvider,
-                                onClick = {
-                                    selectedProviderName = provider.name
-                                },
-                            )
-                        }
-                    }
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
@@ -1726,10 +1688,10 @@ internal fun TvDetailScreen(
                                         onPlayEpisode(
                                             item,
                                             episode,
-                                            selectedProvider,
+                                            generalProvider,
                                         )
                                     } else {
-                                        onPlay(item, selectedProvider)
+                                        onPlay(item, generalProvider)
                                     }
                                 },
                             )
@@ -1814,7 +1776,7 @@ internal fun TvDetailScreen(
                                 TvEpisodeCard(
                                     episode = episode,
                                     onClick = {
-                                        onPlayEpisode(item, episode, selectedProvider)
+                                        onPlayEpisode(item, episode, generalProvider)
                                     },
                                 )
                             }

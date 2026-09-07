@@ -56,6 +56,7 @@ internal data class NativePlayerUi(
     val stage: String? = null,
     val error: String? = null,
     val server: String = "Auto",
+    val availableServers: List<String> = emptyList(),
     val ready: Boolean = false,
     val external: Boolean = false,
     val revision: Int = 0,
@@ -89,6 +90,7 @@ internal fun NativePlayerScreen(
     onBack: () -> Unit = {},
     onRetry: () -> Unit = {},
     onServer: () -> Unit = {},
+    onSelectServer: (String) -> Unit = {},
     onStop: () -> Unit = {},
     onStopCast: () -> Unit = {},
     onWireless: () -> Unit = {},
@@ -359,7 +361,7 @@ internal fun NativePlayerScreen(
                 }
 
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (state.episodes.isNotEmpty()) {
@@ -562,7 +564,7 @@ internal fun NativePlayerScreen(
                                 )
                             }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                 PlayerActionButton(
                                     icon = Icons.Default.AspectRatio,
                                     label = if (fill) "Fit video" else "Fill screen",
@@ -736,9 +738,9 @@ internal fun NativePlayerScreen(
                         SheetOption("Playback Speed", "${player?.playbackParameters?.speed ?: 1f}×") {
                             sheet = "Speed"
                         }
-                        SheetOption("Server · ${state.server}", "Switch to another available server") {
-                            sheet = null
-                            onServer()
+                        val serverCount = (state.availableServers.ifEmpty { listOf("Vid", "Mist", "Mistify", "Flix", "Peach") }).size
+                        SheetOption("Server · ${state.server}", "Choose streaming server ($serverCount available)") {
+                            sheet = "Servers"
                         }
                         if (state.external) {
                             SheetOption("Stop Casting", "Disconnect TV and continue watching on phone") {
@@ -756,6 +758,21 @@ internal fun NativePlayerScreen(
                             }
                         }
                         SheetOption("Stop Playback", "End this playback session and return", onClick = onStop)
+                    }
+
+                    "Servers" -> {
+                        val servers = state.availableServers.ifEmpty { listOf("Vid", "Mist", "Mistify", "Flix", "Peach") }
+                        servers.forEach { serverName ->
+                            val isCurrent = serverName.equals(state.server, ignoreCase = true)
+                            SheetOption(
+                                title = serverName,
+                                subtitle = if (isCurrent) "Currently active server" else "Tap to switch to this server",
+                                selected = isCurrent,
+                            ) {
+                                sheet = null
+                                onSelectServer(serverName)
+                            }
+                        }
                     }
 
                     "CastOptions" -> {

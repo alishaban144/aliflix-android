@@ -24,9 +24,15 @@ internal class NativeStreamResolver(
         selection: PlaybackSelection,
         positionMs: Long,
         excluded: Set<String>,
+        preferredServer: String? = null,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest = withTimeout(45_000) {
-        val direct = preferredNativeEmbeds(selection).firstOrNull { it.first !in excluded }
+        val allDirect = preferredNativeEmbeds(selection)
+        val direct = if (preferredServer != null) {
+            allDirect.firstOrNull { it.first.equals(preferredServer, ignoreCase = true) }
+        } else {
+            allDirect.firstOrNull { it.first !in excluded }
+        }
         val web = WebPlayerController(activity, progress, nativePreparation = true, nativeEmbedUrl = direct?.second)
         this@NativeStreamResolver.web = web
         view = web.viewFor(selection)
@@ -46,10 +52,15 @@ internal class NativeStreamResolver(
             delay(400)
         }
         val servers = orderedNativeServers(web.moviepireServers.value)
-        val server = servers.firstOrNull { it.label !in excluded }
-        if (servers.isNotEmpty() && server == null) throw NoNativeServersException()
-        val label = server?.label ?: selection.source.provider.name.lowercase().replaceFirstChar { it.uppercase() }
-        if (label in excluded) throw NoNativeServersException()
+        val server = if (preferredServer != null) {
+            servers.firstOrNull { it.label.equals(preferredServer, ignoreCase = true) }
+                ?: servers.firstOrNull { it.label !in excluded }
+        } else {
+            servers.firstOrNull { it.label !in excluded }
+        }
+        if (servers.isNotEmpty() && server == null && preferredServer == null) throw NoNativeServersException()
+        val label = server?.label ?: preferredServer ?: selection.source.provider.name.lowercase().replaceFirstChar { it.uppercase() }
+        if (preferredServer == null && label in excluded) throw NoNativeServersException()
         onServer(label)
         val after = SystemClock.elapsedRealtime() + if (server != null && !server.selected) 2_000 else 0
         if (server != null && !server.selected) {
