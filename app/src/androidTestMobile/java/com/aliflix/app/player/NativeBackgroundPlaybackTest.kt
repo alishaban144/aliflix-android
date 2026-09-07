@@ -173,8 +173,13 @@ class NativeBackgroundPlaybackTest {
 
     private fun await(description: String = "Playback condition", condition: () -> Boolean) {
         val deadline = android.os.SystemClock.elapsedRealtime() + 20_000
-        while (!condition() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(100)
-        assertTrue("$description timed out", condition())
+        // MediaSession updates can change between reads (e.g. PLAYING -> BUFFERING on
+        // seek). Do not read twice and report a timeout immediately after observing success.
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            if (condition()) return
+            Thread.sleep(100)
+        }
+        fail("$description timed out")
     }
 
     private class FixtureServer(private val bytes: ByteArray) : AutoCloseable {
