@@ -124,20 +124,24 @@ class SubdlSubtitleRepository(
         withContext(Dispatchers.IO) {
             val directUrl = directSubtitleUrl(track.downloadToken)
             val workerUrl = "$baseUrl/v3/subtitles/download/${track.downloadToken}"
-            val response = try {
-                if (directUrl != null) {
-                    try {
-                        readBytes(directUrl)
-                    } catch (_: Exception) {
-                        readBytes(workerUrl)
-                    }
-                } else {
+            val response = if (directUrl != null && !directUrl.contains("dl.subdl.com")) {
+                try {
+                    readBytes(directUrl)
+                } catch (_: Exception) {
                     readBytes(workerUrl)
                 }
-            } catch (e: Exception) {
-                if (directUrl != null) {
-                    readBytes(directUrl)
-                } else throw e
+            } else {
+                try {
+                    readBytes(workerUrl)
+                } catch (e: Exception) {
+                    if (directUrl != null) {
+                        try {
+                            readBytes(directUrl)
+                        } catch (_: Exception) {
+                            throw e
+                        }
+                    } else throw e
+                }
             }
             val subtitleBytes = if (response.isZip()) {
                 extractSubtitleFromZip(response, track.fileName)

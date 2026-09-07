@@ -161,22 +161,43 @@ function encodeDownloadToken(rawUrl: string): string | null {
     return null;
   }
   if (
-    target.protocol !== 'https:' || target.hostname !== 'dl.subdl.com' || target.port ||
-    target.username || target.password || !target.pathname.startsWith('/subtitle/') ||
-    target.pathname.includes('..') || target.pathname.length > 600
+    target.protocol === 'https:' &&
+    target.hostname === 'dl.subdl.com' &&
+    !target.port && !target.username && !target.password &&
+    target.pathname.startsWith('/subtitle/') &&
+    !target.pathname.includes('..') && target.pathname.length <= 600
   ) {
-    return null;
+    const path = target.pathname;
+    return btoa(path).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   }
-  const path = target.pathname;
-  return btoa(path).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  if (
+    target.protocol === 'https:' &&
+    (target.hostname.endsWith('strem.io') || target.hostname === 'api.opensubtitles.com') &&
+    !target.port && !target.username && !target.password &&
+    target.href.length <= 900
+  ) {
+    return btoa(target.href).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+  return null;
 }
 
 export function decodeSubdlDownloadToken(token: string): URL | null {
   if (!/^[A-Za-z0-9_-]{8,900}$/.test(token)) return null;
   try {
     const padded = token.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - token.length % 4) % 4);
-    const path = atob(padded);
-    const target = new URL(path, SUBDL_DOWNLOAD_ORIGIN);
+    const decoded = atob(padded);
+    if (decoded.startsWith('https://')) {
+      const target = new URL(decoded);
+      if (
+        target.protocol === 'https:' &&
+        (target.hostname.endsWith('strem.io') || target.hostname === 'api.opensubtitles.com') &&
+        !target.port && !target.username && !target.password
+      ) {
+        return target;
+      }
+      return null;
+    }
+    const target = new URL(decoded, SUBDL_DOWNLOAD_ORIGIN);
     if (
       target.protocol !== 'https:' || target.hostname !== 'dl.subdl.com' || target.port ||
       target.username || target.password || !target.pathname.startsWith('/subtitle/') ||
@@ -347,6 +368,107 @@ export async function searchSubdlSubtitles(
     upstreamUrl.searchParams.set('episode', String(episode));
   }
 
+const OPENSUB_LANG_MAP: Record<string, { code: string; name: string }> = {
+  eng: { code: 'EN', name: 'English' },
+  spa: { code: 'ES', name: 'Spanish' },
+  fre: { code: 'FR', name: 'French' },
+  fra: { code: 'FR', name: 'French' },
+  ger: { code: 'DE', name: 'German' },
+  deu: { code: 'DE', name: 'German' },
+  ita: { code: 'IT', name: 'Italian' },
+  por: { code: 'PT', name: 'Portuguese' },
+  pob: { code: 'PT', name: 'Portuguese (BR)' },
+  ara: { code: 'AR', name: 'Arabic' },
+  rus: { code: 'RU', name: 'Russian' },
+  per: { code: 'FA', name: 'Persian' },
+  fas: { code: 'FA', name: 'Persian' },
+  pol: { code: 'PL', name: 'Polish' },
+  tur: { code: 'TR', name: 'Turkish' },
+  dut: { code: 'NL', name: 'Dutch' },
+  nld: { code: 'NL', name: 'Dutch' },
+  ell: { code: 'EL', name: 'Greek' },
+  gre: { code: 'EL', name: 'Greek' },
+  swe: { code: 'SV', name: 'Swedish' },
+  dan: { code: 'DA', name: 'Danish' },
+  fin: { code: 'FI', name: 'Finnish' },
+  nor: { code: 'NO', name: 'Norwegian' },
+  cze: { code: 'CS', name: 'Czech' },
+  ces: { code: 'CS', name: 'Czech' },
+  hun: { code: 'HU', name: 'Hungarian' },
+  kor: { code: 'KO', name: 'Korean' },
+  zho: { code: 'ZH', name: 'Chinese' },
+  chi: { code: 'ZH', name: 'Chinese' },
+  jpn: { code: 'JA', name: 'Japanese' },
+  ind: { code: 'ID', name: 'Indonesian' },
+  vie: { code: 'VI', name: 'Vietnamese' },
+  heb: { code: 'HE', name: 'Hebrew' },
+  hin: { code: 'HI', name: 'Hindi' },
+  rum: { code: 'RO', name: 'Romanian' },
+  ron: { code: 'RO', name: 'Romanian' },
+  bul: { code: 'BG', name: 'Bulgarian' },
+  hrv: { code: 'HR', name: 'Croatian' },
+  srp: { code: 'SR', name: 'Serbian' },
+  slv: { code: 'SL', name: 'Slovenian' },
+  slk: { code: 'SK', name: 'Slovak' },
+  slo: { code: 'SK', name: 'Slovak' },
+  ukr: { code: 'UK', name: 'Ukrainian' },
+  tha: { code: 'TH', name: 'Thai' },
+};
+
+async function fetchOpenSubtitles(
+  mediaType: 'movie' | 'tv',
+  imdbId: string,
+  season?: number,
+  episode?: number,
+): Promise<SubtitleTrackResponse[]> {
+  try {
+    const path = mediaType === 'movie'
+      ? `movie/${encodeURIComponent(imdbId)}.json`
+      : `series/${encodeURIComponent(imdbId)}:${season || 1}:${episode || 1}.json`;
+    const url = new URL(`https://opensubtitles-v3.strem.io/subtitles/${path}`);
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        accept: 'application/json',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+      },
+    });
+    if (!response.ok) return [];
+    const data = await response.json() as { subtitles?: Array<Record<string, unknown>> };
+    const list = Array.isArray(data.subtitles) ? data.subtitles : [];
+    const tracks: SubtitleTrackResponse[] = [];
+    for (const item of list) {
+      const rawUrl = typeof item.url === 'string' ? item.url : '';
+      if (!rawUrl || !rawUrl.startsWith('https://')) continue;
+      const rawLang = typeof item.lang === 'string' ? item.lang.toLowerCase() : 'eng';
+      const meta = OPENSUB_LANG_MAP[rawLang] || {
+        code: rawLang.length <= 3 ? rawLang.toUpperCase() : rawLang.slice(0, 2).toUpperCase(),
+        name: rawLang.toUpperCase(),
+      };
+      const releaseName = (typeof item.movieReleaseName === 'string' && item.movieReleaseName.trim()) ||
+        (typeof item.subtitleFileName === 'string' && item.subtitleFileName.trim()) ||
+        'OpenSubtitles track';
+      const fileName = (typeof item.subtitleFileName === 'string' && item.subtitleFileName.trim()) ||
+        `${releaseName}.srt`;
+      const downloadToken = encodeDownloadToken(rawUrl);
+      if (!downloadToken) continue;
+      tracks.push({
+        id: downloadToken,
+        languageCode: meta.code,
+        languageName: meta.name,
+        releaseName,
+        fileName,
+        hearingImpaired: false,
+        format: 'srt',
+        downloadToken,
+      });
+      if (tracks.length >= 35) break;
+    }
+    return tracks;
+  } catch {
+    return [];
+  }
+}
+
   const searchUrls = [upstreamUrl];
   if (mediaType === 'tv') {
     const seasonPackUrl = new URL(upstreamUrl);
@@ -355,17 +477,23 @@ export async function searchSubdlSubtitles(
     searchUrls.push(seasonPackUrl);
   }
 
-  const searchResults = await Promise.allSettled(
-    searchUrls.map(url => fetchSubdlSearchDocument(url, key)),
-  );
-  const documents = searchResults.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
-  if (documents.length === 0) {
-    throw (searchResults[0] as PromiseRejectedResult).reason;
-  }
+  const [subdlResults, openSubTracks] = await Promise.all([
+    Promise.allSettled(searchUrls.map(url => fetchSubdlSearchDocument(url, key))),
+    fetchOpenSubtitles(mediaType, imdbId, season, episode),
+  ]);
+  const documents = subdlResults.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
 
   const tracks: SubtitleTrackResponse[] = [];
   const seenTrackIds = new Set<string>();
   let parseFailure: unknown;
+
+  // Include OpenSubtitles first for guaranteed reliable, unlimited downloads
+  for (const track of openSubTracks) {
+    if (seenTrackIds.has(track.id)) continue;
+    seenTrackIds.add(track.id);
+    tracks.push(track);
+  }
+
   for (const document of documents) {
     try {
       for (const track of parseSubdlSearchDocument(document, mediaType, tmdbId, season, episode, imdbId)) {
@@ -380,6 +508,18 @@ export async function searchSubdlSubtitles(
     if (tracks.length >= MAX_COMBINED_TRACKS) break;
   }
   if (tracks.length === 0 && parseFailure) throw parseFailure;
+  if (tracks.length === 0 && documents.length === 0 && openSubTracks.length === 0) {
+    throw (subdlResults[0] as PromiseRejectedResult)?.reason ||
+      new ServiceError('SUBTITLE_NOT_FOUND', 'No subtitles found for this title', 404, false);
+  }
+
+  // Sort with EN / English first
+  tracks.sort((a, b) => {
+    const aEn = a.languageCode.toUpperCase() === 'EN' || a.languageName.toLowerCase().startsWith('eng') ? 0 : 1;
+    const bEn = b.languageCode.toUpperCase() === 'EN' || b.languageName.toLowerCase().startsWith('eng') ? 0 : 1;
+    if (aEn !== bEn) return aEn - bEn;
+    return a.languageName.localeCompare(b.languageName);
+  });
 
   return {
     mediaKey: mediaType === 'movie'
@@ -393,24 +533,62 @@ export async function downloadSubdlSubtitle(
   env: RecommendationEnv,
   token: string,
 ): Promise<Response> {
-  const key = requiredSubdlKey(env);
   const target = decodeSubdlDownloadToken(token);
   if (!target) {
     throw new ServiceError('INVALID_SUBTITLE_DOWNLOAD', 'Invalid subtitle download', 400, false);
   }
+
+  // Handle direct OpenSubtitles / Stremio subtitle streams
+  if (target.hostname.endsWith('strem.io') || target.hostname === 'api.opensubtitles.com') {
+    const streamResponse = await fetchWithTimeout(target, {
+      headers: {
+        accept: 'application/x-subrip, text/plain, text/vtt, application/octet-stream, */*',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+      },
+    });
+    if (streamResponse.ok && streamResponse.body) {
+      const contentLength = Number(streamResponse.headers.get('content-length') || 0);
+      const headers = new Headers({
+        'content-type': streamResponse.headers.get('content-type') || 'application/x-subrip; charset=utf-8',
+        'cache-control': 'private, max-age=86400',
+        'x-content-type-options': 'nosniff',
+      });
+      if (contentLength > 0) headers.set('content-length', String(contentLength));
+      return new Response(streamResponse.body, { status: 200, headers });
+    }
+    throw new ServiceError('SUBTITLE_DOWNLOAD_FAILED', 'Could not download subtitle from provider', 502, true);
+  }
+
+  const key = requiredSubdlKey(env);
+  const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
   let response = await fetchWithTimeout(target, {
     headers: {
       accept: 'application/zip, text/plain, text/vtt, application/octet-stream',
+      'user-agent': userAgent,
       'x-api-key': key,
     },
   });
-  // Free keys may authenticate search but use SubDL's anonymous download pool. Paid keys use
-  // x-api-key. Retrying only an explicit auth rejection keeps both account types functional.
+  // If x-api-key was rejected or challenged, try appending api_key query param or anonymous pool
   if (response.status === 401 || response.status === 403) {
     await response.body?.cancel();
-    response = await fetchWithTimeout(target, {
-      headers: { accept: 'application/zip, text/plain, text/vtt, application/octet-stream' },
+    const targetWithKey = new URL(target.href);
+    targetWithKey.searchParams.set('api_key', key);
+    response = await fetchWithTimeout(targetWithKey, {
+      headers: {
+        accept: 'application/zip, text/plain, text/vtt, application/octet-stream',
+        'user-agent': userAgent,
+        authorization: `Bearer ${key}`,
+      },
     });
+    if (!response.ok) {
+      await response.body?.cancel();
+      response = await fetchWithTimeout(target, {
+        headers: {
+          accept: 'application/zip, text/plain, text/vtt, application/octet-stream',
+          'user-agent': userAgent,
+        },
+      });
+    }
   }
   if (!response.ok) {
     await response.body?.cancel();
@@ -419,13 +597,20 @@ export async function downloadSubdlSubtitle(
       response = await fetchWithTimeout(fallback, {
         headers: {
           accept: 'application/zip, text/plain, text/vtt, application/octet-stream',
+          'user-agent': userAgent,
           authorization: `Bearer ${key}`,
         },
       });
     }
   }
   if (!response.ok || !response.body) {
-    throw new ServiceError('SUBDL_DOWNLOAD_FAILED', 'SubDL could not download this subtitle', 502, response.status >= 500);
+    const errorBody = await response.text().catch(() => '');
+    throw new ServiceError(
+      'SUBDL_DOWNLOAD_FAILED',
+      `SubDL could not download this subtitle (status ${response.status}${errorBody ? ': ' + errorBody.slice(0, 100) : ''})`,
+      502,
+      response.status >= 500,
+    );
   }
   const contentLength = Number(response.headers.get('content-length') || 0);
   if (contentLength > MAX_SUBTITLE_FILE_BYTES) {

@@ -128,6 +128,14 @@ class SubtitlesTest {
             "https://dl.subdl.com/subtitle/test.srt",
             directSubtitleUrl("https://dl.subdl.com/subtitle/test.srt"),
         )
+
+        // OpenSubtitles / Stremio Base64 token
+        val stremioUrl = "https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/1618"
+        val stremioToken = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(stremioUrl.toByteArray())
+        assertEquals(
+            stremioUrl,
+            directSubtitleUrl(stremioToken),
+        )
     }
 
     private fun subtitleTrack(

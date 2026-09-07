@@ -18,6 +18,10 @@ describe('SubDL subtitle proxy', () => {
         expect(url.pathname).toBe('/3/movie/27205/external_ids');
         return new Response(JSON.stringify({ id: 27205, imdb_id: 'tt1375666' }));
       }
+      if (url.hostname === 'opensubtitles-v3.strem.io') {
+        expect(url.pathname).toBe('/subtitles/movie/tt1375666.json');
+        return new Response(JSON.stringify({ subtitles: [] }), { headers: { 'content-type': 'application/json' } });
+      }
       expect(url.origin + url.pathname).toBe('https://api.subdl.com/api/v2/subtitles/search');
       expect(url.searchParams.has('api_key')).toBe(false);
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer private-subdl-key');
@@ -47,7 +51,7 @@ describe('SubDL subtitle proxy', () => {
     const body: any = await response.json();
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(body.mediaKey).toBe('movie:27205');
     expect(body.tracks).toHaveLength(1);
     expect(body.tracks[0].fileName).toBe('Inception.2010.1080p.srt');
@@ -60,6 +64,10 @@ describe('SubDL subtitle proxy', () => {
       if (url.hostname === 'api.themoviedb.org') {
         expect(url.pathname).toBe('/3/tv/1405/external_ids');
         return new Response(JSON.stringify({ id: 1405, imdb_id: 'tt0773262' }));
+      }
+      if (url.hostname === 'opensubtitles-v3.strem.io') {
+        expect(url.pathname).toBe('/subtitles/series/tt0773262:1:8.json');
+        return new Response(JSON.stringify({ subtitles: [] }), { headers: { 'content-type': 'application/json' } });
       }
       expect(url.origin + url.pathname).toBe('https://api.subdl.com/api/v2/subtitles/search');
       expect(url.searchParams.has('api_key')).toBe(false);
@@ -107,7 +115,7 @@ describe('SubDL subtitle proxy', () => {
     const body: any = await response.json();
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(body.mediaKey).toBe('tv:1405:s1:e8');
     expect(body.tracks).toHaveLength(2);
     expect(body.tracks.map((track: any) => track.fileName)).toEqual([
@@ -273,5 +281,23 @@ describe('SubDL subtitle proxy', () => {
     );
     expect(new Headers(fetchMock.mock.calls[1][1]?.headers).get('authorization'))
       .toBe('Bearer private-subdl-key');
+  });
+
+  it('streams OpenSubtitles download directly with UTF-8 subtitle content', async () => {
+    const rawUrl = 'https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/1618';
+    const token = btoa(rawUrl).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      expect(String(input)).toBe(rawUrl);
+      return new Response('1\n00:00:01,000 --> 00:00:02,000\nHello World', {
+        headers: { 'content-type': 'application/x-subrip; charset=utf-8' },
+      });
+    });
+    const response = await worker.fetch(
+      new Request(`https://worker.test/v3/subtitles/download/${token}`),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('Hello World');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
