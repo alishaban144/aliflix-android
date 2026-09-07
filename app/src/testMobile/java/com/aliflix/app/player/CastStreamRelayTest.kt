@@ -57,4 +57,29 @@ class CastStreamRelayTest {
             }
         } finally { upstream.stop(0) }
     }
+
+    @Test fun receiverCanFetchSubtitlesVttWithCors() {
+        val sampleVtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nHello Aliflix\n"
+        val request = NativePlaybackRequest(
+            url = "http://127.0.0.1:8080/master.m3u8",
+            mimeType = "application/x-mpegURL",
+            referer = "https://player.example/watch",
+            userAgent = "Aliflix",
+            cookie = "session=test",
+            title = "Test",
+            positionMs = 0,
+            playing = true,
+            subtitlesVtt = sampleVtt
+        )
+        CastStreamRelay(request, "127.0.0.1").use { relay ->
+            val conn = URL(relay.subtitleUrl).openConnection() as HttpURLConnection
+            assertEquals(200, conn.responseCode)
+            assertEquals("text/vtt; charset=utf-8", conn.getHeaderField("Content-Type"))
+            assertEquals("*", conn.getHeaderField("Access-Control-Allow-Origin"))
+            assertEquals(sampleVtt, conn.inputStream.bufferedReader().readText())
+            conn.disconnect()
+        }
+    }
 }
+
+

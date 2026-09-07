@@ -3,10 +3,12 @@ package com.aliflix.app.player
 import android.content.ComponentName
 import android.content.Intent
 import android.hardware.display.DisplayManager
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.TypedValue
 import android.view.*
 import android.widget.FrameLayout
 import androidx.compose.runtime.*
@@ -21,8 +23,10 @@ import androidx.media3.common.*
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.*
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import com.aliflix.app.AliflixApplication
+import com.aliflix.app.model.Episode
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.ui.theme.AliflixMobileTheme
 import com.google.common.util.concurrent.ListenableFuture
@@ -41,6 +45,8 @@ class NativePlayerActivity : FragmentActivity() {
     private var selection: PlaybackSelection? = null
     private var preparation: Job? = null
     private var subtitleJob: Job? = null
+    private var subtitleSyncDebounceJob: Job? = null
+    private var activeSubtitleCuesJson: String? = null
     private var episodeQueueJob: Job? = null
     private var introJob: Job? = null
     private var introKey: String? = null
@@ -58,6 +64,8 @@ class NativePlayerActivity : FragmentActivity() {
     private lateinit var videoFrame: AspectRatioFrameLayout
     private lateinit var subtitles: SubtitleView
     private val progress get() = (application as AliflixApplication).playbackProgressStore
+    private val settingsStore get() = (application as AliflixApplication).playerSettingsStore
+    private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val displays by lazy { getSystemService(DisplayManager::class.java) }
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = updateOutput()
@@ -67,9 +75,9 @@ class NativePlayerActivity : FragmentActivity() {
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) = updateOutput()
     }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         requestAccepted = savedInstanceState?.getBoolean("requestAccepted") == true
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -80,6 +88,9 @@ class NativePlayerActivity : FragmentActivity() {
         receiverButton = androidx.mediarouter.app.MediaRouteButton(this).apply {
             visibility = View.INVISIBLE; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
+        runCatching {
+            com.google.android.gms.cast.framework.CastButtonFactory.setUpMediaRouteButton(this, receiverButton)
+        }
         root.addView(receiverButton, FrameLayout.LayoutParams(1, 1))
         video = SurfaceView(this)
         video.holder.addCallback(object : SurfaceHolder.Callback {
@@ -87,28 +98,70 @@ class NativePlayerActivity : FragmentActivity() {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = sendSurface()
             override fun surfaceDestroyed(holder: SurfaceHolder) = sendSurface(clear = true)
         })
-        videoFrame = AspectRatioFrameLayout(this).apply { addView(video, FrameLayout.LayoutParams(-1, -1)) }
+        videoFrame = AspectRatioFrameLayout(this).apply {
+            resizeMode = if (settingsStore.settings.value.resizeModeZoom) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+            addView(video, FrameLayout.LayoutParams(-1, -1))
+        }
         root.addView(videoFrame, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         subtitles = SubtitleView(this)
+        applySubtitleStyle()
         root.addView(subtitles, FrameLayout.LayoutParams(-1, -1))
         root.addView(ComposeView(this).apply {
             setContent { AliflixMobileTheme {
-                NativePlayerScreen(ui, controller,
-                    onBack = { finish() }, onRetry = { triedServers.clear(); recoveryCount = 0; prepareSelection() },
-                    onServer = { prepareSelection() }, onStop = ::stopPlayback,
+                val playerSettings by settingsStore.settings.collectAsState()
+                NativePlayerScreen(
+                    state = ui,
+                    player = controller,
+                    settings = playerSettings,
+                    onBack = { finish() },
+                    onRetry = { triedServers.clear(); recoveryCount = 0; prepareSelection() },
+                    onServer = { prepareSelection() },
+                    onStop = ::stopPlayback,
                     onStopCast = {
                         controller?.sendCustomCommand(SessionCommand(NativePlaybackService.ACTION_STOP_CAST, Bundle.EMPTY), Bundle.EMPTY)
-                    }, onWireless = {
+                    },
+                    onWireless = {
                         runCatching { startActivity(Intent(Settings.ACTION_CAST_SETTINGS)) }
                             .onFailure { ui = ui.copy(message = "Wireless display settings are unavailable on this phone.") }
-                    }, onFit = { fill -> videoFrame.resizeMode = if (fill) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT },
-                    onRotate = { requestedOrientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
-                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE },
-                    onSubtitleSearch = { searchSubtitles() }, onSubtitle = ::applySubtitle, onReceiver = ::openReceiverPicker,
-                    onEpisode = { episode -> selection?.let { current ->
-                        selection = current.copy(seasonNumber = episode.seasonNumber, episodeNumber = episode.number, episodeTitle = episode.title)
-                        intent.putExtra("selection", selection!!.nativeJson()); triedServers.clear(); recoveryCount = 0; prepareSelection(positionMs = 0)
-                    } })
+                    },
+                    onFit = { fill ->
+                        settingsStore.updateResizeModeZoom(fill)
+                        videoFrame.resizeMode = if (fill) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    },
+                    onRotate = {
+                        requestedOrientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    },
+                    onSubtitleSearch = { searchSubtitles() },
+                    onSubtitle = ::applySubtitle,
+                    onSubtitleDisable = ::disableSubtitles,
+                    onSubtitleDelayChange = ::updateSubtitleDelay,
+                    onSubtitleFontSizeChange = { sizeSp ->
+                        settingsStore.updateSubtitleFontSize(sizeSp)
+                        applySubtitleStyle()
+                    },
+                    onSubtitleOpacityChange = { opacity ->
+                        settingsStore.updateSubtitleBackgroundOpacity(opacity)
+                        applySubtitleStyle()
+                    },
+                    onSpeedChange = { speed ->
+                        settingsStore.updatePlaybackSpeed(speed)
+                        controller?.setPlaybackSpeed(speed)
+                    },
+                    onEpisode = { episode ->
+                        selection?.let { current ->
+                            recordCurrentProgress(urgent = true)
+                            selection = current.copy(seasonNumber = episode.seasonNumber, episodeNumber = episode.number, episodeTitle = episode.title)
+                            intent.putExtra("selection", selection!!.nativeJson())
+                            triedServers.clear()
+                            recoveryCount = 0
+                            prepareSelection(positionMs = 0)
+                        }
+                    },
+                    onReceiver = ::openReceiverPicker,
+                    onBrightnessSwipe = ::adjustBrightness,
+                    onVolumeSwipe = ::adjustVolume,
+                )
             } }
         }, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
@@ -135,6 +188,11 @@ class NativePlayerActivity : FragmentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("requestAccepted", requestAccepted); super.onSaveInstanceState(outState)
+    }
+
+    override fun onPause() {
+        recordCurrentProgress(urgent = true)
+        super.onPause()
     }
 
     private fun activeSelectionKey() = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it).key }.getOrNull() }
@@ -177,7 +235,7 @@ class NativePlayerActivity : FragmentActivity() {
             } }
         }
         selection?.let { ui = ui.copy(title = it.media.title, detail = if (it.media.type == com.aliflix.app.model.MediaType.TV)
-            "S${it.seasonNumber ?: 1} · E${it.episodeNumber ?: 1}${it.episodeTitle?.let { title -> " · $title" }.orEmpty()}" else it.media.year.toString(),
+            "S${it.seasonNumber ?: 1} · E${it.episodeNumber ?: 1}${it.episodeTitle?.let { title -> " · $title" }.orEmpty()}" else it.media.year,
             artwork = it.media.backdropUrl, episodes = it.availableEpisodes, episodeNumber = it.episodeNumber) }
     }
 
@@ -200,9 +258,14 @@ class NativePlayerActivity : FragmentActivity() {
                 val track = tracks.firstOrNull { it.languageCode.equals(code, true) } ?: return@async ""
                 val cues = repository.download(track).getOrDefault(emptyList())
                 ensureActive()
-                if (cues.isEmpty()) "" else nativeSubtitlesVtt(JSONArray().apply {
-                    cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) }
-                }.toString(), 0.0)
+                if (cues.isEmpty()) "" else {
+                    val json = JSONArray().apply {
+                        cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) }
+                    }.toString()
+                    activeSubtitleCuesJson = json
+                    ui = ui.copy(activeSubtitleTrack = track)
+                    nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
+                }
             }
             var success = false
             for (attempt in 0 until 9) {
@@ -292,12 +355,102 @@ class NativePlayerActivity : FragmentActivity() {
             ensureActive()
             result.onSuccess { cues ->
                 val request = NativePlaybackService.activeRequest ?: return@onSuccess
-                val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }
-                startNative(request.copy(subtitlesVtt = nativeSubtitlesVtt(json.toString(), 0.0),
+                val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
+                activeSubtitleCuesJson = json
+                val vtt = nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
+                startNative(request.copy(subtitlesVtt = vtt,
                     positionMs = controller?.currentPosition ?: request.positionMs, playing = controller?.playWhenReady ?: true))
-                ui = ui.copy(message = "${track.languageName} subtitles enabled")
+                controller?.sendCustomCommand(
+                    SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle().apply { putBoolean("enabled", true) }),
+                    Bundle.EMPTY
+                )
+                ui = ui.copy(activeSubtitleTrack = track, message = "${track.languageName} subtitles enabled")
             }.onFailure { ui = ui.copy(subtitleError = "This subtitle couldn't load. Try another version.") }
             ui = ui.copy(subtitleLoading = false)
+        }
+    }
+
+    private fun disableSubtitles() {
+        activeSubtitleCuesJson = null
+        ui = ui.copy(activeSubtitleTrack = null)
+        val req = NativePlaybackService.activeRequest
+        if (req != null) {
+            val pos = controller?.currentPosition ?: req.positionMs
+            val playing = controller?.playWhenReady ?: true
+            startNative(req.copy(subtitlesVtt = "", positionMs = pos, playing = playing))
+        }
+        controller?.sendCustomCommand(
+            SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle().apply { putBoolean("enabled", false) }),
+            Bundle.EMPTY
+        )
+    }
+
+    private fun updateSubtitleDelay(tenths: Int) {
+        settingsStore.updateSubtitleDelayTenths(tenths)
+        subtitleSyncDebounceJob?.cancel()
+        subtitleSyncDebounceJob = lifecycleScope.launch {
+            delay(300)
+            val cuesJson = activeSubtitleCuesJson ?: return@launch
+            val req = NativePlaybackService.activeRequest ?: return@launch
+            val vtt = nativeSubtitlesVtt(cuesJson, tenths / 10.0)
+            val pos = controller?.currentPosition ?: req.positionMs
+            val playing = controller?.playWhenReady ?: true
+            startNative(req.copy(subtitlesVtt = vtt, positionMs = pos, playing = playing))
+        }
+    }
+
+    private fun applySubtitleStyle() {
+        val sizeSp = settingsStore.settings.value.subtitleFontSizeSp
+        val bgOpacity = settingsStore.settings.value.subtitleBackgroundOpacity
+        subtitles.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+        val alpha = (bgOpacity * 255).toInt().coerceIn(0, 255)
+        val bgColor = android.graphics.Color.argb(alpha, 0, 0, 0)
+        val style = CaptionStyleCompat(
+            android.graphics.Color.WHITE,
+            bgColor,
+            android.graphics.Color.TRANSPARENT,
+            CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW,
+            android.graphics.Color.BLACK,
+            null
+        )
+        subtitles.setStyle(style)
+    }
+
+    private fun adjustBrightness(delta: Float): Float {
+        val lp = window.attributes
+        val current = if (lp.screenBrightness < 0f) {
+            try {
+                Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f
+            } catch (_: Exception) { 0.5f }
+        } else lp.screenBrightness
+        val target = (current + delta).coerceIn(0.01f, 1.0f)
+        lp.screenBrightness = target
+        window.attributes = lp
+        return target
+    }
+
+    private fun adjustVolume(delta: Float): Float {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val step = (delta * max * 1.5f).toInt()
+        val target = if (step != 0) {
+            (current + step).coerceIn(0, max)
+        } else if (delta > 0) {
+            (current + 1).coerceIn(0, max)
+        } else if (delta < 0) {
+            (current - 1).coerceIn(0, max)
+        } else current
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+        return target.toFloat() / max.coerceAtLeast(1)
+    }
+
+    private fun recordCurrentProgress(urgent: Boolean = true) {
+        val sel = selection ?: return
+        val c = controller ?: return
+        val dur = c.duration.toDouble() / 1000.0
+        val pos = c.currentPosition.toDouble() / 1000.0
+        if (dur > 0.0 && pos >= 0.0) {
+            progress.savePlayerProgress(sel, pos, dur, urgentCloudSync = urgent)
         }
     }
 
@@ -308,8 +461,13 @@ class NativePlayerActivity : FragmentActivity() {
         controllerFuture = future
         future.addListener({
             if (controllerFuture !== future) return@addListener
-            runCatching { future.get() }.onSuccess { controller = it; it.addListener(listener); sendSurface(); updateOutput() }
-                .onFailure { ui = ui.copy(error = "Unable to connect to playback. Please retry.") }
+            runCatching { future.get() }.onSuccess {
+                controller = it
+                it.addListener(listener)
+                it.setPlaybackSpeed(settingsStore.settings.value.playbackSpeed)
+                sendSurface()
+                updateOutput()
+            }.onFailure { ui = ui.copy(error = "Unable to connect to playback. Please retry.") }
         }, mainExecutor)
     }
 
@@ -336,22 +494,27 @@ class NativePlayerActivity : FragmentActivity() {
         }
         runCatching {
             com.google.android.gms.cast.framework.CastButtonFactory.setUpMediaRouteButton(this, receiverButton)
-            receiverButton.showDialog()
-        }.onFailure { ui = ui.copy(message = "Google Cast is unavailable on this phone. Wireless display is available from the Cast button.") }
+            if (!receiverButton.showDialog()) {
+                receiverButton.performClick()
+            }
+        }.onFailure { ui = ui.copy(message = "Google Cast is unavailable on this phone.") }
     }
 
     private fun stopPlayback() {
+        recordCurrentProgress(urgent = true)
         preparation?.cancel(); controller?.stop(); controller?.clearMediaItems()
         startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
     }
     override fun onStop() {
+        recordCurrentProgress(urgent = true)
         displays.unregisterDisplayListener(displayListener)
         sendSurface(clear = true); controller?.removeListener(listener); controller = null
         controllerFuture?.let(MediaController::releaseFuture); controllerFuture = null
         super.onStop()
     }
     override fun onDestroy() {
-        preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
+        recordCurrentProgress(urgent = true)
+        preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); subtitleSyncDebounceJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
     }
     private fun sendSurface(clear: Boolean = false) {
         val surface = video.holder.surface.takeIf { !clear && it.isValid }
@@ -361,3 +524,4 @@ class NativePlayerActivity : FragmentActivity() {
         it.hide(WindowInsetsCompat.Type.systemBars()); it.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 }
+

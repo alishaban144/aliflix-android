@@ -49,7 +49,9 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.model.PlaybackSource
+import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaQueueItem
+import com.google.android.gms.cast.MediaTrack
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONObject
@@ -140,7 +142,9 @@ class NativePlaybackService : MediaSessionService() {
                 override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
                     if (controller.packageName == packageName) return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                         .setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
-                            .add(SessionCommand(ACTION_STOP_CAST, Bundle.EMPTY)).build()).build()
+                            .add(SessionCommand(ACTION_STOP_CAST, Bundle.EMPTY))
+                            .add(SessionCommand(ACTION_SET_CAST_SUBTITLES, Bundle.EMPTY))
+                            .build()).build()
                     return if (controller.isTrusted) super.onConnect(session, controller) else MediaSession.ConnectionResult.reject()
                 }
                 override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
@@ -155,6 +159,14 @@ class NativePlaybackService : MediaSessionService() {
                         router.selectRoute(MediaRouter.ROUTE_TYPE_LIVE_VIDEO or MediaRouter.ROUTE_TYPE_LIVE_AUDIO, router.defaultRoute)
                         updateDisplay()
                         localPlayer.setVideoSurface(phoneSurface?.takeIf { it.isValid })
+                        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                    }
+                    if (command.customAction == ACTION_SET_CAST_SUBTITLES && controller.packageName == packageName) {
+                        val enabled = args.getBoolean("enabled", true)
+                        runCatching {
+                            val castSession = com.google.android.gms.cast.framework.CastContext.getSharedInstance(this@NativePlaybackService).sessionManager.currentCastSession
+                            castSession?.remoteMediaClient?.setActiveMediaTracks(if (enabled) longArrayOf(1L) else longArrayOf())
+                        }
                         return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                     }
                     return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
@@ -172,6 +184,7 @@ class NativePlaybackService : MediaSessionService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            saveProgress(true)
             player.stop(); player.clearMediaItems(); stopSelf()
             return START_NOT_STICKY
         }
@@ -241,7 +254,32 @@ class NativePlaybackService : MediaSessionService() {
             if (current.subtitlesVtt.isNotBlank()) builder.setSubtitleConfigurations(listOf(
                 MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(currentRelay.subtitleUrl))
                     .setMimeType("text/vtt").setLabel("Aliflix subtitles").setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()))
-            return delegate.toMediaQueueItem(builder.build())
+            val queueItem = delegate.toMediaQueueItem(builder.build())
+            val mediaInfo = queueItem.media
+            if (current.subtitlesVtt.isNotBlank() && mediaInfo != null) {
+                val trackId = 1L
+                val castSubtitleTrack = MediaTrack.Builder(trackId, MediaTrack.TYPE_TEXT)
+                    .setName("Aliflix subtitles")
+                    .setSubtype(MediaTrack.SUBTYPE_SUBTITLES)
+                    .setContentId(currentRelay.subtitleUrl)
+                    .setContentType("text/vtt")
+                    .setLanguage("en")
+                    .build()
+                val updatedMediaInfo = MediaInfo.Builder(mediaInfo.contentId)
+                    .setStreamType(mediaInfo.streamType)
+                    .setContentType(mediaInfo.contentType)
+                    .setMetadata(mediaInfo.metadata)
+                    .setStreamDuration(mediaInfo.streamDuration)
+                    .setMediaTracks(listOf(castSubtitleTrack))
+                    .build()
+                return MediaQueueItem.Builder(updatedMediaInfo)
+                    .setActiveTrackIds(longArrayOf(trackId))
+                    .setAutoplay(queueItem.autoplay)
+                    .setPreloadTime(queueItem.preloadTime)
+                    .setStartTime(queueItem.startTime)
+                    .build()
+            }
+            return queueItem
         }
     }
 
@@ -340,6 +378,7 @@ class NativePlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        saveProgress(true)
         releasing = true
         if (activeService === this) activeService = null
         NativeCastActivity.closeOutput()
@@ -347,7 +386,6 @@ class NativePlaybackService : MediaSessionService() {
         activeRequest = null
         playbackReady = false; playbackFailure = null; hasSelectedAudio = false
         renderedStreamUrl = null
-        saveProgress(true)
         handler.removeCallbacksAndMessages(null)
         displays.unregisterDisplayListener(displayListener)
         unregisterReceiver(screenReceiver)
@@ -409,6 +447,8 @@ class NativePlaybackService : MediaSessionService() {
         const val ACTION_STOP = "com.aliflix.app.STOP_NATIVE_PLAYBACK"
 
         const val ACTION_STOP_CAST = "com.aliflix.app.STOP_CAST"
+
+        const val ACTION_SET_CAST_SUBTITLES = "com.aliflix.app.SET_CAST_SUBTITLES"
 
         private const val NOTIFICATION_ID = 4103
         private const val CHANNEL_ID = "aliflix_native_playback"

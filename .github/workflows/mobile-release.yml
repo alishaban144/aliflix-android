@@ -5,11 +5,12 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.61"
+      - "release/v3.1.62"
+      - "release/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.61"
+        description: "Release tag, for example v3.1.62"
         required: true
         type: string
       notes:
@@ -21,8 +22,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "151"
-  RELEASE_VERSION_NAME: "3.1.61"
+  RELEASE_VERSION_CODE: "152"
+  RELEASE_VERSION_NAME: "3.1.62"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -253,7 +254,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Phone player redesign with automatic native stream preparation, preferred Vid, Mist, Mistify, Flix and Peach servers, IntroDB skip intro/outro buttons, native audio/subtitle/quality controls, faster cached episode lists, direct wireless-display settings and Stop casting. Playback runs in a foreground media service with notification controls and independent TV output. Screen-off casting requires a system route that keeps the external display connected and powered; phone mirroring power policy remains controlled by Android and the device manufacturer."
+            "releaseNotes": "10/10 Aliflix cinematic video player overhaul with dark elegant surfaces, Aliflix-red accents, and smooth micro-interactions. Real Google Cast device chooser with synchronized subtitle tracks (MediaTrack) on TV. Subtitle synchronization adjustment with exact 0.1s (-/+) increments, font size and background opacity customization. Persisted settings across app restarts (subtitles, speed, fit/fill). Vertical swipe gestures for brightness & volume with HUD indicators, two-finger pinch-to-fill, countdown next-episode card with auto-play & cancel, in-player buffering glow ring, and server fallback retry."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -264,7 +265,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Phone player redesign with automatic native stream preparation, preferred Vid, Mist, Mistify, Flix and Peach servers, IntroDB skip intro/outro buttons, native audio/subtitle/quality controls, faster cached episode lists, direct wireless-display settings and Stop casting. Playback runs in a foreground media service with notification controls and independent TV output. Screen-off casting requires a system route that keeps the external display connected and powered; phone mirroring power policy remains controlled by Android and the device manufacturer."
+          body: "10/10 Aliflix cinematic video player overhaul with dark elegant surfaces, Aliflix-red accents, and smooth micro-interactions. Real Google Cast device chooser with synchronized subtitle tracks (MediaTrack) on TV. Subtitle synchronization adjustment with exact 0.1s (-/+) increments, font size and background opacity customization. Persisted settings across app restarts (subtitles, speed, fit/fill). Vertical swipe gestures for brightness & volume with HUD indicators, two-finger pinch-to-fill, countdown next-episode card with auto-play & cancel, in-player buffering glow ring, and server fallback retry."
           files: |
             aliflix-mobile.apk
             update-mobile.json
