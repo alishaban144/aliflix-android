@@ -133,7 +133,8 @@ class NativePlaybackService : MediaSessionService() {
                 if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) || events.contains(Player.EVENT_IS_PLAYING_CHANGED)) saveProgress(true)
             }
         })
-        val activity = PendingIntent.getActivity(this, 0, Intent(this, NativePlayerActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val activity = PendingIntent.getActivity(this, 0, Intent(this, NativePlayerActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT, nativePhoneLaunchOptions())
         session = MediaSession.Builder(this, player).setSessionActivity(activity)
             .setCallback(object : MediaSession.Callback {
                 override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {

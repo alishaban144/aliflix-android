@@ -48,7 +48,7 @@ class NativeProviderPlaybackTest {
                         val stream = NativePlaybackService.activeStreamUrl
                         if (checkedStream != stream) {
                             checkedStream = stream; stableSince = android.os.SystemClock.elapsedRealtime()
-                            scenario.onActivity { it.playbackController?.seekTo(30_000); positionAtSeek = 30_000 }
+                            scenario.onActivity { it.playbackController?.seekTo(180_000); positionAtSeek = 180_000 }
                         }
                         if (android.os.SystemClock.elapsedRealtime() - stableSince >= 10_000) {
                             var advanced = false
@@ -61,7 +61,7 @@ class NativeProviderPlaybackTest {
                 scenario.onActivity {
                     state = it.playbackUiState
                     assertNull("Native decoder error after seeking", it.playbackController?.playerError)
-                    assertTrue("Playback must continue after seeking", it.playbackController?.let { p -> p.isPlaying && p.currentPosition > 35_000 } == true)
+                    assertTrue("Playback must continue after seeking", it.playbackController?.let { p -> p.isPlaying && p.currentPosition > 185_000 } == true)
                     assertEquals(android.content.res.Configuration.ORIENTATION_LANDSCAPE, it.resources.configuration.orientation)
                 }
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->

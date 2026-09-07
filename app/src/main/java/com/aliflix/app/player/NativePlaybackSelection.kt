@@ -1,7 +1,9 @@
 package com.aliflix.app.player
 
 import android.app.Activity
+import android.app.ActivityOptions
 import android.content.Intent
+import android.view.Display
 import com.aliflix.app.model.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -28,8 +30,12 @@ internal fun nativeSelection(raw: String): PlaybackSelection = JSONObject(raw).l
 internal fun launchNativeSelection(activity: Activity, selection: PlaybackSelection, language: String, autoSubtitles: Boolean) {
     activity.startActivity(Intent().setClassName(activity, "com.aliflix.app.player.NativePlayerActivity")
         .putExtra("selection", selection.nativeJson()).putExtra("subtitleLanguage", language)
-        .putExtra("autoSubtitles", autoSubtitles))
+        .putExtra("autoSubtitles", autoSubtitles), nativePhoneLaunchOptions())
 }
+
+// Service/notification launches otherwise inherit the last focused (possibly TV) display.
+internal fun nativePhoneLaunchOptions(): android.os.Bundle = ActivityOptions.makeBasic()
+    .setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
 
 /** Provider labels can include decorations, e.g. 'Vid • HD'. Avoid matching unrelated Videasy. */
 internal fun nativeServerRank(label: String): Int = listOf("Vid", "Mist", "Mistify", "Flix", "Peach")

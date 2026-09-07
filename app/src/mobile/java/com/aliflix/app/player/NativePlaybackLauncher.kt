@@ -14,7 +14,7 @@ internal object NativePlaybackLauncher {
             java.io.File(activity.cacheDir, name).writeText(request.toJson())
             intent.putExtra("requestFile", name)
         }
-        activity.startActivity(intent)
+        activity.startActivity(intent, nativePhoneLaunchOptions())
     }
 }
 

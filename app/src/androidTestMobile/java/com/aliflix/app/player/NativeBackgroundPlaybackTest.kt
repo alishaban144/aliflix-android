@@ -51,7 +51,7 @@ class NativeBackgroundPlaybackTest {
         val requestFile = java.io.File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json")
         requestFile.writeText(request.toJson())
         try {
-            scenario = ActivityScenario.launch(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", requestFile.name))
+            scenario = ActivityScenario.launch(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", requestFile.name), nativePhoneLaunchOptions())
             val session = awaitSession()
             await("Initial playback: ${session.playbackState}") { session.playbackState?.state == PlaybackState.STATE_PLAYING }
             assertFalse("The service must consume the file handoff", requestFile.exists())
@@ -80,11 +80,17 @@ class NativeBackgroundPlaybackTest {
             Thread.sleep(3000)
             val lockFrames = frames.get()
             Thread.sleep(6000)
-            assertFalse("Phone display should be off", context.getSystemService(android.os.PowerManager::class.java).isInteractive)
+            assertEquals("Phone display should be off", android.view.Display.STATE_OFF,
+                context.getSystemService(DisplayManager::class.java).getDisplay(android.view.Display.DEFAULT_DISPLAY).state)
             assertTrue("Playback must advance with the phone locked", position(session) > beforeLock + 4500)
             val poweredWhileLocked = display!!.display.state != android.view.Display.STATE_OFF
-            if (poweredWhileLocked) assertTrue("A powered TV display must keep receiving video throughout phone lock", frames.get() > lockFrames + 5)
-            else android.util.Log.w("AliflixCastValidation", "System powered the external display OFF during phone lock; continuous screen-off TV video is unsupported by this route.")
+            if (independentDisplay && poweredWhileLocked) {
+                assertTrue("An independently powered TV display must keep receiving video throughout phone lock", frames.get() > lockFrames + 5)
+            } else {
+                // A shared power group sleeps its windows even on API 35, where a virtual
+                // Display can still report ON. This fixture tests recovery, not lock support.
+                android.util.Log.w("AliflixCastValidation", "System-controlled shared/asleep display: phone-lock video is not proven; checking decoder survival and output restoration.")
+            }
             assertNull("Display power policy must not cause a decoder failure", NativePlaybackService.playbackFailure)
             instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_WAKEUP").use { java.io.FileInputStream(it.fileDescriptor).readBytes() }
             instrumentation.uiAutomation.executeShellCommand("wm dismiss-keyguard").use { java.io.FileInputStream(it.fileDescriptor).readBytes() }
@@ -98,11 +104,15 @@ class NativeBackgroundPlaybackTest {
             sendNotificationAction("play")
             await { session.playbackState?.state == PlaybackState.STATE_PLAYING }
             // Return from the actual Settings task before requesting Activity recreation.
-            instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_BACK").use {
+            instrumentation.uiAutomation.executeShellCommand("input -d 0 keyevent KEYCODE_BACK").use {
                 java.io.FileInputStream(it.fileDescriptor).readBytes()
             }
             await("Returning from Settings must resume the player controls") { scenario?.state == Lifecycle.State.RESUMED }
             scenario.recreate()
+            // Activity recreation/rotation can take long enough to reach the short fixture's end.
+            // Start a fresh observation window without changing the session's play/pause state.
+            session.transportControls.seekTo(3000)
+            await("Playback after recreation and seek") { session.playbackState?.state == PlaybackState.STATE_PLAYING && position(session) in 2500..10_000 }
             scenario.close(); scenario = null
             val afterDestroy = position(session)
             val destroyFrames = frames.get()
@@ -110,7 +120,8 @@ class NativeBackgroundPlaybackTest {
             assertTrue("Destroying the Activity must not destroy playback", position(session) > afterDestroy + 4500)
             assertTrue("TV surface belongs to the service after Activity destruction", frames.get() > destroyFrames + 5)
             assertNotNull(context.getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull { it.notification.extras.containsKey("android.mediaSession") })
-            scenario = ActivityScenario.launch(Intent(context, NativePlayerActivity::class.java))
+            scenario = ActivityScenario.launch(Intent(context, NativePlayerActivity::class.java), nativePhoneLaunchOptions())
+            scenario.onActivity { assertEquals("Controls must reopen on the phone", android.view.Display.DEFAULT_DISPLAY, it.windowManager.defaultDisplay.displayId) }
             await("Reopened native controls") { var connected = false; scenario.onActivity { connected = it.playbackController != null }; connected }
             scenario.onActivity { it.playbackController!!.sendCustomCommand(
                 androidx.media3.session.SessionCommand(NativePlaybackService.ACTION_STOP_CAST, android.os.Bundle.EMPTY), android.os.Bundle.EMPTY) }
