@@ -86,7 +86,23 @@ export class TmdbClient {
   get callsUsed(): number { return this.used; }
   get callsRemaining(): number { return this.budget - this.used; }
 
-  private async request<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
+  async seasons(id: number) {
+    const result = await this.request<{ seasons?: Array<{ season_number: number; name: string; episode_count: number }> }>(`/tv/${id}`, { language: 'en-US' }, 3600);
+    return { tmdbId: id, seasons: (result.seasons || []).filter(s => s.season_number >= 0).map(s => ({
+      number: s.season_number, title: s.name, episodeCount: s.episode_count,
+    })) };
+  }
+
+  async episodes(id: number, season: number) {
+    const result = await this.request<{ episodes?: Array<{ episode_number: number; season_number: number; name: string; overview: string; still_path: string | null; runtime: number | null }> }>(`/tv/${id}/season/${season}`, { language: 'en-US' }, 3600);
+    return { tmdbId: id, seasonNumber: season, episodes: (result.episodes || [])
+      .filter(e => e.season_number === season && e.episode_number > 0).map(e => ({
+        number: e.episode_number, seasonNumber: season, title: e.name, overview: e.overview,
+        stillPath: e.still_path, runtime: e.runtime,
+      })) };
+  }
+
+  private async request<T>(path: string, params: Record<string, string | number | boolean | undefined> = {}, cacheTtl?: number): Promise<T> {
     if (!this.env.TMDB_API_KEY && !this.env.TMDB_READ_ACCESS_TOKEN) {
       throw new ServiceError('TMDB_AUTH_FAILED', 'TMDB is not configured', 503, true);
     }
@@ -101,7 +117,8 @@ export class TmdbClient {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8_000);
       try {
-        const response = await fetch(url, { headers, signal: controller.signal });
+        const response = await fetch(url, { headers, signal: controller.signal,
+          ...(cacheTtl ? { cf: { cacheTtl, cacheEverything: true } } : {}) });
         if (response.ok) return await response.json() as T;
         if (response.status === 401 || response.status === 403) {
           throw new ServiceError('TMDB_AUTH_FAILED', 'TMDB rejected the configured credential', 503, false);

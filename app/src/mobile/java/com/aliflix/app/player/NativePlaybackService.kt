@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Presentation
+import android.view.Display
 import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.media.MediaRouter
@@ -33,6 +34,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -67,7 +69,11 @@ class NativePlaybackService : MediaSessionService() {
     private var presentation: Presentation? = null
     private var presentationPlayerView: PlayerView? = null
     private var phoneSurface: Surface? = null
-    private var surfaceController: MediaSession.ControllerInfo? = null
+    private var tvSurface: Surface? = null
+    private var tvSurfaceOwner: String? = null
+    private var castActivityDisplay: Int? = null
+    private var displayWasOff = false
+    private var phoneSurfaceOwner: String? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var relayWakeLock: PowerManager.WakeLock? = null
     private var releasing = false
@@ -77,9 +83,14 @@ class NativePlaybackService : MediaSessionService() {
     }
     private val displays by lazy { getSystemService(DisplayManager::class.java) }
     private val displayListener = object : DisplayManager.DisplayListener {
-        override fun onDisplayAdded(displayId: Int) = updateDisplay()
+        override fun onDisplayAdded(displayId: Int) { castingSuppressed = false; updateDisplay() }
         override fun onDisplayChanged(displayId: Int) = updateDisplay()
-        override fun onDisplayRemoved(displayId: Int) = updateDisplay()
+        override fun onDisplayRemoved(displayId: Int) { castingSuppressed = false; updateDisplay() }
+    }
+    private val screenReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: Intent?) {
+            updateWifiLock(); updateDisplay()
+        }
     }
 
     override fun onCreate() {
@@ -96,11 +107,16 @@ class NativePlaybackService : MediaSessionService() {
             } else spec
         }
         localPlayer = ExoPlayer.Builder(this)
+            .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 3_000, 6_000).build())
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, scopedHttp)))
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
+        localPlayer.addListener(object : Player.Listener {
+            override fun onRenderedFirstFrame() { renderedStreamUrl = activeStreamUrl }
+        })
         player = runCatching {
             CastPlayer.Builder(this).setLocalPlayer(localPlayer)
                 .setRemotePlayer(RemoteCastPlayer.Builder(this).setMediaItemConverter(relayConverter()).build())
@@ -109,6 +125,9 @@ class NativePlaybackService : MediaSessionService() {
         player.addListener(object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
                 if (releasing) return
+                playbackReady = player.playbackState == Player.STATE_READY
+                playbackFailure = player.playerError
+                hasSelectedAudio = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
                 updateWifiLock()
                 updateDisplay()
                 if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) || events.contains(Player.EVENT_IS_PLAYING_CHANGED)) saveProgress(true)
@@ -120,26 +139,31 @@ class NativePlaybackService : MediaSessionService() {
                 override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
                     if (controller.packageName == packageName) return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                         .setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
-                            .add(SessionCommand(ACTION_PHONE_SURFACE, Bundle.EMPTY)).build()).build()
+                            .add(SessionCommand(ACTION_STOP_CAST, Bundle.EMPTY)).build()).build()
                     return if (controller.isTrusted) super.onConnect(session, controller) else MediaSession.ConnectionResult.reject()
                 }
                 override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
-                    if (command.customAction != ACTION_PHONE_SURFACE || controller.packageName != packageName) return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
-                    val surface = androidx.core.os.BundleCompat.getParcelable(args, "surface", Surface::class.java)
-                    if (surface != null || surfaceController == controller) {
-                        phoneSurface = surface; surfaceController = if (surface != null) controller else null
-                        if (presentation == null) localPlayer.setVideoSurface(surface)
+                    if (command.customAction == ACTION_STOP_CAST && controller.packageName == packageName) {
+                        castingSuppressed = true
+                        if (player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) {
+                            runCatching { com.google.android.gms.cast.framework.CastContext.getSharedInstance(this@NativePlaybackService).sessionManager.endCurrentSession(true) }
+                        }
+                        NativeCastActivity.closeOutput(); tvSurface = null; tvSurfaceOwner = null; castActivityDisplay = null
+                        // Selecting the system's default route disconnects wireless display without stopping decoding.
+                        val router = getSystemService(MediaRouter::class.java)
+                        router.selectRoute(MediaRouter.ROUTE_TYPE_LIVE_VIDEO or MediaRouter.ROUTE_TYPE_LIVE_AUDIO, router.defaultRoute)
+                        updateDisplay()
+                        localPlayer.setVideoSurface(phoneSurface?.takeIf { it.isValid })
+                        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                     }
-                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-                }
-                override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
-                    if (surfaceController == controller) {
-                        phoneSurface = null; surfaceController = null
-                        if (presentation == null) localPlayer.clearVideoSurface()
-                    }
+                    return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
                 }
             }).build()
         displays.registerDisplayListener(displayListener, handler)
+        androidx.core.content.ContextCompat.registerReceiver(this, screenReceiver, android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_USER_PRESENT)
+        }, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+        activeService = this
         handler.post(progressTask)
     }
 
@@ -176,7 +200,10 @@ class NativePlaybackService : MediaSessionService() {
         player.stop(); player.clearMediaItems()
         relay?.close(); relay = null
         request = next
+        playbackReady = false; playbackFailure = null; hasSelectedAudio = false
+        activeRequest = next
         activeStreamUrl = next.url
+        renderedStreamUrl = null
         selection = runCatching {
             val json = JSONObject(next.selectionJson)
             PlaybackSelection(Media.fromJson(json.getJSONObject("media")),
@@ -188,7 +215,9 @@ class NativePlaybackService : MediaSessionService() {
         // Cookie forwarding for segmented streams is handled per origin by the relay.
         httpFactory.setUserAgent(next.userAgent).setDefaultRequestProperties(headers)
         val itemBuilder = MediaItem.Builder().setMediaId(selection?.key ?: next.title).setUri(next.url)
-            .setMimeType(next.mimeType).setMediaMetadata(MediaMetadata.Builder().setTitle(next.title).build())
+            .setMimeType(next.mimeType).setMediaMetadata(MediaMetadata.Builder().setTitle(next.title)
+                .setSubtitle(selection?.episodeTitle)
+                .setArtworkUri(selection?.media?.backdropUrl?.let(android.net.Uri::parse)).build())
         if (next.subtitlesVtt.isNotBlank()) {
             val file = java.io.File(cacheDir, "native-playback-subtitles.vtt").apply { writeText(next.subtitlesVtt) }
             itemBuilder.setSubtitleConfigurations(listOf(MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(file))
@@ -227,17 +256,42 @@ class NativePlaybackService : MediaSessionService() {
     @Suppress("DEPRECATION")
     private fun updateDisplay() {
         if (releasing) return
-        val display = if (player.mediaItemCount == 0 || player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) null else
+        val display = if (castingSuppressed || player.mediaItemCount == 0 || player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) null else
             getSystemService(MediaRouter::class.java).getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_VIDEO).presentationDisplay
                 ?: displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).firstOrNull()
         // Reattaching an unchanged phone surface can emit another player event indefinitely.
         // Phone attachments are handled by the surface command; this method handles TV transitions.
-        if (display == null && presentation == null) return
+        if (display == null && presentation == null) {
+            if (castActivityDisplay != null || tvSurface != null) {
+                NativeCastActivity.closeOutput(); tvSurface = null; tvSurfaceOwner = null; castActivityDisplay = null
+                localPlayer.setAudioAttributes(AudioAttributes.DEFAULT, true)
+                localPlayer.setVideoSurface(phoneSurface?.takeIf { it.isValid })
+            }
+            return
+        }
+        if (display != null && !castingSuppressed && castActivityDisplay != display.displayId) {
+            castActivityDisplay = display.displayId
+            val options = android.app.ActivityOptions.makeBasic().setLaunchDisplayId(display.displayId)
+            val intent = Intent(this, NativeCastActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (getSystemService(android.app.ActivityManager::class.java).isActivityStartAllowedOnDisplay(this, display.displayId, intent)) {
+                runCatching { startActivity(intent, options.toBundle()) }
+            }
+        }
+        if (display != null && tvSurface?.isValid == true) return
+        // Some system routes suspend their compositor on lock. Recreate the fallback surface
+        // after that power cycle: a valid Surface can still refer to the abandoned producer.
+        if (display?.state == Display.STATE_OFF) displayWasOff = true
+        if (displayWasOff && display?.state == Display.STATE_ON) {
+            displayWasOff = false
+            presentationPlayerView?.player = null
+            runCatching { presentation?.dismiss() }; presentation = null; presentationPlayerView = null
+        }
         if (presentation?.display?.displayId == display?.displayId && presentation?.isShowing == true) return
         presentationPlayerView?.player = null
         runCatching { presentation?.dismiss() }
         presentation = null; presentationPlayerView = null
         if (display == null || player.mediaItemCount == 0) {
+            NativeCastActivity.closeOutput(); tvSurface = null; tvSurfaceOwner = null; castActivityDisplay = null
             localPlayer.setAudioAttributes(AudioAttributes.DEFAULT, true)
             localPlayer.setVideoSurface(phoneSurface?.takeIf { it.isValid })
             return
@@ -246,7 +300,9 @@ class NativePlaybackService : MediaSessionService() {
             val output = Presentation(this, display)
             val view = PlayerView(output.context).apply { useController = false; this.player = localPlayer; setBackgroundColor(android.graphics.Color.BLACK) }
             output.setContentView(view, FrameLayout.LayoutParams(-1, -1))
-            output.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            // Apply only to the TV window. Never dismiss the phone's secure lock or wake its screen.
+            output.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_FULLSCREEN or
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
             output.show()
             output.window?.setLayout(-1, -1)
             presentation = output; presentationPlayerView = view
@@ -267,7 +323,7 @@ class NativePlaybackService : MediaSessionService() {
                 .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Aliflix:NativeCastWifi")
                 .apply { setReferenceCounted(false); acquire() }
         } else if (!needed) { wifiLock?.takeIf { it.isHeld }?.release(); wifiLock = null }
-        val relaying = needed && player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE
+        val relaying = needed
         if (relaying && relayWakeLock?.isHeld != true) {
             relayWakeLock = getSystemService(PowerManager::class.java)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Aliflix:CastRelay")
@@ -284,10 +340,17 @@ class NativePlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         releasing = true
+        if (activeService === this) activeService = null
+        NativeCastActivity.closeOutput()
         activeStreamUrl = null
+        activeRequest = null
+        playbackReady = false; playbackFailure = null; hasSelectedAudio = false
+        renderedStreamUrl = null
         saveProgress(true)
         handler.removeCallbacksAndMessages(null)
         displays.unregisterDisplayListener(displayListener)
+        unregisterReceiver(screenReceiver)
+        castingSuppressed = false
         presentationPlayerView?.player = null
         runCatching { presentation?.dismiss() }
         session?.release(); session = null
@@ -300,10 +363,52 @@ class NativePlaybackService : MediaSessionService() {
     }
 
     companion object {
+        private var activeService: NativePlaybackService? = null
+
+        /** Same-process main-thread handoff must finish before SurfaceHolder.surfaceDestroyed returns. */
+        internal fun attachSurface(owner: String, surface: Surface?, tv: Boolean) {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            val service = activeService ?: return
+            if (service.releasing) return
+            if (tv) {
+                if (surface == null && service.tvSurfaceOwner != owner) return
+                val previous = service.tvSurface
+                service.tvSurface = surface; service.tvSurfaceOwner = if (surface != null) owner else null
+                if (surface != null && !castingSuppressed) {
+                    service.presentationPlayerView?.player = null
+                    runCatching { service.presentation?.dismiss() }
+                    service.presentation = null; service.presentationPlayerView = null
+                    service.localPlayer.setVideoSurface(surface)
+                    service.localPlayer.setAudioAttributes(AudioAttributes.DEFAULT, false)
+                } else if (previous != null) {
+                    service.localPlayer.clearVideoSurface(previous)
+                    service.handler.post { service.updateDisplay() }
+                }
+            } else {
+                if (surface == null && service.phoneSurfaceOwner != owner) return
+                service.phoneSurface = surface; service.phoneSurfaceOwner = if (surface != null) owner else null
+                if (service.presentation == null && service.tvSurface == null) service.localPlayer.setVideoSurface(surface)
+            }
+        }
+
+        internal var playbackReady = false
+            private set
+        internal var playbackFailure: androidx.media3.common.PlaybackException? = null
+            private set
+        internal var hasSelectedAudio = false
+            private set
+        internal var castingSuppressed: Boolean = false
+            private set
+        internal var renderedStreamUrl: String? = null
+            private set
+        internal var activeRequest: NativePlaybackRequest? = null
+            private set
         internal var activeStreamUrl: String? = null
             private set
         const val ACTION_STOP = "com.aliflix.app.STOP_NATIVE_PLAYBACK"
-        const val ACTION_PHONE_SURFACE = "com.aliflix.app.PHONE_PLAYBACK_SURFACE"
+
+        const val ACTION_STOP_CAST = "com.aliflix.app.STOP_CAST"
+
         private const val NOTIFICATION_ID = 4103
         private const val CHANNEL_ID = "aliflix_native_playback"
     }

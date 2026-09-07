@@ -490,6 +490,7 @@ fun AliflixApp(
     val person by viewModel.person.collectAsState()
     val myList by viewModel.myList.collectAsState()
     val recent by viewModel.recent.collectAsState()
+    LaunchedEffect(recent.take(3).map { it.key }) { viewModel.preloadRecentlyWatchedEpisodes() }
     val likes by viewModel.likes.collectAsState()
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
     val recommendationAiModel by viewModel.recommendationAiModel.collectAsState()
@@ -775,7 +776,11 @@ fun AliflixApp(
                 requestedProvider = requestedProvider,
             ),
         )
-        playerVisible = true
+        com.aliflix.app.player.launchNativeSelection(
+            activity, checkNotNull(playerSelection),
+            playbackPreferences.preferredSubtitleLanguage.code,
+            playbackPreferences.autoDisplaySubtitles,
+        )
     }
 
     fun playMedia(item: Media) = playSelection(PlaybackSelection(item))
@@ -5081,11 +5086,10 @@ private fun DetailScreen(
                 }
             } else if (state.episodes.isEmpty()) {
                 item(key = "episodes-empty") {
-                    Text(
-                        text = "Episode information is unavailable for this season.",
-                        color = AliflixMuted,
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
-                    )
+                    Column(Modifier.padding(horizontal = 18.dp, vertical = 20.dp)) {
+                        Text("Episode information is unavailable for this season.", color = AliflixMuted)
+                        TextButton(onClick = { onSelectSeason(state.selectedSeason) }) { Text("Reload episodes") }
+                    }
                 }
             } else {
                 items(

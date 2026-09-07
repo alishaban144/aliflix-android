@@ -30,7 +30,7 @@ class WebStreamHandoffTest {
                     while (!input.readLine().isNullOrEmpty()) { }
                     val (type, body) = when (path) {
                         "/" -> "text/html" to "<iframe src='/frame' style='width:100%;height:100%'></iframe>".toByteArray()
-                        "/frame" -> "text/html" to "<video autoplay controls src='$base/video.mp4' style='width:100%'></video>".toByteArray()
+                        "/frame" -> "text/html" to "<video controls src='$base/video.mp4' style='width:100%'></video>".toByteArray()
                         "/master.m3u8" -> "application/vnd.apple.mpegurl" to "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=10000\nvariant.m3u8\n".toByteArray()
                         else -> "video/mp4" to videoBytes
                     }
@@ -52,7 +52,7 @@ class WebStreamHandoffTest {
                 WebViewCompat.addWebMessageListener(web, "AliflixPlaybackProgress", setOf(base)) { _, message, _, _, _ ->
                     runCatching { JSONObject(message.data.orEmpty()) }.getOrNull()?.let { progress.set(it) }
                 }
-                WebViewCompat.addDocumentStartJavaScript(web, nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript(), setOf(base))
+                WebViewCompat.addDocumentStartJavaScript(web, nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript() + "\n" + nativePreparationScript(), setOf(base))
                 activity.setContentView(FrameLayout(activity).apply { addView(web, FrameLayout.LayoutParams(-1, -1)) })
                 web.loadUrl(base)
             }

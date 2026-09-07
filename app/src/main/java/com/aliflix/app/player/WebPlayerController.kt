@@ -66,8 +66,31 @@ data class MoviepireServerOption(
 class WebPlayerController(
     private val activity: ComponentActivity,
     private val playbackProgressStore: PlaybackProgressStore,
+    private val nativePreparation: Boolean = false,
+    private val nativeEmbedUrl: String? = null,
 ) {
     private var nativeStream: JSONObject? = null
+    private var nativeStreamReceivedAt = 0L
+
+    internal fun preparedNativeRequest(after: Long, positionMs: Long): NativePlaybackRequest? {
+        if (nativeStreamReceivedAt < after) return null
+        val stream = nativeStream ?: return null
+        val selection = activeSelection ?: return null
+        val view = webView ?: return null
+        val url = stream.optString("url")
+        if (!isNativeStreamUrl(url)) return null
+        return NativePlaybackRequest(url, stream.optString("mimeType", "video/mp4"),
+            stream.optString("referer"), view.settings.userAgentString,
+            CookieManager.getInstance().getCookie(url).orEmpty(),
+            selection.media.title, positionMs, true, selectionJson = selection.nativeJson())
+    }
+
+    internal fun refreshNativeServers() {
+        val view = webView ?: return
+        activeSelection?.let { discoverMoviepireServers(view, it) }
+    }
+
+    private fun preparationScript() = if (nativePreparation) "\n" + nativePreparationScript() else ""
     private var webView: WebView? = null
     private var loadedKey: String? = null
     private var activeSelection: PlaybackSelection? = null
@@ -439,7 +462,7 @@ class WebPlayerController(
         flushProgress(urgentCloudSync = true)
         hideCustomView()
         playerVisible = false
-        setSystemBarsVisible(activity, true)
+        if (!nativePreparation) setSystemBarsVisible(activity, true)
         moviepireDocumentStartScriptHandler?.remove()
         moviepireDocumentStartScriptHandler = null
         moviepireProtectedSourceHost = null
@@ -507,6 +530,12 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
+        if (nativePreparation && nativeEmbedUrl != null) {
+            view.loadDataWithBaseURL(selection.entryUrl,
+                "<html><meta name='viewport' content='width=device-width,initial-scale=1'><body style='margin:0;background:black'><iframe src='$nativeEmbedUrl' allow='autoplay; fullscreen' style='border:0;width:100vw;height:100vh'></iframe></body></html>",
+                "text/html", "UTF-8", null)
+            return
+        }
         _loading.value = true
         _error.value = null
         pendingServerKey = null
@@ -537,7 +566,7 @@ class WebPlayerController(
             installMoviepireMessageListener(view, sourceHost)
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 moviepireDocumentStartScriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                    view, nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript(),
+                    view, nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript() + preparationScript(),
                     nativePlaybackOriginRules(sourceHost),
                 )
             }
@@ -568,7 +597,7 @@ class WebPlayerController(
             WebViewCompat.addDocumentStartJavaScript(
                 view,
                 mobileMoviepireAdShieldScript() + if (nativeMode) {
-                    "\n" + nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript()
+                    "\n" + nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript() + preparationScript()
                 } else {
                     ""
                 },
@@ -644,6 +673,8 @@ class WebPlayerController(
             return
         }
         nativeStream = payload.optJSONObject("nativeStream")?.takeIf { isNativeStreamUrl(it.optString("url")) }
+        nativeStreamReceivedAt = SystemClock.elapsedRealtime()
+        if (nativePreparation) return // Resolution must never overwrite the saved native resume point.
         latestDurationSeconds = duration
         when (event) {
             "play", "playing" -> _playing.value = true
@@ -699,6 +730,7 @@ class WebPlayerController(
     }
 
     private fun flushProgress(urgentCloudSync: Boolean) {
+        if (nativePreparation) return
         val selection = activeSelection ?: return
         if (NativePlaybackLauncher.ownsStream(nativeStream?.optString("url"))) return
         if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
@@ -847,7 +879,7 @@ class WebPlayerController(
                     if (view != null && url != null) {
                         if (
                             selection != null &&
-                            shouldResolveMobileMoviepireEpisode(selection)
+                            nativeEmbedUrl == null && shouldResolveMobileMoviepireEpisode(selection)
                         ) {
                             view.alpha = 0f
                             resolveMobileMoviepireEpisode(view, selection, attempt = 0)
@@ -1966,7 +1998,7 @@ class WebPlayerController(
         view: View,
         callback: WebChromeClient.CustomViewCallback?,
     ) {
-        if (customView != null) {
+        if (nativePreparation || customView != null) {
             callback?.onCustomViewHidden()
             return
         }
@@ -1998,6 +2030,7 @@ class WebPlayerController(
     }
 
     private fun hideCustomView() {
+        if (nativePreparation && customView == null && !nativeFullscreenRequested) return
         customView?.let { view ->
             (view.parent as? ViewGroup)?.removeView(view)
             customViewContainer?.let { container ->

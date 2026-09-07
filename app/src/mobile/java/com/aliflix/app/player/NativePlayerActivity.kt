@@ -7,57 +7,57 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.view.Gravity
-import android.view.View
-import android.view.WindowManager
-import android.view.SurfaceView
-import android.view.SurfaceHolder
-import android.widget.Button
+import android.view.*
 import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.ComposeView
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.lifecycle.Lifecycle
-import androidx.media3.common.DeviceInfo
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
+import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.*
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
-import androidx.media3.session.SessionCommand
-import androidx.media3.ui.PlayerControlView
+import androidx.media3.session.*
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.SubtitleView
-import androidx.mediarouter.app.MediaRouteButton
-import com.google.android.gms.cast.framework.CastButtonFactory
+import com.aliflix.app.AliflixApplication
+import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.ui.theme.AliflixMobileTheme
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.*
+import org.json.JSONArray
 
-/** A disposable controller/surface. Closing or recreating this Activity never releases playback. */
+/** Disposable UI and preparation; the service retains decoding, the TV surface and media session. */
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlayerActivity : FragmentActivity() {
+    private val surfaceOwner = java.util.UUID.randomUUID().toString()
     private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var controller: MediaController? = null
+    private var controller by mutableStateOf<MediaController?>(null)
+    private var ui by mutableStateOf(NativePlayerUi())
+    internal val playbackUiState get() = ui
+    internal val playbackController get() = controller
+    private var selection: PlaybackSelection? = null
+    private var preparation: Job? = null
+    private var subtitleJob: Job? = null
+    private var episodeQueueJob: Job? = null
+    private var introJob: Job? = null
+    private var introKey: String? = null
+    private var resolver: NativeStreamResolver? = null
+    private var requestAccepted = false
+    private lateinit var receiverButton: androidx.mediarouter.app.MediaRouteButton
+    private val receiverPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) openReceiverPicker() else ui = ui.copy(message = "Allow Nearby devices in app settings to find compatible TVs.")
+    }
+    private var recoveryCount = 0
+    private var stalledSince = 0L
+    private val triedServers = linkedSetOf<String>()
+    private lateinit var resolverHost: FrameLayout
     private lateinit var video: SurfaceView
     private lateinit var videoFrame: AspectRatioFrameLayout
     private lateinit var subtitles: SubtitleView
-    private lateinit var controls: PlayerControlView
-    private lateinit var status: TextView
-    private lateinit var castButton: MediaRouteButton
-    private var requestAccepted = false
-    private var castConfigured = false
-    private val networkPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            enablePlayback()
-            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) connectController()
-        } else {
-            status.text = "Allow Nearby devices in Aliflix's app permissions to send video to your TV. Tap Cast to open app settings."
-            status.visibility = View.VISIBLE
-            castButton.setOnClickListener {
-                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
-            }
-        }
-    }
+    private val progress get() = (application as AliflixApplication).playbackProgressStore
     private val displays by lazy { getSystemService(DisplayManager::class.java) }
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = updateOutput()
@@ -66,17 +66,21 @@ class NativePlayerActivity : FragmentActivity() {
     }
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) = updateOutput()
-        override fun onPlayerError(error: PlaybackException) {
-            status.text = "This stream could not play (${error.errorCodeName}). Return to Aliflix and try another server."
-            status.visibility = View.VISIBLE
-        }
     }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         requestAccepted = savedInstanceState?.getBoolean("requestAccepted") == true
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        hideSystemBars()
         val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
+        resolverHost = FrameLayout(this).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS }
+        root.addView(resolverHost, FrameLayout.LayoutParams(-1, -1))
+        receiverButton = androidx.mediarouter.app.MediaRouteButton(this).apply {
+            visibility = View.INVISIBLE; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        root.addView(receiverButton, FrameLayout.LayoutParams(1, 1))
         video = SurfaceView(this)
         video.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) = sendSurface()
@@ -87,121 +91,273 @@ class NativePlayerActivity : FragmentActivity() {
         root.addView(videoFrame, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         subtitles = SubtitleView(this)
         root.addView(subtitles, FrameLayout.LayoutParams(-1, -1))
-        status = TextView(this).apply { setTextColor(-1); textSize = 18f; gravity = Gravity.CENTER; setPadding(32, 72, 32, 72) }
-        root.addView(status, FrameLayout.LayoutParams(-1, -1))
-        controls = PlayerControlView(this).apply { showTimeoutMs = 0 }
-        root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-        val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(8, 12, 8, 8) }
-        bar.addView(Button(this).apply { text = "Back"; setOnClickListener { finish() } })
-        castButton = MediaRouteButton(this).apply { contentDescription = "Cast video to TV" }
-        castButton.setOnClickListener { networkPermission.launch(LOCAL_NETWORK_PERMISSION) }
-        bar.addView(castButton, LinearLayout.LayoutParams(56.dp, 48.dp))
-        bar.addView(Button(this).apply {
-            text = "Wireless display"
-            setOnClickListener {
-                runCatching { startActivity(Intent(Settings.ACTION_CAST_SETTINGS)) }.onFailure { status.text = "Wireless display settings are unavailable" }
-            }
-        })
-        bar.addView(Button(this).apply {
-            text = "Stop"
-            setOnClickListener {
-                controller?.stop(); controller?.clearMediaItems()
-                startService(Intent(this@NativePlayerActivity, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP))
-                finish()
-            }
-        })
-        root.addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        root.addView(ComposeView(this).apply {
+            setContent { AliflixMobileTheme {
+                NativePlayerScreen(ui, controller,
+                    onBack = { finish() }, onRetry = { triedServers.clear(); recoveryCount = 0; prepareSelection() },
+                    onServer = { prepareSelection() }, onStop = ::stopPlayback,
+                    onStopCast = {
+                        controller?.sendCustomCommand(SessionCommand(NativePlaybackService.ACTION_STOP_CAST, Bundle.EMPTY), Bundle.EMPTY)
+                    }, onWireless = {
+                        runCatching { startActivity(Intent(Settings.ACTION_CAST_SETTINGS)) }
+                            .onFailure { ui = ui.copy(message = "Wireless display settings are unavailable on this phone.") }
+                    }, onFit = { fill -> videoFrame.resizeMode = if (fill) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT },
+                    onRotate = { requestedOrientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE },
+                    onSubtitleSearch = { searchSubtitles() }, onSubtitle = ::applySubtitle, onReceiver = ::openReceiverPicker,
+                    onEpisode = { episode -> selection?.let { current ->
+                        selection = current.copy(seasonNumber = episode.seasonNumber, episodeNumber = episode.number, episodeTitle = episode.title)
+                        intent.putExtra("selection", selection!!.nativeJson()); triedServers.clear(); recoveryCount = 0; prepareSelection(positionMs = 0)
+                    } })
+            } }
+        }, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
-        if (hasLocalNetworkAccess()) enablePlayback()
-        else networkPermission.launch(LOCAL_NETWORK_PERMISSION)
+        acceptRequest(intent)
+        lifecycleScope.launch {
+            while (isActive) {
+                updateOutput()
+                val current = controller
+                if (preparation?.isActive != true && current?.playWhenReady == true && current.playbackState == Player.STATE_BUFFERING) {
+                    if (stalledSince == 0L) stalledSince = android.os.SystemClock.elapsedRealtime()
+                    if (android.os.SystemClock.elapsedRealtime() - stalledSince > 30_000) recover()
+                } else stalledSince = 0
+                delay(300)
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent); setIntent(intent); requestAccepted = false
-        if (hasLocalNetworkAccess()) enablePlayback()
+        super.onNewIntent(intent); setIntent(intent)
+        if (intent.hasExtra("selection") || intent.hasExtra("request") || intent.hasExtra("requestFile")) {
+            requestAccepted = false; triedServers.clear(); recoveryCount = 0; acceptRequest(intent)
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        outState.putBoolean("requestAccepted", requestAccepted)
-        super.onSaveInstanceState(outState)
+        outState.putBoolean("requestAccepted", requestAccepted); super.onSaveInstanceState(outState)
     }
 
-    private fun hasLocalNetworkAccess(): Boolean = android.os.Build.VERSION.SDK_INT < 37 ||
-        checkSelfPermission(LOCAL_NETWORK_PERMISSION) == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-    private fun enablePlayback() {
-        if (!castConfigured) {
-            castButton.setOnClickListener(null)
-            runCatching { CastButtonFactory.setUpMediaRouteButton(this, castButton) }
-            castConfigured = true
-        }
-        if (!requestAccepted) { acceptRequest(intent); requestAccepted = true }
-    }
+    private fun activeSelectionKey() = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it).key }.getOrNull() }
 
     private fun acceptRequest(intent: Intent) {
-        val raw = nativeRequestPayload(this, intent) ?: return
-        val file = intent.getStringExtra("requestFile")
-        intent.removeExtra("request")
-        intent.removeExtra("requestFile")
-        val service = Intent(this, NativePlaybackService::class.java)
-        if (file != null) service.putExtra("requestFile", file) else service.putExtra("request", raw)
-        if (NativePlaybackRequest.fromJson(raw).playing) androidx.core.content.ContextCompat.startForegroundService(this, service)
-        else startService(service)
+        selection = intent.getStringExtra("selection")?.let { runCatching { nativeSelection(it) }.getOrNull() }
+            ?: NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it) }.getOrNull() }
+        updateSelectionUi()
+        if (selection?.media?.type == com.aliflix.app.model.MediaType.TV && selection?.availableEpisodes.isNullOrEmpty()) {
+            val current = checkNotNull(selection)
+            episodeQueueJob?.cancel()
+            episodeQueueJob = lifecycleScope.launch {
+                try {
+                    val repository = com.aliflix.app.data.MobileEpisodeRepository(this@NativePlayerActivity,
+                        com.aliflix.app.recommendation.RecommendationAiClient(com.aliflix.app.BuildConfig.RECOMMENDATION_AI_BASE_URL))
+                    val episodes = repository.episodes(current.media.id, current.seasonNumber ?: 1)
+                    if (selection?.key == current.key) { selection = current.copy(availableEpisodes = episodes); updateSelectionUi() }
+                } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+            }
+        }
+        if (requestAccepted) {
+            if (selection != null && activeSelectionKey() != selection?.key) prepareSelection()
+            return
+        }
+        requestAccepted = true
+        val raw = runCatching { nativeRequestPayload(this, intent, consume = true) }.getOrNull()
+        intent.removeExtra("request"); intent.removeExtra("requestFile")
+        if (raw != null) {
+            runCatching { NativePlaybackRequest.fromJson(raw) }.onSuccess(::startNative)
+                .onFailure { ui = ui.copy(error = "The saved stream is no longer available. Please choose the title again.") }
+        } else if (selection != null && intent.hasExtra("selection") && (activeSelectionKey() != selection?.key || NativePlaybackService.activeStreamUrl == null)) prepareSelection()
+    }
+
+    private fun updateSelectionUi() {
+        if (introKey != selection?.key) {
+            introKey = selection?.key; introJob?.cancel(); ui = ui.copy(segments = emptyList())
+            selection?.let { current -> introJob = lifecycleScope.launch {
+                val markers = IntroDbRepository(this@NativePlayerActivity).segments(current)
+                if (selection?.key == current.key) ui = ui.copy(segments = markers)
+            } }
+        }
+        selection?.let { ui = ui.copy(title = it.media.title, detail = if (it.media.type == com.aliflix.app.model.MediaType.TV)
+            "S${it.seasonNumber ?: 1} · E${it.episodeNumber ?: 1}${it.episodeTitle?.let { title -> " · $title" }.orEmpty()}" else it.media.year.toString(),
+            artwork = it.media.backdropUrl, episodes = it.availableEpisodes, episodeNumber = it.episodeNumber) }
+    }
+
+    private fun prepareSelection(positionMs: Long? = null) {
+        val current = selection ?: return
+        val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition
+            ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
+        preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
+        controller?.pause()
+        ui = ui.copy(stage = "Finding the best stream", error = null, ready = false, subtitleTracks = emptyList(), message = null)
+        updateSelectionUi()
+        preparation = lifecycleScope.launch {
+            val initialSubtitles = async {
+                if (!intent.getBooleanExtra("autoSubtitles", true)) return@async ""
+                val repository = SubdlSubtitleRepository()
+                val tracks = repository.search(current).getOrDefault(emptyList())
+                ensureActive()
+                ui = ui.copy(subtitleTracks = tracks)
+                val code = intent.getStringExtra("subtitleLanguage") ?: "EN"
+                val track = tracks.firstOrNull { it.languageCode.equals(code, true) } ?: return@async ""
+                val cues = repository.download(track).getOrDefault(emptyList())
+                ensureActive()
+                if (cues.isEmpty()) "" else nativeSubtitlesVtt(JSONArray().apply {
+                    cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) }
+                }.toString(), 0.0)
+            }
+            var success = false
+            for (attempt in 0 until 9) {
+                if (success) break
+                ensureActive()
+                val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
+                resolver = adapter
+                var server = ""
+                try {
+                    val resolved = adapter.resolve(current, resume, triedServers) { label -> server = label; ui = ui.copy(server = label, stage = "Opening $label") }
+                    val request = resolved.copy(subtitlesVtt = withTimeoutOrNull(1500) { initialSubtitles.await() }.orEmpty())
+                    adapter.close(); resolver = null; hideSystemBars()
+                    ui = ui.copy(stage = "Preparing your video")
+                    startNative(request)
+                    withTimeout(25_000) {
+                        while (true) {
+                            ensureActive()
+                            if (NativePlaybackService.activeStreamUrl == request.url) {
+                                NativePlaybackService.playbackFailure?.let { throw it }
+                                if (NativePlaybackService.playbackReady && (NativePlaybackService.renderedStreamUrl == request.url || ui.external)) {
+                                    check(NativePlaybackService.hasSelectedAudio || ui.external) { "The stream has no supported audio track" }
+                                    break
+                                }
+                            }
+                            delay(200)
+                        }
+                    }
+                    success = true; ui = ui.copy(stage = null, ready = true, error = null)
+                    if (server.isNotBlank()) triedServers.add(server)
+                    if (ui.subtitleTracks.isEmpty()) searchSubtitles()
+                } catch (cancelled: CancellationException) {
+                    if (cancelled !is TimeoutCancellationException) throw cancelled
+                } catch (_: NoNativeServersException) {
+                    break
+                } catch (_: Exception) {
+                    // Retry with a fresh provider page and fresh signed stream URL.
+                } finally {
+                    adapter.close(); if (resolver === adapter) resolver = null; hideSystemBars()
+                }
+                if (!success) {
+                    controller?.stop()
+                    if (server.isNotBlank()) triedServers.add(server)
+                    ui = ui.copy(stage = "Trying another server")
+                    if (server.isBlank()) break // A failed provider page cannot supply another server.
+                }
+            }
+            initialSubtitles.cancel()
+            if (!success) ui = ui.copy(stage = null, error = "We couldn't prepare this title. Check your connection and try again. Some servers may be unavailable.")
+        }
+    }
+
+    private fun startNative(request: NativePlaybackRequest) {
+        val name = "native-request-${java.util.UUID.randomUUID()}.json"
+        java.io.File(cacheDir, name).writeText(request.toJson())
+        val service = Intent(this, NativePlaybackService::class.java).putExtra("requestFile", name)
+        if (request.playing) ContextCompat.startForegroundService(this, service) else startService(service)
+    }
+
+    private fun recover() {
+        if (selection == null || preparation?.isActive == true) return
+        stalledSince = 0
+        if (recoveryCount++ < 2) prepareSelection()
+        else ui = ui.copy(stage = null, error = "Playback was interrupted. Retry to reconnect or choose another server.")
+    }
+
+    private fun searchSubtitles(auto: Boolean = false) {
+        val current = selection ?: return
+        subtitleJob?.cancel()
+        subtitleJob = lifecycleScope.launch {
+            ui = ui.copy(subtitleLoading = true)
+            val result = SubdlSubtitleRepository().search(current)
+            ensureActive()
+            ui = ui.copy(subtitleLoading = false, subtitleTracks = result.getOrDefault(emptyList()),
+                subtitleError = result.exceptionOrNull()?.let { "Subtitles couldn't load. Tap Refresh to retry." })
+            if (auto) {
+                val code = intent.getStringExtra("subtitleLanguage") ?: "EN"
+                ui.subtitleTracks.firstOrNull { it.languageCode.equals(code, true) }?.let(::applySubtitle)
+            }
+        }
+    }
+
+    private fun applySubtitle(track: SubtitleTrack) {
+        subtitleJob?.cancel()
+        subtitleJob = lifecycleScope.launch {
+            ui = ui.copy(subtitleLoading = true)
+            val result = SubdlSubtitleRepository().download(track)
+            ensureActive()
+            result.onSuccess { cues ->
+                val request = NativePlaybackService.activeRequest ?: return@onSuccess
+                val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }
+                startNative(request.copy(subtitlesVtt = nativeSubtitlesVtt(json.toString(), 0.0),
+                    positionMs = controller?.currentPosition ?: request.positionMs, playing = controller?.playWhenReady ?: true))
+                ui = ui.copy(message = "${track.languageName} subtitles enabled")
+            }.onFailure { ui = ui.copy(subtitleError = "This subtitle couldn't load. Try another version.") }
+            ui = ui.copy(subtitleLoading = false)
+        }
     }
 
     override fun onStart() {
         super.onStart()
-        if (hasLocalNetworkAccess()) { enablePlayback(); connectController() }
-    }
-
-    private fun connectController() {
-        if (controllerFuture != null) return
         displays.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         val future = MediaController.Builder(this, SessionToken(this, ComponentName(this, NativePlaybackService::class.java))).buildAsync()
         controllerFuture = future
         future.addListener({
             if (controllerFuture !== future) return@addListener
-            runCatching { future.get() }.onSuccess {
-                controller = it; it.addListener(listener); controls.player = it; sendSurface(); updateOutput()
-            }.onFailure { status.text = "Unable to connect to playback controls" }
+            runCatching { future.get() }.onSuccess { controller = it; it.addListener(listener); sendSurface(); updateOutput() }
+                .onFailure { ui = ui.copy(error = "Unable to connect to playback. Please retry.") }
         }, mainExecutor)
     }
 
     private fun updateOutput() {
         val current = controller ?: return
-        val external = current.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE ||
-            displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).isNotEmpty()
-        video.visibility = if (external) View.GONE else View.VISIBLE
+        val external = !NativePlaybackService.castingSuppressed && (current.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE || displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).isNotEmpty())
+        videoFrame.visibility = if (external) View.INVISIBLE else View.VISIBLE
         val size = current.videoSize
         if (size.height > 0) videoFrame.setAspectRatio(size.width * size.pixelWidthHeightRatio / size.height)
-        subtitles.setCues(current.currentCues.cues)
-        subtitles.visibility = if (external) View.GONE else View.VISIBLE
-        status.text = when {
-            current.playerError != null -> "This stream could not play (${current.playerError?.errorCodeName}). Try another server."
-            external -> "Playing on your TV\nYou can use other apps. Playback controls are in notifications."
-            current.playbackState == Player.STATE_BUFFERING -> "Preparing video…"
-            current.mediaItemCount == 0 -> "Playback stopped"
-            else -> ""
+        subtitles.setCues(current.currentCues.cues); subtitles.visibility = if (external) View.GONE else View.VISIBLE
+        ui = ui.copy(external = external, revision = ui.revision + 1,
+            ready = ui.ready || (ui.stage == null && current.playbackState == Player.STATE_READY),
+            title = selection?.media?.title ?: current.mediaMetadata.title?.toString().orEmpty().ifBlank { "Aliflix" })
+        if (current.playerError != null && preparation?.isActive != true && ui.error == null) {
+            if (selection != null) recover() else ui = ui.copy(error = "This stream couldn't play. Choose the title again to get a fresh stream.")
         }
-        status.visibility = if (status.text.isEmpty()) View.GONE else View.VISIBLE
     }
 
+    private fun openReceiverPicker() {
+        ui = ui.copy(message = null)
+        val permission = "android.permission.ACCESS_LOCAL_NETWORK"
+        if (android.os.Build.VERSION.SDK_INT >= 37 && checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            receiverPermission.launch(permission); return
+        }
+        runCatching {
+            com.google.android.gms.cast.framework.CastButtonFactory.setUpMediaRouteButton(this, receiverButton)
+            receiverButton.showDialog()
+        }.onFailure { ui = ui.copy(message = "Google Cast is unavailable on this phone. Wireless display is available from the Cast button.") }
+    }
+
+    private fun stopPlayback() {
+        preparation?.cancel(); controller?.stop(); controller?.clearMediaItems()
+        startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
+    }
     override fun onStop() {
         displays.unregisterDisplayListener(displayListener)
-        sendSurface(clear = true); controls.player = null
-        controller?.removeListener(listener); controller = null
+        sendSurface(clear = true); controller?.removeListener(listener); controller = null
         controllerFuture?.let(MediaController::releaseFuture); controllerFuture = null
         super.onStop()
     }
-
-    private val Int.dp: Int get() = (this * resources.displayMetrics.density).toInt()
-
+    override fun onDestroy() {
+        preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
+    }
     private fun sendSurface(clear: Boolean = false) {
         val surface = video.holder.surface.takeIf { !clear && it.isValid }
-        controller?.sendCustomCommand(SessionCommand(NativePlaybackService.ACTION_PHONE_SURFACE, Bundle.EMPTY), Bundle().apply { putParcelable("surface", surface) })
+        NativePlaybackService.attachSurface(surfaceOwner, surface, tv = false)
     }
-
-    private companion object {
-        const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
+    private fun hideSystemBars() = WindowInsetsControllerCompat(window, window.decorView).let {
+        it.hide(WindowInsetsCompat.Type.systemBars()); it.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 }

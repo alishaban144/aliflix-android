@@ -5,11 +5,11 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.60"
+      - "release/v3.1.61"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.60"
+        description: "Release tag, for example v3.1.61"
         required: true
         type: string
       notes:
@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "150"
-  RELEASE_VERSION_NAME: "3.1.60"
+  RELEASE_VERSION_CODE: "151"
+  RELEASE_VERSION_NAME: "3.1.61"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -253,7 +253,7 @@ jobs:
             "apkUrl": "${DOWNLOAD_URL}",
             "sha256": "${SHA256}",
             "sizeBytes": ${SIZE},
-            "releaseNotes": "Replaces browser keep-alive casting with service-owned native video, direct Google Cast, full-screen wireless-display output, and notification playback controls. Preserves playback position and selected subtitles. Use Cast video to TV, or Wireless display for TVs that expose a separate display. Ordinary screen mirroring without a separate display cannot show independent video while other phone apps are in use."
+            "releaseNotes": "Phone player redesign with automatic native stream preparation, preferred Vid, Mist, Mistify, Flix and Peach servers, IntroDB skip intro/outro buttons, native audio/subtitle/quality controls, faster cached episode lists, direct wireless-display settings and Stop casting. Playback runs in a foreground media service with notification controls and independent TV output. Screen-off casting requires a system route that keeps the external display connected and powered; phone mirroring power policy remains controlled by Android and the device manufacturer."
           }
           EOF
           cp "$APK_PATH" aliflix-mobile.apk
@@ -264,7 +264,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Replaces browser keep-alive casting with service-owned native video, direct Google Cast, full-screen wireless-display output, and notification playback controls. Preserves playback position and selected subtitles. Use Cast video to TV, or Wireless display for TVs that expose a separate display. Ordinary screen mirroring without a separate display cannot show independent video while other phone apps are in use."
+          body: "Phone player redesign with automatic native stream preparation, preferred Vid, Mist, Mistify, Flix and Peach servers, IntroDB skip intro/outro buttons, native audio/subtitle/quality controls, faster cached episode lists, direct wireless-display settings and Stop casting. Playback runs in a foreground media service with notification controls and independent TV output. Screen-off casting requires a system route that keeps the external display connected and powered; phone mirroring power policy remains controlled by Android and the device manufacturer."
           files: |
             aliflix-mobile.apk
             update-mobile.json

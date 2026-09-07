@@ -5,6 +5,7 @@ import { ContinuationReservation, createCursor, parseCursor, RecommendationSessi
 import { RecommendationEnv, RecommendationResponse, RecommendationResult, ServiceError } from './types';
 import { companySearch, editorialPicks, homeFeed, personCredits, titleDetails, titleSearch, tvNetworkFeed } from './catalog';
 import { downloadSubdlSubtitle, searchSubdlSubtitles } from './subdl';
+import { TmdbClient } from './tmdb';
 
 export { RecommendationSession };
 
@@ -241,6 +242,16 @@ export default {
       } catch (error) { return errorResponse(error); }
     }
     const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);
+    const seasonMatch = /^\/v3\/tv\/([1-9]\d{0,8})\/seasons(?:\/(\d{1,4}))?$/.exec(url.pathname);
+    if (seasonMatch) {
+      if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
+      try {
+        await enforceRateLimit(request, env);
+        const tmdb = new TmdbClient(env, 3);
+        return catalogJson(seasonMatch[2] === undefined ? await tmdb.seasons(Number(seasonMatch[1]))
+          : await tmdb.episodes(Number(seasonMatch[1]), Number(seasonMatch[2])));
+      } catch (error) { return errorResponse(error); }
+    }
     const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);
     const isEditorialPicks = url.pathname === '/v3/editorial-picks';
     const isHomeFeed = url.pathname === '/v3/home';

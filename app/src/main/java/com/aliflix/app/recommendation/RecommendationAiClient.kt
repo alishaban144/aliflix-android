@@ -33,6 +33,12 @@ class RecommendationAiClient(
         V3TitleDetails.fromJson(JSONObject(getJson("$baseUrl/v3/titles/$mediaType/$tmdbId")))
     }
 
+    suspend fun getSeasonDocument(tmdbId: Int, season: Int? = null): JSONObject = withContext(ioDispatcher) {
+        require(tmdbId > 0 && (season == null || season >= 0))
+        JSONObject(getJson("$baseUrl/v3/tv/$tmdbId/seasons${season?.let { "/$it" }.orEmpty()}"))
+            .also { require(it.getInt("tmdbId") == tmdbId && (season == null || it.getInt("seasonNumber") == season)) }
+    }
+
     suspend fun getPersonCredits(tmdbId: Int): V3PersonCredits = withContext(ioDispatcher) {
         require(tmdbId > 0) { "A valid TMDB person ID is required." }
         V3PersonCredits

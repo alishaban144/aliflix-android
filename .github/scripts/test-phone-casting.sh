@@ -50,7 +50,7 @@ for setting in window_animation_scale transition_animation_scale animator_durati
   adb -s emulator-5554 shell settings put global "$setting" 0
 done
 echo "Android phone API $API ready; running decoded-frame and notification regressions."
-classes=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest
+classes=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest,com.aliflix.app.player.NativeSkipControlsTest
 if [ "$API" = 37.0 ]; then
   # Use the same ADB installation/instrumentation path validated locally on Android 17.
   ./gradlew assembleMobileDebug assembleMobileDebugAndroidTest --no-daemon --console=plain
@@ -58,8 +58,8 @@ if [ "$API" = 37.0 ]; then
   adb -s emulator-5554 install -r app/build/outputs/apk/androidTest/mobile/debug/app-mobile-debug-androidTest.apk
   adb -s emulator-5554 shell am instrument -w -r -e class "$classes" \
     com.aliflix.app.test/androidx.test.runner.AndroidJUnitRunner | tee .validation/instrumentation.txt
-  # am instrument can exit zero even when assertions fail. Require both tests to pass.
-  tr -d '\r' < .validation/instrumentation.txt | grep -Fxq 'OK (2 tests)'
+  # am instrument can exit zero even when assertions fail. Require all four tests to pass.
+  tr -d '\r' < .validation/instrumentation.txt | grep -Fxq 'OK (4 tests)'
 else
   ./gradlew connectedMobileDebugAndroidTest \
     -Pandroid.testInstrumentationRunnerArguments.class="$classes" --no-daemon --console=plain

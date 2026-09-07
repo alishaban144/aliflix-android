@@ -1044,10 +1044,11 @@ class CatalogClient(
 
     suspend fun details(
         item: Media,
+        nativeMetadata: Boolean = false,
         onProgress: suspend (Media, List<Media>?) -> Unit,
     ) = supervisorScope {
-        val current = catalogue.firstOrNull { it.key == item.key } ?: item
-        val pageHtml = suspendOrNull {
+        val current = if (nativeMetadata) item else catalogue.firstOrNull { it.key == item.key } ?: item
+        val pageHtml = if (nativeMetadata) null else suspendOrNull {
             pageLoader(
                 "$TMDB_SITE_URL/${item.type.routeName}/${item.id}?language=en-US",
             )
@@ -1089,24 +1090,28 @@ class CatalogClient(
         onProgress(metadataWithPendingRatings, recommendations)
 
         var omdbEnriched = metadataWithPendingRatings
-        if (metadata.imdbId?.matches(Regex("tt\\d{5,12}")) == true) {
-            try {
-                val req = com.aliflix.app.data.omdb.OmdbLookupRequest(
-                    imdbId = metadata.imdbId,
-                    title = metadata.title,
-                    year = fourDigitYear.find(metadata.year)?.value?.toIntOrNull(),
-                    mediaType = metadata.type.routeName,
-                )
-                val omdbMeta = omdbClient.lookup(req)
-                if (omdbMeta != null && omdbMeta.found) {
-                    omdbEnriched = omdbEnriched.mergeWithOmdb(omdbMeta)
-                    catalogue = listOf(omdbEnriched) + catalogue.filterNot { it.key == omdbEnriched.key }
-                    onProgress(omdbEnriched, recommendations)
-                }
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {}
+        suspend fun enrichOmdb() {
+            if (metadata.imdbId?.matches(Regex("tt\\d{5,12}")) == true) {
+                try {
+                    val req = com.aliflix.app.data.omdb.OmdbLookupRequest(
+                        imdbId = metadata.imdbId,
+                        title = metadata.title,
+                        year = fourDigitYear.find(metadata.year)?.value?.toIntOrNull(),
+                        mediaType = metadata.type.routeName,
+                    )
+                    val omdbMeta = omdbClient.lookup(req)
+                    if (omdbMeta != null && omdbMeta.found) {
+                        omdbEnriched = (if (nativeMetadata) catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched else omdbEnriched).mergeWithOmdb(omdbMeta)
+                        catalogue = listOf(omdbEnriched) + catalogue.filterNot { it.key == omdbEnriched.key }
+                        onProgress(omdbEnriched, recommendations)
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {}
+            }
+
         }
+        val omdbJob = if (nativeMetadata) async { enrichOmdb() } else { enrichOmdb(); null }
 
         val imdbJob = async {
             try {
@@ -1215,6 +1220,14 @@ class CatalogClient(
         imdbJob.await()
         rtJob.await()
         reviewsJob.await()
+        omdbJob?.await()
+    }
+
+    suspend fun mobileEpisodeRatings(item: Media, season: Int, episodes: List<Episode>): List<Episode> {
+        val ratings = imdbRatingRepository.ratingsForEpisodes(item, season, episodes)
+        return episodes.map { episode -> ratings[episode.number]?.let { rating ->
+            episode.copy(imdbId = rating.imdbId, imdbRating = rating.rating, imdbVoteCount = rating.voteCount, imdbRatingState = rating.state)
+        } ?: episode.copy(imdbRatingState = RatingSourceState.UNAVAILABLE) }
     }
 
     suspend fun seasons(item: Media): List<Season> {

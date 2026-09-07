@@ -921,7 +921,89 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _genre.value = GenreUiState()
     }
 
+    private val mobileEpisodes by lazy { com.aliflix.app.data.MobileEpisodeRepository(getApplication(), aiClient) }
+    private val mobileDetailCache = object : LinkedHashMap<String, Media>(32, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Media>?) = size > 60
+    }
+
+    private var episodePrefetchJob: Job? = null
+    fun preloadRecentlyWatchedEpisodes() {
+        if (BuildConfig.IS_TV) return
+        episodePrefetchJob?.cancel()
+        episodePrefetchJob = viewModelScope.launch {
+            recent.value.filter { it.type == MediaType.TV }.take(3).forEach { show ->
+                val season = playbackProgressStore.entries.value.values.filter { it.media.key == show.key }
+                    .maxByOrNull { it.updatedAtMillis }?.seasonNumber ?: 1
+                try { mobileEpisodes.episodes(show.id, season); mobileEpisodes.seasons(show.id) }
+                catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+            }
+        }
+    }
+
+    private fun openMobileDetails(item: Media) {
+        detailJob?.cancel(); episodeJob?.cancel()
+        val initial = mobileDetailCache[item.key] ?: item
+        val season = playbackProgressStore.entries.value.values.filter { it.media.key == item.key }
+            .maxByOrNull { it.updatedAtMillis }?.seasonNumber ?: 1
+        _detail.value = DetailUiState(item = initial, selectedSeason = season, episodesLoading = item.type == MediaType.TV)
+        if (item.type == MediaType.TV) loadMobileSeason(initial, season)
+        detailJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
+            if (item.type == MediaType.TV) launch {
+                try {
+                    val seasons = mobileEpisodes.seasons(item.id)
+                    if (_detail.value.item?.key == item.key) _detail.value = _detail.value.copy(seasons = seasons)
+                } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+            }
+            launch {
+                try {
+                    val details = aiClient.getTitleDetails(item.type.routeName, item.id)
+                    if (_detail.value.item?.key == item.key) {
+                        val stable = details.toStableMobileMedia(_detail.value.item ?: initial)
+                        _detail.value = _detail.value.copy(item = stable, recommendations = details.recommendations.map { it.toMedia() })
+                        mobileDetailCache[item.key] = stable
+                    }
+                } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+            }
+            launch {
+                try {
+                    client.details(initial, nativeMetadata = true) { update, _ ->
+                        val current = _detail.value
+                        if (current.item?.key == item.key) {
+                            val merged = current.item.mergeStableMobileDetailUpdate(update)
+                            _detail.value = current.copy(item = merged)
+                            mobileDetailCache[item.key] = merged; library.refreshMetadata(merged)
+                        }
+                    }
+                } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+            }
+        }
+    }
+
+    private fun loadMobileSeason(item: Media, season: Int) {
+        episodeJob?.cancel()
+        _detail.value = _detail.value.copy(selectedSeason = season, episodes = emptyList(), episodesLoading = true, error = null)
+        episodeJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
+            fun publish(episodes: List<Episode>) {
+                val latest = _detail.value
+                if (latest.item?.key == item.key && latest.selectedSeason == season) _detail.value = latest.copy(episodes = episodes, episodesLoading = false)
+            }
+            try {
+                val episodes = mobileEpisodes.episodes(item.id, season) { publish(it) }
+                publish(episodes)
+                // Ratings enrich visible rows; they never gate the list or the Play action.
+                val enriched = client.mobileEpisodeRatings(_detail.value.item ?: item, season, episodes)
+                publish(enriched)
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (error: Exception) {
+                val latest = _detail.value
+                if (latest.item?.key == item.key && latest.selectedSeason == season) _detail.value = latest.copy(episodesLoading = false,
+                    error = if (latest.episodes.isEmpty()) "Episodes couldn't load. Select the season to retry." else null)
+            }
+        }
+    }
+
     fun openDetails(item: Media) {
+        if (!BuildConfig.IS_TV) { openMobileDetails(item); return }
         detailJob?.cancel()
         episodeJob?.cancel()
         _detail.value = DetailUiState(loading = true, item = item)
@@ -1017,6 +1099,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun selectSeason(number: Int) {
+        if (!BuildConfig.IS_TV) {
+            val item = _detail.value.item ?: return
+            if (item.type == MediaType.TV && (number != _detail.value.selectedSeason || _detail.value.episodes.isEmpty())) loadMobileSeason(item, number)
+            return
+        }
         val current = _detail.value
         val item = current.item ?: return
         if (item.type != MediaType.TV || number == current.selectedSeason) return

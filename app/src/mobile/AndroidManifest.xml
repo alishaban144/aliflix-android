@@ -15,6 +15,10 @@
         <activity android:name=".player.NativePlayerActivity"
             android:theme="@style/Theme.Aliflix.NativePlayer" android:launchMode="singleTask"
             android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity android:name=".player.NativeCastActivity" android:exported="false"
+            android:theme="@style/Theme.Aliflix.NativePlayer" android:taskAffinity="com.aliflix.app.wirelessdisplay"
+            android:excludeFromRecents="true" android:launchMode="singleTask" android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
         <service android:name=".player.NativePlaybackService" android:exported="false"
             android:foregroundServiceType="mediaPlayback" android:stopWithTask="false">
             <intent-filter><action android:name="androidx.media3.session.MediaSessionService" /></intent-filter>
