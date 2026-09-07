@@ -35,9 +35,15 @@ class NativeSkipControlsTest {
         }
         try {
             compose.setContent { AliflixMobileTheme {
-                NativePlayerScreen(NativePlayerUi(title = "Aliflix", ready = true, revision = revision.intValue,
-                    segments = listOf(IntroSegment(IntroSegmentKind.INTRO, 12000, 34000), IntroSegment(IntroSegmentKind.OUTRO, 70000, 80000))),
-                    player, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+                NativePlayerScreen(
+                    state = NativePlayerUi(
+                        title = "Aliflix",
+                        ready = true,
+                        revision = revision.intValue,
+                        segments = listOf(IntroSegment(IntroSegmentKind.INTRO, 12000, 34000), IntroSegment(IntroSegmentKind.OUTRO, 70000, 80000))
+                    ),
+                    player = player
+                )
             } }
             compose.onNodeWithText("Skip intro").assertDoesNotExist()
             compose.runOnIdle { position = 12000; revision.intValue++ }
