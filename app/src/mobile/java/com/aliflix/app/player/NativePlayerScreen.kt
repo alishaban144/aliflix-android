@@ -393,6 +393,13 @@ internal fun NativePlayerScreen(
                         }
 
                         IconButton(
+                            onClick = { locked = true; interaction++ },
+                            modifier = Modifier.size(40.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
+                        ) {
+                            Icon(Icons.Default.Lock, "Lock controls", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+
+                        IconButton(
                             onClick = { sheet = "More"; interaction++ },
                             modifier = Modifier.size(40.dp).background(Color.White.copy(alpha = 0.08f), CircleShape)
                         ) {
