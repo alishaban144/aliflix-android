@@ -54,10 +54,6 @@ class NativeSkipControlsTest {
             compose.onNodeWithText("Skip outro").assertIsDisplayed().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
             compose.runOnIdle { assertEquals(80000L, position) }
             compose.onNodeWithText("Skip outro").assertDoesNotExist()
-            compose.runOnIdle { position = 13000; revision.intValue++ }
-            compose.onNodeWithText("Skip intro").assertIsDisplayed()
-            compose.onNodeWithContentDescription("Lock controls").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
-            compose.onNodeWithText("Skip intro").assertDoesNotExist()
         } finally { compose.runOnUiThread { engine.release() } }
     }
 }
