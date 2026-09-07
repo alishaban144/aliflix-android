@@ -223,12 +223,9 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew \
-            testMobileDebugUnitTest \
-            testTvDebugUnitTest \
-            lintMobileDebug \
-            packageMobileRelease \
-            packageTvRelease
+          ./gradlew testMobileDebugUnitTest testTvDebugUnitTest
+          ./gradlew lintMobileDebug
+          ./gradlew packageMobileRelease packageTvRelease
 
       - name: Verify release APKs integrity
         run: |
