@@ -65,6 +65,7 @@ class NativePlaybackService : MediaSessionService() {
     private var relay: CastStreamRelay? = null
     private var request: NativePlaybackRequest? = null
     private var originalItem: MediaItem? = null
+    private val subtitleFiles = mutableListOf<java.io.File>()
     private var selection: PlaybackSelection? = null
     private var presentation: Presentation? = null
     private var presentationPlayerView: PlayerView? = null
@@ -379,6 +380,7 @@ class NativePlaybackService : MediaSessionService() {
         runCatching { presentation?.dismiss() }
         session?.release(); session = null
         player.release()
+        subtitleFiles.forEach { it.delete() }; subtitleFiles.clear()
         relay?.close(); relay = null
         wifiLock?.takeIf { it.isHeld }?.release(); wifiLock = null
         relayWakeLock?.takeIf { it.isHeld }?.release(); relayWakeLock = null
@@ -426,14 +428,28 @@ class NativePlaybackService : MediaSessionService() {
             service.request = updated
             activeRequest = updated
             service.relay?.updateSubtitles(vtt)
-            if (vtt.isNotBlank()) {
-                val file = java.io.File(service.cacheDir, "native-playback-subtitles.vtt").apply { writeText(vtt) }
-                val lang = updated.subtitleLanguage.ifBlank { "en" }
-                service.player.trackSelectionParameters = service.player.trackSelectionParameters.buildUpon()
-                    .setPreferredTextLanguage(lang)
-                    .setSelectUndeterminedTextLanguage(true)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                    .build()
+            val lang = updated.subtitleLanguage.ifBlank { "en" }
+            val configs = if (vtt.isBlank()) emptyList() else {
+                // A new URI prevents a previously parsed track from retaining old text/timing.
+                val file = java.io.File(service.cacheDir, "native-subtitles-${java.util.UUID.randomUUID()}.vtt").apply { writeText(vtt) }
+                service.subtitleFiles.add(file)
+                listOf(MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(file))
+                    .setMimeType("text/vtt").setLanguage(lang).setLabel(updated.subtitleLabel)
+                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build())
+            }
+            service.player.trackSelectionParameters = service.player.trackSelectionParameters.buildUpon()
+                .setPreferredTextLanguage(lang).setSelectUndeterminedTextLanguage(true)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, vtt.isBlank()).build()
+            val item = service.originalItem?.buildUpon()?.setSubtitleConfigurations(configs)?.build() ?: return
+            service.originalItem = item
+            // Progressive sources may accept replaceMediaItem without rebuilding their merged
+            // text sources. Explicitly prepare the updated item at the same playback position.
+            if (service.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL && service.player.currentMediaItemIndex >= 0) {
+                val position = service.player.currentPosition
+                val playing = service.player.playWhenReady
+                service.player.setMediaItem(item, position)
+                service.player.prepare()
+                service.player.playWhenReady = playing
             }
         }
 

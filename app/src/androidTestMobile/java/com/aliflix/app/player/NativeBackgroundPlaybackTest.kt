@@ -191,7 +191,7 @@ class NativeBackgroundPlaybackTest {
         fail("$description timed out")
     }
 
-    private class FixtureServer(private val bytes: ByteArray) : AutoCloseable {
+    internal class FixtureServer(private val bytes: ByteArray) : AutoCloseable {
         private val socket = ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${socket.localPort}/cast-test.mp4"
         init { thread(isDaemon = true) { while (!socket.isClosed) {

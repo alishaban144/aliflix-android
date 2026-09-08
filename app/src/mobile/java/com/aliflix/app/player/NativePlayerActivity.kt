@@ -98,6 +98,7 @@ class NativePlayerActivity : FragmentActivity() {
         hideSystemBars()
         val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
         playerRoot = root
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateSubtitlePadding() }
         resolverHost = FrameLayout(this).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS }
         root.addView(resolverHost, FrameLayout.LayoutParams(-1, -1))
         receiverButton = androidx.mediarouter.app.MediaRouteButton(this).apply {
@@ -286,6 +287,9 @@ class NativePlayerActivity : FragmentActivity() {
         val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition?.takeIf { it > 0 }
             ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
+        activeSubtitleCues = emptyList()
+        activeSubtitleCuesJson = null
+        subtitles.setCues(emptyList())
         controller?.pause()
         if (preferredServer != null) {
             triedServers.remove(preferredServer)
@@ -298,6 +302,7 @@ class NativePlayerActivity : FragmentActivity() {
             server = preferredServer ?: ui.server,
             availableServers = defaultServers,
             subtitleTracks = emptyList(),
+            activeSubtitleTrack = null,
             message = null,
         )
         updateSelectionUi()
@@ -319,6 +324,8 @@ class NativePlayerActivity : FragmentActivity() {
                     activeSubtitleCuesJson = json
                     activeSubtitleCues = cues
                     ui = ui.copy(activeSubtitleTrack = track)
+                    updateSubtitleCues()
+                    updateSubtitlePadding()
                     nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
                 }
             }
@@ -445,6 +452,7 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun disableSubtitles() {
+        subtitleJob?.cancel()
         activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
         subtitles.setCues(emptyList())
@@ -472,36 +480,26 @@ class NativePlayerActivity : FragmentActivity() {
 
     private var lastControlsVisible = true
 
+    private val subtitleLayoutUpdate = Runnable { applySubtitlePadding() }
+
     private fun updateSubtitlePadding(controlsVisible: Boolean = lastControlsVisible) {
         lastControlsVisible = controlsVisible
         if (!::subtitles.isInitialized) return
+        // The video frame is laid out before its subtitle sibling. Changing sibling padding
+        // during that layout can leave its canvas measured with the previous viewport until
+        // another UI action requests layout. Apply only after the complete layout pass.
+        subtitles.removeCallbacks(subtitleLayoutUpdate)
+        subtitles.post(subtitleLayoutUpdate)
+    }
+
+    private fun applySubtitlePadding() {
+        if (!::playerRoot.isInitialized || playerRoot.height <= 0 || subtitles.height <= 0) return
         val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
         val density = resources.displayMetrics.density
         val offsetPx = (settingsStore.settings.value.subtitleVerticalOffsetDp * density).toInt()
-
+        val controlsVisible = lastControlsVisible
         val bottomPx = if (isPortrait) {
-            val rootH = if (::playerRoot.isInitialized && playerRoot.height > 0) {
-                playerRoot.height
-            } else {
-                resources.displayMetrics.heightPixels
-            }
-            val vfHeight = if (::videoFrame.isInitialized && videoFrame.height > 0) {
-                videoFrame.height
-            } else {
-                val size = controller?.videoSize
-                if (size != null && size.height > 0 && resources.displayMetrics.widthPixels > 0) {
-                    val aspect = (size.width.toFloat() * size.pixelWidthHeightRatio) / size.height
-                    (resources.displayMetrics.widthPixels / aspect).toInt()
-                } else {
-                    0
-                }
-            }
-            val spaceBelowPx = if (vfHeight > 0 && rootH > vfHeight) {
-                (rootH - vfHeight) / 2
-            } else {
-                0
-            }
-
+            val spaceBelowPx = (playerRoot.height - videoFrame.bottom).coerceAtLeast(0)
             if (spaceBelowPx > (40 * density)) {
                 // Directly under the video in portrait letterbox space
                 (spaceBelowPx - (32 * density).toInt() + offsetPx).coerceAtLeast((16 * density).toInt())
@@ -514,7 +512,11 @@ class NativePlayerActivity : FragmentActivity() {
             ((baseDp * density).toInt() + offsetPx).coerceAtLeast(0)
         }
         val horizontalPx = (16 * density).toInt()
-        subtitles.setPadding(horizontalPx, 0, horizontalPx, bottomPx)
+        val textHeight = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
+            settingsStore.settings.value.subtitleFontSizeSp * 3, resources.displayMetrics).toInt()
+        val safeBottom = bottomPx.coerceIn(0, (subtitles.height - textHeight).coerceAtLeast(0))
+        subtitles.setBottomPaddingFraction(0f)
+        subtitles.setPadding(horizontalPx, 0, horizontalPx, safeBottom)
     }
 
     private fun applySubtitleStyle() {
@@ -681,6 +683,7 @@ class NativePlayerActivity : FragmentActivity() {
     }
     override fun onDestroy() {
         recordCurrentProgress(urgent = true)
+        if (::subtitles.isInitialized) subtitles.removeCallbacks(subtitleLayoutUpdate)
         subtitleRenderJob?.cancel()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); subtitleSyncDebounceJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
     }

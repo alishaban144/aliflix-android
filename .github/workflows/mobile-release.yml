@@ -5,12 +5,12 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.69"
+      - "release/v3.1.70"
       - "release/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.69"
+        description: "Release tag, for example v3.1.70"
         required: true
         type: string
       notes:
@@ -22,8 +22,10 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "159"
-  RELEASE_VERSION_NAME: "3.1.69"
+  RELEASE_VERSION_CODE: "160"
+  RELEASE_VERSION_NAME: "3.1.70"
+  PRESERVED_TV_VERSION_CODE: "159"
+  PRESERVED_TV_VERSION_NAME: "3.1.69"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -191,8 +193,8 @@ jobs:
 
           test "$GRADLE_VERSION_CODE" = "$RELEASE_VERSION_CODE"
           test "$GRADLE_VERSION_NAME" = "$RELEASE_VERSION_NAME"
-          test "$TV_GRADLE_VERSION_CODE" = "$RELEASE_VERSION_CODE"
-          test "$TV_GRADLE_VERSION_NAME" = "$RELEASE_VERSION_NAME"
+          test "$TV_GRADLE_VERSION_CODE" = "$PRESERVED_TV_VERSION_CODE"
+          test "$TV_GRADLE_VERSION_NAME" = "$PRESERVED_TV_VERSION_NAME"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             test "$REQUESTED_TAG" = "$EXPECTED_TAG"
           elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
@@ -247,7 +249,7 @@ jobs:
           echo "Expected certificate SHA256: $EXPECTED_MOBILE_SIGNER_SHA256"
           test "$KEYSTORE_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
-      - name: Test and build mobile and TV releases
+      - name: Test and build phone release
         env:
           ALIFLIX_KEYSTORE_FILE: ${{ runner.temp }}/aliflix-release.jks
           ALIFLIX_KEYSTORE_PASSWORD: ${{ secrets.ALIFLIX_KEYSTORE_PASSWORD }}
@@ -256,9 +258,9 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew testMobileDebugUnitTest testTvDebugUnitTest
+          ./gradlew testMobileDebugUnitTest
           ./gradlew lintMobileDebug
-          ./gradlew packageMobileRelease packageTvRelease
+          ./gradlew packageMobileRelease
 
       - name: Verify release APKs integrity
         run: |
@@ -266,7 +268,7 @@ jobs:
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
 
-          for FLAVOR in mobile tv; do
+          for FLAVOR in mobile; do
             APK_PATH="app/build/outputs/apk/${FLAVOR}/release/app-${FLAVOR}-release.apk"
             echo "Verifying $APK_PATH..."
             test -s "$APK_PATH"
@@ -288,7 +290,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Added robust OpenSubtitles integration with direct unlimited streams, eliminated 403/429 errors, enhanced SubDL download proxy with API key credentials, and prioritized English (EN) subtitles first."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Phone subtitles load and render automatically without adjusting Vertical Shift. Fixed initial caption layout, late subtitle attachment, caption switching and restoration after reopening the player. Preserves playback position and pause state. TV remains on v3.1.69."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -310,25 +312,21 @@ jobs:
           EOF
           cp "$MOBILE_APK" aliflix-mobile.apk
 
-          # TV APK and manifest
-          TV_APK="app/build/outputs/apk/tv/release/app-tv-release.apk"
-          TV_SHA256="$(sha256sum "$TV_APK" | awk '{print $1}')"
-          TV_SIZE="$(stat -c %s "$TV_APK")"
-          TV_DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/aliflix-tv.apk"
-
-          cat <<EOF > update-tv.json
-          {
-            "versionCode": ${RELEASE_VERSION_CODE},
-            "versionName": "${RELEASE_VERSION_NAME}-tv",
-            "apkUrl": "${TV_DOWNLOAD_URL}",
-            "sha256": "${TV_SHA256}",
-            "sizeBytes": ${TV_SIZE},
-            "minimumSdk": 30,
-            "notes": "${RELEASE_NOTES}",
-            "releaseNotes": "${RELEASE_NOTES}"
-          }
-          EOF
-          cp "$TV_APK" aliflix-tv.apk
+          # Keep the existing TV update available through /releases/latest without rebuilding TV.
+          TV_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${PRESERVED_TV_VERSION_NAME}"
+          curl --fail --location --retry 3 "$TV_BASE/update-tv.json" -o update-tv.json
+          curl --fail --location --retry 3 "$TV_BASE/aliflix-tv.apk" -o aliflix-tv.apk
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, zipfile
+          metadata = json.loads(pathlib.Path('update-tv.json').read_text())
+          apk = pathlib.Path('aliflix-tv.apk')
+          assert metadata['versionCode'] == int(os.environ['PRESERVED_TV_VERSION_CODE'])
+          assert metadata['versionName'] == os.environ['PRESERVED_TV_VERSION_NAME'] + '-tv'
+          assert hashlib.sha256(apk.read_bytes()).hexdigest() == metadata['sha256']
+          assert apk.stat().st_size == metadata['sizeBytes']
+          with zipfile.ZipFile(apk) as archive:
+              assert archive.testzip() is None
+          PY
 
       - name: Create or update release
         uses: softprops/action-gh-release@v2
@@ -336,7 +334,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Fixed subtitle playback display with dedicated real-time cue rendering, ExoPlayer forced text track selection, seamless instant subtitle switching without reloading, and OpenSubtitles unlimited direct streams."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Phone subtitles load and render automatically without adjusting Vertical Shift. Fixed initial caption layout, late subtitle attachment, caption switching and restoration after reopening the player. Preserves playback position and pause state. TV remains on v3.1.69."
           files: |
             aliflix-mobile.apk
             aliflix-tv.apk
