@@ -7,6 +7,8 @@ import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.PlaybackSelection
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 internal class NoNativeServersException : Exception()
 
@@ -19,12 +21,33 @@ internal class NativeStreamResolver(
     private var web: WebPlayerController? = null
     private var view: FrameLayout? = null
     private var closed = false
+    private val children = mutableListOf<NativeStreamResolver>()
 
     suspend fun resolve(
         selection: PlaybackSelection,
         positionMs: Long,
         excluded: Set<String>,
         preferredServer: String? = null,
+        onServer: (String) -> Unit,
+    ): NativePlaybackRequest {
+        val candidates = preferredNativeEmbeds(selection).filter { it.first !in excluded }
+        if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, onServer)
+        val winner = try { firstSuccessful(candidates.map { (name, _) -> suspend {
+            val child = NativeStreamResolver(activity, progress, host)
+            children.add(child)
+            try { name to child.resolveSingle(selection, positionMs, excluded, name) {} }
+            finally { child.close(); children.remove(child) }
+        } }, parallelism = 2) } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            // Preferred embeds may all be unavailable while the catalogue has another server.
+            return resolveSingle(selection, positionMs, excluded + candidates.map { it.first }, null, onServer)
+        }
+        onServer(winner.first)
+        return winner.second
+    }
+
+    private suspend fun resolveSingle(
+        selection: PlaybackSelection, positionMs: Long, excluded: Set<String>, preferredServer: String?,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest = withTimeout(45_000) {
         val allDirect = preferredNativeEmbeds(selection)
@@ -79,6 +102,8 @@ internal class NativeStreamResolver(
     override fun close() {
         if (closed) return
         closed = true
+        children.toList().forEach { it.close() }
+        children.clear()
         web?.destroy(); web = null; view?.let { host.removeView(it) }; view = null
     }
 }

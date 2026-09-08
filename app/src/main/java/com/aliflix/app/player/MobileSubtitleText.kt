@@ -94,6 +94,16 @@ internal fun mobileSubtitleCandidates(
             val identity = episodePattern.find(track.fileName) ?: episodePattern.find(track.releaseName)
             season == null || episode == null || identity == null ||
                 (identity.groupValues[1].toInt() == season && identity.groupValues[2].toInt() == episode)
-        }.sortedWith(compareByDescending<SubtitleTrack>(::score).thenBy { it.hearingImpaired }
+        }.sortedWith(compareByDescending<SubtitleTrack> { it.hashMatched }.thenByDescending(::score).thenBy { it.hearingImpaired }
             .thenBy { it.format.lowercase() !in setOf("srt", "vtt") })
 }
+
+internal fun normalizeMobileSubtitleTracks(tracks: List<SubtitleTrack>): List<SubtitleTrack> = tracks.map { track ->
+    val code = canonicalSubtitleLanguageCode(track.languageCode).let { raw ->
+        if (raw in setOf("SUB", "UNKNOWN", "UND")) canonicalSubtitleLanguageCode(track.languageName) else raw
+    }
+    val name = com.aliflix.app.model.SubtitleLanguage.entries.firstOrNull { it.code == code }?.displayName
+        ?: java.util.Locale.forLanguageTag(code.lowercase()).getDisplayLanguage(java.util.Locale.ENGLISH).takeIf { it.isNotBlank() }
+        ?: track.languageName
+    track.copy(languageCode = code, languageName = name)
+}.groupBy { it.downloadToken }.values.map { copies -> copies.firstOrNull { it.hashMatched } ?: copies.first() }

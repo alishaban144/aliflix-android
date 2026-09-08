@@ -41,6 +41,7 @@ export interface SubtitleTrackResponse {
   format: string;
   fps?: string;
   downloadToken: string;
+  hashMatched?: boolean;
 }
 
 export interface SubtitleSearchResponse {
@@ -247,6 +248,7 @@ export function parseSubdlSearchDocument(
   season?: number,
   episode?: number,
   expectedImdbId?: string,
+  maxTracks = MAX_TRACKS_PER_SEARCH,
 ): SubtitleTrackResponse[] {
   if (document.status === false) {
     const errorMessage = typeof document.error === 'string'
@@ -285,7 +287,7 @@ export function parseSubdlSearchDocument(
       ...(candidate.fps ? { fps: candidate.fps } : {}),
       downloadToken,
     });
-    if (tracks.length >= MAX_TRACKS_PER_SEARCH) break;
+    if (tracks.length >= maxTracks) break;
   }
   return tracks;
 }
@@ -335,6 +337,15 @@ export async function searchSubdlSubtitles(
   requestUrl: URL,
 ): Promise<SubtitleSearchResponse> {
   const key = requiredSubdlKey(env);
+  const expanded = requestUrl.searchParams.get('mode') === 'phone';
+  const requestedLanguage = (requestUrl.searchParams.get('language') || 'EN').toUpperCase();
+  const preferredLanguage = /^[A-Z]{2,3}$/.test(requestedLanguage) ? requestedLanguage : 'EN';
+  const hashValue = requestUrl.searchParams.get('videoHash') || '';
+  const videoHash = expanded && /^[a-f0-9]{16}$/i.test(hashValue) ? hashValue.toLowerCase() : undefined;
+  const sizeValue = Number(requestUrl.searchParams.get('videoSize'));
+  const videoSize = videoHash && Number.isSafeInteger(sizeValue) && sizeValue >= 65536 ? sizeValue : undefined;
+  const filename = expanded ? (requestUrl.searchParams.get('filename') || '').slice(0, 240) : '';
+  const maxCombined = expanded ? 240 : MAX_COMBINED_TRACKS;
   const mediaType = requestUrl.searchParams.get('type');
   if (mediaType !== 'movie' && mediaType !== 'tv') {
     throw new ServiceError('INVALID_SUBTITLE_REQUEST', 'type must be movie or tv', 400, false);
@@ -425,7 +436,11 @@ async function fetchOpenSubtitles(
     const path = mediaType === 'movie'
       ? `movie/${encodeURIComponent(imdbId)}.json`
       : `series/${encodeURIComponent(imdbId)}:${season || 1}:${episode || 1}.json`;
-    const url = new URL(`https://opensubtitles-v3.strem.io/subtitles/${path}`);
+    const extras = new URLSearchParams();
+    if (videoHash && videoSize) { extras.set('videoHash', videoHash); extras.set('videoSize', String(videoSize)); }
+    if (filename) extras.set('filename', filename);
+    const suffix = extras.size ? `/${extras.toString()}.json` : '.json';
+    const url = new URL(`https://opensubtitles-v3.strem.io/subtitles/${path.replace(/\.json$/, '')}${suffix}`);
     const response = await fetchWithTimeout(url, {
       headers: {
         accept: 'application/json',
@@ -460,8 +475,9 @@ async function fetchOpenSubtitles(
         hearingImpaired: false,
         format: 'srt',
         downloadToken,
+        ...(videoHash && (item.moviehash_match === true || item.moviehash === videoHash) ? { hashMatched: true } : {}),
       });
-      if (tracks.length >= 35) break;
+      if (tracks.length >= (expanded ? 240 : 35)) break;
     }
     return tracks;
   } catch {
@@ -477,6 +493,15 @@ async function fetchOpenSubtitles(
     searchUrls.push(seasonPackUrl);
   }
 
+  if (expanded) {
+    for (const original of [...searchUrls]) {
+      const targeted = new URL(original);
+      targeted.searchParams.set('languages', preferredLanguage);
+      targeted.searchParams.set('releases', '1');
+      targeted.searchParams.set('hi', '1');
+      searchUrls.unshift(targeted);
+    }
+  }
   const [subdlResults, openSubTracks] = await Promise.all([
     Promise.allSettled(searchUrls.map(url => fetchSubdlSearchDocument(url, key))),
     fetchOpenSubtitles(mediaType, imdbId, season, episode),
@@ -487,7 +512,7 @@ async function fetchOpenSubtitles(
   const seenTrackIds = new Set<string>();
   let parseFailure: unknown;
 
-  // Include OpenSubtitles first for guaranteed reliable, unlimited downloads
+  // Merge provider results before language ranking; no provider guarantees availability.
   for (const track of openSubTracks) {
     if (seenTrackIds.has(track.id)) continue;
     seenTrackIds.add(track.id);
@@ -496,16 +521,16 @@ async function fetchOpenSubtitles(
 
   for (const document of documents) {
     try {
-      for (const track of parseSubdlSearchDocument(document, mediaType, tmdbId, season, episode, imdbId)) {
+      for (const track of parseSubdlSearchDocument(document, mediaType, tmdbId, season, episode, imdbId, expanded ? 120 : MAX_TRACKS_PER_SEARCH)) {
         if (seenTrackIds.has(track.id)) continue;
         seenTrackIds.add(track.id);
         tracks.push(track);
-        if (tracks.length >= MAX_COMBINED_TRACKS) break;
+        if (!expanded && tracks.length >= MAX_COMBINED_TRACKS) break;
       }
     } catch (error) {
       parseFailure ??= error;
     }
-    if (tracks.length >= MAX_COMBINED_TRACKS) break;
+    if (!expanded && tracks.length >= MAX_COMBINED_TRACKS) break;
   }
   if (tracks.length === 0 && parseFailure) throw parseFailure;
   if (tracks.length === 0 && documents.length === 0 && openSubTracks.length === 0) {
@@ -513,8 +538,21 @@ async function fetchOpenSubtitles(
       new ServiceError('SUBTITLE_NOT_FOUND', 'No subtitles found for this title', 404, false);
   }
 
-  // Sort with EN / English first
+  if (expanded) {
+    for (const track of tracks) {
+      const raw = track.languageCode.toLowerCase();
+      const mapped = OPENSUB_LANG_MAP[raw] || Object.values(OPENSUB_LANG_MAP).find(value =>
+        value.code.toLowerCase() === raw || value.name.toLowerCase() === track.languageName.toLowerCase());
+      if (mapped) { track.languageCode = mapped.code; track.languageName = mapped.name; }
+    }
+  }
+  // Preferred-language results must not be discarded behind the first 35 foreign tracks.
   tracks.sort((a, b) => {
+    if (expanded) {
+      if (Boolean(a.hashMatched) !== Boolean(b.hashMatched)) return a.hashMatched ? -1 : 1;
+      const languageOrder = Number(b.languageCode === preferredLanguage) - Number(a.languageCode === preferredLanguage);
+      if (languageOrder) return languageOrder;
+    }
     const aEn = a.languageCode.toUpperCase() === 'EN' || a.languageName.toLowerCase().startsWith('eng') ? 0 : 1;
     const bEn = b.languageCode.toUpperCase() === 'EN' || b.languageName.toLowerCase().startsWith('eng') ? 0 : 1;
     if (aEn !== bEn) return aEn - bEn;
@@ -525,7 +563,7 @@ async function fetchOpenSubtitles(
     mediaKey: mediaType === 'movie'
       ? `movie:${tmdbId}`
       : `tv:${tmdbId}:s${season}:e${episode}`,
-    tracks,
+    tracks: tracks.slice(0, maxCombined),
   };
 }
 

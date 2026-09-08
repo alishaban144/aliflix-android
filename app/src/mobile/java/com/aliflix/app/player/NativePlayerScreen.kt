@@ -114,6 +114,7 @@ internal fun NativePlayerScreen(
     onControlsVisibilityChanged: (Boolean) -> Unit = {},
     onOverlayVisibilityChanged: (Boolean) -> Unit = {},
 ) {
+    val subtitleTracks = remember(state.subtitleTracks) { normalizeMobileSubtitleTracks(state.subtitleTracks) }
     var controls by remember { mutableStateOf(true) }
     var interaction by remember { mutableIntStateOf(0) }
     var fill by rememberSaveable { mutableStateOf(settings.resizeModeZoom) }
@@ -898,12 +899,12 @@ internal fun NativePlayerScreen(
                         }
                         if (state.subtitleLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = AliflixAccentPrimary)
                         state.subtitleError?.let { Text(it, color = AliflixError, fontSize = 13.sp) }
-                        if (!state.subtitleLoading && state.subtitleTracks.isEmpty()) {
+                        if (!state.subtitleLoading && subtitleTracks.isEmpty()) {
                             Text("No external subtitles found for this title.", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                         }
                         var language by remember { mutableStateOf<String?>(null) }
-                        val languages = remember(state.subtitleTracks) {
-                            state.subtitleTracks.map { it.languageName }.distinct().sortedWith(
+                        val languages = remember(subtitleTracks) {
+                            subtitleTracks.map { it.languageName }.distinct().sortedWith(
                                 compareBy<String> { name ->
                                     if (name.equals("EN", ignoreCase = true) || name.equals("English", ignoreCase = true)) 0 else 1
                                 }.thenBy { it }
@@ -911,7 +912,7 @@ internal fun NativePlayerScreen(
                         }
                         if (languages.isNotEmpty()) {
                             val activeLanguage = language?.takeIf { l -> languages.any { it.equals(l, ignoreCase = true) } }
-                                ?: state.activeSubtitleTrack?.languageName?.takeIf { l -> languages.any { it.equals(l, ignoreCase = true) } }
+                                ?: state.activeSubtitleTrack?.let { normalizeMobileSubtitleTracks(listOf(it)).first().languageName }?.takeIf { l -> languages.any { it.equals(l, ignoreCase = true) } }
                                 ?: languages.firstOrNull()
                             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 languages.forEach { name ->
@@ -927,7 +928,7 @@ internal fun NativePlayerScreen(
                                     )
                                 }
                             }
-                            state.subtitleTracks.filter { it.languageName.equals(activeLanguage, ignoreCase = true) }.forEach { track ->
+                            subtitleTracks.filter { it.languageName.equals(activeLanguage, ignoreCase = true) }.forEach { track ->
                                 SheetOption(track.languageName, track.releaseName, selected = state.activeSubtitleTrack?.id == track.id) {
                                     player?.let { it.trackSelectionParameters = it.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build() }
                                     onSubtitle(track)

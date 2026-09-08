@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
-import { decodeSubdlDownloadToken, parseSubdlSearchDocument } from '../src/subdl';
+import { decodeSubdlDownloadToken, parseSubdlSearchDocument, searchSubdlSubtitles } from '../src/subdl';
 
 const env: any = {
   SUBDL_API_KEY: 'private-subdl-key',
@@ -11,6 +11,40 @@ const env: any = {
 afterEach(() => vi.restoreAllMocks());
 
 describe('SubDL subtitle proxy', () => {
+  it('phone searches include language-specific episode results beyond the early foreign tracks', async () => {
+    const seen: URL[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      seen.push(url);
+      if (url.hostname === 'api.themoviedb.org') return Response.json({ imdb_id: 'tt0944947' });
+      if (url.hostname === 'opensubtitles-v3.strem.io') return Response.json({ subtitles:
+        Array.from({ length: 50 }, (_, i) => ({ url: `https://opensubtitles-v3.strem.io/file/${i}.srt`, lang: i === 49 ? 'eng' : 'ara', movieReleaseName: `release-${i}` })) });
+      return Response.json({ status: true, results: [{ imdb_id: 'tt0944947', tmdb_id: 1399, type: 'tv' }],
+        subtitles: url.searchParams.get('languages') === 'EN' ? [{ name: 'Game.of.Thrones.S01E01.WEB.srt',
+          language: 'EN', season: 1, episode: 1, format: 'srt', url: '/subtitle/got-en' }] : [] });
+    });
+    const result = await searchSubdlSubtitles(env, new URL('https://worker.test/v3/subtitles?mode=phone&type=tv&tmdbId=1399&season=1&episode=1&language=EN'));
+    expect(result.tracks.length).toBe(51);
+    expect(result.tracks[0].languageCode).toBe('EN');
+    expect(result.tracks.filter(track => track.languageName === 'English')).toHaveLength(2);
+    expect(seen.filter(url => url.hostname === 'api.subdl.com' && url.searchParams.get('languages') === 'EN')).toHaveLength(2);
+    expect(result.mediaKey).toBe('tv:1399:s1:e1');
+  });
+
+  it('forwards file fingerprint hints without claiming an unconfirmed hash match', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.hostname === 'api.themoviedb.org') return Response.json({ imdb_id: 'tt1375666' });
+      if (url.hostname === 'opensubtitles-v3.strem.io') {
+        expect(decodeURIComponent(url.pathname)).toContain('videoHash=0000000000020003&videoSize=131072&filename=Inception.mp4.json');
+        return Response.json({ subtitles: [{ url: 'https://opensubtitles-v3.strem.io/file/one.srt', lang: 'eng' }] });
+      }
+      return Response.json({ status: true, results: [{ imdb_id: 'tt1375666' }], subtitles: [] });
+    });
+    const result = await searchSubdlSubtitles(env, new URL('https://worker.test/v3/subtitles?mode=phone&type=movie&tmdbId=27205&videoHash=0000000000020003&videoSize=131072&filename=Inception.mp4'));
+    expect(result.tracks).toHaveLength(1);
+    expect(result.tracks[0].hashMatched).toBeUndefined();
+  });
   it('keeps TV-only parameters out of exact movie searches', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));

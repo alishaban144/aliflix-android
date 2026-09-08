@@ -26,6 +26,7 @@ data class SubtitleTrack(
     val format: String,
     val fps: String?,
     val downloadToken: String,
+    val hashMatched: Boolean = false,
 )
 
 data class SubtitleCue(
@@ -56,6 +57,7 @@ internal fun preferredSubtitleTrack(
 
 internal fun canonicalSubtitleLanguageCode(value: String): String {
     val normalized = value.trim().substringBefore('-').uppercase()
+    SubtitleLanguage.entries.firstOrNull { it.displayName.equals(value.trim(), true) }?.let { return it.code }
     return SUBTITLE_LANGUAGE_ALIASES[normalized] ?: normalized
 }
 
@@ -77,11 +79,19 @@ class SubdlSubtitleRepository(
 ) {
     private val baseUrl = baseUrl.trimEnd('/')
 
-    suspend fun search(selection: PlaybackSelection): Result<List<SubtitleTrack>> = runCatching {
+    suspend fun search(selection: PlaybackSelection, preferredLanguage: String? = null,
+        fingerprint: SubtitleVideoFingerprint? = null): Result<List<SubtitleTrack>> = runCatching {
         withContext(Dispatchers.IO) {
             val query = buildString {
                 append("$baseUrl/v3/subtitles?type=${selection.media.type.routeName}")
                 append("&tmdbId=${selection.media.id}")
+                if (!BuildConfig.IS_TV && preferredLanguage != null) {
+                    append("&mode=phone&language=${canonicalSubtitleLanguageCode(preferredLanguage)}")
+                    fingerprint?.let {
+                        append("&videoHash=${it.hash}&videoSize=${it.size}")
+                        append("&filename=${java.net.URLEncoder.encode(it.fileName, "UTF-8")}")
+                    }
+                }
                 if (selection.media.type == MediaType.TV) {
                     append("&season=${selection.seasonNumber ?: 1}")
                     append("&episode=${selection.episodeNumber ?: 1}")
@@ -108,6 +118,7 @@ class SubdlSubtitleRepository(
                     format = item.optString("format").trim().lowercase(),
                     fps = item.optString("fps").trim().takeIf(String::isNotBlank),
                     downloadToken = token,
+                    hashMatched = item.optBoolean("hashMatched", false),
                 )
             }.distinctBy(SubtitleTrack::id)
              .sortedWith(
@@ -120,7 +131,7 @@ class SubdlSubtitleRepository(
         }
     }
 
-    suspend fun download(track: SubtitleTrack): Result<List<SubtitleCue>> = runCatching {
+    suspend fun download(track: SubtitleTrack, selection: PlaybackSelection? = null): Result<List<SubtitleCue>> = runCatching {
         withContext(Dispatchers.IO) {
             val directUrl = directSubtitleUrl(track.downloadToken)
             val workerUrl = "$baseUrl/v3/subtitles/download/${track.downloadToken}"
@@ -144,7 +155,9 @@ class SubdlSubtitleRepository(
                 }
             }
             val subtitleBytes = if (response.isZip()) {
-                extractSubtitleFromZip(response, track.fileName)
+                extractSubtitleFromZip(response, track.fileName,
+                    selection?.takeUnless { BuildConfig.IS_TV }?.seasonNumber,
+                    selection?.takeUnless { BuildConfig.IS_TV }?.episodeNumber)
             } else {
                 response
             }
@@ -247,10 +260,11 @@ private fun ByteArray.isZip(): Boolean = size >= 4 &&
     this[0] == 0x50.toByte() && this[1] == 0x4b.toByte() &&
     this[2] in listOf(0x03.toByte(), 0x05.toByte(), 0x07.toByte())
 
-private fun extractSubtitleFromZip(bytes: ByteArray, preferredName: String): ByteArray {
+internal fun extractSubtitleFromZip(bytes: ByteArray, preferredName: String, season: Int? = null, episode: Int? = null): ByteArray {
     data class Entry(val name: String, val bytes: ByteArray)
 
     val entries = mutableListOf<Entry>()
+    var archiveTotal = 0
     ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
         repeat(100) {
             val entry = zip.nextEntry ?: return@use
@@ -263,6 +277,8 @@ private fun extractSubtitleFromZip(bytes: ByteArray, preferredName: String): Byt
                     val read = zip.read(buffer)
                     if (read < 0) break
                     total += read
+                    archiveTotal += read
+                    if (season != null && archiveTotal > 16 * 1024 * 1024) throw SubtitleException("Subtitle archive is too large")
                     if (total > MAX_UNPACKED_SUBTITLE_BYTES) {
                         throw SubtitleException("Subtitle file is too large")
                     }
@@ -274,8 +290,19 @@ private fun extractSubtitleFromZip(bytes: ByteArray, preferredName: String): Byt
         }
     }
     if (entries.isEmpty()) throw SubtitleException("The subtitle archive has no supported text file")
+    val eligible = if (season != null && episode != null) {
+        val pattern = Regex("(?i)(?:s(\\d{1,2})[ ._-]*e(\\d{1,3})|(\\d{1,2})x(\\d{1,3}))")
+        val identified = entries.map { entry -> entry to pattern.find(entry.name) }
+        val exact = identified.filter { (_, match) -> match != null &&
+            (match.groupValues[1].ifEmpty { match.groupValues[3] }).toInt() == season &&
+            (match.groupValues[2].ifEmpty { match.groupValues[4] }).toInt() == episode }.map { it.first }
+        exact.ifEmpty {
+            if (entries.size == 1 && identified.single().second == null) entries
+            else throw SubtitleException("This archive has no exact file for the selected episode")
+        }
+    } else entries
     val preferredStem = preferredName.substringBeforeLast('.').lowercase()
-    return entries.maxByOrNull { entry ->
+    return eligible.maxByOrNull { entry ->
         val stem = entry.name.substringBeforeLast('.').lowercase()
         commonPrefixLength(stem, preferredStem) + if (entry.name.endsWith(".srt", true)) 10 else 0
     }!!.bytes
