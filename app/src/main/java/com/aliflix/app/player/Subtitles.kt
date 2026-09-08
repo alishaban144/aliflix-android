@@ -54,7 +54,7 @@ internal fun preferredSubtitleTrack(
     )
     .firstOrNull()
 
-private fun canonicalSubtitleLanguageCode(value: String): String {
+internal fun canonicalSubtitleLanguageCode(value: String): String {
     val normalized = value.trim().substringBefore('-').uppercase()
     return SUBTITLE_LANGUAGE_ALIASES[normalized] ?: normalized
 }
@@ -148,7 +148,7 @@ class SubdlSubtitleRepository(
             } else {
                 response
             }
-            val decoded = decodeSubtitleText(subtitleBytes)
+            val decoded = if (BuildConfig.IS_TV) decodeSubtitleText(subtitleBytes) else decodeMobileSubtitleText(subtitleBytes, track.languageCode)
             val cues = if (
                 track.format in setOf("ass", "ssa") ||
                 track.fileName.endsWith(".ass", ignoreCase = true) ||
@@ -241,7 +241,7 @@ internal fun directSubtitleUrl(token: String): String? {
     }
 }
 
-private class SubtitleException(message: String) : Exception(message)
+internal class SubtitleException(message: String) : Exception(message)
 
 private fun ByteArray.isZip(): Boolean = size >= 4 &&
     this[0] == 0x50.toByte() && this[1] == 0x4b.toByte() &&

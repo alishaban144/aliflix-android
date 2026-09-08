@@ -13,6 +13,7 @@ import android.util.TypedValue
 import android.view.*
 import android.widget.FrameLayout
 import androidx.compose.runtime.*
+import androidx.activity.addCallback
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -85,13 +86,14 @@ class NativePlayerActivity : FragmentActivity() {
         }
         override fun onCues(cueGroup: CueGroup) {
             if (activeSubtitleCues.isEmpty()) {
-                subtitles.setCues(cueGroup.cues)
+                renderCaptions(cueGroup.cues)
             }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this) { pauseAndLeavePlayer() }
         requestAccepted = savedInstanceState?.getBoolean("requestAccepted") == true
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -123,6 +125,8 @@ class NativePlayerActivity : FragmentActivity() {
         }
         root.addView(videoFrame, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         subtitles = SubtitleView(this)
+        subtitles.setApplyEmbeddedStyles(false)
+        subtitles.setApplyEmbeddedFontSizes(false)
         applySubtitleStyle()
         root.addView(subtitles, FrameLayout.LayoutParams(-1, -1))
         root.addView(ComposeView(this).apply {
@@ -132,7 +136,7 @@ class NativePlayerActivity : FragmentActivity() {
                     state = ui,
                     player = controller,
                     settings = playerSettings,
-                    onBack = { finish() },
+                    onBack = ::pauseAndLeavePlayer,
                     onRetry = { triedServers.clear(); recoveryCount = 0; prepareSelection() },
                     onServer = { prepareSelection() },
                     onSelectServer = ::selectServer,
@@ -187,6 +191,7 @@ class NativePlayerActivity : FragmentActivity() {
                     onBrightnessSwipe = ::adjustBrightness,
                     onVolumeSwipe = ::adjustVolume,
                     onControlsVisibilityChanged = ::updateSubtitlePadding,
+                    onOverlayVisibilityChanged = { captionGestureBlocked = it },
                 )
             } }
         }, FrameLayout.LayoutParams(-1, -1))
@@ -203,6 +208,59 @@ class NativePlayerActivity : FragmentActivity() {
                 delay(300)
             }
         }
+    }
+
+    private var captionGestureBlocked = false
+    private var captionPreviewOffset: Int? = null
+    private var renderedCaptions: List<Cue> = emptyList()
+    private val captionDrag by lazy {
+        CaptionDragGesture(this, ::captionBounds, { settingsStore.settings.value.subtitleVerticalOffsetDp },
+            { super.dispatchTouchEvent(it) },
+            {
+                ui = ui.copy(captionDragging = true)
+                subtitles.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            },
+            { captionPreviewOffset = it; applySubtitlePadding() },
+            { commit ->
+                if (commit) captionPreviewOffset?.let(settingsStore::updateSubtitleVerticalOffsetDp)
+                captionPreviewOffset = null
+                ui = ui.copy(captionDragging = false)
+                updateSubtitlePadding()
+            })
+    }
+
+    internal fun captionBounds(): android.graphics.RectF? {
+        if (captionGestureBlocked || ui.external || renderedCaptions.isEmpty() || !subtitles.isShown) return null
+        val paint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
+                settingsStore.settings.value.subtitleFontSizeSp, resources.displayMetrics)
+        }
+        val available = ((subtitles.width - subtitles.paddingLeft - subtitles.paddingRight) * 0.92f).toInt()
+        if (available <= 0) return null
+        val layouts = renderedCaptions.mapNotNull { cue -> cue.text?.let {
+            android.text.StaticLayout.Builder.obtain(it, 0, it.length, paint, available)
+                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER).build()
+        } }
+        val height = layouts.maxOfOrNull { it.height } ?: return null
+        val width = layouts.maxOfOrNull { layout -> (0 until layout.lineCount).maxOf { layout.getLineWidth(it) } } ?: return null
+        val bottom = (subtitles.height - subtitles.paddingBottom).toFloat()
+        val margin = 12 * resources.displayMetrics.density
+        return android.graphics.RectF((subtitles.width - width) / 2 - margin, bottom - height - margin,
+            (subtitles.width + width) / 2 + margin, bottom + margin)
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (::subtitles.isInitialized && captionDrag.onTouch(event)) return true
+        return super.dispatchTouchEvent(event)
+    }
+
+    internal fun pauseAndLeavePlayer() {
+        preparation?.cancel(); resolver?.close(); resolver = null
+        subtitleJob?.cancel()
+        controller?.pause()
+        NativePlaybackService.pauseFromBack()
+        recordCurrentProgress(urgent = true)
+        finish()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -287,9 +345,10 @@ class NativePlayerActivity : FragmentActivity() {
         val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition?.takeIf { it > 0 }
             ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
+        settingsStore.updateSubtitleDelayTenths(0)
         activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
-        subtitles.setCues(emptyList())
+        renderCaptions(emptyList())
         controller?.pause()
         if (preferredServer != null) {
             triedServers.remove(preferredServer)
@@ -307,6 +366,7 @@ class NativePlayerActivity : FragmentActivity() {
         )
         updateSelectionUi()
         preparation = lifecycleScope.launch {
+            val resolvedRelease = CompletableDeferred<String>()
             val initialSubtitles = async {
                 if (!intent.getBooleanExtra("autoSubtitles", true)) return@async ""
                 val repository = SubdlSubtitleRepository()
@@ -314,8 +374,14 @@ class NativePlayerActivity : FragmentActivity() {
                 ensureActive()
                 ui = ui.copy(subtitleTracks = tracks)
                 val code = intent.getStringExtra("subtitleLanguage") ?: "EN"
-                val track = tracks.firstOrNull { it.languageCode.equals(code, true) } ?: return@async ""
-                val cues = repository.download(track).getOrDefault(emptyList())
+                val candidates = mobileSubtitleCandidates(tracks, code, current.seasonNumber, current.episodeNumber, current.media.title + " " + resolvedRelease.await())
+                var selected: Pair<SubtitleTrack, List<SubtitleCue>>? = null
+                for (candidate in candidates.take(4)) {
+                    ensureActive()
+                    val downloaded = withTimeoutOrNull(6000) { repository.download(candidate).getOrDefault(emptyList()) }.orEmpty()
+                    if (subtitleLanguageIsPlausible(downloaded, code)) { selected = candidate to downloaded; break }
+                }
+                val (track, cues) = selected ?: return@async ""
                 ensureActive()
                 if (cues.isEmpty()) "" else {
                     val json = JSONArray().apply {
@@ -341,9 +407,11 @@ class NativePlayerActivity : FragmentActivity() {
                         server = label
                         ui = ui.copy(server = label, stage = "Preparing your video")
                     }
+                    if (!resolvedRelease.isCompleted) resolvedRelease.complete(resolved.url)
                     val vtt = withTimeoutOrNull(1500) { initialSubtitles.await() }.orEmpty()
                     val request = resolved.copy(subtitlesVtt = vtt,
-                        subtitleLanguage = ui.activeSubtitleTrack?.languageCode?.lowercase() ?: "en",
+                        preferEmbeddedSubtitles = intent.getBooleanExtra("autoSubtitles", true),
+                        subtitleLanguage = (intent.getStringExtra("subtitleLanguage") ?: "en").lowercase(),
                         subtitleLabel = ui.activeSubtitleTrack?.languageName ?: "Aliflix subtitles")
                     adapter.close(); resolver = null; hideSystemBars()
                     ui = ui.copy(stage = "Preparing your video")
@@ -380,6 +448,7 @@ class NativePlayerActivity : FragmentActivity() {
                     if (server.isBlank()) break // A failed provider page cannot supply another server.
                 }
             }
+            if (!success) initialSubtitles.cancel()
             if (success && NativePlaybackService.activeRequest?.subtitlesVtt.isNullOrBlank()) {
                 val lateVtt = initialSubtitles.await()
                 val active = NativePlaybackService.activeRequest
@@ -387,7 +456,8 @@ class NativePlayerActivity : FragmentActivity() {
                     NativePlaybackService.updateSubtitles(
                         lateVtt,
                         ui.activeSubtitleTrack?.languageCode?.lowercase() ?: "en",
-                        ui.activeSubtitleTrack?.languageName ?: "Aliflix subtitles"
+                        ui.activeSubtitleTrack?.languageName ?: "Aliflix subtitles",
+                        automatic = true
                     )
                     updateSubtitleCues()
                 }
@@ -433,6 +503,7 @@ class NativePlayerActivity : FragmentActivity() {
             val result = SubdlSubtitleRepository().download(track)
             ensureActive()
             result.onSuccess { cues ->
+                settingsStore.updateSubtitleDelayTenths(0)
                 activeSubtitleCues = cues
                 val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
                 activeSubtitleCuesJson = json
@@ -455,7 +526,7 @@ class NativePlayerActivity : FragmentActivity() {
         subtitleJob?.cancel()
         activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
-        subtitles.setCues(emptyList())
+        renderCaptions(emptyList())
         ui = ui.copy(activeSubtitleTrack = null)
         NativePlaybackService.updateSubtitles("")
         controller?.sendCustomCommand(
@@ -496,7 +567,7 @@ class NativePlayerActivity : FragmentActivity() {
         if (!::playerRoot.isInitialized || playerRoot.height <= 0 || subtitles.height <= 0) return
         val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
         val density = resources.displayMetrics.density
-        val offsetPx = (settingsStore.settings.value.subtitleVerticalOffsetDp * density).toInt()
+        val offsetPx = ((captionPreviewOffset ?: settingsStore.settings.value.subtitleVerticalOffsetDp) * density).toInt()
         val controlsVisible = lastControlsVisible
         val bottomPx = if (isPortrait) {
             val spaceBelowPx = (playerRoot.height - videoFrame.bottom).coerceAtLeast(0)
@@ -508,7 +579,7 @@ class NativePlayerActivity : FragmentActivity() {
                 ((baseDp * density).toInt() + offsetPx).coerceAtLeast(0)
             }
         } else {
-            val baseDp = if (controlsVisible) 56 else 16
+            val baseDp = if (controlsVisible) 132 else 24
             ((baseDp * density).toInt() + offsetPx).coerceAtLeast(0)
         }
         val horizontalPx = (16 * density).toInt()
@@ -585,6 +656,13 @@ class NativePlayerActivity : FragmentActivity() {
         }
     }
 
+    private fun renderCaptions(cues: List<Cue>) {
+        renderedCaptions = cues.map { it.buildUpon().setPosition(0.5f)
+            .setPositionAnchor(Cue.ANCHOR_TYPE_MIDDLE).setSize(0.92f)
+            .setLine(Cue.DIMEN_UNSET, Cue.LINE_TYPE_FRACTION).build() }
+        subtitles.setCues(renderedCaptions)
+    }
+
     private fun updateSubtitleCues() {
         if (!::subtitles.isInitialized) return
         val current = controller
@@ -594,7 +672,7 @@ class NativePlayerActivity : FragmentActivity() {
             return
         }
         subtitles.visibility = View.VISIBLE
-        val cues = activeSubtitleCues
+        val cues = if (NativePlaybackService.embeddedSubtitlesActive) emptyList() else activeSubtitleCues
         if (cues.isNotEmpty()) {
             val delaySec = settingsStore.settings.value.subtitleDelaySeconds
             val currentSec = ((current?.currentPosition ?: 0L) / 1000.0)
@@ -609,13 +687,13 @@ class NativePlayerActivity : FragmentActivity() {
                         .setText(cue.text)
                         .build()
                 }
-                subtitles.setCues(media3Cues)
+                renderCaptions(media3Cues)
             } else {
-                subtitles.setCues(emptyList())
+                renderCaptions(emptyList())
             }
         } else {
             val playerCues = current?.currentCues?.cues.orEmpty()
-            subtitles.setCues(playerCues)
+            renderCaptions(playerCues)
         }
     }
 

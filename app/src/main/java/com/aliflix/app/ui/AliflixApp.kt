@@ -33,6 +33,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
@@ -179,6 +181,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import coil.compose.AsyncImage
 import com.aliflix.app.AliflixViewModel
 import com.aliflix.app.account.AccountState
@@ -481,14 +484,14 @@ private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>
     },
 )
 
-private enum class HomeFilter(val label: String) {
+internal enum class HomeFilter(val label: String) {
     FOR_YOU("For You"),
     MOVIES("Movies"),
     TV("TV Shows"),
     NEW("New & Popular"),
 }
 
-private data class MobileUpdateUiState(
+internal data class MobileUpdateUiState(
     val busy: Boolean = false,
     val message: String = "",
     val progress: Int? = null,
@@ -1507,7 +1510,7 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun HomeFeed(
+internal fun HomeFeed(
     content: HomeContent,
     tvNetworks: TvNetworksUiState,
     editorialPicks: List<Media>,
@@ -1607,10 +1610,14 @@ private fun HomeFeed(
             .toList()
     }
 
-    LaunchedEffect(pagerState, heroCandidates) {
+    val heroDragged by pagerState.interactionSource.collectIsDraggedAsState()
+    val heroLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(pagerState, heroCandidates, heroDragged) {
         if (heroCandidates.size > 1) {
             while (true) {
                 kotlinx.coroutines.delay(7_000L)
+                if (!com.aliflix.app.BuildConfig.IS_TV && (heroDragged || pagerState.isScrollInProgress ||
+                    listState.firstVisibleItemIndex > 0 || !heroLifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))) continue
                 pagerState.animateScrollToPage(
                     page = pagerState.currentPage + 1,
                     animationSpec = tween(
@@ -1642,13 +1649,25 @@ private fun HomeFeed(
                     ).absoluteValue.coerceIn(0f, 1f)
                     HeroBanner(
                         item = featured,
+                        motionOffset = if (com.aliflix.app.BuildConfig.IS_TV) 0f else
+                            (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction,
+                        activeShot = !com.aliflix.app.BuildConfig.IS_TV && pagerState.currentPage == page && listState.firstVisibleItemIndex == 0,
                         personalMatch = PersonalizationEngine.match(featured, likes),
                         onPlay = { onPlay(featured) },
                         onInfo = { onOpen(featured) },
-                        modifier = Modifier.graphicsLayer {
-                            alpha = 1f - (pageOffset * 0.16f)
-                            scaleX = 1f - (pageOffset * 0.018f)
-                            scaleY = 1f - (pageOffset * 0.018f)
+                        modifier = Modifier
+                            .zIndex(if (pagerState.currentPage == page) 1f else 0f)
+                            .then(if (pagerState.currentPage != page) Modifier.clearAndSetSemantics {} else Modifier)
+                            .graphicsLayer {
+                            if (com.aliflix.app.BuildConfig.IS_TV) {
+                                alpha = 1f - (pageOffset * 0.16f)
+                                scaleX = 1f - (pageOffset * 0.018f)
+                                scaleY = scaleX
+                            } else {
+                                // Keep the frame fixed while artwork and typography dissolve separately.
+                                translationX = size.width * ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction)
+                                alpha = (1f - pageOffset).coerceIn(0f, 1f)
+                            }
                         },
                     )
                 }
@@ -1791,7 +1810,14 @@ private fun HeroBanner(
     onPlay: () -> Unit,
     onInfo: () -> Unit,
     modifier: Modifier = Modifier,
+    motionOffset: Float = 0f,
+    activeShot: Boolean = false,
 ) {
+    val shot = remember(item.key) { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(activeShot) {
+        if (activeShot) { shot.snapTo(0f); shot.animateTo(1f, tween(9000, easing = LinearEasing)) }
+    }
+    val cinematic = !com.aliflix.app.BuildConfig.IS_TV
     val fontScale = LocalDensity.current.fontScale
     val accessibilityExpansion = (
         (fontScale - 1f).coerceAtLeast(0f) * 170f
@@ -1800,7 +1826,8 @@ private fun HeroBanner(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(556.dp + accessibilityExpansion),
+            .height(556.dp + accessibilityExpansion)
+            .then(if (cinematic) Modifier.clipToBounds() else Modifier),
     ) {
         ArtworkPlaceholder(title = item.title)
         AsyncImage(
@@ -1809,6 +1836,13 @@ private fun HeroBanner(
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer {
+                    if (cinematic) {
+                        scaleX = 1.04f + shot.value * 0.035f
+                        scaleY = scaleX
+                        translationX = motionOffset * size.width * 0.065f
+                    }
+                }
                 .drawWithContent {
                     drawContent()
                     drawRect(
@@ -1828,9 +1862,23 @@ private fun HeroBanner(
                 },
         )
 
+        if (cinematic) Canvas(Modifier.fillMaxSize()) {
+            val passage = motionOffset.absoluteValue.coerceIn(0f, 1f)
+            drawRect(Brush.radialGradient(
+                colors = listOf(AliflixAccentPrimary.copy(alpha = 0.10f + passage * 0.12f), Color.Transparent),
+                center = androidx.compose.ui.geometry.Offset(size.width * (0.12f + shot.value * 0.76f), size.height * 0.32f),
+                radius = size.width * 0.85f
+            ))
+        }
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
+                .graphicsLayer {
+                    if (cinematic) {
+                        alpha = (1f - motionOffset.absoluteValue * 1.8f).coerceIn(0f, 1f)
+                        translationY = motionOffset.absoluteValue * 28.dp.toPx()
+                    }
+                }
                 .padding(horizontal = 20.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -2894,7 +2942,7 @@ private fun MobileUpdatePanel(
 }
 
 @Composable
-private fun MobileSettingsDialog(
+internal fun MobileSettingsDialog(
     accountState: AccountState,
     onOpenAccount: () -> Unit,
     generalProvider: PlaybackProviderId,
@@ -3201,7 +3249,7 @@ private fun MobileSettingsDialog(
                                 .fillMaxWidth()
                                 .toggleable(
                                     value = autoDisplaySubtitles,
-                                    role = Role.Checkbox,
+                                    role = Role.Switch,
                                     onValueChange = onSetAutoDisplaySubtitles,
                                 )
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
@@ -3214,13 +3262,16 @@ private fun MobileSettingsDialog(
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.weight(1f),
                             )
-                            Checkbox(
+                            Switch(
                                 checked = autoDisplaySubtitles,
                                 onCheckedChange = null,
-                                colors = CheckboxDefaults.colors(
-                                    checkedColor = AliflixAccentPrimary,
-                                    checkmarkColor = Color.White,
-                                    uncheckedColor = AliflixContentSecondary,
+                                modifier = Modifier.testTag("settings-auto-subtitles-switch"),
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = AliflixAccentPrimary,
+                                    uncheckedThumbColor = AliflixMuted,
+                                    uncheckedTrackColor = AliflixSurfaceRaised,
+                                    uncheckedBorderColor = AliflixBorderStrong,
                                 ),
                             )
                         }

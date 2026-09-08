@@ -125,6 +125,20 @@ class NativePlaybackService : MediaSessionService() {
         }.onFailure { android.util.Log.e("AliflixCast", "Google Cast initialization failed", it) }
             .getOrDefault(localPlayer)
         player.addListener(object : Player.Listener {
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                if (request?.preferEmbeddedSubtitles != true || embeddedSubtitlesActive) return
+                val language = canonicalSubtitleLanguageCode(request?.subtitleLanguage.orEmpty())
+                val match = tracks.groups.asSequence().filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { group ->
+                    (0 until group.length).asSequence().map { group to it }
+                }.firstOrNull { (group, index) ->
+                    val format = group.getTrackFormat(index)
+                    group.isTrackSupported(index) && !format.id.orEmpty().contains("aliflix-external") &&
+                        canonicalSubtitleLanguageCode(format.language.orEmpty()) == language
+                } ?: return
+                embeddedSubtitlesActive = true
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second)).build()
+            }
             override fun onEvents(player: Player, events: Player.Events) {
                 if (releasing) return
                 playbackReady = player.playbackState == Player.STATE_READY
@@ -215,6 +229,11 @@ class NativePlaybackService : MediaSessionService() {
         player.stop(); player.clearMediaItems()
         relay?.close(); relay = null
         request = next
+        embeddedSubtitlesActive = false
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setPreferredTextLanguage(next.subtitleLanguage)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, next.subtitlesVtt.isBlank() && !next.preferEmbeddedSubtitles).build()
         relay = runCatching { CastStreamRelay(next, lanAddress()) }.getOrNull()
         playbackReady = false; playbackFailure = null; hasSelectedAudio = false
         activeRequest = next
@@ -238,7 +257,7 @@ class NativePlaybackService : MediaSessionService() {
             val file = java.io.File(cacheDir, "native-playback-subtitles.vtt").apply { writeText(next.subtitlesVtt) }
             val lang = next.subtitleLanguage.ifBlank { "en" }
             itemBuilder.setSubtitleConfigurations(listOf(MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(file))
-                .setMimeType("text/vtt").setLanguage(lang).setLabel(next.subtitleLabel)
+                .setId("aliflix-external").setMimeType("text/vtt").setLanguage(lang).setLabel(next.subtitleLabel)
                 .setSelectionFlags(C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_FORCED).build()))
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                 .setPreferredTextLanguage(lang)
@@ -391,6 +410,13 @@ class NativePlaybackService : MediaSessionService() {
     companion object {
         private var activeService: NativePlaybackService? = null
 
+        internal val isPlaybackRequested get() = activeService?.player?.playWhenReady == true
+
+        internal fun pauseFromBack() {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            activeService?.player?.pause()
+        }
+
         /** Same-process main-thread handoff must finish before SurfaceHolder.surfaceDestroyed returns. */
         internal fun attachSurface(owner: String, surface: Surface?, tv: Boolean) {
             check(Looper.myLooper() == Looper.getMainLooper())
@@ -417,8 +443,13 @@ class NativePlaybackService : MediaSessionService() {
             }
         }
 
-        internal fun updateSubtitles(vtt: String, language: String = "", label: String = "") {
+        internal fun updateSubtitles(vtt: String, language: String = "", label: String = "", automatic: Boolean = false) {
             val service = activeService ?: return
+            if (automatic && embeddedSubtitlesActive) return
+            if (!automatic) {
+                embeddedSubtitlesActive = false
+                service.request = service.request?.copy(preferEmbeddedSubtitles = false)
+            }
             val current = service.request ?: return
             val updated = current.copy(
                 subtitlesVtt = vtt,
@@ -434,10 +465,11 @@ class NativePlaybackService : MediaSessionService() {
                 val file = java.io.File(service.cacheDir, "native-subtitles-${java.util.UUID.randomUUID()}.vtt").apply { writeText(vtt) }
                 service.subtitleFiles.add(file)
                 listOf(MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(file))
-                    .setMimeType("text/vtt").setLanguage(lang).setLabel(updated.subtitleLabel)
+                    .setId("aliflix-external").setMimeType("text/vtt").setLanguage(lang).setLabel(updated.subtitleLabel)
                     .setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build())
             }
             service.player.trackSelectionParameters = service.player.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                 .setPreferredTextLanguage(lang).setSelectUndeterminedTextLanguage(true)
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, vtt.isBlank()).build()
             val item = service.originalItem?.buildUpon()?.setSubtitleConfigurations(configs)?.build() ?: return
@@ -453,6 +485,8 @@ class NativePlaybackService : MediaSessionService() {
             }
         }
 
+        internal var embeddedSubtitlesActive = false
+            private set
         internal var playbackReady = false
             private set
         internal var playbackFailure: androidx.media3.common.PlaybackException? = null

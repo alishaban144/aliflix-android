@@ -52,10 +52,72 @@ class NativeSubtitleRenderingTest {
             scenario.recreate()
             awaitCaptions(scenario, "LATE CAPTIONS")
             assertEquals("No position-control interaction is required", 0, settings.settings.value.subtitleVerticalOffsetDp)
+            instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                File(context.getExternalFilesDir(null), "player71-landscape.png").outputStream().use {
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+                }
+                bitmap.recycle()
+            }
+            // Hold the actual caption, then move it by a fractional-pixel amount: no settings sheet.
+            var x = 0f
+            var y = 0f
+            var density = 1f
+            scenario.onActivity {
+                val bounds = requireNotNull(it.captionBounds())
+                x = bounds.centerX(); y = bounds.centerY()
+                density = it.resources.displayMetrics.density
+            }
+            val down = android.os.SystemClock.uptimeMillis()
+            fun touch(action: Int, atY: Float) = scenario.onActivity {
+                val event = android.view.MotionEvent.obtain(down, android.os.SystemClock.uptimeMillis(), action, x, atY, 0)
+                it.dispatchTouchEvent(event); event.recycle()
+            }
+            touch(android.view.MotionEvent.ACTION_DOWN, y)
+            Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout().toLong() + 150)
+            touch(android.view.MotionEvent.ACTION_MOVE, y - 7.5f * density)
+            touch(android.view.MotionEvent.ACTION_UP, y - 7.5f * density)
+            await("Fine caption drag saved") { settings.settings.value.subtitleVerticalOffsetDp == 7 }
+            awaitCaptions(scenario, "LATE CAPTIONS")
+            scenario.recreate()
+            awaitCaptions(scenario, "LATE CAPTIONS")
+            assertEquals("Dragged position survives recreation", 7, settings.settings.value.subtitleVerticalOffsetDp)
+            scenario.onActivity { it.playbackController!!.play() }
+            await("Playing before Back") { var playing = false; scenario.onActivity { playing = it.playbackController?.isPlaying == true }; playing }
+            scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            Thread.sleep(500)
+            instrumentation.runOnMainSync { assertFalse("Back must pause the service", NativePlaybackService.isPlaybackRequested) }
         } finally {
             scenario.close()
             context.stopService(Intent(context, NativePlaybackService::class.java))
             settings.updateSubtitleVerticalOffsetDp(previous)
+            server.close(); payload.delete()
+        }
+    }
+
+    @Test fun automaticSubtitlesPreferTheStreamsOwnTimelineOverDownloadedRelease() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        grantNativeFixtureNetworkPermission()
+        val server = NativeBackgroundPlaybackTest.FixtureServer(instrumentation.context.assets.open("cast-test-embedded.mkv").use { it.readBytes() })
+        val request = NativePlaybackRequest(server.url, "video/x-matroska", "https://fixture.aliflix.test/",
+            "Aliflix test", "", "Embedded caption verification", 3000, true,
+            "WEBVTT\n\n00:00:00.000 --> 00:01:20.000\nWRONG RELEASE TIMING\n\n",
+            preferEmbeddedSubtitles = true)
+        val payload = File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json").apply { writeText(request.toJson()) }
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java)
+            .putExtra("requestFile", payload.name), nativePhoneLaunchOptions())
+        try {
+            awaitCaptions(scenario, "EMBEDDED MATCHED CAPTIONS")
+            scenario.onActivity {
+                assertTrue(NativePlaybackService.embeddedSubtitlesActive)
+                NativePlaybackService.updateSubtitles(request.subtitlesVtt, automatic = true)
+            }
+            awaitCaptions(scenario, "EMBEDDED MATCHED CAPTIONS")
+            scenario.onActivity { NativePlaybackService.updateSubtitles(request.subtitlesVtt) }
+            awaitCaptions(scenario, "WRONG RELEASE TIMING")
+        } finally {
+            scenario.close()
+            context.stopService(Intent(context, NativePlaybackService::class.java))
             server.close(); payload.delete()
         }
     }
