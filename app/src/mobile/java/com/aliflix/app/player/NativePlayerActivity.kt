@@ -21,6 +21,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.*
+import androidx.media3.common.text.Cue
+import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.*
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -47,6 +49,8 @@ class NativePlayerActivity : FragmentActivity() {
     private var preparation: Job? = null
     private var subtitleJob: Job? = null
     private var subtitleSyncDebounceJob: Job? = null
+    private var subtitleRenderJob: Job? = null
+    private var activeSubtitleCues: List<SubtitleCue> = emptyList()
     private var activeSubtitleCuesJson: String? = null
     private var episodeQueueJob: Job? = null
     private var introJob: Job? = null
@@ -75,7 +79,15 @@ class NativePlayerActivity : FragmentActivity() {
         override fun onDisplayRemoved(displayId: Int) = updateOutput()
     }
     private val listener = object : Player.Listener {
-        override fun onEvents(player: Player, events: Player.Events) = updateOutput()
+        override fun onEvents(player: Player, events: Player.Events) {
+            updateOutput()
+            updateSubtitleCues()
+        }
+        override fun onCues(cueGroup: CueGroup) {
+            if (activeSubtitleCues.isEmpty()) {
+                subtitles.setCues(cueGroup.cues)
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -305,6 +317,7 @@ class NativePlayerActivity : FragmentActivity() {
                         cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) }
                     }.toString()
                     activeSubtitleCuesJson = json
+                    activeSubtitleCues = cues
                     ui = ui.copy(activeSubtitleTrack = track)
                     nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
                 }
@@ -364,11 +377,12 @@ class NativePlayerActivity : FragmentActivity() {
                 val lateVtt = initialSubtitles.await()
                 val active = NativePlaybackService.activeRequest
                 if (lateVtt.isNotBlank() && active != null && selection?.key == current.key) {
-                    startNative(active.copy(subtitlesVtt = lateVtt,
-                        subtitleLanguage = ui.activeSubtitleTrack?.languageCode?.lowercase() ?: "en",
-                        subtitleLabel = ui.activeSubtitleTrack?.languageName ?: "Aliflix subtitles",
-                        positionMs = controller?.currentPosition?.takeIf { it > 0 } ?: active.positionMs,
-                        playing = controller?.playWhenReady ?: active.playing))
+                    NativePlaybackService.updateSubtitles(
+                        lateVtt,
+                        ui.activeSubtitleTrack?.languageCode?.lowercase() ?: "en",
+                        ui.activeSubtitleTrack?.languageName ?: "Aliflix subtitles"
+                    )
+                    updateSubtitleCues()
                 }
             } else initialSubtitles.cancel()
             if (!success) ui = ui.copy(stage = null, error = "We couldn't prepare this title. Check your connection and try again. Some servers may be unavailable.")
@@ -412,16 +426,16 @@ class NativePlayerActivity : FragmentActivity() {
             val result = SubdlSubtitleRepository().download(track)
             ensureActive()
             result.onSuccess { cues ->
-                val request = NativePlaybackService.activeRequest ?: return@onSuccess
+                activeSubtitleCues = cues
                 val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
                 activeSubtitleCuesJson = json
                 val vtt = nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
-                startNative(request.copy(subtitlesVtt = vtt, subtitleLanguage = track.languageCode.lowercase(), subtitleLabel = track.languageName,
-                    positionMs = controller?.currentPosition ?: request.positionMs, playing = controller?.playWhenReady ?: true))
+                NativePlaybackService.updateSubtitles(vtt, track.languageCode.lowercase(), track.languageName)
                 controller?.sendCustomCommand(
                     SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle.EMPTY),
                     Bundle().apply { putBoolean("enabled", true) }
                 )
+                updateSubtitleCues()
                 ui = ui.copy(activeSubtitleTrack = track, subtitleError = null, message = "${track.languageName} subtitles enabled")
             }.onFailure {
                 ui = ui.copy(subtitleError = it.message?.takeIf { msg -> msg.isNotBlank() } ?: "This subtitle couldn't load. Try another version.")
@@ -431,14 +445,11 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun disableSubtitles() {
+        activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
+        subtitles.setCues(emptyList())
         ui = ui.copy(activeSubtitleTrack = null)
-        val req = NativePlaybackService.activeRequest
-        if (req != null) {
-            val pos = controller?.currentPosition ?: req.positionMs
-            val playing = controller?.playWhenReady ?: true
-            startNative(req.copy(subtitlesVtt = "", positionMs = pos, playing = playing))
-        }
+        NativePlaybackService.updateSubtitles("")
         controller?.sendCustomCommand(
             SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle.EMPTY),
             Bundle().apply { putBoolean("enabled", false) }
@@ -447,15 +458,13 @@ class NativePlayerActivity : FragmentActivity() {
 
     private fun updateSubtitleDelay(tenths: Int) {
         settingsStore.updateSubtitleDelayTenths(tenths)
+        updateSubtitleCues()
         subtitleSyncDebounceJob?.cancel()
         subtitleSyncDebounceJob = lifecycleScope.launch {
             delay(300)
             val cuesJson = activeSubtitleCuesJson ?: return@launch
-            val req = NativePlaybackService.activeRequest ?: return@launch
             val vtt = nativeSubtitlesVtt(cuesJson, tenths / 10.0)
-            val pos = controller?.currentPosition ?: req.positionMs
-            val playing = controller?.playWhenReady ?: true
-            startNative(req.copy(subtitlesVtt = vtt, positionMs = pos, playing = playing))
+            NativePlaybackService.updateSubtitles(vtt)
         }
     }
 
@@ -564,8 +573,53 @@ class NativePlayerActivity : FragmentActivity() {
         }
     }
 
+    private fun startSubtitleRenderLoop() {
+        subtitleRenderJob?.cancel()
+        subtitleRenderJob = lifecycleScope.launch {
+            while (isActive) {
+                updateSubtitleCues()
+                delay(100)
+            }
+        }
+    }
+
+    private fun updateSubtitleCues() {
+        if (!::subtitles.isInitialized) return
+        val current = controller
+        val external = !NativePlaybackService.castingSuppressed && (current?.deviceInfo?.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE || displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).isNotEmpty())
+        if (external) {
+            subtitles.visibility = View.GONE
+            return
+        }
+        subtitles.visibility = View.VISIBLE
+        val cues = activeSubtitleCues
+        if (cues.isNotEmpty()) {
+            val delaySec = settingsStore.settings.value.subtitleDelaySeconds
+            val currentSec = ((current?.currentPosition ?: 0L) / 1000.0)
+            val matchingCues = cues.filter { cue ->
+                val start = cue.startSeconds + delaySec
+                val end = cue.endSeconds + delaySec
+                currentSec in start..end
+            }
+            if (matchingCues.isNotEmpty()) {
+                val media3Cues = matchingCues.map { cue ->
+                    Cue.Builder()
+                        .setText(cue.text)
+                        .build()
+                }
+                subtitles.setCues(media3Cues)
+            } else {
+                subtitles.setCues(emptyList())
+            }
+        } else {
+            val playerCues = current?.currentCues?.cues.orEmpty()
+            subtitles.setCues(playerCues)
+        }
+    }
+
     override fun onStart() {
         super.onStart()
+        startSubtitleRenderLoop()
         displays.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         val future = MediaController.Builder(this, SessionToken(this, ComponentName(this, NativePlaybackService::class.java))).buildAsync()
         controllerFuture = future
@@ -577,6 +631,7 @@ class NativePlayerActivity : FragmentActivity() {
                 it.setPlaybackSpeed(settingsStore.settings.value.playbackSpeed)
                 sendSurface()
                 updateOutput()
+                updateSubtitleCues()
             }.onFailure { ui = ui.copy(error = "Unable to connect to playback. Please retry.") }
         }, mainExecutor)
     }
@@ -587,7 +642,7 @@ class NativePlayerActivity : FragmentActivity() {
         videoFrame.visibility = if (external) View.INVISIBLE else View.VISIBLE
         val size = current.videoSize
         if (size.height > 0) videoFrame.setAspectRatio(size.width * size.pixelWidthHeightRatio / size.height)
-        subtitles.setCues(current.currentCues.cues); subtitles.visibility = if (external) View.GONE else View.VISIBLE
+        updateSubtitleCues()
         ui = ui.copy(external = external, revision = ui.revision + 1,
             ready = ui.ready || (ui.stage == null && current.playbackState == Player.STATE_READY),
             title = selection?.media?.title ?: current.mediaMetadata.title?.toString().orEmpty().ifBlank { "Aliflix" })
@@ -612,11 +667,13 @@ class NativePlayerActivity : FragmentActivity() {
 
     private fun stopPlayback() {
         recordCurrentProgress(urgent = true)
+        subtitleRenderJob?.cancel()
         preparation?.cancel(); controller?.stop(); controller?.clearMediaItems()
         startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
     }
     override fun onStop() {
         recordCurrentProgress(urgent = true)
+        subtitleRenderJob?.cancel()
         displays.unregisterDisplayListener(displayListener)
         sendSurface(clear = true); controller?.removeListener(listener); controller = null
         controllerFuture?.let(MediaController::releaseFuture); controllerFuture = null
@@ -624,6 +681,7 @@ class NativePlayerActivity : FragmentActivity() {
     }
     override fun onDestroy() {
         recordCurrentProgress(urgent = true)
+        subtitleRenderJob?.cancel()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); subtitleSyncDebounceJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
     }
     override fun onConfigurationChanged(newConfig: Configuration) {

@@ -235,8 +235,15 @@ class NativePlaybackService : MediaSessionService() {
                 .setArtworkUri(selection?.media?.backdropUrl?.let(android.net.Uri::parse)).build())
         if (next.subtitlesVtt.isNotBlank()) {
             val file = java.io.File(cacheDir, "native-playback-subtitles.vtt").apply { writeText(next.subtitlesVtt) }
+            val lang = next.subtitleLanguage.ifBlank { "en" }
             itemBuilder.setSubtitleConfigurations(listOf(MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(file))
-                .setMimeType("text/vtt").setLanguage(next.subtitleLanguage).setLabel(next.subtitleLabel).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()))
+                .setMimeType("text/vtt").setLanguage(lang).setLabel(next.subtitleLabel)
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_FORCED).build()))
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setPreferredTextLanguage(lang)
+                .setSelectUndeterminedTextLanguage(true)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .build()
         }
         originalItem = itemBuilder.build()
         player.setMediaItem(checkNotNull(originalItem), next.positionMs)
@@ -405,6 +412,28 @@ class NativePlaybackService : MediaSessionService() {
                 if (surface == null && service.phoneSurfaceOwner != owner) return
                 service.phoneSurface = surface; service.phoneSurfaceOwner = if (surface != null) owner else null
                 if (service.presentation == null && service.tvSurface == null) service.localPlayer.setVideoSurface(surface)
+            }
+        }
+
+        internal fun updateSubtitles(vtt: String, language: String = "", label: String = "") {
+            val service = activeService ?: return
+            val current = service.request ?: return
+            val updated = current.copy(
+                subtitlesVtt = vtt,
+                subtitleLanguage = language.ifBlank { current.subtitleLanguage },
+                subtitleLabel = label.ifBlank { current.subtitleLabel }
+            )
+            service.request = updated
+            activeRequest = updated
+            service.relay?.updateSubtitles(vtt)
+            if (vtt.isNotBlank()) {
+                val file = java.io.File(service.cacheDir, "native-playback-subtitles.vtt").apply { writeText(vtt) }
+                val lang = updated.subtitleLanguage.ifBlank { "en" }
+                service.player.trackSelectionParameters = service.player.trackSelectionParameters.buildUpon()
+                    .setPreferredTextLanguage(lang)
+                    .setSelectUndeterminedTextLanguage(true)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .build()
             }
         }
 

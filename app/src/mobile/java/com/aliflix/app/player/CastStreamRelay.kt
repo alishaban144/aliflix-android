@@ -20,7 +20,7 @@ import kotlin.concurrent.thread
  * variants, audio, subtitles, keys and byte ranges all use the same authenticated upstream path.
  */
 internal class CastStreamRelay(
-    private val request: NativePlaybackRequest,
+    private var request: NativePlaybackRequest,
     private val address: String,
     bindAddress: InetAddress? = null,
 ) : Closeable {
@@ -33,6 +33,10 @@ internal class CastStreamRelay(
     private val workers = Executors.newCachedThreadPool { task -> Thread(task, "AliflixCastRelay").apply { isDaemon = true } }
     val streamUrl: String = register(request.url)
     val subtitleUrl: String get() = "http://$address:${server.localPort}/$token/subtitles.vtt"
+
+    fun updateSubtitles(subtitlesVtt: String) {
+        request = request.copy(subtitlesVtt = subtitlesVtt)
+    }
 
     init {
         thread(name = "AliflixCastAccept", isDaemon = true) {

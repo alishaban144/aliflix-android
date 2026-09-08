@@ -5,12 +5,12 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.68"
+      - "release/v3.1.69"
       - "release/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.68"
+        description: "Release tag, for example v3.1.69"
         required: true
         type: string
       notes:
@@ -22,8 +22,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "158"
-  RELEASE_VERSION_NAME: "3.1.68"
+  RELEASE_VERSION_CODE: "159"
+  RELEASE_VERSION_NAME: "3.1.69"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -336,7 +336,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Added robust OpenSubtitles integration with direct unlimited streams, eliminated 403/429 errors, enhanced SubDL download proxy with API key credentials, and prioritized English (EN) subtitles first."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Fixed subtitle playback display with dedicated real-time cue rendering, ExoPlayer forced text track selection, seamless instant subtitle switching without reloading, and OpenSubtitles unlimited direct streams."
           files: |
             aliflix-mobile.apk
             aliflix-tv.apk

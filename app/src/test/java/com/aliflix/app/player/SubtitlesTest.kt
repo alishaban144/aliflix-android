@@ -138,6 +138,22 @@ class SubtitlesTest {
         )
     }
 
+    @Test
+    fun activeCueAtPositionMatchesCurrentTimestampAndDelay() {
+        val cues = listOf(
+            SubtitleCue(1.0, 3.0, "First cue"),
+            SubtitleCue(4.0, 6.5, "Second cue"),
+        )
+        val match1 = cues.filter { 2.0 in (it.startSeconds + 0.0)..(it.endSeconds + 0.0) }
+        assertEquals("First cue", match1.single().text)
+
+        val match2 = cues.filter { 3.5 in (it.startSeconds + 0.0)..(it.endSeconds + 0.0) }
+        assertTrue(match2.isEmpty())
+
+        val match3 = cues.filter { 3.5 in (it.startSeconds + 1.5)..(it.endSeconds + 1.5) }
+        assertEquals("First cue", match3.single().text)
+    }
+
     private fun subtitleTrack(
         id: String,
         code: String,
