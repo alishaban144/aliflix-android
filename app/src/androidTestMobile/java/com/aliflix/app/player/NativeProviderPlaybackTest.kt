@@ -27,7 +27,10 @@ class NativeProviderPlaybackTest {
             PlaybackSelection(Media(550, MediaType.MOVIE, "Fight Club", year = "1999"), source = PlaybackSource(PlaybackProviderId.MOVIEPIRE, "https://moviepire.ru")),
             PlaybackSelection(Media(1396, MediaType.TV, "Breaking Bad"), 1, 1, "Pilot", source = PlaybackSource(PlaybackProviderId.MOVIEPIRE, "https://moviepire.ru")),
         )
-        selections.forEachIndexed { index, selection ->
+        val provider = InstrumentationRegistry.getArguments().getString("liveProvider")
+        val cases = if (provider == "ramoflix") (selections + selections.last().copy(seasonNumber = 2, episodeNumber = 3, episodeTitle = "Bit by a Dead Bee"))
+            .map { it.copy(source = PlaybackSource.ramoflix()) } else selections
+        cases.forEachIndexed { index, selection ->
             context.stopService(Intent(context, NativePlaybackService::class.java))
             Thread.sleep(500)
             val scenario = ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java)

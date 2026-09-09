@@ -311,6 +311,8 @@ class NativePlayerActivity : FragmentActivity() {
         } else if (selection != null && intent.hasExtra("selection") && (activeSelectionKey() != selection?.key || NativePlaybackService.activeStreamUrl == null)) prepareSelection()
     }
 
+    private val resolvedServerNames = mutableMapOf<String, List<String>>()
+
     private fun updateSelectionUi() {
         if (introKey != selection?.key) {
             introKey = selection?.key; introJob?.cancel(); ui = ui.copy(segments = emptyList())
@@ -320,7 +322,7 @@ class NativePlayerActivity : FragmentActivity() {
             } }
         }
         selection?.let {
-            val servers = if (it.source.provider.usesMoviepire) listOf("Vid", "Mist", "Mistify", "Flix", "Peach") else listOf(it.source.provider.displayName)
+            val servers = resolvedServerNames[it.key] ?: if (it.source.provider.usesMoviepire) listOf("Vid", "Mist", "Mistify", "Flix", "Peach") else listOf(it.source.provider.displayName)
             ui = ui.copy(
                 title = it.media.title,
                 detail = if (it.media.type == com.aliflix.app.model.MediaType.TV)
@@ -354,7 +356,7 @@ class NativePlayerActivity : FragmentActivity() {
         if (preferredServer != null) {
             triedServers.remove(preferredServer)
         }
-        val defaultServers = if (current.source.provider.usesMoviepire) listOf("Vid", "Mist", "Mistify", "Flix", "Peach") else listOf(current.source.provider.displayName)
+        val defaultServers = resolvedServerNames[current.key] ?: if (current.source.provider.usesMoviepire) listOf("Vid", "Mist", "Mistify", "Flix", "Peach") else listOf(current.source.provider.displayName)
         ui = ui.copy(
             stage = "Preparing your video",
             error = null,
@@ -382,7 +384,11 @@ class NativePlayerActivity : FragmentActivity() {
                     var server = ""
                     try {
                         val resolved = adapter.resolve(current, resume, triedServers,
-                            preferredServer = if (attempt == 0) preferredServer else null) { label -> server = label }
+                            preferredServer = if (attempt == 0) preferredServer else null,
+                            onServers = { names ->
+                                resolvedServerNames[current.key] = names
+                                ui = ui.copy(availableServers = names)
+                            }) { label -> server = label }
                         ui = ui.copy(server = server, stage = "Preparing your video")
                         adapter.close(); resolver = null; hideSystemBars()
                         // Native decoding and embedded-track discovery happen while playback is paused.

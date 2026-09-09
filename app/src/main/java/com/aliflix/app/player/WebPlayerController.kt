@@ -918,7 +918,7 @@ class WebPlayerController(
                         }
                         if (
                             selection != null &&
-                            selection.source.provider == PlaybackProviderId.RAMOFLIX &&
+                            nativeEmbedUrl == null && selection.source.provider == PlaybackProviderId.RAMOFLIX &&
                             isRamoflixSearchUrl(url, selection)
                         ) {
                             resolveRamoflixTitle(view, selection, attempt = 0)
@@ -1747,6 +1747,7 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
+        if (nativePreparation && nativeEmbedUrl != null) return
         when (selection.source.provider) {
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.MOVIEPIRE -> {

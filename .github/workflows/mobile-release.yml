@@ -5,12 +5,12 @@ on:
     tags:
       - "v*"
     branches:
-      - "release/v3.1.72"
+      - "release/v3.1.73"
       - "release/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.72"
+        description: "Release tag, for example v3.1.73"
         required: true
         type: string
       notes:
@@ -22,8 +22,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "162"
-  RELEASE_VERSION_NAME: "3.1.72"
+  RELEASE_VERSION_CODE: "163"
+  RELEASE_VERSION_NAME: "3.1.73"
   PRESERVED_TV_VERSION_CODE: "159"
   PRESERVED_TV_VERSION_NAME: "3.1.69"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
@@ -290,7 +290,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Parallel server loading selects the first successful stream and destroys the others. Subtitle search runs during loading, merges duplicate languages, expands preferred-language results, and selects the correct file from episode packs. Native playback waits for subtitle preparation; embedded subtitles and supported video fingerprints improve release matching. Includes the clean player redesign, draggable captions, pause on Back and cinematic home transitions. TV remains on v3.1.69."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Ramoflix now resolves its own movie and exact episode servers into the shared native player, with automatic server fallback and the same playback controls, subtitles and progress handling. Title identity is checked against TMDB before playback. TV remains on v3.1.69."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -334,7 +334,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Parallel server loading selects the first successful stream and destroys the others. Subtitle search runs during loading, merges duplicate languages, expands preferred-language results, and selects the correct file from episode packs. Native playback waits for subtitle preparation; embedded subtitles and supported video fingerprints improve release matching. Includes the clean player redesign, draggable captions, pause on Back and cinematic home transitions. TV remains on v3.1.69."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Ramoflix now resolves its own movie and exact episode servers into the shared native player, with automatic server fallback and the same playback controls, subtitles and progress handling. Title identity is checked against TMDB before playback. TV remains on v3.1.69."
           files: |
             aliflix-mobile.apk
             aliflix-tv.apk

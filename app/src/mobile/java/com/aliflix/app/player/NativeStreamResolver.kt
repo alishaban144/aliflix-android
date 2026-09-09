@@ -5,6 +5,7 @@ import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.model.PlaybackProviderId
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.currentCoroutineContext
@@ -28,19 +29,25 @@ internal class NativeStreamResolver(
         positionMs: Long,
         excluded: Set<String>,
         preferredServer: String? = null,
+        onServers: (List<String>) -> Unit = {},
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
-        val candidates = preferredNativeEmbeds(selection).filter { it.first !in excluded }
-        if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, onServer)
+        val embeds = if (selection.source.provider == PlaybackProviderId.RAMOFLIX)
+            RamoflixNativeCatalog().embeds(selection) else preferredNativeEmbeds(selection)
+        if (embeds.isNotEmpty()) onServers(embeds.map { it.first })
+        val candidates = embeds.filter { it.first !in excluded }
+        if (selection.source.provider == PlaybackProviderId.RAMOFLIX && candidates.isEmpty()) throw NoNativeServersException()
+        if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, onServer)
         val winner = try { firstSuccessful(candidates.map { (name, _) -> suspend {
             val child = NativeStreamResolver(activity, progress, host)
             children.add(child)
-            try { name to child.resolveSingle(selection, positionMs, excluded, name) {} }
+            try { name to child.resolveSingle(selection, positionMs, excluded, name, embeds) {} }
             finally { child.close(); children.remove(child) }
         } }, parallelism = 2) } catch (error: Exception) {
             currentCoroutineContext().ensureActive()
             // Preferred embeds may all be unavailable while the catalogue has another server.
-            return resolveSingle(selection, positionMs, excluded + candidates.map { it.first }, null, onServer)
+            if (selection.source.provider == PlaybackProviderId.RAMOFLIX) throw error
+            return resolveSingle(selection, positionMs, excluded + candidates.map { it.first }, null, embeds, onServer)
         }
         onServer(winner.first)
         return winner.second
@@ -48,9 +55,9 @@ internal class NativeStreamResolver(
 
     private suspend fun resolveSingle(
         selection: PlaybackSelection, positionMs: Long, excluded: Set<String>, preferredServer: String?,
+        allDirect: List<Pair<String, String>>,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest = withTimeout(45_000) {
-        val allDirect = preferredNativeEmbeds(selection)
         val direct = if (preferredServer != null) {
             allDirect.firstOrNull { it.first.equals(preferredServer, ignoreCase = true) }
         } else {
