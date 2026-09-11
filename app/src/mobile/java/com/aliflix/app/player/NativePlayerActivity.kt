@@ -52,6 +52,8 @@ class NativePlayerActivity : FragmentActivity() {
     private var subtitleJob: Job? = null
     private var subtitleSyncDebounceJob: Job? = null
     private var subtitleRenderJob: Job? = null
+    internal var subtitleTimingEvidence: SubtitleTimingMatch? = null
+        private set
     private var activeSubtitleCues: List<SubtitleCue> = emptyList()
     private var activeSubtitleCuesJson: String? = null
     private var episodeQueueJob: Job? = null
@@ -66,6 +68,7 @@ class NativePlayerActivity : FragmentActivity() {
     private var recoveryCount = 0
     private var stalledSince = 0L
     private val triedServers = linkedSetOf<String>()
+    private val exhaustedSources = linkedSetOf<com.aliflix.app.model.PlaybackProviderId>()
     private lateinit var resolverHost: FrameLayout
     private lateinit var video: SurfaceView
     private lateinit var videoFrame: AspectRatioFrameLayout
@@ -138,7 +141,7 @@ class NativePlayerActivity : FragmentActivity() {
                     player = controller,
                     settings = playerSettings,
                     onBack = ::pauseAndLeavePlayer,
-                    onRetry = { triedServers.clear(); recoveryCount = 0; prepareSelection() },
+                    onRetry = { exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0; prepareSelection() },
                     onServer = { prepareSelection() },
                     onSelectServer = ::selectServer,
                     onStop = ::stopPlayback,
@@ -183,7 +186,7 @@ class NativePlayerActivity : FragmentActivity() {
                             recordCurrentProgress(urgent = true)
                             selection = current.copy(seasonNumber = episode.seasonNumber, episodeNumber = episode.number, episodeTitle = episode.title)
                             intent.putExtra("selection", selection!!.nativeJson())
-                            triedServers.clear()
+                            exhaustedSources.clear(); triedServers.clear()
                             recoveryCount = 0
                             prepareSelection()
                         }
@@ -267,7 +270,7 @@ class NativePlayerActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
         if (intent.hasExtra("selection") || intent.hasExtra("request") || intent.hasExtra("requestFile")) {
-            requestAccepted = false; triedServers.clear(); recoveryCount = 0; acceptRequest(intent)
+            requestAccepted = false; exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0; acceptRequest(intent)
         }
     }
 
@@ -345,15 +348,18 @@ class NativePlayerActivity : FragmentActivity() {
     private fun prepareSelection(positionMs: Long? = null, preferredServer: String? = null) {
         val current = selection ?: return
         recordCurrentProgress(urgent = true)
+        val startingSource = current.source
         val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition?.takeIf { it > 0 }
             ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
         settingsStore.updateSubtitleDelayTenths(0)
+        subtitleTimingEvidence = null
         activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
         renderCaptions(emptyList())
         controller?.pause()
         if (preferredServer != null) {
+            exhaustedSources.remove(current.source.provider)
             triedServers.remove(preferredServer)
         }
         val defaultServers = resolvedServerNames[current.key] ?: if (current.source.provider.usesMoviepire) listOf("Vid", "Mist", "Mistify", "Flix", "Peach") else listOf(current.source.provider.displayName)
@@ -377,18 +383,28 @@ class NativePlayerActivity : FragmentActivity() {
                 if (!auto) emptyList() else searchStartupSubtitles(repository, current, language)
             }
             try {
+                val preferences = com.aliflix.app.data.PlaybackProviderRepository(this@NativePlayerActivity).preferences.value
+                for (candidate in playbackSourceFallbacks(current, preferences).filter { it.source.provider !in exhaustedSources }) {
+                    val current = candidate
+                    if (selection?.source != current.source) {
+                        selection = current
+                        triedServers.clear()
+                        subtitleTimingEvidence = null
+                        ui = ui.copy(stage = "Trying ${current.source.provider.displayName}", server = "", availableServers = emptyList())
+                        updateSelectionUi()
+                    }
                 for (attempt in 0 until 6) {
                     ensureActive()
                     val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                     resolver = adapter
                     var server = ""
                     try {
-                        val resolved = adapter.resolve(current, resume, triedServers,
-                            preferredServer = if (attempt == 0) preferredServer else null,
+                        val resolved = withTimeout(75_000) { adapter.resolve(current, resume, triedServers,
+                            preferredServer = if (attempt == 0 && current.source == startingSource) preferredServer else null,
                             onServers = { names ->
                                 resolvedServerNames[current.key] = names
                                 ui = ui.copy(availableServers = names)
-                            }) { label -> server = label }
+                            }) { label -> server = label } }
                         ui = ui.copy(server = server, stage = "Preparing your video")
                         adapter.close(); resolver = null; hideSystemBars()
                         // Native decoding and embedded-track discovery happen while playback is paused.
@@ -396,7 +412,8 @@ class NativePlayerActivity : FragmentActivity() {
                         awaitNativeReady(resolved.url)
                         if (auto && !NativePlaybackService.embeddedSubtitlesActive) {
                             ui = ui.copy(stage = "Preparing subtitles", subtitleLoading = true)
-                            val selected = withTimeoutOrNull(45_000) {
+                            var startupFallback: Pair<SubtitleTrack, List<SubtitleCue>>? = null
+                            val selected = withTimeoutOrNull(100_000) {
                                 val fingerprint = subtitleVideoFingerprint(resolved)
                                 val initial = initialSearch.await()
                                 val matched = if (fingerprint != null) repository.search(current, language, fingerprint).getOrDefault(emptyList()) else emptyList()
@@ -404,22 +421,60 @@ class NativePlayerActivity : FragmentActivity() {
                                 ui = ui.copy(subtitleTracks = tracks)
                                 val candidates = mobileSubtitleCandidates(tracks, language, current.seasonNumber, current.episodeNumber,
                                     current.media.title + " " + (fingerprint?.fileName ?: resolved.url))
-                                // Prefer each ranked pair in turn; a broken download never defeats its partner.
-                                var winner: Pair<SubtitleTrack, List<SubtitleCue>>? = null
-                                for (batch in candidates.take(12).chunked(2)) {
-                                    try {
-                                        winner = firstSuccessful(batch.map { track -> suspend {
+                                val downloaded = mutableListOf<Pair<SubtitleTrack, List<SubtitleCue>>>()
+                                val durationSeconds = (controller?.duration ?: 0) / 1000.0
+                                for (batch in candidates.take(24).chunked(4)) {
+                                    downloaded += batch.map { track -> async {
+                                        try {
                                             val cues = withTimeout(7000) { repository.download(track, current).getOrThrow() }
-                                            check(subtitleLanguageIsPlausible(cues, language)) { "Subtitle language does not match" }
-                                            val durationSeconds = (controller?.duration ?: 0) / 1000.0
-                                            check(durationSeconds <= 0 || cues.last().endSeconds <= durationSeconds + 120) { "Subtitle belongs to a longer cut" }
-                                            track to cues
-                                        } })
-                                        break
-                                    } catch (error: Exception) { ensureActive() }
+                                            if (cues.isNotEmpty() && subtitleLanguageIsPlausible(cues, language) &&
+                                                (durationSeconds <= 0 || cues.last().endSeconds <= durationSeconds + 120)) track to cues else null
+                                        } catch (error: Exception) { ensureActive(); null }
+                                    } }.awaitAll().filterNotNull()
+                                    startupFallback = downloaded.firstOrNull()
+                                    if (downloaded.firstOrNull()?.first?.hashMatched == true) break
                                 }
-                                winner
-                            }
+                                val fallback = downloaded.firstOrNull()
+                                if (fallback != null && !fallback.first.hashMatched && durationSeconds > 300) {
+                                    ui = ui.copy(stage = "Matching subtitle timing")
+                                    val windows = withContext(Dispatchers.Default) { subtitleProbeWindows(fallback.second, durationSeconds) }
+                                    val samples = windows.mapIndexed { index, start -> async {
+                                        try { subtitleSpeechSample(this@NativePlayerActivity, resolved, start, index) }
+                                        catch (error: Exception) {
+                                            ensureActive()
+                                            android.util.Log.w("AliflixSubtitleTiming", "Sample $index unavailable: ${error.javaClass.simpleName}: ${error.message}")
+                                            emptyList()
+                                        }
+                                    } }.awaitAll().toMutableList()
+                                    for (index in samples.indices.filter { samples[it].size < 8 }) {
+                                        samples[index] = withTimeoutOrNull(35_000) {
+                                            try { subtitleSpeechSample(this@NativePlayerActivity, resolved, (windows[index] - 25).coerceAtLeast(0.0), index) }
+                                            catch (error: Exception) { ensureActive(); emptyList() }
+                                        }.orEmpty()
+                                    }
+                                    val words = samples.flatten()
+                                    android.util.Log.i("AliflixSubtitleTiming", "${current.key}: candidates=${downloaded.size} words=${words.size} windows=$windows")
+                                    if (com.aliflix.app.BuildConfig.DEBUG) withContext(Dispatchers.IO) {
+                                        val folder = java.io.File(getExternalFilesDir(null), "player-validation").apply { mkdirs() }
+                                        java.io.File(folder, "speech-${current.media.id}.json").writeText(org.json.JSONObject().apply {
+                                            put("words", JSONArray().apply { words.forEach { put(JSONArray().put(it.text).put(it.seconds).put(it.sample)) } })
+                                            put("candidates", JSONArray().apply { downloaded.forEach { (track, cues) -> put(org.json.JSONObject().apply {
+                                                put("release", track.releaseName); put("cues", JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } })
+                                            }) } })
+                                        }.toString())
+                                    }
+                                    val matches = withContext(Dispatchers.Default) { downloaded.mapNotNull { candidate ->
+                                        matchSubtitleTiming(candidate.second, words)?.let { candidate to it }
+                                    }.sortedWith(compareByDescending<Pair<Pair<SubtitleTrack, List<SubtitleCue>>, SubtitleTimingMatch>> { it.second.anchors }
+                                        .thenBy { it.second.residual }) }
+                                    val best = matches.firstOrNull()
+                                    if (best != null) {
+                                        subtitleTimingEvidence = best.second
+                                        android.util.Log.i("AliflixSubtitleTiming", "${current.key}: anchors=${best.second.anchors} offset=${best.second.offset} rate=${best.second.rate} residual=${best.second.residual}")
+                                        best.first.first to best.second.apply(best.first.second)
+                                    } else fallback
+                                } else fallback
+                            } ?: startupFallback
                             ensureActive()
                             if (selected != null) {
                                 val (track, cues) = selected
@@ -436,6 +491,7 @@ class NativePlayerActivity : FragmentActivity() {
                             }
                         }
                         ensureActive()
+                        intent.putExtra("selection", current.nativeJson())
                         ui = ui.copy(stage = null, ready = true, error = null, subtitleLoading = false)
                         controller?.play()
                         return@launch
@@ -445,6 +501,9 @@ class NativePlayerActivity : FragmentActivity() {
                     controller?.stop()
                     if (server.isNotBlank()) triedServers.add(server) else break
                     ui = ui.copy(stage = "Trying another server")
+                }
+                    exhaustedSources.add(current.source.provider)
+                    controller?.stop()
                 }
                 ui = ui.copy(stage = null, error = "We couldn't prepare this title. Check your connection and try again.", subtitleLoading = false)
             } finally { initialSearch.cancel() }
@@ -489,7 +548,8 @@ class NativePlayerActivity : FragmentActivity() {
     private fun recover() {
         if (selection == null || preparation?.isActive == true) return
         stalledSince = 0
-        if (recoveryCount++ < 2) prepareSelection()
+        if (ui.server.isNotBlank()) triedServers.add(ui.server)
+        if (recoveryCount++ < 8) prepareSelection()
         else ui = ui.copy(stage = null, error = "Playback was interrupted. Retry to reconnect or choose another server.")
     }
 
@@ -537,6 +597,7 @@ class NativePlayerActivity : FragmentActivity() {
 
     private fun disableSubtitles() {
         subtitleJob?.cancel()
+        subtitleTimingEvidence = null
         activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
         renderCaptions(emptyList())

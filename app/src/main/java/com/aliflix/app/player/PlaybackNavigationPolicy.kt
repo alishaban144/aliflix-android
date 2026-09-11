@@ -130,7 +130,7 @@ object PlaybackNavigationPolicy {
         "vidplus.to",
         "superflixapi.buzz",
         "uembed.xyz",
-    ) + if (com.aliflix.app.BuildConfig.IS_TV) emptySet() else setOf("wplay.me", "nextgencloudfabric.com", "vidbolt.xyz")
+    ) + if (com.aliflix.app.BuildConfig.IS_TV) emptySet() else setOf("wplay.me", "nextgencloudfabric.com", "vidbolt.xyz", "vidfast.vc")
 
     fun isAllowedTopLevel(url: String, customHosts: Set<String> = emptySet()): Boolean = runCatching {
         val uri = URI(url)

@@ -64,6 +64,7 @@ class NativePlaybackService : MediaSessionService() {
     private val httpFactory = DefaultHttpDataSource.Factory()
     private var relay: CastStreamRelay? = null
     private var request: NativePlaybackRequest? = null
+    private var preferredQualityApplied = false
     private var originalItem: MediaItem? = null
     private val subtitleFiles = mutableListOf<java.io.File>()
     private var selection: PlaybackSelection? = null
@@ -126,6 +127,10 @@ class NativePlaybackService : MediaSessionService() {
             .getOrDefault(localPlayer)
         player.addListener(object : Player.Listener {
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                if (!preferredQualityApplied && (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality == PreferredVideoQuality.LOW && lowestVideoTrack(tracks) != null) {
+                    preferredQualityApplied = true
+                    applyLowestVideoTrack(player, tracks)
+                }
                 if (request?.preferEmbeddedSubtitles != true || embeddedSubtitlesActive) return
                 val language = canonicalSubtitleLanguageCode(request?.subtitleLanguage.orEmpty())
                 val match = tracks.groups.asSequence().filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { group ->
@@ -229,6 +234,9 @@ class NativePlaybackService : MediaSessionService() {
         player.stop(); player.clearMediaItems()
         relay?.close(); relay = null
         request = next
+        preferredQualityApplied = false
+        player.trackSelectionParameters = preferredQualityParameters(player.trackSelectionParameters,
+            (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality)
         embeddedSubtitlesActive = false
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)

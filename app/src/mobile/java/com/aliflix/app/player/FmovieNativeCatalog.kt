@@ -1,5 +1,6 @@
 package com.aliflix.app.player
 
+import com.aliflix.app.data.RamoflixConfig
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackSelection
 import kotlinx.coroutines.Dispatchers
@@ -11,30 +12,34 @@ import org.json.JSONObject
 import java.net.URI
 import java.net.URLEncoder
 
-/** Read the selected site's catalogue, then hand its own embeds to the shared native resolver. */
-internal class RamoflixNativeCatalog {
+/** Ramoflix and Doraby use the Fmovie theme. Resolve each selected site's own catalogue. */
+internal class FmovieNativeCatalog {
     suspend fun embeds(selection: PlaybackSelection): List<Pair<String, String>> = withContext(Dispatchers.IO) {
-        val entry = requireNotNull(selection.entryUrl)
+        val entry = fmovieSearchUrl(selection)
         val search = Jsoup.connect(entry).timeout(15_000).get()
-        val candidates = ramoflixTitleLinks(search, selection)
+        val candidates = fmovieTitleLinks(search, selection)
         for (url in candidates) {
             ensureActive()
-            val page = Jsoup.connect(url).timeout(15_000).get()
-            val embeds = ramoflixPageEmbeds(page, selection)
+            val page = try { Jsoup.connect(url).timeout(15_000).get() }
+                catch (_: Exception) { ensureActive(); continue }
+            val embeds = fmoviePageEmbeds(page, selection)
             if (embeds.isNotEmpty()) return@withContext embeds
         }
-        error("Ramoflix did not provide servers for the selected title")
+        error("${selection.source.provider.displayName} did not provide servers for the selected title")
     }
 }
 
-internal fun ramoflixTitleLinks(page: Document, selection: PlaybackSelection): List<String> =
+internal fun fmovieSearchUrl(selection: PlaybackSelection): String =
+    RamoflixConfig(selection.source.baseUrl).buildWatchUrl(selection.media.title)
+
+internal fun fmovieTitleLinks(page: Document, selection: PlaybackSelection): List<String> =
     page.select(".filmlist .item a[href]").map { it.absUrl("href") }
         .filter { url -> runCatching {
             val uri = URI(url)
             uri.scheme == "https" && uri.host == URI(selection.source.baseUrl).host && uri.userInfo == null
         }.getOrDefault(false) }.distinct().take(20)
 
-internal fun ramoflixPageEmbeds(page: Document, selection: PlaybackSelection): List<Pair<String, String>> {
+internal fun fmoviePageEmbeds(page: Document, selection: PlaybackSelection): List<Pair<String, String>> {
     val tv = selection.media.type == MediaType.TV
     val variable = if (tv) "Episodes" else "Servers"
     val script = page.getElementById(if (tv) "episodes-js-extra" else "servers-js-extra")?.data() ?: return emptyList()
@@ -48,7 +53,7 @@ internal fun ramoflixPageEmbeds(page: Document, selection: PlaybackSelection): L
         val url = if (tv) {
             val key = server.attr("data-load-embed-host").takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val post = config.optString("post_id").takeIf { it.matches(Regex("[0-9]+")) } ?: return@mapNotNull null
-            // The provider's own episode endpoint; no asynchronous season menu or default S1E1.
+            // The selected provider's own episode endpoint; no season-menu race or default S1E1.
             selection.source.baseUrl.trimEnd('/') + "/?player_tv=$post&s=${selection.seasonNumber ?: 1}&e=${selection.episodeNumber ?: 1}&sv=${URLEncoder.encode(key, "UTF-8")}&tv=true"
         } else {
             val key = Regex("loadServer\\(\\s*([A-Za-z0-9_]+)\\s*\\)")

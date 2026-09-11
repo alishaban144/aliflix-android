@@ -178,7 +178,7 @@ class PlaybackProviderRepository(context: Context) {
             preferredSubtitleLanguage = SubtitleLanguage.fromCode(
                 prefs.getString(KEY_PREFERRED_SUBTITLE_LANGUAGE, null),
             ),
-            autoDisplaySubtitles = prefs.getBoolean(KEY_AUTO_DISPLAY_SUBTITLES, false),
+            autoDisplaySubtitles = prefs.getBoolean(KEY_AUTO_DISPLAY_SUBTITLES, !BuildConfig.IS_TV),
         )
     }
 

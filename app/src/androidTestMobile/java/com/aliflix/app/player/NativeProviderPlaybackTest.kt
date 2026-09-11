@@ -17,10 +17,17 @@ class NativeProviderPlaybackTest {
         grantNativeFixtureNetworkPermission()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
+        val lowQuality = InstrumentationRegistry.getArguments().getString("liveQuality") == "low"
+        val settings = (context.applicationContext as com.aliflix.app.AliflixApplication).playerSettingsStore
+        settings.updatePreferredVideoQuality(if (lowQuality) PreferredVideoQuality.LOW else PreferredVideoQuality.AUTO)
         instrumentation.uiAutomation.executeShellCommand("settings put secure immersive_mode_confirmations confirmed").use { java.io.FileInputStream(it.fileDescriptor).readBytes() }
         val output = File(context.getExternalFilesDir(null), "player-validation").apply { mkdirs() }
         val autoSubtitles = InstrumentationRegistry.getArguments().getString("liveSubtitles") == "true"
-        val selections = if (InstrumentationRegistry.getArguments().getString("liveTitle") == "got") listOf(
+        val timingTitles = InstrumentationRegistry.getArguments().getString("liveTitle") == "timing"
+        val selections = if (timingTitles) listOf(
+            PlaybackSelection(Media(1339713, MediaType.MOVIE, "Obsession", year = "2026"), source = PlaybackSource.moviepire()),
+            PlaybackSelection(Media(1233413, MediaType.MOVIE, "Sinners", year = "2025"), source = PlaybackSource.moviepire()),
+        ) else if (InstrumentationRegistry.getArguments().getString("liveTitle") == "got") listOf(
             PlaybackSelection(Media(1399, MediaType.TV, "Game of Thrones"), 1, 1, "Winter Is Coming",
                 source = PlaybackSource(PlaybackProviderId.MOVIEPIRE, "https://moviepire.ru"))
         ) else listOf(
@@ -28,9 +35,13 @@ class NativeProviderPlaybackTest {
             PlaybackSelection(Media(1396, MediaType.TV, "Breaking Bad"), 1, 1, "Pilot", source = PlaybackSource(PlaybackProviderId.MOVIEPIRE, "https://moviepire.ru")),
         )
         val provider = InstrumentationRegistry.getArguments().getString("liveProvider")
-        val cases = if (provider == "ramoflix") (selections + selections.last().copy(seasonNumber = 2, episodeNumber = 3, episodeTitle = "Bit by a Dead Bee"))
-            .map { it.copy(source = PlaybackSource.ramoflix()) } else selections
-        cases.forEachIndexed { index, selection ->
+        val forceFallback = InstrumentationRegistry.getArguments().getString("liveFallback") == "true"
+        val cases = if (provider in setOf("ramoflix", "doraby")) (if (timingTitles) selections else selections + selections.last().copy(seasonNumber = 2, episodeNumber = 3, episodeTitle = "Bit by a Dead Bee"))
+            .map { it.copy(source = if (provider == "doraby") PlaybackSource.doraby() else PlaybackSource.ramoflix()) } else selections
+        cases.forEachIndexed { index, original ->
+            val selection = if (forceFallback) original.copy(source = original.source.copy(baseUrl = "https://unavailable.aliflix.invalid")) else original
+            if (forceFallback) (context.applicationContext as com.aliflix.app.AliflixApplication).playbackProgressStore
+                .savePlayerProgress(selection, 270.0, 6000.0, urgentCloudSync = false)
             context.stopService(Intent(context, NativePlaybackService::class.java))
             Thread.sleep(500)
             val scenario = ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java)
@@ -61,6 +72,12 @@ class NativeProviderPlaybackTest {
                         }
                         val stream = NativePlaybackService.activeStreamUrl
                         if (checkedStream != stream) {
+                            if (forceFallback && checkedStream == null) scenario.onActivity {
+                                assertTrue("Fallback must reapply saved position before playback", it.playbackController!!.currentPosition >= 270000)
+                                val actual = nativeSelection(requireNotNull(NativePlaybackService.activeRequest).selectionJson)
+                                assertNotEquals("Unavailable source must fall back automatically", selection.source.provider, actual.source.provider)
+                                assertEquals(com.aliflix.app.data.playbackProgressKey(selection), com.aliflix.app.data.playbackProgressKey(actual))
+                            }
                             checkedStream = stream; stableSince = android.os.SystemClock.elapsedRealtime()
                             scenario.onActivity { it.playbackController?.seekTo(180_000); positionAtSeek = 180_000 }
                         }
@@ -74,8 +91,17 @@ class NativeProviderPlaybackTest {
                 }
                 scenario.onActivity {
                     state = it.playbackUiState
+                    if (timingTitles) {
+                        File(output, "timing-$index.txt").writeText("${it.subtitleTimingEvidence}\n")
+                        assertTrue("Dialogue timing must be verified", it.subtitleTimingEvidence != null || NativePlaybackService.embeddedSubtitlesActive)
+                    }
                     assertEquals("Every resolver must be destroyed after the winning stream is prepared", 0, it.resolverViewCount)
                     assertNull("Native decoder error after seeking", it.playbackController?.playerError)
+                    if (lowQuality) {
+                        val tracks = it.playbackController!!.currentTracks
+                        val lowest = requireNotNull(lowestVideoTrack(tracks))
+                        assertTrue("Low must select the lowest supported video track", tracks.groups.first { group -> group.mediaTrackGroup == lowest.mediaTrackGroup }.isTrackSelected(lowest.trackIndices.single()))
+                    }
                     assertTrue("Playback must continue after seeking", it.playbackController?.let { p -> p.isPlaying && p.currentPosition > 185_000 } == true)
                     assertEquals(android.content.res.Configuration.ORIENTATION_LANDSCAPE, it.resources.configuration.orientation)
                 }
@@ -108,5 +134,6 @@ class NativeProviderPlaybackTest {
                 Thread.sleep(3000)
             } finally { scenario.close(); context.stopService(Intent(context, NativePlaybackService::class.java)) }
         }
+        settings.updatePreferredVideoQuality(PreferredVideoQuality.AUTO)
     }
 }

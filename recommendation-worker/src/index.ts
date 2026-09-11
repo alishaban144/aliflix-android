@@ -6,6 +6,7 @@ import { RecommendationEnv, RecommendationResponse, RecommendationResult, Servic
 import { companySearch, editorialPicks, homeFeed, personCredits, titleDetails, titleSearch, tvNetworkFeed } from './catalog';
 import { downloadSubdlSubtitle, searchSubdlSubtitles } from './subdl';
 import { TmdbClient } from './tmdb';
+import { subtitleAudioTiming } from './subtitleAudio';
 
 export { RecommendationSession };
 
@@ -227,6 +228,12 @@ export default {
         tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN),
         subdlConfigured: Boolean(env.SUBDL_API_KEY),
       });
+    }
+    if (url.pathname === '/v3/subtitles/audio-timing' && request.method === 'POST') {
+      try {
+        await enforceRateLimit(request, env);
+        return await subtitleAudioTiming(request, env);
+      } catch (error) { return errorResponse(error); }
     }
     if (url.pathname === '/v3/subtitles' && request.method === 'GET') {
       try {

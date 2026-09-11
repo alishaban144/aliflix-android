@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+enum class PreferredVideoQuality(val label: String) { AUTO("Auto"), LOW("Low") }
+
 data class PlayerSettings(
     val subtitleFontSizeSp: Float = DEFAULT_SUBTITLE_FONT_SIZE_SP,
     val subtitleBackgroundOpacity: Float = DEFAULT_SUBTITLE_BACKGROUND_OPACITY,
@@ -13,6 +15,7 @@ data class PlayerSettings(
     val subtitleVerticalOffsetDp: Int = 0,
     val playbackSpeed: Float = 1.0f,
     val resizeModeZoom: Boolean = false,
+    val preferredVideoQuality: PreferredVideoQuality = PreferredVideoQuality.AUTO,
 ) {
     val subtitleDelaySeconds: Double get() = subtitleDelayTenths / 10.0
 
@@ -66,6 +69,11 @@ class PlayerSettingsStore(context: Context) {
         preferences.edit { putBoolean(KEY_RESIZE_MODE_ZOOM, zoom) }
     }
 
+    fun updatePreferredVideoQuality(quality: PreferredVideoQuality) {
+        update { it.copy(preferredVideoQuality = quality) }
+        preferences.edit { putString(KEY_VIDEO_QUALITY, quality.name) }
+    }
+
     private inline fun update(transform: (PlayerSettings) -> PlayerSettings) {
         _settings.value = transform(_settings.value)
     }
@@ -83,6 +91,9 @@ class PlayerSettingsStore(context: Context) {
             if (it in listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)) it else 1.0f
         },
         resizeModeZoom = preferences.getBoolean(KEY_RESIZE_MODE_ZOOM, false),
+        preferredVideoQuality = PreferredVideoQuality.entries.firstOrNull {
+            it.name == preferences.getString(KEY_VIDEO_QUALITY, null)
+        } ?: PreferredVideoQuality.AUTO,
     )
 
     companion object {
@@ -93,5 +104,6 @@ class PlayerSettingsStore(context: Context) {
         private const val KEY_SUBTITLE_VERTICAL_OFFSET = "subtitle_vertical_offset_dp"
         private const val KEY_PLAYBACK_SPEED = "playback_speed"
         private const val KEY_RESIZE_MODE_ZOOM = "resize_mode_zoom"
+        private const val KEY_VIDEO_QUALITY = "preferred_video_quality"
     }
 }

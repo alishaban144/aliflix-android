@@ -14,25 +14,25 @@ class RamoflixNativeCatalogTest {
         <section id="servers"><li class="server" data-load-embed-host="Vidfast" data-load-season="1" data-load-episode="1">Vidsrc</li></section>"""
 
     @Test fun moviesUseOnlyAdvertisedServersForTheExactTmdbIdentity() {
-        val embeds = ramoflixPageEmbeds(Jsoup.parse(movieHtml), movie)
+        val embeds = fmoviePageEmbeds(Jsoup.parse(movieHtml), movie)
         assertEquals(listOf("Vidsrc", "Videasy"), embeds.map { it.first })
         assertEquals("https://soap2night.cc/embed/movie/tt0137523", embeds.first().second)
-        assertTrue(ramoflixPageEmbeds(Jsoup.parse(movieHtml), movie.copy(media = movie.media.copy(id = 551))).isEmpty())
-        assertTrue(ramoflixPageEmbeds(Jsoup.parse(movieHtml), tv.copy(media = tv.media.copy(id = 550))).isEmpty())
+        assertTrue(fmoviePageEmbeds(Jsoup.parse(movieHtml), movie.copy(media = movie.media.copy(id = 551))).isEmpty())
+        assertTrue(fmoviePageEmbeds(Jsoup.parse(movieHtml), tv.copy(media = tv.media.copy(id = 550))).isEmpty())
     }
 
     @Test fun exactEpisodeOverridesTheSitesDefaultAndPreservesTheConfiguredMirror() {
         val selection = tv.copy(source = PlaybackSource(PlaybackProviderId.RAMOFLIX, "https://mirror.example/"))
         assertEquals("https://mirror.example/?player_tv=468&s=2&e=3&sv=Vidfast&tv=true",
-            ramoflixPageEmbeds(Jsoup.parse(tvHtml), selection).single().second)
-        assertTrue(ramoflixPageEmbeds(Jsoup.parse(tvHtml), movie).isEmpty())
+            fmoviePageEmbeds(Jsoup.parse(tvHtml), selection).single().second)
+        assertTrue(fmoviePageEmbeds(Jsoup.parse(tvHtml), movie).isEmpty())
     }
 
     @Test fun searchIgnoresNavigationAdvertisingAndDuplicatePostLinks() {
         val page = Jsoup.parse("""<a href="/category/movies/">Fight Club</a><div class="filmlist"><div class="item">
             <a href="/fight-club/">Poster</a><a href="/fight-club/">Fight Club</a>
             <a href="https://ramoflix.net.attacker.test/wrong/">Fight Club</a></div></div>""", "https://ramoflix.net/")
-        assertEquals(listOf("https://ramoflix.net/fight-club/"), ramoflixTitleLinks(page, movie))
+        assertEquals(listOf("https://ramoflix.net/fight-club/"), fmovieTitleLinks(page, movie))
     }
 
     @Test fun nativeHandoffPreservesRamoflixEpisodeAndResumeIdentity() {

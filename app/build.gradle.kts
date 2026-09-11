@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 163
-val mobileVersionName = "3.1.73"
+val mobileVersionCode = 164
+val mobileVersionName = "3.1.74"
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
@@ -37,8 +37,8 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 163
-        versionName = "3.1.73"
+        versionCode = 164
+        versionName = "3.1.74"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
