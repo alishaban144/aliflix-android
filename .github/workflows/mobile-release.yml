@@ -22,8 +22,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "164"
-  RELEASE_VERSION_NAME: "3.1.74"
+  RELEASE_VERSION_CODE: "166"
+  RELEASE_VERSION_NAME: "3.1.76"
   PRESERVED_TV_VERSION_CODE: "159"
   PRESERVED_TV_VERSION_NAME: "3.1.69"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
@@ -157,7 +157,13 @@ jobs:
           done
 
   release:
-    needs: [changed-paths, worker-checks, deploy-recommendations, playback-device-tests]
+    needs:
+      [
+        changed-paths,
+        worker-checks,
+        deploy-recommendations,
+        playback-device-tests,
+      ]
     if: >-
       always() && needs.changed-paths.result == 'success' && needs.playback-device-tests.result == 'success' &&
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
@@ -291,7 +297,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Doraby movies and episodes now use the shared native player, with automatic fallback across Doraby, Ramoflix and Moviepire while retaining playback progress. New Auto and Low quality preferences apply across sources and servers. Settings have a compact Aliflix redesign. Automatic subtitles now compare multiple releases and can correct timing using dialogue from separate scenes when confident matches are available. TV remains on v3.1.69."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels. TV remains on v3.1.69."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -335,7 +341,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Doraby movies and episodes now use the shared native player, with automatic fallback across Doraby, Ramoflix and Moviepire while retaining playback progress. New Auto and Low quality preferences apply across sources and servers. Settings have a compact Aliflix redesign. Automatic subtitles now compare multiple releases and can correct timing using dialogue from separate scenes when confident matches are available. TV remains on v3.1.69."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels. TV remains on v3.1.69."
           files: |
             aliflix-mobile.apk
             aliflix-tv.apk

@@ -334,6 +334,7 @@ class NativePlayerActivity : FragmentActivity() {
                 episodes = it.availableEpisodes,
                 episodeNumber = it.episodeNumber,
                 availableServers = servers,
+                playbackSelection = it,
             )
         }
     }
