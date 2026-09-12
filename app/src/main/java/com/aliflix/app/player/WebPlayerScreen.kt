@@ -231,33 +231,8 @@ fun WebPlayerScreen(
         subtitleTrackLoading = false
     }
 
-    LaunchedEffect(
-        nativePhoneMoviepire,
-        playing,
-        loading,
-        error,
-        controlsVisible,
-        serverMenuExpanded,
-        episodeMenuExpanded,
-        subtitleDialogVisible,
-        switchingMoviepireServer,
-    ) {
-        if (
-            nativePhoneMoviepire &&
-            controlsVisible &&
-            !loading &&
-            error == null &&
-            !serverMenuExpanded &&
-            !episodeMenuExpanded &&
-            !subtitleDialogVisible &&
-            !switchingMoviepireServer
-        ) {
-            delay(if (playing) 3_200L else 5_200L)
-            controlsVisible = false
-        }
-    }
-
     BackHandler(enabled = visible) {
+        controller.resetOrientation()
         if (!controller.handleBack()) onClose()
     }
 
@@ -468,53 +443,19 @@ fun WebPlayerScreen(
                     )
                 },
             )
-        } else if (nativePhoneMoviepire) {
-            if (!controlsVisible && resumeDecisionMade && error == null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clickable(
-                            interactionSource = null,
-                            indication = null,
-                            onClick = { controlsVisible = true },
-                        ),
-                )
-            }
-            AnimatedVisibility(
-                visible = controlsVisible,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter),
-            ) {
-                NativeMoviepireTopBar(
-                    selection = selection,
-                    servers = moviepireServers,
-                    episodes = selection.availableEpisodes,
-                    switchingServer = switchingMoviepireServer,
-                    currentSeasonNumber = selection.seasonNumber,
-                    currentEpisodeNumber = selection.episodeNumber,
-                    serverMenuExpanded = serverMenuExpanded,
-                    episodeMenuExpanded = episodeMenuExpanded,
-                    subtitlesActive = selectedSubtitleTrack != null && activeSubtitleCues.isNotEmpty(),
-                    onServerMenuExpandedChange = { serverMenuExpanded = it },
-                    onEpisodeMenuExpandedChange = { episodeMenuExpanded = it },
-                    onSelectServer = { server ->
-                        controlsVisible = true
-                        controller.selectMoviepireServer(server)
-                    },
-                    onSelectEpisode = onSelectEpisode,
-                    onClose = onClose,
-                    onFullscreen = {
-                        val fullscreenActive = controller.requestMoviepireFullscreen()
-                        controlsVisible = !fullscreenActive
-                    },
-                    onSubtitles = {
-                        controlsVisible = true
-                        subtitleDialogVisible = true
-                    },
-                    onCast = controller::openCastPicker,
-                )
-            }
+        } else {
+            MobilePlayerOverlay(
+                selection = selection,
+                controller = controller,
+                onClose = {
+                    controller.resetOrientation()
+                    onClose()
+                },
+                onSelectEpisode = onSelectEpisode,
+                subtitlesActive = selectedSubtitleTrack != null && activeSubtitleCues.isNotEmpty(),
+                subtitleLanguage = selectedSubtitleTrack?.languageName,
+                onOpenSubtitles = { subtitleDialogVisible = true },
+            )
 
             if (subtitleDialogVisible) {
                 SubtitleDialog(
@@ -576,254 +517,6 @@ fun WebPlayerScreen(
                         )
                     },
                 )
-            }
-        } else {
-            ExistingPlayerTopControls(selection, controller, onClose)
-        }
-    }
-}
-
-@Composable
-private fun NativeMoviepireTopBar(
-    selection: PlaybackSelection,
-    servers: List<MoviepireServerOption>,
-    episodes: List<Episode>,
-    switchingServer: Boolean,
-    currentSeasonNumber: Int?,
-    currentEpisodeNumber: Int?,
-    serverMenuExpanded: Boolean,
-    episodeMenuExpanded: Boolean,
-    subtitlesActive: Boolean,
-    onServerMenuExpandedChange: (Boolean) -> Unit,
-    onEpisodeMenuExpandedChange: (Boolean) -> Unit,
-    onSelectServer: (MoviepireServerOption) -> Unit,
-    onSelectEpisode: (Episode) -> Unit,
-    onClose: () -> Unit,
-    onFullscreen: () -> Unit,
-    onSubtitles: () -> Unit,
-    onCast: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val selectedServer = servers.firstOrNull(MoviepireServerOption::selected)
-    val episodeContext = if (currentSeasonNumber != null && currentEpisodeNumber != null) {
-        "S${currentSeasonNumber.toString().padStart(2, '0')}  •  " +
-            "E${currentEpisodeNumber.toString().padStart(2, '0')}"
-    } else {
-        null
-    }
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        AliflixBlack.copy(alpha = 0.98f),
-                        AliflixBlack.copy(alpha = 0.86f),
-                        AliflixBlack.copy(alpha = 0.42f),
-                        Color.Transparent,
-                    ),
-                ),
-            )
-            .padding(top = 38.dp, start = 14.dp, end = 14.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            PlayerIconButton(onClick = onClose) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back to Aliflix")
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = selection.media.title,
-                    color = AliflixContentPrimary,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val secondaryLine = listOfNotNull(
-                    episodeContext,
-                    selection.episodeTitle?.takeIf(String::isNotBlank),
-                ).joinToString("  •  ")
-                if (secondaryLine.isNotBlank()) {
-                    Text(
-                        text = secondaryLine,
-                        color = AliflixContentSecondary,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            PlayerIconButton(onClick = onFullscreen) {
-                Icon(Icons.Rounded.Fullscreen, contentDescription = "Play fullscreen")
-            }
-            PlayerIconButton(
-                onClick = onSubtitles,
-                active = subtitlesActive,
-            ) {
-                Icon(Icons.Rounded.Subtitles, contentDescription = "Subtitles")
-            }
-            PlayerIconButton(onClick = onCast) {
-                Icon(Icons.Rounded.Cast, contentDescription = "Cast video to TV")
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            Box {
-                Button(
-                    onClick = { onServerMenuExpandedChange(true) },
-                    enabled = servers.isNotEmpty() && !switchingServer,
-                    modifier = Modifier.heightIn(min = 44.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = AliflixSurfaceElevated.copy(alpha = 0.94f),
-                        contentColor = AliflixContentPrimary,
-                        disabledContainerColor = AliflixSurfaceElevated.copy(alpha = 0.78f),
-                        disabledContentColor = AliflixContentSecondary,
-                    ),
-                    border = BorderStroke(1.dp, AliflixBorderSubtle),
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    if (switchingServer) {
-                        CircularProgressIndicator(
-                            color = AliflixAccentSecondary,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.size(8.dp))
-                    }
-                    Text(
-                        text = if (switchingServer) {
-                            "Switching server"
-                        } else {
-                            selectedServer?.label ?: "Choose server"
-                        },
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
-                    if (!switchingServer) {
-                        Spacer(Modifier.size(4.dp))
-                        Icon(
-                            Icons.Rounded.ExpandMore,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                }
-                DropdownMenu(
-                    expanded = serverMenuExpanded,
-                    onDismissRequest = { onServerMenuExpandedChange(false) },
-                ) {
-                    servers.forEach { server ->
-                        DropdownMenuItem(
-                            text = {
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(
-                                        text = server.label,
-                                        color = if (server.selected) {
-                                            AliflixAccentSecondary
-                                        } else {
-                                            AliflixContentPrimary
-                                        },
-                                        fontWeight = if (server.selected) {
-                                            FontWeight.Bold
-                                        } else {
-                                            FontWeight.Medium
-                                        },
-                                    )
-                                    if (server.selected) {
-                                        Text(
-                                            text = "Currently playing",
-                                            color = AliflixContentSecondary,
-                                            fontSize = 10.sp,
-                                        )
-                                    }
-                                }
-                            },
-                            enabled = !server.selected && !switchingServer,
-                            onClick = {
-                                onServerMenuExpandedChange(false)
-                                onSelectServer(server)
-                            },
-                        )
-                    }
-                }
-            }
-            if (episodes.isNotEmpty()) {
-                Spacer(Modifier.size(10.dp))
-                Box {
-                    Button(
-                        onClick = { onEpisodeMenuExpandedChange(true) },
-                        modifier = Modifier.heightIn(min = 44.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = AliflixAccentPrimary.copy(alpha = 0.92f),
-                            contentColor = Color.White,
-                        ),
-                        border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = 0.34f)),
-                        shape = RoundedCornerShape(16.dp),
-                    ) {
-                        Text(
-                            text = episodeContext ?: "Episodes",
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                        )
-                        Spacer(Modifier.size(4.dp))
-                        Icon(
-                            Icons.Rounded.ExpandMore,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = episodeMenuExpanded,
-                        onDismissRequest = { onEpisodeMenuExpandedChange(false) },
-                    ) {
-                        episodes.forEach { episode ->
-                            val current = episode.seasonNumber == currentSeasonNumber &&
-                                episode.number == currentEpisodeNumber
-                            DropdownMenuItem(
-                                text = {
-                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(
-                                            text = "S${episode.seasonNumber.toString().padStart(2, '0')}  •  " +
-                                                "E${episode.number.toString().padStart(2, '0')}",
-                                            color = if (current) {
-                                                AliflixAccentSecondary
-                                            } else {
-                                                AliflixContentSecondary
-                                            },
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                        Text(
-                                            text = episode.title,
-                                            color = AliflixContentPrimary,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            fontWeight = if (current) {
-                                                FontWeight.Bold
-                                            } else {
-                                                FontWeight.Medium
-                                            },
-                                        )
-                                    }
-                                },
-                                enabled = !current,
-                                onClick = {
-                                    onEpisodeMenuExpandedChange(false)
-                                    onSelectEpisode(episode)
-                                },
-                            )
-                        }
-                    }
-                }
             }
         }
     }
@@ -1171,69 +864,6 @@ private fun SubtitleAdjustmentRow(
 }
 
 @Composable
-private fun BoxScope.ExistingPlayerTopControls(
-    selection: PlaybackSelection,
-    controller: WebPlayerController,
-    onClose: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .align(Alignment.TopStart)
-            .padding(top = 44.dp, start = 16.dp),
-    ) {
-        PlayerIconButton(onClick = onClose) {
-            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back to Aliflix")
-        }
-    }
-
-    if (!BuildConfig.IS_TV) {
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 44.dp, end = 16.dp),
-        ) {
-            PlayerIconButton(onClick = controller::openCastPicker) {
-                Icon(Icons.Rounded.Cast, contentDescription = "Cast video to TV")
-            }
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .align(Alignment.TopCenter)
-            .padding(top = 44.dp),
-    ) {
-        if (selection.source.provider == PlaybackProviderId.RAMOFLIX) {
-            Button(
-                onClick = controller::showProviderOptions,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Black.copy(alpha = 0.72f),
-                    contentColor = Color.White,
-                ),
-                shape = CircleShape,
-            ) {
-                Text(
-                    text = "Ramoflix · Servers",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        } else {
-            Text(
-                text = selection.source.provider.displayName,
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.72f))
-                    .padding(horizontal = 18.dp, vertical = 11.dp),
-            )
-        }
-    }
-}
-
-@Composable
 private fun PlayerIconButton(
     onClick: () -> Unit,
     active: Boolean = false,
@@ -1254,17 +884,6 @@ private fun PlayerIconButton(
     )
 }
 
-private fun formatPlaybackTime(seconds: Double): String {
-    val totalSeconds = seconds.toLong().coerceAtLeast(0L)
-    val hours = totalSeconds / 3_600L
-    val minutes = (totalSeconds % 3_600L) / 60L
-    val remainingSeconds = totalSeconds % 60L
-    return if (hours > 0L) {
-        "%d:%02d:%02d".format(hours, minutes, remainingSeconds)
-    } else {
-        "%d:%02d".format(minutes, remainingSeconds)
-    }
-}
 
 private enum class TvPlayerSubOverlay {
     NONE,

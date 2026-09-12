@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.MutableContextWrapper
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -138,6 +139,19 @@ class WebPlayerController(
 
     private val _playing = MutableStateFlow(false)
     val playing: StateFlow<Boolean> = _playing.asStateFlow()
+    val isPlaying: StateFlow<Boolean> = _playing.asStateFlow()
+
+    private val _videoFound = MutableStateFlow(false)
+    val videoFound: StateFlow<Boolean> = _videoFound.asStateFlow()
+
+    private val _currentPositionMs = MutableStateFlow(0L)
+    val currentPositionMs: StateFlow<Long> = _currentPositionMs.asStateFlow()
+
+    private val _durationMs = MutableStateFlow(0L)
+    val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
+
+    private val _bufferedPositionMs = MutableStateFlow(0L)
+    val bufferedPositionMs: StateFlow<Long> = _bufferedPositionMs.asStateFlow()
 
     fun viewFor(selection: PlaybackSelection): FrameLayout {
         val host = localPlayerHost ?: FrameLayout(activity).apply {
@@ -162,6 +176,10 @@ class WebPlayerController(
             _moviepireServers.value = emptyList()
             _switchingMoviepireServer.value = false
             _playing.value = false
+            _videoFound.value = false
+            _currentPositionMs.value = ((pendingSeekSeconds ?: 0.0) * 1000).toLong()
+            _durationMs.value = 0L
+            _bufferedPositionMs.value = 0L
             activePlayerReplyProxy = null
             moviepireEpisodeBootstrapReloads = 0
             _error.value = null
@@ -514,15 +532,19 @@ class WebPlayerController(
     val durationSeconds: Double get() = latestDurationSeconds
 
     fun play() {
+        _playing.value = true
         postPlaybackControl(true)
     }
 
     fun pause() {
+        _playing.value = false
         postPlaybackControl(false)
     }
 
     fun togglePlayPause() {
-        postPlaybackControl(!_playing.value)
+        val nextPlaying = !_playing.value
+        _playing.value = nextPlaying
+        postPlaybackControl(nextPlaying)
     }
 
     fun seekTo(seconds: Double) {
@@ -530,7 +552,60 @@ class WebPlayerController(
         val maxDur = latestDurationSeconds.takeIf { it > 0.0 } ?: Double.MAX_VALUE
         val target = seconds.coerceIn(0.0, maxDur)
         latestPositionSeconds = target
+        _currentPositionMs.value = (target * 1000).toLong()
         postSeekToMoviepirePlayer(view, target, activePlayerReplyProxy)
+    }
+
+    fun seekTo(positionMs: Long) {
+        val seconds = positionMs.coerceAtLeast(0L) / 1000.0
+        seekTo(seconds)
+    }
+
+    fun seekBy(offsetMs: Long) {
+        val current = _currentPositionMs.value
+        val dur = _durationMs.value
+        val target = if (dur > 0L) {
+            (current + offsetMs).coerceIn(0L, dur)
+        } else {
+            (current + offsetMs).coerceAtLeast(0L)
+        }
+        seekTo(target)
+    }
+
+    fun setPlaybackSpeed(speed: Float) {
+        val view = webView ?: return
+        val clampedSpeed = speed.coerceIn(0.25f, 3.0f)
+        val command = JSONObject()
+            .put("type", "aliflix-speed")
+            .put("speed", clampedSpeed.toDouble())
+            .toString()
+        activePlayerReplyProxy?.let { proxy -> runCatching { proxy.postMessage(command) } }
+        view.evaluateJavascript(
+            """
+            (() => {
+              const speed = $clampedSpeed;
+              const v = document.querySelector("video");
+              if (v) v.playbackRate = speed;
+              document.querySelectorAll("iframe").forEach(f => {
+                try { f.contentWindow?.postMessage({ type: "aliflix-speed", speed }, "*"); } catch (_) {}
+              });
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
+    fun toggleOrientation() {
+        val currentOrientation = activity.resources.configuration.orientation
+        if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        } else {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+    }
+
+    fun resetOrientation() {
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
     private fun postPlaybackControl(shouldPlay: Boolean) {
@@ -715,6 +790,12 @@ class WebPlayerController(
         nativeStreamReceivedAt = SystemClock.elapsedRealtime()
         if (nativePreparation) return // Resolution must never overwrite the saved native resume point.
         latestDurationSeconds = duration
+        _durationMs.value = (duration * 1000).toLong()
+        _videoFound.value = true
+        val buffered = payload.optDouble("bufferedSeconds", Double.NaN)
+        if (buffered.isFinite() && buffered >= 0.0) {
+            _bufferedPositionMs.value = (buffered * 1000).toLong()
+        }
         when (event) {
             "play", "playing" -> _playing.value = true
             "pause", "ended" -> _playing.value = false
@@ -724,6 +805,7 @@ class WebPlayerController(
             // A different Moviepire server can replace the entire player frame. Reapply the
             // text track to the exact frame that has just reported its real video clock.
             postActiveSubtitles(replyProxy)
+            suppressProviderVideoControls(view)
         }
         pendingSeekSeconds?.let { seek ->
             val switchingServer = pendingServerKey != null
@@ -753,6 +835,7 @@ class WebPlayerController(
         if (stillRestoring) return
 
         latestPositionSeconds = position.coerceAtMost(duration)
+        _currentPositionMs.value = (latestPositionSeconds * 1000).toLong()
         latestPlaybackEnded = event == "ended" || (latestPlaybackEnded && event == "pause")
         // The browser is paused after handoff; only the native owner may persist its clock.
         if (NativePlaybackLauncher.ownsStream(nativeStream?.optString("url"))) return
@@ -768,6 +851,33 @@ class WebPlayerController(
             )
             lastLocalProgressWriteAt = now
         }
+    }
+
+    private fun suppressProviderVideoControls(view: WebView) {
+        view.evaluateJavascript(
+            """
+            (() => {
+              try {
+                const styleId = "aliflix-hide-provider-controls";
+                if (!document.getElementById(styleId)) {
+                  const s = document.createElement("style");
+                  s.id = styleId;
+                  s.textContent = `
+                    video::-webkit-media-controls { display: none !important; }
+                    video::-webkit-media-controls-enclosure { display: none !important; }
+                    .plyr__controls, .vjs-control-bar, .jw-controls { display: none !important; }
+                  `;
+                  document.head?.appendChild(s);
+                }
+                document.querySelectorAll("video").forEach(v => {
+                  v.controls = false;
+                  v.removeAttribute("controls");
+                });
+              } catch (_) {}
+            })();
+            """.trimIndent(),
+            null,
+        )
     }
 
     private fun flushProgress(urgentCloudSync: Boolean) {
@@ -2500,11 +2610,23 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
             seekActiveVideo();
           }
         }
+        let bufferedSeconds = 0;
+        try {
+          if (video.buffered && video.buffered.length > 0) {
+            for (let i = video.buffered.length - 1; i >= 0; i--) {
+              if (video.buffered.start(i) <= video.currentTime + 0.5) {
+                bufferedSeconds = video.buffered.end(i);
+                break;
+              }
+            }
+          }
+        } catch (_) {}
         try {
           bridge.postMessage(JSON.stringify({
             event,
             positionSeconds: video.currentTime,
             durationSeconds: video.duration,
+            bufferedSeconds: bufferedSeconds,
             documentHidden: document.visibilityState !== "visible",
             nativeStream: window.__aliflixNativeStream?.(video) || null
           }));
@@ -2512,13 +2634,17 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
       };
       const onTimeUpdate = (event) => {
         const now = Date.now();
-        if (now - lastTimeUpdateSentAt < 1000) return;
+        if (now - lastTimeUpdateSentAt < 250) return;
         lastTimeUpdateSentAt = now;
         post("timeupdate", event.currentTarget);
       };
       const attach = (video) => {
         if (!video || video.dataset.aliflixProgressAttached === "true") return;
         video.dataset.aliflixProgressAttached = "true";
+        try {
+          video.controls = false;
+          video.removeAttribute("controls");
+        } catch (_) {}
         activate(video);
         applySubtitles(video);
         video.addEventListener("loadedmetadata", (event) => {
@@ -2548,6 +2674,11 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
       });
       document.addEventListener("DOMContentLoaded", scan, { once: true });
       scan();
+      window.setInterval(() => {
+        if (activeVideo && !activeVideo.paused) {
+          post("timeupdate", activeVideo);
+        }
+      }, 300);
 
       const receiveCommand = (raw) => {
         let data = raw;
@@ -2561,6 +2692,14 @@ internal fun mobileMoviepireProgressBridgeScript(): String =
         }
         if (data.type === "aliflix-playback-control") {
           controlPlayback(data.shouldPlay);
+          return true;
+        }
+        if (data.type === "aliflix-speed") {
+          const s = Number(data.speed);
+          if (Number.isFinite(s) && s > 0) {
+            const v = activeVideo || document.querySelector("video");
+            if (v) v.playbackRate = s;
+          }
           return true;
         }
         if (data.type === "aliflix-subtitles") {
