@@ -1,5 +1,10 @@
 package com.aliflix.app.player
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -215,7 +220,7 @@ internal fun MobilePlayerCenterControls(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Seek Back 15s
-        Box(
+        androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 .size(52.dp)
                 .clickable(
@@ -226,7 +231,7 @@ internal fun MobilePlayerCenterControls(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            AnimatedVisibility(
+            androidx.compose.animation.AnimatedVisibility(
                 visible = !hideSeekBack,
                 enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.85f),
                 exit = fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.85f),
@@ -267,7 +272,7 @@ internal fun MobilePlayerCenterControls(
         }
 
         // Seek Forward 15s
-        Box(
+        androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 .size(52.dp)
                 .clickable(
@@ -278,7 +283,7 @@ internal fun MobilePlayerCenterControls(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            AnimatedVisibility(
+            androidx.compose.animation.AnimatedVisibility(
                 visible = !hideSeekForward,
                 enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.85f),
                 exit = fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.85f),

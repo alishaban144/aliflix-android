@@ -405,12 +405,20 @@ class NativePlayerActivity : FragmentActivity() {
                         ui = ui.copy(server = server, stage = "Preparing your video")
                         adapter.close(); resolver = null; hideSystemBars()
                         // Native decoding and embedded-track discovery happen while playback is paused.
-                        startNative(resolved.copy(playing = false, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
+                        startNative(
+                            resolved.copy(
+                                playing = false,
+                                preferEmbeddedSubtitles = auto,
+                                subtitleLanguage = language.lowercase()
+                            )
+                        )
                         awaitNativeReady(resolved.url)
                         if (NativePlaybackService.embeddedSubtitlesActive) {
-                            ui = ui.copy(stage = "Ready")
-                            resumeIfPending()
-                            break
+                            ensureActive()
+                            intent.putExtra("selection", current.nativeJson())
+                            ui = ui.copy(stage = null, ready = true, error = null, subtitleLoading = false)
+                            controller?.play()
+                            return@launch
                         }
                         if (auto) {
                             ui = ui.copy(stage = "Preparing subtitles", subtitleLoading = true)
@@ -504,13 +512,15 @@ class NativePlayerActivity : FragmentActivity() {
                     if (server.isNotBlank()) triedServers.add(server) else break
                     ui = ui.copy(stage = "Trying another server")
                 }
-                    exhaustedSources.add(current.source.provider)
-                    controller?.stop()
-                }
-                ui = ui.copy(stage = null, error = "We couldn't prepare this title. Check your connection and try again.", subtitleLoading = false)
+                exhaustedSources.add(current.source.provider)
+                controller?.stop()
             }
+            ui = ui.copy(stage = null, error = "We couldn't prepare this title. Check your connection and try again.", subtitleLoading = false)
+        } finally {
+            // Playback preparation finished; nothing left to cancel.
         }
     }
+}
 
     private suspend fun searchStartupSubtitles(repository: SubdlSubtitleRepository, current: PlaybackSelection, language: String): List<SubtitleTrack> {
         var accumulated = emptyList<SubtitleTrack>()
