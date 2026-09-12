@@ -148,9 +148,8 @@ internal fun MobilePlayerOverlay(
                         episodesSheetVisible = true
                         interactionToken++
                     },
-                    onCast = {
-                        controller.openCastPicker()
-                        interactionToken++
+                    onSubtitles = {
+                        onOpenSubtitles()
                     },
                     onRotate = {
                         controller.toggleOrientation()
@@ -180,6 +179,8 @@ internal fun MobilePlayerOverlay(
                         controller.seekBy(15_000L)
                         interactionToken++
                     },
+                    hideSeekBack = seekFeedback.state?.isForward == false,
+                    hideSeekForward = seekFeedback.state?.isForward == true,
                     modifier = Modifier.align(Alignment.Center),
                 )
 

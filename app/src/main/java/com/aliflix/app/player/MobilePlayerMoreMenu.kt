@@ -74,6 +74,8 @@ internal fun MobilePlayerMoreSheet(
     currentSpeed: Float? = null,
     onStopPlayback: (() -> Unit)? = null,
     onOpenWirelessDisplay: (() -> Unit)? = null,
+    castActive: Boolean = false,
+    onCast: (() -> Unit)? = null,
 ) {
     if (!visible) return
 
@@ -152,6 +154,19 @@ internal fun MobilePlayerMoreSheet(
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
+
+                if (onCast != null) {
+                    MoreOptionRow(
+                        icon = Icons.Rounded.Cast,
+                        title = "Cast",
+                        subtitle = if (castActive) "Manage device" else "Choose device",
+                        onClick = {
+                            onDismiss()
+                            onCast()
+                        },
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
 
                 // Playback Speed option
                 Text(

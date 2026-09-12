@@ -19,7 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ViewList
-import androidx.compose.material.icons.rounded.Cast
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -59,7 +59,7 @@ internal fun MobilePlayerTopBar(
     isTv: Boolean,
     onBack: () -> Unit,
     onEpisodes: () -> Unit,
-    onCast: () -> Unit,
+    onSubtitles: () -> Unit,
     onRotate: () -> Unit,
     onMore: () -> Unit,
     modifier: Modifier = Modifier,
@@ -125,9 +125,9 @@ internal fun MobilePlayerTopBar(
                 )
             }
             CompactTopButton(
-                icon = Icons.Rounded.Cast,
-                contentDescription = "Cast",
-                onClick = onCast,
+                icon = Icons.Rounded.Subtitles,
+                contentDescription = "Audio & Subtitles",
+                onClick = onSubtitles,
             )
             CompactTopButton(
                 icon = Icons.Rounded.ScreenRotation,
@@ -205,6 +205,8 @@ internal fun MobilePlayerCenterControls(
     onPlayPause: () -> Unit,
     onSeekBack: () -> Unit,
     onSeekForward: () -> Unit,
+    hideSeekBack: Boolean = false,
+    hideSeekForward: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -219,14 +221,21 @@ internal fun MobilePlayerCenterControls(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
+                    enabled = !hideSeekBack,
                     onClick = onSeekBack,
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Seek15Icon(
-                isForward = false,
-                modifier = Modifier.size(40.dp),
-            )
+            AnimatedVisibility(
+                visible = !hideSeekBack,
+                enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.85f),
+                exit = fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.85f),
+            ) {
+                Seek15Icon(
+                    isForward = false,
+                    modifier = Modifier.size(40.dp),
+                )
+            }
         }
 
         // Play / Pause 64dp outlined circle
@@ -264,14 +273,21 @@ internal fun MobilePlayerCenterControls(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
+                    enabled = !hideSeekForward,
                     onClick = onSeekForward,
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Seek15Icon(
-                isForward = true,
-                modifier = Modifier.size(40.dp),
-            )
+            AnimatedVisibility(
+                visible = !hideSeekForward,
+                enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.85f),
+                exit = fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.85f),
+            ) {
+                Seek15Icon(
+                    isForward = true,
+                    modifier = Modifier.size(40.dp),
+                )
+            }
         }
     }
 }

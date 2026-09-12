@@ -1,4 +1,4 @@
-package com.aliflix.app.player
+﻿package com.aliflix.app.player
 
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
@@ -159,8 +159,8 @@ private data class HudFeedback(
 /**
  * Phone player using the approved v3.1.75 mobile playback redesign:
  * - Compact top bar (back, uppercase title, Episodes / Cast / Rotate / More)
- * - Outlined 64dp play/pause with ±15 second seek controls
- * - 35% / 30% / 35% double-tap seek zones with cumulative ±15/±30/±45 HUD
+ * - Outlined 64dp play/pause with Â±15 second seek controls
+ * - 35% / 30% / 35% double-tap seek zones with cumulative Â±15/Â±30/Â±45 HUD
  * - Redesigned purple timeline with scrub bubble
  * - Redesigned Episodes panel and playback settings (More) menu
  * - 3-second auto-hide during playback
@@ -457,8 +457,8 @@ internal fun NativePlayerScreen(
                         episodesVisible = true
                         interaction++
                     },
-                    onCast = {
-                        if (state.external) sheet = "CastOptions" else onReceiver()
+                    onSubtitles = {
+                        sheet = "Audio & subtitles"
                         interaction++
                     },
                     onRotate = {
@@ -484,6 +484,8 @@ internal fun NativePlayerScreen(
                         },
                         onSeekBack = { seekWithFeedback(false) },
                         onSeekForward = { seekWithFeedback(true) },
+                        hideSeekBack = seekFeedback.state?.isForward == false,
+                        hideSeekForward = seekFeedback.state?.isForward == true,
                         modifier = Modifier.align(Alignment.Center),
                     )
                 }
@@ -573,7 +575,7 @@ internal fun NativePlayerScreen(
                     }
                     Column(Modifier.weight(1f)) {
                         Text("UP NEXT", color = AliflixAccentSecondary, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.sp)
-                        Text("E${next!!.number} · ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("E${next!!.number} Â· ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     OpenPlayerButton(
                         onClick = { next?.let { onEpisode(it) } },
@@ -652,7 +654,7 @@ internal fun NativePlayerScreen(
             }
         }
 
-        // Cumulative double-tap / ±15s seek feedback HUD
+        // Cumulative double-tap / Â±15s seek feedback HUD
         SeekFeedbackHud(
             feedback = seekFeedback.state,
             onDismiss = { seekFeedback.dismiss() },
@@ -715,6 +717,16 @@ internal fun NativePlayerScreen(
             onOpenWirelessDisplay = {
                 moreVisible = false
                 onWireless()
+            },
+            castActive = state.external,
+            onCast = {
+                moreVisible = false
+                if (state.external) {
+                    sheet = "CastOptions"
+                } else {
+                    onReceiver()
+                }
+                interaction++
             },
         )
     }
@@ -788,7 +800,7 @@ internal fun NativePlayerScreen(
                                         modifier = Modifier.size(38.dp),
                                         colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
                                     ) {
-                                        Text("−0.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                        Text("âˆ’0.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                     if (settings.subtitleDelayTenths != 0) {
                                         TextButton(onClick = { onSubtitleDelayChange(0) }) {

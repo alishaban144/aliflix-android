@@ -22,10 +22,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "166"
-  RELEASE_VERSION_NAME: "3.1.76"
-  PRESERVED_TV_VERSION_CODE: "159"
-  PRESERVED_TV_VERSION_NAME: "3.1.69"
+  RELEASE_VERSION_CODE: "167"
+  RELEASE_VERSION_NAME: "3.1.77"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -189,19 +187,9 @@ jobs:
             sed -nE 's/^val mobileVersionName[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' \
               app/build.gradle.kts
           )"
-          TV_GRADLE_VERSION_CODE="$(
-            sed -nE 's/^val tvVersionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' \
-              app/build.gradle.kts
-          )"
-          TV_GRADLE_VERSION_NAME="$(
-            sed -nE 's/^val tvVersionName[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' \
-              app/build.gradle.kts
-          )"
 
           test "$GRADLE_VERSION_CODE" = "$RELEASE_VERSION_CODE"
           test "$GRADLE_VERSION_NAME" = "$RELEASE_VERSION_NAME"
-          test "$TV_GRADLE_VERSION_CODE" = "$PRESERVED_TV_VERSION_CODE"
-          test "$TV_GRADLE_VERSION_NAME" = "$PRESERVED_TV_VERSION_NAME"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             test "$REQUESTED_TAG" = "$EXPECTED_TAG"
           elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
@@ -297,7 +285,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels. TV remains on v3.1.69."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -319,31 +307,13 @@ jobs:
           EOF
           cp "$MOBILE_APK" aliflix-mobile.apk
 
-          # Keep the existing TV update available through /releases/latest without rebuilding TV.
-          TV_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${PRESERVED_TV_VERSION_NAME}"
-          curl --fail --location --retry 3 "$TV_BASE/update-tv.json" -o update-tv.json
-          curl --fail --location --retry 3 "$TV_BASE/aliflix-tv.apk" -o aliflix-tv.apk
-          python3 - <<'PY'
-          import hashlib, json, os, pathlib, zipfile
-          metadata = json.loads(pathlib.Path('update-tv.json').read_text())
-          apk = pathlib.Path('aliflix-tv.apk')
-          assert metadata['versionCode'] == int(os.environ['PRESERVED_TV_VERSION_CODE'])
-          assert metadata['versionName'] == os.environ['PRESERVED_TV_VERSION_NAME'] + '-tv'
-          assert hashlib.sha256(apk.read_bytes()).hexdigest() == metadata['sha256']
-          assert apk.stat().st_size == metadata['sizeBytes']
-          with zipfile.ZipFile(apk) as archive:
-              assert archive.testzip() is None
-          PY
-
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels. TV remains on v3.1.69."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels."
           files: |
             aliflix-mobile.apk
-            aliflix-tv.apk
             update-mobile.json
-            update-tv.json

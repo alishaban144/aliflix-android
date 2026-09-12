@@ -379,10 +379,6 @@ class NativePlayerActivity : FragmentActivity() {
             val auto = intent.getBooleanExtra("autoSubtitles", true)
             val language = canonicalSubtitleLanguageCode(intent.getStringExtra("subtitleLanguage") ?: "EN")
             val repository = SubdlSubtitleRepository()
-            // This starts before server resolution; it is not a lazy task waiting for playback.
-            val initialSearch = async {
-                if (!auto) emptyList() else searchStartupSubtitles(repository, current, language)
-            }
             try {
                 val preferences = com.aliflix.app.data.PlaybackProviderRepository(this@NativePlayerActivity).preferences.value
                 for (candidate in playbackSourceFallbacks(current, preferences).filter { it.source.provider !in exhaustedSources }) {
@@ -411,12 +407,17 @@ class NativePlayerActivity : FragmentActivity() {
                         // Native decoding and embedded-track discovery happen while playback is paused.
                         startNative(resolved.copy(playing = false, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
                         awaitNativeReady(resolved.url)
-                        if (auto && !NativePlaybackService.embeddedSubtitlesActive) {
+                        if (NativePlaybackService.embeddedSubtitlesActive) {
+                            ui = ui.copy(stage = "Ready")
+                            resumeIfPending()
+                            break
+                        }
+                        if (auto) {
                             ui = ui.copy(stage = "Preparing subtitles", subtitleLoading = true)
                             var startupFallback: Pair<SubtitleTrack, List<SubtitleCue>>? = null
                             val selected = withTimeoutOrNull(100_000) {
                                 val fingerprint = subtitleVideoFingerprint(resolved)
-                                val initial = initialSearch.await()
+                                val initial = searchStartupSubtitles(repository, current, language)
                                 val matched = if (fingerprint != null) repository.search(current, language, fingerprint).getOrDefault(emptyList()) else emptyList()
                                 val tracks = normalizeMobileSubtitleTracks(matched + initial)
                                 ui = ui.copy(subtitleTracks = tracks)
@@ -507,7 +508,7 @@ class NativePlayerActivity : FragmentActivity() {
                     controller?.stop()
                 }
                 ui = ui.copy(stage = null, error = "We couldn't prepare this title. Check your connection and try again.", subtitleLoading = false)
-            } finally { initialSearch.cancel() }
+            }
         }
     }
 
