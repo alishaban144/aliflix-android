@@ -9,12 +9,9 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -120,7 +117,7 @@ internal fun MobileVideoGestureDetector(
 
 /**
  * Seek feedback HUD overlay displaying over left or right side:
- * ↶ -15s / -30s or ↷ +15s / +30s
+ * "+15s" / "+30s" or "-15s" / "-30s" accumulated seek text.
  * Fast scale-in + fade-in, auto-dismisses after 650ms.
  */
 @Composable
@@ -163,21 +160,15 @@ internal fun SeekFeedbackHud(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Seek15Icon(
-                            isForward = feedback.isForward,
-                            modifier = Modifier.size(36.dp),
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (feedback.accumulatedSeconds > 0) "+${feedback.accumulatedSeconds}s" else "${feedback.accumulatedSeconds}s",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
+                    Text(
+                        text = if (feedback.accumulatedSeconds > 0)
+                            "+${feedback.accumulatedSeconds}s"
+                        else
+                            "${feedback.accumulatedSeconds}s",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
         }
