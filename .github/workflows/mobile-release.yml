@@ -175,7 +175,7 @@ jobs:
 
       - name: Validate release version and tag
         env:
-          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+          REQUESTED_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name || github.ref_name.replace('release/', '')) }}
         run: |
           set -euo pipefail
           EXPECTED_TAG="v${RELEASE_VERSION_NAME}"
