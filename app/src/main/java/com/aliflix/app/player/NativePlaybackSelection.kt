@@ -30,6 +30,7 @@ internal fun nativeSelection(raw: String): PlaybackSelection = JSONObject(raw).l
 internal fun launchNativeSelection(activity: Activity, selection: PlaybackSelection, language: String, autoSubtitles: Boolean) {
     activity.startActivity(Intent().setClassName(activity, "com.aliflix.app.player.NativePlayerActivity")
         .putExtra("selection", selection.nativeJson()).putExtra("subtitleLanguage", language)
+        .putExtra("playTapElapsedMs", android.os.SystemClock.elapsedRealtime())
         .putExtra("autoSubtitles", autoSubtitles), nativePhoneLaunchOptions())
 }
 

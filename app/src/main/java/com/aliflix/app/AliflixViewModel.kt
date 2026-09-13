@@ -860,6 +860,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    internal val discoverCatalogue = com.aliflix.app.ui.discover.DiscoverCatalogueStore(aiClient)
+
     suspend fun searchTitles(query: String): List<Media> = aiClient.searchTitles(query.trim())
         .map { it.toMedia() }
         .distinctBy(Media::key)

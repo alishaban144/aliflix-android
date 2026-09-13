@@ -130,7 +130,7 @@ function genreMap(genres: TmdbGenre[]): Map<number, string> {
   return new Map(genres.map(genre => [genre.id, genre.name]));
 }
 
-function summary(
+export function summary(
   item: TmdbListItem,
   mediaType: MediaType,
   genresById: Map<number, string>,

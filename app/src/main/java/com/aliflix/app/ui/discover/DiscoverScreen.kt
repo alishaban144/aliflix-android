@@ -63,6 +63,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AssistChip
@@ -148,6 +149,10 @@ import kotlinx.coroutines.launch
 internal fun DiscoverScreen(
     state: SearchUiState,
     aiEnabled: Boolean,
+    catalogueStore: DiscoverCatalogueStore? = null,
+    onPerson: (com.aliflix.app.model.MediaCreator) -> Unit = {},
+    onCategory: (String) -> Unit = {},
+    onAccount: () -> Unit = {},
     homeContent: HomeContent?,
     recent: List<Media>,
     focusRequestId: Int?,
@@ -345,13 +350,12 @@ internal fun DiscoverScreen(
                     Column(modifier = Modifier.fillMaxSize()) {
                         MobileTopSafeArea()
 
-                        Text(
-                            text = "Discover",
-                            color = AliflixContentPrimary,
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
-                        )
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            IconButton(onClick = onAccount, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Rounded.AccountCircle, "Account", tint = AliflixAccentSecondary, modifier = Modifier.size(30.dp))
+                            }
+                        }
 
                         Row(
 
@@ -364,28 +368,26 @@ internal fun DiscoverScreen(
                                 value = fieldValue,
                                 onValueChange = { updated ->
                                     fieldValue = updated
-                                    onQueryChange(updated.text)
+
                                 },
                                 placeholder = {
                                     Text(
-                                        text = "Title, actor, year, or keyword",
+                                        text = "Search titles and people",
                                         color = AliflixContentTertiary,
                                         fontSize = 14.sp,
                                     )
                                 },
                                 leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Filled.Search,
-                                        contentDescription = null,
-                                        tint = AliflixContentSecondary,
-                                    )
+                                    IconButton(onClick = { keyboard?.hide(); fieldValue = fieldValue.copy(text = fieldValue.text.trim()) }) {
+                                        Icon(Icons.Filled.Search, "Search catalogue", tint = AliflixContentSecondary)
+                                    }
                                 },
                                 trailingIcon = {
                                     if (fieldValue.text.isNotEmpty()) {
                                         IconButton(
                                             onClick = {
                                                 fieldValue = TextFieldValue("")
-                                                onQueryChange("")
+
                                             }
                                         ) {
                                             Icon(
@@ -400,7 +402,7 @@ internal fun DiscoverScreen(
                                 keyboardActions = KeyboardActions(
                                     onSearch = { 
                                         keyboard?.hide()
-                                        onSubmitSearch(fieldValue.text)
+                                        fieldValue = fieldValue.copy(text = fieldValue.text.trim())
                                     },
                                 ),
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -422,48 +424,6 @@ internal fun DiscoverScreen(
                                     .focusRequester(focusRequester)
                                     .testTag("discover-search-field"),
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            val searchInteractionSource = remember { MutableInteractionSource() }
-                            Button(
-                                onClick = {
-                                    keyboard?.hide()
-                                    onSubmitSearch(fieldValue.text)
-                                },
-                                enabled = fieldValue.text.isNotBlank(),
-                                interactionSource = searchInteractionSource,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = AliflixAccentPrimary,
-                                    contentColor = Color.White,
-                                    disabledContainerColor = AliflixSurfaceSecondary,
-                                    disabledContentColor = AliflixContentTertiary,
-                                ),
-                                shape = RoundedCornerShape(18.dp),
-                                modifier = Modifier
-                                    .height(56.dp)
-                                    .aliflixPressScale(searchInteractionSource)
-                                    .testTag("discover-catalogue-submit"),
-                            ) {
-                                AnimatedContent(
-                                    targetState = state.phase == SearchPhase.LOADING,
-                                    transitionSpec = { fadeIn(DiscoverMotion.standard()).togetherWith(fadeOut(DiscoverMotion.standard())) },
-                                    label = "searchIcon"
-                                ) { isLoading ->
-                                    if (isLoading) {
-                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Filled.Search,
-                                            contentDescription = "Search catalogue",
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Search",
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
                         }
 
                         AnimatedVisibility(
@@ -498,11 +458,11 @@ internal fun DiscoverScreen(
                                             )
                                         )
                                         .border(1.dp, AliflixAccentPrimary.copy(alpha = 0.34f), RoundedCornerShape(22.dp))
-                                        .padding(horizontal = 16.dp, vertical = 15.dp),
+                                        .padding(horizontal = 16.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     AnimatedAliflixHeatmapLogo(
-                                        modifier = Modifier.size(46.dp),
+                                        modifier = Modifier.size(36.dp),
                                     )
                                     Spacer(modifier = Modifier.width(13.dp))
                                     Row(
@@ -529,30 +489,15 @@ internal fun DiscoverScreen(
                         CatalogueTypeSelector(
                             selected = mediaFilter,
                             onSelect = onMediaFilterChange,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (state.phase == SearchPhase.IDLE) 20.dp else 4.dp)
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)
                         )
 
-                        AnimatedContent(
-                            targetState = state to mediaFilter,
-                            transitionSpec = {
-                                fadeIn(DiscoverMotion.standard()).togetherWith(fadeOut(DiscoverMotion.standard()))
-                            },
-                            label = "catalogueContent",
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                        ) { (currentState, currentFilter) ->
+                        if (catalogueStore != null) DiscoverCatalogueContent(
+                            store = catalogueStore, query = fieldValue.text.trim(), filter = mediaFilter,
+                            onOpen = onOpen, onPerson = onPerson, onCategory = onCategory,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                        )
 
-                            CatalogueContent(
-                                state = currentState,
-                                mediaFilter = currentFilter,
-                                homeContent = homeContent,
-                                recent = recent,
-                                onOpen = onOpen,
-                                gridState = catalogGridState,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
                     }
 
                 }
@@ -618,238 +563,6 @@ private fun CatalogueTypeSelector(
 }
 
 @Composable
-private fun CatalogueContent(
-    state: SearchUiState,
-    mediaFilter: String,
-    homeContent: HomeContent?,
-    recent: List<Media>,
-    onOpen: (Media) -> Unit,
-    gridState: LazyGridState,
-    modifier: Modifier = Modifier,
-) {
-    val filteredResults = remember(state.results, mediaFilter) {
-        state.results.filter { item ->
-            when (mediaFilter) {
-                "Movies" -> item.type == MediaType.MOVIE
-                "Series" -> item.type == MediaType.TV
-                else -> true
-            }
-        }
-    }
-
-    if (state.query.isBlank()) {
-        DiscoverIdleContent(
-            homeContent = homeContent,
-            recent = recent,
-            mediaFilter = mediaFilter,
-            onOpen = onOpen,
-            modifier = modifier.testTag("discover-idle"),
-        )
-        return
-    }
-
-    Column(modifier = modifier) {
-        when {
-            state.phase == SearchPhase.LOADING && state.results.isEmpty() -> {
-                CatalogueSkeletonGrid(modifier = Modifier.fillMaxSize())
-                return@Column
-            }
-            state.phase == SearchPhase.EMPTY -> {
-                DiscoverStateMessage(
-                    eyebrow = "NO MATCHES",
-                    title = "Nothing matched that search",
-                    message = "Try a shorter title, a different spelling, or switch to Recommend for a more descriptive request.",
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("discover-catalogue-empty"),
-                )
-                return@Column
-            }
-            state.phase == SearchPhase.ERROR && state.results.isEmpty() -> {
-                DiscoverStateMessage(
-                    eyebrow = "SEARCH UNAVAILABLE",
-                    title = "The catalogue did not answer",
-                    message = state.error.orEmpty(),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("discover-catalogue-error"),
-                )
-                return@Column
-            }
-        }
-
-        if (state.phase == SearchPhase.LOADING || state.phase == SearchPhase.TYPING) {
-            LinearProgressIndicator(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .testTag("discover-catalogue-loading"),
-                color = AliflixAccentSecondary,
-                trackColor = Color.Transparent,
-            )
-        }
-        if (state.phase == SearchPhase.ERROR && state.error != null) {
-            InlineNotice(
-                title = "Could not refresh these results",
-                message = state.error,
-                actionLabel = null,
-                onAction = null,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = when (state.phase) {
-                    SearchPhase.LOADING -> "Updating matches"
-                    else -> "Best catalogue matches"
-                },
-                color = AliflixContentSecondary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = "${filteredResults.size}",
-                color = AliflixContentTertiary,
-                fontSize = 11.sp,
-            )
-        }
-        if (filteredResults.isEmpty()) {
-            DiscoverStateMessage(
-                eyebrow = mediaFilter.uppercase(),
-                title = "No $mediaFilter in these matches",
-                message = "Choose another media filter to see the rest.",
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            LazyVerticalGrid(
-                state = gridState,
-                columns = GridCells.Adaptive(112.dp),
-                contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = 2.dp,
-
-                    bottom = 32.dp,
-                ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("discover-catalogue-results"),
-            ) {
-                items(
-                    items = filteredResults,
-                    key = Media::key,
-                    contentType = { "catalogue-poster" },
-                ) { item ->
-                    DiscoverPosterCard(item = item, onOpen = onOpen)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DiscoverIdleContent(
-    homeContent: HomeContent?,
-    recent: List<Media>,
-    mediaFilter: String,
-    onOpen: (Media) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val accepts: (Media) -> Boolean = remember(mediaFilter) {
-        { item ->
-            when (mediaFilter) {
-                "Movies" -> item.type == MediaType.MOVIE
-                "Series" -> item.type == MediaType.TV
-                else -> true
-            }
-        }
-    }
-    val recentItems = remember(recent, mediaFilter) { recent.filter(accepts).take(12) }
-    val rails = remember(homeContent, mediaFilter) {
-        homeContent?.rails.orEmpty()
-            .map { rail -> rail.copy(items = rail.items.filter(accepts).distinctBy(Media::key)) }
-            .filter { it.items.isNotEmpty() }
-            .take(3)
-    }
-
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
-    ) {
-        if (recentItems.isNotEmpty()) {
-            item(key = "recent", contentType = "media-rail") {
-                DiscoverMediaRail(
-                    title = "Pick up where you left off",
-                    subtitle = null,
-                    items = recentItems,
-                    onOpen = onOpen,
-                )
-            }
-        }
-        items(
-            items = rails,
-            key = { "rail:${it.title}" },
-            contentType = { "media-rail" },
-        ) { rail ->
-            DiscoverMediaRail(
-                title = rail.title,
-                subtitle = null,
-                items = rail.items.take(14),
-                onOpen = onOpen,
-            )
-        }
-        if (recentItems.isEmpty() && rails.isEmpty()) {
-            item(key = "catalogue-warming", contentType = "status") {
-                InlineNotice(
-                    title = "No titles yet",
-                    message = "Browse or search to begin.",
-                    actionLabel = null,
-                    onAction = null,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DiscoverMediaRail(
-    title: String,
-    subtitle: String?,
-    items: List<Media>,
-    onOpen: (Media) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        DiscoverSectionHeader(title = title, subtitle = subtitle)
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(11.dp),
-        ) {
-            items(
-                items = items,
-                key = Media::key,
-                contentType = { "discover-rail-poster" },
-            ) { item ->
-                DiscoverPosterCard(
-                    item = item,
-                    onOpen = onOpen,
-                    modifier = Modifier.width(108.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 internal fun DiscoverSectionHeader(
     title: String,
     subtitle: String?,
@@ -872,7 +585,7 @@ internal fun DiscoverSectionHeader(
 }
 
 @Composable
-private fun DiscoverPosterCard(
+internal fun DiscoverPosterCard(
     item: Media,
     onOpen: (Media) -> Unit,
     modifier: Modifier = Modifier,

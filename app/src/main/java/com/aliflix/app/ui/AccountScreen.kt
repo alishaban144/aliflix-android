@@ -134,6 +134,7 @@ internal fun AccountScreen(
     onAccountEnded: (String) -> Unit,
     onCreate: suspend (String, String, String?) -> AccountActionResult,
     onSignIn: suspend (String, String) -> AccountActionResult,
+    onGoogleSignIn: (suspend () -> AccountActionResult)? = null,
     onResetPassword: suspend (String) -> AccountActionResult,
     onSignOut: suspend () -> AccountActionResult,
     onReauthenticateGoogle: suspend () -> AccountActionResult,
@@ -261,6 +262,14 @@ internal fun AccountScreen(
                 .padding(horizontal = 18.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            if (onGoogleSignIn != null && route in setOf(AccountRoute.SIGN_IN, AccountRoute.CREATE_ACCOUNT)) {
+                OutlinedButton(
+                    onClick = { runAction(action = onGoogleSignIn) },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("account-google-sign-in"),
+                    shape = RoundedCornerShape(16.dp),
+                ) { Text("Continue with Google", fontWeight = FontWeight.SemiBold) }
+            }
             when (route) {
                 AccountRoute.SIGN_IN -> SignInForm(
                     busy = busy,

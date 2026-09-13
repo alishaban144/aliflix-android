@@ -343,7 +343,7 @@ internal fun NativePlayerScreen(
             ) {
                 OpenPlayerButton(
                     onClick = onBack,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.07f))
                 ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(22.dp))
                 }
@@ -353,8 +353,8 @@ internal fun NativePlayerScreen(
                         state.title,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        maxLines = 1,
+                        fontSize = if (wide) 18.sp else 15.sp,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     if (state.detail.isNotBlank()) {
@@ -369,39 +369,19 @@ internal fun NativePlayerScreen(
                 }
 
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.clip(RoundedCornerShape(28.dp)).background(Color.White.copy(alpha = 0.07f)),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (state.episodes.isNotEmpty()) {
-                        OpenPlayerButton(
-                            onClick = { sheet = "Episodes"; interaction++ },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Default.VideoLibrary, "Episodes", tint = Color.White, modifier = Modifier.size(20.dp))
-                        }
+                    if (state.episodes.isNotEmpty()) IconButton(onClick = { sheet = "Episodes"; interaction++ }, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.VideoLibrary, "Episodes", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
-
-                    // Google Cast Button (Official Cast Picker)
-                    if (state.external) {
-                        OpenPlayerButton(
-                            onClick = { sheet = "CastOptions"; interaction++ },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Default.CastConnected, "Cast active", tint = AliflixAccentSecondary, modifier = Modifier.size(20.dp))
-                        }
-                    } else {
-                        OpenPlayerButton(
-                            onClick = { onReceiver(); interaction++ },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Default.Cast, "Cast to TV", tint = Color.White, modifier = Modifier.size(20.dp))
-                        }
+                    IconButton(onClick = { sheet = "Subtitles"; interaction++ }, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.Subtitles, "Subtitles", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
-
-                    OpenPlayerButton(
-                        onClick = { sheet = "More"; interaction++ },
-                        modifier = Modifier.size(48.dp)
-                    ) {
+                    IconButton(onClick = { onRotate(); interaction++ }, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.ScreenRotation, "Rotate", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                    IconButton(onClick = { sheet = "More"; interaction++ }, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Default.MoreVert, "More", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                 }

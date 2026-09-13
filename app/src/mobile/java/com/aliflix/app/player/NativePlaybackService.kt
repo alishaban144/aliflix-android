@@ -117,7 +117,7 @@ class NativePlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         localPlayer.addListener(object : Player.Listener {
-            override fun onRenderedFirstFrame() { renderedStreamUrl = activeStreamUrl }
+            override fun onRenderedFirstFrame() { renderedStreamUrl = activeStreamUrl; PlaybackStartupTiming.mark("first_frame") }
         })
         player = runCatching {
             CastPlayer.Builder(this).setLocalPlayer(localPlayer)
@@ -147,6 +147,7 @@ class NativePlaybackService : MediaSessionService() {
             override fun onEvents(player: Player, events: Player.Events) {
                 if (releasing) return
                 playbackReady = player.playbackState == Player.STATE_READY
+                if (playbackReady) PlaybackStartupTiming.mark("ready")
                 playbackFailure = player.playerError
                 hasSelectedAudio = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
                 updateWifiLock()
@@ -275,6 +276,7 @@ class NativePlaybackService : MediaSessionService() {
         }
         originalItem = itemBuilder.build()
         player.setMediaItem(checkNotNull(originalItem), next.positionMs)
+        PlaybackStartupTiming.mark("media3_prepare")
         player.prepare()
         player.playWhenReady = next.playing
         updateDisplay()
@@ -482,15 +484,9 @@ class NativePlaybackService : MediaSessionService() {
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, vtt.isBlank()).build()
             val item = service.originalItem?.buildUpon()?.setSubtitleConfigurations(configs)?.build() ?: return
             service.originalItem = item
-            // Progressive sources may accept replaceMediaItem without rebuilding their merged
-            // text sources. Explicitly prepare the updated item at the same playback position.
-            if (service.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL && service.player.currentMediaItemIndex >= 0) {
-                val position = service.player.currentPosition
-                val playing = service.player.playWhenReady
-                service.player.setMediaItem(item, position)
-                service.player.prepare()
-                service.player.playWhenReady = playing
-            }
+            // The Activity renders local external cues against currentPosition. Keep
+            // the updated item for Cast handoff, without interrupting native decoding.
+
         }
 
         internal var embeddedSubtitlesActive = false

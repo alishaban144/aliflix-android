@@ -1,3 +1,4 @@
+import { catalogueSearch, discoverArguments, discoverCategory, DISCOVER_CATEGORIES, DiscoverCategory } from './discover';
 import { ZodError } from 'zod';
 import { processFilterDiscoveryPage, processRecommendation, supportsDirectFilterPagination } from './engine';
 import { ParsedRecommendationRequest, RecommendationRequestSchema } from './schemas';
@@ -217,7 +218,7 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
 }
 
 export default {
-  async fetch(request: Request, env: RecommendationEnv): Promise<Response> {
+  async fetch(request: Request, env: RecommendationEnv, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health' && request.method === 'GET') {
       return json({
@@ -246,6 +247,29 @@ export default {
       try {
         await enforceRateLimit(request, env);
         return await downloadSubdlSubtitle(env, subtitleDownloadMatch[1]);
+      } catch (error) { return errorResponse(error); }
+    }
+    if (url.pathname === '/v3/discover' || url.pathname === '/v3/search/catalogue') {
+      if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
+      try {
+        const { filter, page } = discoverArguments(url);
+        const category = (url.searchParams.get('category') || 'trending') as DiscoverCategory;
+        if (url.pathname === '/v3/discover' && !DISCOVER_CATEGORIES.includes(category))
+          throw new ServiceError('INVALID_REQUEST', 'Unknown Discover category', 400, false);
+        const cacheUrl = new URL(url.origin + url.pathname);
+        cacheUrl.searchParams.set('v', '1'); cacheUrl.searchParams.set('type', filter); cacheUrl.searchParams.set('page', String(page));
+        cacheUrl.searchParams.set(url.pathname === '/v3/discover' ? 'category' : 'query', url.pathname === '/v3/discover' ? category : (url.searchParams.get('query') || '').trim().slice(0, 160));
+        const cacheKey = new Request(cacheUrl.toString());
+        const cached = await caches.default.match(cacheKey);
+        if (cached) return cached;
+        await enforceRateLimit(request, env);
+        const body = url.pathname === '/v3/discover' ? await discoverCategory(env, category, filter, page)
+          : await catalogueSearch(env, url.searchParams.get('query') || '', filter, page);
+        const response = catalogJson(body);
+        response.headers.set('cache-control', 'public, max-age=900');
+        const cacheWrite = caches.default.put(cacheKey, response.clone());
+        if (ctx) ctx.waitUntil(cacheWrite); else await cacheWrite;
+        return response;
       } catch (error) { return errorResponse(error); }
     }
     const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);

@@ -123,10 +123,11 @@ internal fun MobileSettingsDialog(
                             }
                         }
                         SettingsDivider()
-                        SettingsToggle(Icons.Rounded.Subtitles, "Auto display", "Find and match subtitles automatically", autoDisplaySubtitles, "settings-auto-subtitles-switch", onSetAutoDisplaySubtitles)
+                        SettingsToggle(Icons.Rounded.Subtitles, "Auto display", "Embedded first, then external subtitles", autoDisplaySubtitles, "settings-auto-subtitles-switch", onSetAutoDisplaySubtitles)
                     }
                     SettingsGroup("DISCOVER") {
                         SettingsToggle(Icons.Rounded.AutoAwesome, "Ask Aliflix", "Personal recommendations in Discover", aiRecommendationsEnabled, "settings-ask-aliflix-switch", onSetAiRecommendationsEnabled)
+                        if (aiRecommendationsEnabled) {
                         SettingsDivider()
                         var modelMenu by remember { mutableStateOf(false) }
                         Box {
@@ -136,6 +137,7 @@ internal fun MobileSettingsDialog(
                             SettingsMenu(modelMenu, { modelMenu = false }, RecommendationAiModel.entries, { it.label }, recommendationAiModel) {
                                 modelMenu = false; onSetRecommendationAiModel(it)
                             }
+                        }
                         }
                     }
                     SettingsGroup("APP & STORAGE") {

@@ -62,6 +62,13 @@ class RecommendationAiClient(
             .toStringList { V3CatalogMedia.fromJson(it) }
     }
 
+    suspend fun cataloguePage(category: String?, query: String, filter: String, page: Int): JSONObject = withContext(ioDispatcher) {
+        val type = when (filter) { "Movies" -> "movie"; "Series" -> "tv"; else -> "all" }
+        val endpoint = if (category != null) "discover?category=${URLEncoder.encode(category, "UTF-8")}" else
+            "search/catalogue?query=${URLEncoder.encode(query.trim(), "UTF-8")}"
+        JSONObject(getJson("$baseUrl/v3/$endpoint&type=$type&page=$page"))
+    }
+
     suspend fun searchCompanies(query: String): List<ProductionCompanyFilter> = withContext(ioDispatcher) {
         val encoded = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.name())
         JSONObject(getJson("$baseUrl/v3/search/companies?query=$encoded"))

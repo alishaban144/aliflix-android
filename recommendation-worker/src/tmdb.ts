@@ -143,6 +143,12 @@ export class TmdbClient {
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request failed', 503, true);
   }
 
+  searchMulti(query: string, page = 1): Promise<TmdbPage<TmdbTrendingItem & { profile_path?: string; adult?: boolean }>> {
+    return this.request('/search/multi', { query, page, include_adult: false, language: 'en-US' }, 300);
+  }
+  trending(type: MediaType, page = 1): Promise<TmdbPage> {
+    return this.request(`/trending/${type}/week`, { page, language: 'en-US' }, 900);
+  }
   searchTitle(type: MediaType, query: string, page = 1): Promise<TmdbPage> { return this.request(`/search/${type}`, { query, page, include_adult: false }); }
   searchKeyword(query: string): Promise<TmdbPage<TmdbKeyword>> { return this.request('/search/keyword', { query, page: 1 }); }
   searchPerson(query: string): Promise<TmdbPage<TmdbPerson>> { return this.request('/search/person', { query, page: 1, include_adult: false }); }

@@ -2,6 +2,8 @@
 
 package com.aliflix.app.ui
 
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
@@ -327,6 +329,8 @@ internal sealed interface MobileDestination {
         val firstVisibleItemScrollOffset: Int = 0,
     ) : MobileDestination
 
+    data class DiscoverCategory(val category: String, val filter: String) : MobileDestination
+
     data class Account(val route: AccountRoute) : MobileDestination
 }
 
@@ -338,6 +342,8 @@ private data class MobileAnimatedDestination(
     val detailItem: Media? = null,
     val detailScrollIndex: Int = 0,
     val detailScrollOffset: Int = 0,
+    val discoverCategory: String? = null,
+    val discoverFilter: String = "All",
     val genreName: String? = null,
     val genreMediaType: MediaType? = null,
     val accountRoute: AccountRoute? = null,
@@ -368,6 +374,7 @@ internal fun mobileDestinationSaveKey(
             "${destinations.size}:genre:${destination.mediaType.name}:${destination.name}"
         is MobileDestination.Person ->
             "${destinations.size}:person:${destination.creator.tmdbId}"
+        is MobileDestination.DiscoverCategory -> "${destinations.size}:discover:${destination.category}:${destination.filter}"
         is MobileDestination.Account ->
             "${destinations.size}:account:${destination.route.name}"
     }
@@ -409,6 +416,8 @@ private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>
                                 "firstVisibleItemScrollOffset",
                                 destination.firstVisibleItemScrollOffset,
                             )
+                        is MobileDestination.DiscoverCategory -> JSONObject().put("kind", "discover")
+                            .put("category", destination.category).put("filter", destination.filter)
                         is MobileDestination.Account -> JSONObject()
                             .put("kind", "account")
                             .put("route", destination.route.name)
@@ -464,6 +473,7 @@ private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>
                                     value.optInt("firstVisibleItemScrollOffset").coerceAtLeast(0),
                             ),
                         )
+                        "discover" -> add(MobileDestination.DiscoverCategory(value.getString("category"), value.optString("filter", "All")))
                         "account" -> add(
                             MobileDestination.Account(
                                 AccountRoute.entries.firstOrNull {
@@ -664,6 +674,7 @@ fun AliflixApp(
             is MobileDestination.Person -> capturePersonScrollPosition()
             is MobileDestination.Genre -> captureGenreScrollPosition()
             is MobileDestination.Detail -> captureDetailStateSnapshot()
+            is MobileDestination.DiscoverCategory -> Unit
             is MobileDestination.Account -> Unit
             is MobileDestination.Root -> Unit
         }
@@ -695,6 +706,7 @@ fun AliflixApp(
                     viewModel.openPerson(destination.creator)
                 }
             }
+            is MobileDestination.DiscoverCategory -> Unit
             is MobileDestination.Account -> Unit
         }
     }
@@ -775,6 +787,7 @@ fun AliflixApp(
                         }
                     }
             }
+            is MobileDestination.DiscoverCategory -> Unit
             is MobileDestination.Account -> Unit
         }
     }
@@ -940,6 +953,7 @@ fun AliflixApp(
             ) { padding ->
             val screen = when (currentDestination) {
                 is MobileDestination.Detail -> AppScreen.DETAIL
+                is MobileDestination.DiscoverCategory -> AppScreen.GENRE_EXPLORE
                 is MobileDestination.Genre -> AppScreen.GENRE_EXPLORE
                 is MobileDestination.Person -> AppScreen.PERSON
                 is MobileDestination.Account -> AppScreen.ACCOUNT
@@ -959,6 +973,8 @@ fun AliflixApp(
                 detailItem = currentDetailDestination?.item,
                 detailScrollIndex = savedDetailScroll?.first ?: currentDetailDestination?.firstVisibleItemIndex ?: 0,
                 detailScrollOffset = savedDetailScroll?.second ?: currentDetailDestination?.firstVisibleItemScrollOffset ?: 0,
+                discoverCategory = (currentDestination as? MobileDestination.DiscoverCategory)?.category,
+                discoverFilter = (currentDestination as? MobileDestination.DiscoverCategory)?.filter ?: "All",
                 genreName = (currentDestination as? MobileDestination.Genre)?.name,
                 genreMediaType =
                     (currentDestination as? MobileDestination.Genre)?.mediaType,
@@ -1061,6 +1077,7 @@ fun AliflixApp(
                             viewModel.createEmailAccount(email, password, displayName)
                         },
                         onSignIn = viewModel::signInWithEmail,
+                        onGoogleSignIn = { viewModel.signInWithGoogle(activity) },
                         onResetPassword = viewModel::sendPasswordResetEmail,
                         onSignOut = viewModel::signOutAccount,
                         onReauthenticateGoogle = {
@@ -1092,7 +1109,13 @@ fun AliflixApp(
                     AppScreen.GENRE_EXPLORE -> {
                         val genreName = targetDestination.genreName
                         val mediaType = targetDestination.genreMediaType
-                        if (genreName != null && mediaType != null) {
+                        if (targetDestination.discoverCategory != null) {
+                            com.aliflix.app.ui.discover.DiscoverCategoryScreen(
+                                category = targetDestination.discoverCategory, filter = targetDestination.discoverFilter,
+                                store = viewModel.discoverCatalogue, onBack = ::popDestination, onOpen = ::openDetails,
+                                modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
+                            )
+                        } else if (genreName != null && mediaType != null) {
                             GenreExploreScreen(
                                 genreName = genreName,
                                 mediaType = mediaType,
@@ -1198,6 +1221,10 @@ fun AliflixApp(
 
                     AppScreen.SEARCH -> DiscoverScreen(
                         state = search,
+                        catalogueStore = viewModel.discoverCatalogue,
+                        onPerson = ::openCreatorFromDetails,
+                        onCategory = { category -> destinationStack = destinationStack + MobileDestination.DiscoverCategory(category, searchMediaFilter) },
+                        onAccount = { openAccount(if (accountState.isSignedIn) AccountRoute.MANAGE else AccountRoute.SIGN_IN) },
                         aiEnabled = aiRecommendationsEnabled,
                         homeContent = home.content,
                         recent = recent,
@@ -1619,7 +1646,7 @@ internal fun HomeFeed(
                 if (!com.aliflix.app.BuildConfig.IS_TV && (heroDragged || pagerState.isScrollInProgress ||
                     listState.firstVisibleItemIndex > 0 || !heroLifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))) continue
                 pagerState.animateScrollToPage(
-                    page = pagerState.currentPage + 1,
+                    page = (pagerState.currentPage - 1).coerceAtLeast(0),
                     animationSpec = tween(
                         durationMillis = 1_350,
                         easing = FastOutSlowInEasing,
@@ -2978,6 +3005,21 @@ private fun MySpaceScreen(
         initialPage = page.coerceIn(0, 2),
         pageCount = { 3 },
     )
+    var chromeVisible by remember { mutableStateOf(true) }
+    val chromeScroll = remember {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                if (available.y < -3f) chromeVisible = false
+                if (available.y > 3f) chromeVisible = true
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+        }
+    }
+    val activeGrid = when (pagerState.currentPage) { 0 -> listGridState; 1 -> favoritesGridState; else -> historyGridState }
+    LaunchedEffect(activeGrid) {
+        snapshotFlow { activeGrid.firstVisibleItemIndex == 0 && activeGrid.firstVisibleItemScrollOffset == 0 }
+            .collect { atTop -> if (atTop) chromeVisible = true }
+    }
     var showSettingsWindow by rememberSaveable { mutableStateOf(false) }
     var showClearConfirmation by remember { mutableStateOf(false) }
 
@@ -3057,6 +3099,12 @@ private fun MySpaceScreen(
             .aliflixScreenBackground(),
     ) {
         MobileTopSafeArea()
+        androidx.compose.animation.AnimatedVisibility(
+            visible = chromeVisible,
+            enter = androidx.compose.animation.expandVertically(tween(220)) + fadeIn(tween(160)),
+            exit = androidx.compose.animation.shrinkVertically(tween(220)) + fadeOut(tween(160)),
+        ) { Column {
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3169,11 +3217,12 @@ private fun MySpaceScreen(
                 }
             }
         }
+        } }
 
         HorizontalPager(
             state = pagerState,
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxWidth().nestedScroll(chromeScroll)
                 .weight(1f),
             beyondViewportPageCount = 1,
         ) { targetPage ->
@@ -3189,7 +3238,7 @@ private fun MySpaceScreen(
                     onOpen = onOpen,
                     gridState = favoritesGridState,
                     emptyTitle = "No favorites yet",
-                    emptyMessage = "Tap the heart on a title to add it here and tune Match scores.",
+                    emptyMessage = "",
                 )
             } else {
                 HistoryCollection(
@@ -3210,7 +3259,7 @@ private fun GenreOrganizedList(
     onOpen: (Media) -> Unit,
     gridState: LazyGridState,
     emptyTitle: String = "Nothing saved yet",
-    emptyMessage: String = "Add titles from their details screen to build your space.",
+    emptyMessage: String = "",
 ) {
     if (items.isEmpty()) {
         EmptyMessage(
@@ -4018,7 +4067,7 @@ internal fun DetailScreen(
         )
     } ?: state.episodes.firstOrNull()
     val configuration = LocalConfiguration.current
-    val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else 500.dp
+    val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else (configuration.screenHeightDp * 0.53f).coerceIn(300f, 460f).dp
     val detailListState = rememberLazyListState(
         initialFirstVisibleItemIndex = initialFirstVisibleItemIndex,
         initialFirstVisibleItemScrollOffset = initialFirstVisibleItemScrollOffset,

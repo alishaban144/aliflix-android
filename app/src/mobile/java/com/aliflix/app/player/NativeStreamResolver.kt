@@ -35,13 +35,28 @@ internal class NativeStreamResolver(
         val catalogueProvider = selection.source.provider in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY)
         val embeds = if (catalogueProvider) FmovieNativeCatalog().embeds(selection) else preferredNativeEmbeds(selection)
         if (embeds.isNotEmpty()) onServers(embeds.map { it.first })
-        val candidates = embeds.filter { it.first !in excluded }
+        val history = activity.getSharedPreferences("native-resolver-performance", android.content.Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val candidates = embeds.filter { it.first !in excluded }.sortedBy { (name, _) ->
+            val key = "${selection.source.provider}:$name"
+            if (now - history.getLong("$key:at", 0) < 30 * 60_000) history.getLong("$key:ms", 5_000) else 5_000
+        }
         if (catalogueProvider && candidates.isEmpty()) throw NoNativeServersException()
         if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, onServer)
         val winner = try { firstSuccessful(candidates.map { (name, _) -> suspend {
             val child = NativeStreamResolver(activity, progress, host)
             children.add(child)
-            try { name to child.resolveSingle(selection, positionMs, excluded, name, embeds) {} }
+            val started = SystemClock.elapsedRealtime()
+            val key = "${selection.source.provider}:$name"
+            try {
+                val request = child.resolveSingle(selection, positionMs, excluded, name, embeds) {}
+                history.edit().putLong("$key:ms", SystemClock.elapsedRealtime() - started).putLong("$key:at", now).apply()
+                name to request
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                history.edit().putLong("$key:ms", 20_000).putLong("$key:at", now).apply()
+                throw error
+            }
             finally { child.close(); children.remove(child) }
         } }, parallelism = 2) } catch (error: Exception) {
             currentCoroutineContext().ensureActive()
@@ -57,7 +72,7 @@ internal class NativeStreamResolver(
         selection: PlaybackSelection, positionMs: Long, excluded: Set<String>, preferredServer: String?,
         allDirect: List<Pair<String, String>>,
         onServer: (String) -> Unit,
-    ): NativePlaybackRequest = withTimeout(45_000) {
+    ): NativePlaybackRequest = withTimeout(10_000) {
         val direct = if (preferredServer != null) {
             allDirect.firstOrNull { it.first.equals(preferredServer, ignoreCase = true) }
         } else {
@@ -75,7 +90,7 @@ internal class NativeStreamResolver(
                 delay(200)
             }
         }
-        val discoveryDeadline = SystemClock.elapsedRealtime() + 12_000
+        val discoveryDeadline = SystemClock.elapsedRealtime() + 4_000
         while (web.moviepireServers.value.isEmpty() && SystemClock.elapsedRealtime() < discoveryDeadline) {
             web.refreshNativeServers()
             if (!selection.source.provider.usesMoviepire && web.preparedNativeRequest(0, positionMs) != null) break
