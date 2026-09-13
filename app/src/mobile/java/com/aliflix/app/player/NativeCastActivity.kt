@@ -26,7 +26,7 @@ class NativeCastActivity : Activity() {
         override fun onEvents(player: Player, events: Player.Events) {
             val size = player.videoSize
             if (size.height > 0) frame.setAspectRatio(size.width * size.pixelWidthHeightRatio / size.height)
-            subtitles.setCues(player.currentCues.cues)
+            subtitles.setCues(NativePlaybackService.currentCaptionCues())
             if (player.mediaItemCount == 0) finish()
         }
     }
@@ -65,6 +65,7 @@ class NativeCastActivity : Activity() {
     }
     companion object {
         private var active: WeakReference<NativeCastActivity>? = null
+        internal fun renderCaptions(cues: List<androidx.media3.common.text.Cue>) { active?.get()?.subtitles?.setCues(cues) }
         internal fun closeOutput() { active?.get()?.finish() }
     }
 }

@@ -141,16 +141,16 @@ internal fun MobilePlayerOverlay(
             ) {
                 // Top Bar
                 MobilePlayerTopBar(
-                    title = displayTitle,
+                    title = selection.media.title,
+                    detail = listOfNotNull(seasonEpisodeText, selection.episodeTitle?.takeIf(String::isNotBlank)).joinToString(" • "),
                     isTv = isTv,
                     onBack = onClose,
                     onEpisodes = {
                         episodesSheetVisible = true
                         interactionToken++
                     },
-                    onCast = {
-                        controller.openCastPicker()
-                        interactionToken++
+                    onSubtitles = {
+                        onOpenSubtitles()
                     },
                     onRotate = {
                         controller.toggleOrientation()
@@ -180,6 +180,8 @@ internal fun MobilePlayerOverlay(
                         controller.seekBy(15_000L)
                         interactionToken++
                     },
+                    hideSeekBack = seekFeedback.state?.isForward == false,
+                    hideSeekForward = seekFeedback.state?.isForward == true,
                     modifier = Modifier.align(Alignment.Center),
                 )
 

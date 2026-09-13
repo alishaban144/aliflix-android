@@ -50,7 +50,7 @@ for setting in window_animation_scale transition_animation_scale animator_durati
   adb -s emulator-5554 shell settings put global "$setting" 0
 done
 echo "Android phone API $API ready; running decoded-frame and notification regressions."
-classes=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.DetailsStabilityTest,com.aliflix.app.data.ExactProgressTest,com.aliflix.app.player.CastSubtitleTracksTest,com.aliflix.app.player.NativeSubtitleRenderingTest,com.aliflix.app.ui.PhonePlayerPolishTest
+classes=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.DetailsStabilityTest,com.aliflix.app.data.ExactProgressTest,com.aliflix.app.player.CastSubtitleTracksTest,com.aliflix.app.player.NativeSubtitleRenderingTest,com.aliflix.app.ui.PhonePlayerPolishTest,com.aliflix.app.ui.DiscoverCatalogueUiTest
 if [ "$API" = 37.0 ]; then
   # Use the same ADB installation/instrumentation path validated locally on Android 17.
   ./gradlew assembleMobileDebug assembleMobileDebugAndroidTest --no-daemon --console=plain

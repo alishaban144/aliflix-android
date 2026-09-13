@@ -89,9 +89,7 @@ class NativePlayerActivity : FragmentActivity() {
             updateSubtitleCues()
         }
         override fun onCues(cueGroup: CueGroup) {
-            if (activeSubtitleCues.isEmpty()) {
-                renderCaptions(cueGroup.cues)
-            }
+            renderCaptions(NativePlaybackService.currentCaptionCues())
         }
     }
 
@@ -335,6 +333,7 @@ class NativePlayerActivity : FragmentActivity() {
                 episodes = it.availableEpisodes,
                 episodeNumber = it.episodeNumber,
                 availableServers = servers,
+                playbackSelection = it,
             )
         }
     }
@@ -380,7 +379,14 @@ class NativePlayerActivity : FragmentActivity() {
             val language = canonicalSubtitleLanguageCode(intent.getStringExtra("subtitleLanguage") ?: "EN")
             try {
                 val preferences = com.aliflix.app.data.PlaybackProviderRepository(this@NativePlayerActivity).preferences.value
-                for (candidate in playbackSourceFallbacks(current, preferences).filter { it.source.provider !in exhaustedSources }) {
+                val history = getSharedPreferences("native-resolver-performance", MODE_PRIVATE)
+                val now = System.currentTimeMillis()
+                val sources = playbackSourceFallbacks(current, preferences).filter { it.source.provider !in exhaustedSources }
+                val orderedSources = if (preferredServer != null) sources else sources.sortedBy {
+                    val key = "provider:${it.source.provider}"
+                    if (now - history.getLong("$key:at", 0) < 30 * 60_000) history.getLong("$key:ms", 15_000) else 15_000
+                }
+                for (candidate in orderedSources) {
                     val current = candidate
                     if (selection?.source != current.source) {
                         selection = current
@@ -394,6 +400,7 @@ class NativePlayerActivity : FragmentActivity() {
                     val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                     resolver = adapter
                     var server = ""
+                    val attemptStarted = android.os.SystemClock.elapsedRealtime()
                     try {
                         val resolved = withTimeout(24_000) { adapter.resolve(current, resume, triedServers,
                             preferredServer = if (attempt == 0 && current.source == startingSource) preferredServer else null,
@@ -406,6 +413,8 @@ class NativePlayerActivity : FragmentActivity() {
                         PlaybackStartupTiming.mark("stream_resolved")
                         startNative(resolved.copy(playing = true, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
                         awaitNativeReady(resolved.url)
+                        history.edit().putLong("provider:${current.source.provider}:ms", android.os.SystemClock.elapsedRealtime() - attemptStarted)
+                            .putLong("provider:${current.source.provider}:at", now).apply()
                         if (auto && !NativePlaybackService.embeddedSubtitlesActive) {
                             loadAutomaticSubtitles(current, language, resolved.url)
                         }
@@ -421,6 +430,7 @@ class NativePlayerActivity : FragmentActivity() {
                     if (server.isNotBlank()) triedServers.add(server) else break
                     ui = ui.copy(stage = "Trying another server")
                 }
+                    history.edit().putLong("provider:${current.source.provider}:ms", 30_000).putLong("provider:${current.source.provider}:at", now).apply()
                     exhaustedSources.add(current.source.provider)
                     controller?.stop()
                 }
@@ -686,29 +696,7 @@ class NativePlayerActivity : FragmentActivity() {
             return
         }
         subtitles.visibility = View.VISIBLE
-        val cues = if (NativePlaybackService.embeddedSubtitlesActive) emptyList() else activeSubtitleCues
-        if (cues.isNotEmpty()) {
-            val delaySec = settingsStore.settings.value.subtitleDelaySeconds
-            val currentSec = ((current?.currentPosition ?: 0L) / 1000.0)
-            val matchingCues = cues.filter { cue ->
-                val start = cue.startSeconds + delaySec
-                val end = cue.endSeconds + delaySec
-                currentSec in start..end
-            }
-            if (matchingCues.isNotEmpty()) {
-                val media3Cues = matchingCues.map { cue ->
-                    Cue.Builder()
-                        .setText(cue.text)
-                        .build()
-                }
-                renderCaptions(media3Cues)
-            } else {
-                renderCaptions(emptyList())
-            }
-        } else {
-            val playerCues = current?.currentCues?.cues.orEmpty()
-            renderCaptions(playerCues)
-        }
+        renderCaptions(NativePlaybackService.currentCaptionCues())
     }
 
     override fun onStart() {

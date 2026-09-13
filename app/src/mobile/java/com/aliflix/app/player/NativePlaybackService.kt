@@ -66,6 +66,7 @@ class NativePlaybackService : MediaSessionService() {
     private var request: NativePlaybackRequest? = null
     private var preferredQualityApplied = false
     private var originalItem: MediaItem? = null
+    private var externalCaptionCues: List<SubtitleCue> = emptyList()
     private val subtitleFiles = mutableListOf<java.io.File>()
     private var selection: PlaybackSelection? = null
     private var presentation: Presentation? = null
@@ -80,6 +81,15 @@ class NativePlaybackService : MediaSessionService() {
     private var relayWakeLock: PowerManager.WakeLock? = null
     private var releasing = false
     private val handler = Handler(Looper.getMainLooper())
+    private val captionTask = object : Runnable {
+        override fun run() {
+            if (releasing) return
+            val cues = currentCaptionCues()
+            presentationPlayerView?.subtitleView?.setCues(cues)
+            NativeCastActivity.renderCaptions(cues)
+            handler.postDelayed(this, 100)
+        }
+    }
     private val progressTask = object : Runnable {
         override fun run() { saveProgress(false); handler.postDelayed(this, 5000) }
     }
@@ -110,7 +120,7 @@ class NativePlaybackService : MediaSessionService() {
         }
         localPlayer = ExoPlayer.Builder(this)
             .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true))
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 3_000, 6_000).build())
+            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 750, 2_000).build())
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, scopedHttp)))
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .setHandleAudioBecomingNoisy(true)
@@ -199,6 +209,7 @@ class NativePlaybackService : MediaSessionService() {
         }, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         activeService = this
         handler.post(progressTask)
+        handler.post(captionTask)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -238,6 +249,7 @@ class NativePlaybackService : MediaSessionService() {
         preferredQualityApplied = false
         player.trackSelectionParameters = preferredQualityParameters(player.trackSelectionParameters,
             (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality)
+        externalCaptionCues = parseTimedTextSubtitleCues(next.subtitlesVtt)
         embeddedSubtitlesActive = false
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
@@ -453,6 +465,14 @@ class NativePlaybackService : MediaSessionService() {
             }
         }
 
+        internal fun currentCaptionCues(): List<androidx.media3.common.text.Cue> {
+            val service = activeService ?: return emptyList()
+            if (embeddedSubtitlesActive || service.externalCaptionCues.isEmpty()) return service.localPlayer.currentCues.cues
+            val seconds = service.player.currentPosition / 1000.0
+            return service.externalCaptionCues.asSequence().filter { seconds >= it.startSeconds && seconds < it.endSeconds }
+                .map { androidx.media3.common.text.Cue.Builder().setText(it.text).build() }.toList()
+        }
+
         internal fun updateSubtitles(vtt: String, language: String = "", label: String = "", automatic: Boolean = false) {
             val service = activeService ?: return
             if (automatic && embeddedSubtitlesActive) return
@@ -468,6 +488,7 @@ class NativePlaybackService : MediaSessionService() {
             )
             service.request = updated
             activeRequest = updated
+            service.externalCaptionCues = parseTimedTextSubtitleCues(vtt)
             service.relay?.updateSubtitles(vtt)
             val lang = updated.subtitleLanguage.ifBlank { "en" }
             val configs = if (vtt.isBlank()) emptyList() else {
@@ -481,7 +502,7 @@ class NativePlaybackService : MediaSessionService() {
             service.player.trackSelectionParameters = service.player.trackSelectionParameters.buildUpon()
                 .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                 .setPreferredTextLanguage(lang).setSelectUndeterminedTextLanguage(true)
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, vtt.isBlank()).build()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !automatic || vtt.isBlank()).build()
             val item = service.originalItem?.buildUpon()?.setSubtitleConfigurations(configs)?.build() ?: return
             service.originalItem = item
             // The Activity renders local external cues against currentPosition. Keep

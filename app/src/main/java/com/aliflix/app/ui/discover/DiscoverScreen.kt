@@ -623,7 +623,7 @@ internal fun DiscoverPosterCard(
         )
         if (item.year.isNotBlank()) {
             Text(
-                text = item.year,
+                text = listOf(if (item.type == MediaType.MOVIE) "Movie" else "Series", item.year).filter(String::isNotBlank).joinToString(" • "),
                 color = AliflixContentTertiary,
                 fontSize = 10.sp,
                 maxLines = 1,

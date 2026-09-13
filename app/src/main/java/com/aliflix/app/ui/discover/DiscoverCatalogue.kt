@@ -162,16 +162,24 @@ internal fun CatalogueGrid(store: DiscoverCatalogueStore, category: String?, que
     val session = store.session(category, query, filter)
     val grid = rememberLazyGridState()
     val scope = rememberCoroutineScope()
+    var waiting by remember(session) { mutableStateOf(session.updatedAt == 0L) }
     LaunchedEffect(category, query, filter) {
-        if (category == null) delay(280)
-        store.load(category, query, filter)
+        try {
+            if (category == null) delay(280)
+            store.load(category, query, filter)
+        } finally { waiting = false }
     }
     Column(modifier) {
-        if (session.items.isEmpty() && session.people.isEmpty()) {
+        if (!waiting && session.items.isEmpty() && session.people.isEmpty()) {
             CatalogueStatus(session) { store.load(category, query, filter, force = true) }
         }
         LazyVerticalGrid(state = grid, columns = GridCells.Adaptive(112.dp), modifier = Modifier.weight(1f).testTag("discover-catalogue-results"),
             contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            if ((waiting || session.loading) && session.items.isEmpty() && session.people.isEmpty()) {
+                items(9, key = { "skeleton:$it" }) {
+                    ShimmerBox(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)))
+                }
+            }
             if (session.people.isNotEmpty()) {
                 item("people-label", span = { GridItemSpan(maxLineSpan) }) { Text("People", style = MaterialTheme.typography.titleMedium) }
                 items(session.people, key = { "person:${it.tmdbId}" }) { person ->

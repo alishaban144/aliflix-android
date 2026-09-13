@@ -67,6 +67,37 @@ class PhonePlayerPolishTest {
         compose.runOnIdle { assertTrue(enabled) }
     }
 
+    @Test fun doubleTapUsesTheControllerCallbackThatArrivesAfterComposition() {
+        var connected by mutableStateOf(false)
+        var position = 30_000L
+        compose.setContent {
+            val ready = connected
+            com.aliflix.app.player.MobileVideoGestureDetector(
+                onToggleControls = {},
+                onSeekRewind = { if (ready) position -= 15_000 },
+                onSeekForward = { if (ready) position += 15_000 },
+            )
+        }
+        compose.runOnIdle { connected = true }
+        compose.onRoot().performTouchInput { doubleClick(androidx.compose.ui.geometry.Offset(width * 0.85f, height * 0.4f)) }
+        compose.runOnIdle { assertEquals(45_000L, position) }
+        compose.onRoot().performTouchInput { doubleClick(androidx.compose.ui.geometry.Offset(width * 0.15f, height * 0.4f)) }
+        compose.runOnIdle { assertEquals(30_000L, position) }
+    }
+
+    @Test fun compactPillRetainsFullEpisodeIdentity() {
+        compose.setContent { AliflixMobileTheme {
+            NativePlayerScreen(NativePlayerUi(title = "Silo", detail = "S1 E6 • Prayers and Visions", ready = true), null)
+        } }
+        compose.onNodeWithText("Silo").assertIsDisplayed()
+        compose.onNodeWithText("S1 E6 • Prayers and Visions").assertIsDisplayed()
+        for (description in listOf("Back", "Audio & Subtitles", "Rotate", "More")) {
+            val bounds = compose.onNodeWithContentDescription(description).fetchSemanticsNode().touchBoundsInRoot
+            assertTrue("$description needs a usable touch target", bounds.width >= 48 && bounds.height >= 48)
+        }
+        capture("player79.png")
+    }
+
     @Test fun transportPressHasNoRectangularOrCircularIndication() {
         compose.setContent { AliflixMobileTheme {
             Box(Modifier.fillMaxSize().background(Color.Black)) {

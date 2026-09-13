@@ -17,6 +17,37 @@ import java.io.File
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class NativeSubtitleRenderingTest {
+    @Test fun firstFrameAndLateCaptionsNeverReprepareTheStream() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        grantNativeFixtureNetworkPermission()
+        val server = NativeBackgroundPlaybackTest.FixtureServer(instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() })
+        val request = NativePlaybackRequest(server.url, "video/mp4", "https://fixture.aliflix.test/", "Aliflix test", "", "Startup without subtitles", 0, true, "")
+        val payload = File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json").apply { writeText(request.toJson()) }
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", payload.name), nativePhoneLaunchOptions())
+        var buffering = 0
+        var discontinuities = 0
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_BUFFERING) buffering++ }
+            override fun onPositionDiscontinuity(old: Player.PositionInfo, next: Player.PositionInfo, reason: Int) { discontinuities++ }
+        }
+        try {
+            await("First frame with no external subtitles") { NativePlaybackService.renderedStreamUrl == server.url }
+            scenario.onActivity {
+                assertTrue(it.playbackController!!.playWhenReady)
+                it.playbackController!!.addListener(listener)
+                NativePlaybackService.updateSubtitles("WEBVTT\n\n00:00:00.000 --> 00:01:20.000\nLATE NONBLOCKING CAPTIONS\n\n", "en", "English")
+            }
+            awaitCaptions(scenario, "LATE NONBLOCKING CAPTIONS")
+            scenario.onActivity {
+                assertTrue(it.playbackController!!.playWhenReady)
+                assertEquals("Caption attachment must not buffer", 0, buffering)
+                assertEquals("Caption attachment must not seek/reload", 0, discontinuities)
+                it.playbackController!!.removeListener(listener)
+            }
+        } finally { scenario.close(); context.stopService(Intent(context, NativePlaybackService::class.java)); server.close(); payload.delete() }
+    }
+
     @Test fun captionsAppearAtStartupAndAfterLateDownloadWithoutPositionControls() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

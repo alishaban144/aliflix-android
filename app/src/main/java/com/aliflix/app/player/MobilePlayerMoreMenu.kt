@@ -24,10 +24,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -69,10 +71,16 @@ internal fun MobilePlayerMoreSheet(
     onOpenProviderOptions: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    currentSpeed: Float? = null,
+    onStopPlayback: (() -> Unit)? = null,
+    onOpenWirelessDisplay: (() -> Unit)? = null,
+    castActive: Boolean = false,
+    onCast: (() -> Unit)? = null,
 ) {
     if (!visible) return
 
-    var currentSpeed by remember { mutableFloatStateOf(1.0f) }
+    var rememberedSpeed by remember { mutableFloatStateOf(1.0f) }
+    val activeSpeed = currentSpeed ?: rememberedSpeed
 
     Box(
         modifier = modifier
@@ -147,6 +155,19 @@ internal fun MobilePlayerMoreSheet(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
+                if (onCast != null) {
+                    MoreOptionRow(
+                        icon = Icons.Rounded.Cast,
+                        title = "Cast",
+                        subtitle = if (castActive) "Manage device" else "Choose device",
+                        onClick = {
+                            onDismiss()
+                            onCast()
+                        },
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+
                 // Playback Speed option
                 Text(
                     text = "Playback Speed",
@@ -160,14 +181,14 @@ internal fun MobilePlayerMoreSheet(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     PlaybackSpeeds.forEach { speed ->
-                        val isSelected = currentSpeed == speed
+                        val isSelected = kotlin.math.abs(activeSpeed - speed) < 0.01f
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (isSelected) AliflixPurple else RowBackground)
                                 .clickable {
-                                    currentSpeed = speed
+                                    rememberedSpeed = speed
                                     onSelectSpeed(speed)
                                 }
                                 .padding(vertical = 8.dp),
@@ -234,6 +255,32 @@ internal fun MobilePlayerMoreSheet(
                         onClick = {
                             onDismiss()
                             onOpenProviderOptions()
+                        },
+                    )
+                }
+
+                if (onOpenWirelessDisplay != null) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    MoreOptionRow(
+                        icon = Icons.Rounded.Cast,
+                        title = "Wireless Display",
+                        subtitle = "Screen mirroring",
+                        onClick = {
+                            onDismiss()
+                            onOpenWirelessDisplay()
+                        },
+                    )
+                }
+
+                if (onStopPlayback != null) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    MoreOptionRow(
+                        icon = Icons.Rounded.Stop,
+                        title = "Stop Playback",
+                        subtitle = "End session",
+                        onClick = {
+                            onDismiss()
+                            onStopPlayback()
                         },
                     )
                 }

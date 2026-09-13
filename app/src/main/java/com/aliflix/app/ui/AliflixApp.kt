@@ -1646,7 +1646,7 @@ internal fun HomeFeed(
                 if (!com.aliflix.app.BuildConfig.IS_TV && (heroDragged || pagerState.isScrollInProgress ||
                     listState.firstVisibleItemIndex > 0 || !heroLifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))) continue
                 pagerState.animateScrollToPage(
-                    page = (pagerState.currentPage - 1).coerceAtLeast(0),
+                    page = if (com.aliflix.app.BuildConfig.IS_TV) pagerState.currentPage + 1 else (pagerState.currentPage - 1).coerceAtLeast(0),
                     animationSpec = tween(
                         durationMillis = 1_350,
                         easing = FastOutSlowInEasing,
