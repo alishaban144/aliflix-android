@@ -44,7 +44,34 @@ class NativeSubtitleRenderingTest {
                 assertEquals("Caption attachment must not buffer", 0, buffering)
                 assertEquals("Caption attachment must not seek/reload", 0, discontinuities)
                 it.playbackController!!.removeListener(listener)
+                it.playbackController!!.pause()
+                it.playbackController!!.seekTo(1000)
             }
+            await("Ready to verify real double-tap seek") { var ready = false; scenario.onActivity { ready = it.playbackController?.playbackState == Player.STATE_READY && it.playbackUiState.ready }; ready }
+            fun doubleTap(ratio: Float) {
+                repeat(2) {
+                    val down = android.os.SystemClock.uptimeMillis()
+                    scenario.onActivity { activity ->
+                        val root = activity.window.decorView
+                        val event = android.view.MotionEvent.obtain(down, down, android.view.MotionEvent.ACTION_DOWN, root.width * ratio, root.height * 0.4f, 0)
+                        activity.dispatchTouchEvent(event); event.recycle()
+                    }
+                    Thread.sleep(30)
+                    scenario.onActivity { activity ->
+                        val root = activity.window.decorView
+                        val event = android.view.MotionEvent.obtain(down, android.os.SystemClock.uptimeMillis(), android.view.MotionEvent.ACTION_UP, root.width * ratio, root.height * 0.4f, 0)
+                        activity.dispatchTouchEvent(event); event.recycle()
+                    }
+                    Thread.sleep(70)
+                }
+            }
+            var expected = 0L
+            scenario.onActivity { expected = minOf(16_000, it.playbackController!!.duration) }
+            doubleTap(0.9f)
+            await("Double-tap changes the real Media3 position") { var reached = false; scenario.onActivity { reached = kotlin.math.abs(it.playbackController!!.currentPosition - expected) < 300 }; reached }
+            expected = (expected - 15_000).coerceAtLeast(0)
+            doubleTap(0.1f)
+            await("Double-tap rewinds the real Media3 position") { var reached = false; scenario.onActivity { reached = kotlin.math.abs(it.playbackController!!.currentPosition - expected) < 300 }; reached }
         } finally { scenario.close(); context.stopService(Intent(context, NativePlaybackService::class.java)); server.close(); payload.delete() }
     }
 
@@ -160,7 +187,7 @@ class NativeSubtitleRenderingTest {
             val view = findSubtitles(activity.window.decorView)
             if (diagnosticCount++ % 20 == 0) android.util.Log.i("SubtitleRenderingTest",
                 "state=${player?.playbackState} error=${player?.playerError} cues=${player?.currentCues?.cues?.map { it.text }} view=${view?.width}x${view?.height} padding=${view?.paddingBottom} children=${view?.childCount} childHeight=${view?.getChildAt(0)?.height} shown=${view?.isShown}")
-            if (player?.playbackState == Player.STATE_READY && player.currentCues.cues.any { it.text.toString().contains(expected) } &&
+            if (player?.playbackState == Player.STATE_READY && NativePlaybackService.currentCaptionCues().any { it.text.toString().contains(expected) } &&
                 view != null && view.isShown && view.width > 0 && view.height > 0) {
                 val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
                 view.draw(Canvas(bitmap))

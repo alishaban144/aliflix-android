@@ -328,7 +328,7 @@ class NativePlayerActivity : FragmentActivity() {
             ui = ui.copy(
                 title = it.media.title,
                 detail = if (it.media.type == com.aliflix.app.model.MediaType.TV)
-                    "S${it.seasonNumber ?: 1} · E${it.episodeNumber ?: 1}${it.episodeTitle?.let { title -> " · $title" }.orEmpty()}" else it.media.year,
+                    "S${it.seasonNumber ?: 1} E${it.episodeNumber ?: 1}${it.episodeTitle?.let { title -> " • $title" }.orEmpty()}" else it.media.year,
                 artwork = it.media.backdropUrl,
                 episodes = it.availableEpisodes,
                 episodeNumber = it.episodeNumber,

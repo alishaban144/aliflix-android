@@ -131,7 +131,7 @@ internal fun DiscoverCatalogueContent(store: DiscoverCatalogueStore, query: Stri
                         Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Open $title", tint = AliflixAccentSecondary)
                     }
                     if (session.items.isEmpty()) {
-                        if (session.error != null) CatalogueStatus(session, onRetry = { store.load(category, "", filter, force = true) })
+                        if (session.error != null || (!session.loading && session.updatedAt > 0)) CatalogueStatus(session, onRetry = { store.load(category, "", filter, force = true) })
                         else LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(4) { ShimmerBox(Modifier.width(118.dp).height(177.dp).clip(RoundedCornerShape(16.dp))) }
                         }
