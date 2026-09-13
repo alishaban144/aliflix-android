@@ -1,0 +1,10 @@
+{
+  "versionCode": 168,
+  "versionName": "3.1.78",
+  "apkUrl": "https://github.com/alishaban144/aliflix-android/releases/download/v3.1.78/aliflix-mobile.apk",
+  "sha256": "f8c936312908abd7ce4658618ccfbb3345a3ea3edea797673beb4e4ec104fe4e",
+  "sizeBytes": 10747407,
+  "minimumSdk": 29,
+  "notes": "Aliflix v3.1.78: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels.",
+  "releaseNotes": "Aliflix v3.1.78: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels."
+}
