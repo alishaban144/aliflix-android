@@ -93,25 +93,6 @@ internal class DiscoverCatalogueStore(private val client: RecommendationAiClient
 }
 
 @Composable
-internal fun DiscoverShortcuts(onCategory: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        listOf(discoveryCategories.entries.take(3), discoveryCategories.entries.drop(3)).forEach { shortcuts ->
-            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(shortcuts, key = { it.key }) { (id, title) ->
-                    Surface(onClick = { onCategory(id) }, shape = RoundedCornerShape(18.dp),
-                        color = if (id in discoveryCategories.keys.take(3)) AliflixAccentPrimary.copy(alpha = 0.18f) else AliflixSurfaceSecondary,
-                        modifier = Modifier.heightIn(min = 48.dp).testTag("discover-category-$id")) {
-                        Box(Modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
-                            Text(title, style = MaterialTheme.typography.labelLarge, color = AliflixContentPrimary)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 internal fun DiscoverCatalogueContent(store: DiscoverCatalogueStore, query: String, filter: String,
     onOpen: (Media) -> Unit, onPerson: (MediaCreator) -> Unit, onCategory: (String) -> Unit, modifier: Modifier = Modifier) {
     if (query.isNotBlank()) {
@@ -121,7 +102,6 @@ internal fun DiscoverCatalogueContent(store: DiscoverCatalogueStore, query: Stri
     } else {
         val listState = rememberLazyListState()
         LazyColumn(state = listState, modifier = modifier.testTag("discover-idle"), contentPadding = PaddingValues(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-            item("shortcuts") { DiscoverShortcuts(onCategory) }
             items(discoveryCategories.entries.take(3), key = { it.key }) { (category, title) ->
                 val session = store.session(category, "", filter)
                 LaunchedEffect(category, filter) { store.load(category, "", filter) }

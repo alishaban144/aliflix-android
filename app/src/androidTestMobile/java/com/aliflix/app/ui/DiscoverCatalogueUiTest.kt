@@ -31,18 +31,18 @@ class DiscoverCatalogueUiTest {
         store.session(null, "Tom", "All").apply { people = listOf(person); updatedAt = System.currentTimeMillis(); hasMore = false }
         store.session(null, "Tom", "Movies").apply { items = listOf(movie); updatedAt = System.currentTimeMillis(); hasMore = false }
         var openedPerson: MediaCreator? = null
-        var category: String? = null
         var filter by mutableStateOf("All")
         compose.setContent { AliflixMobileTheme {
             DiscoverScreen(state = SearchUiState(), aiEnabled = false, catalogueStore = store,
-                onPerson = { openedPerson = it }, onCategory = { category = it }, homeContent = null, recent = emptyList(),
+                onPerson = { openedPerson = it }, onCategory = {}, homeContent = null, recent = emptyList(),
                 focusRequestId = null, onFocusRequestConsumed = {}, onQueryChange = {}, onSubmitSearch = {},
                 onSearchTitles = { emptyList() }, onModeChange = {}, onOpen = {}, catalogGridState = rememberLazyGridState(),
                 recommendationListState = rememberLazyListState(), mediaFilter = filter, onMediaFilterChange = { filter = it })
         } }
         compose.onNodeWithText("Ask Aliflix").assertDoesNotExist()
-        compose.onNodeWithTag("discover-category-mind-bending").performClick()
-        compose.runOnIdle { assertEquals("mind-bending", category) }
+        compose.onNodeWithText("Trending").assertIsDisplayed()
+        compose.onNodeWithText("Top Rated").assertIsDisplayed()
+        compose.onNodeWithText("Mind-bending").assertDoesNotExist()
         val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         File(context.getExternalFilesDir(null), "discover79.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
