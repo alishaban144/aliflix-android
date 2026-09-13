@@ -41,7 +41,9 @@ class DiscoverCatalogueUiTest {
         } }
         compose.onNodeWithText("Ask Aliflix").assertDoesNotExist()
         compose.onNodeWithText("Trending").assertIsDisplayed()
+        compose.onNodeWithTag("discover-idle").performScrollToNode(hasText("Top Rated"))
         compose.onNodeWithText("Top Rated").assertIsDisplayed()
+        compose.onNodeWithTag("discover-idle").performScrollToIndex(0)
         compose.onNodeWithText("Mind-bending").assertDoesNotExist()
         val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
