@@ -28,6 +28,9 @@ describe('deterministic mobile Discover', () => {
         expect(relaxed['vote_count.gte']).toBeLessThan(Number(strict['vote_count.gte']));
       }
     }
+    expect(validDiscoveryItem({ ...item, genre_ids: [10759, 10765] }, 'tv', 'feel-good', today)).toBe(false);
+    expect(validDiscoveryItem({ ...item, genre_ids: [35], overview: 'A sadistic serial killer hunts friends.' }, 'tv', 'feel-good', today)).toBe(false);
+    expect(discoveryParams('feel-good', 'tv', 1, today).without_keywords).toContain('10123');
     expect(validDiscoveryItem({ ...item, genre_ids: [35, 27] }, 'movie', 'feel-good', today)).toBe(false);
     expect(validDiscoveryItem({ ...item, genre_ids: [18] }, 'movie', 'fast-paced', today)).toBe(false);
     expect(validDiscoveryItem({ ...item, genre_ids: [80, 10751] }, 'tv', 'dark', today)).toBe(false);

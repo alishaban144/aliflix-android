@@ -351,7 +351,7 @@ internal fun DiscoverScreen(
                         MobileTopSafeArea()
 
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Discover", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text("Discover", color = AliflixContentPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             IconButton(onClick = onAccount, modifier = Modifier.size(48.dp)) {
                                 Icon(Icons.Rounded.AccountCircle, "Account", tint = AliflixAccentSecondary, modifier = Modifier.size(30.dp))
                             }

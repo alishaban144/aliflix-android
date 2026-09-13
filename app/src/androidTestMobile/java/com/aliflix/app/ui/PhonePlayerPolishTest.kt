@@ -87,7 +87,9 @@ class PhonePlayerPolishTest {
 
     @Test fun compactPillRetainsFullEpisodeIdentity() {
         compose.setContent { AliflixMobileTheme {
-            NativePlayerScreen(NativePlayerUi(title = "Silo", detail = "S1 E6 • Prayers and Visions", ready = true), null)
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                NativePlayerScreen(NativePlayerUi(title = "Silo", detail = "S1 E6 • Prayers and Visions", ready = true), null)
+            }
         } }
         compose.onNodeWithText("Silo").assertIsDisplayed()
         compose.onNodeWithText("S1 E6 • Prayers and Visions").assertIsDisplayed()

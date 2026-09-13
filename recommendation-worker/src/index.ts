@@ -257,7 +257,7 @@ export default {
         if (url.pathname === '/v3/discover' && !DISCOVER_CATEGORIES.includes(category))
           throw new ServiceError('INVALID_REQUEST', 'Unknown Discover category', 400, false);
         const cacheUrl = new URL(url.origin + url.pathname);
-        cacheUrl.searchParams.set('v', '1'); cacheUrl.searchParams.set('type', filter); cacheUrl.searchParams.set('page', String(page));
+        cacheUrl.searchParams.set('v', '2'); cacheUrl.searchParams.set('type', filter); cacheUrl.searchParams.set('page', String(page));
         cacheUrl.searchParams.set(url.pathname === '/v3/discover' ? 'category' : 'query', url.pathname === '/v3/discover' ? category : (url.searchParams.get('query') || '').trim().slice(0, 160));
         const cacheKey = new Request(cacheUrl.toString());
         const cached = await caches.default.match(cacheKey);

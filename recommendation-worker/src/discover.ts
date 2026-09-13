@@ -7,6 +7,7 @@ import { MediaType, RecommendationEnv, ServiceError, TmdbListItem } from './type
 export const KEYWORDS = {
   psychologicalThriller: 12565, timeTravel: 4379, quantumMechanics: 8056,
   comingOfAge: 10683, unlikelyFriendship: 167982, maleFriendship: 3230,
+  murder: 9826, gore: 10292, serialKiller: 10714, zombie: 12377, darkComedy: 10123, suicide: 236, tragedy: 10614,
   dystopia: 4565, revenge: 9748, heist: 10051, survival: 10349, martialArts: 779,
 } as const;
 export const DISCOVER_CATEGORIES = ['trending', 'new', 'top-rated', 'mind-bending', 'feel-good', 'dark', 'fast-paced'] as const;
@@ -15,9 +16,9 @@ type Recipe = { movie: number[]; tv: number[]; exclude: number[]; keywords: numb
 export const MOODS: Record<string, Recipe> = {
   'mind-bending': { movie: [878, 9648, 53], tv: [10765, 9648], exclude: [99, 10764, 10767, 10763],
     keywords: [KEYWORDS.psychologicalThriller, KEYWORDS.timeTravel, KEYWORDS.quantumMechanics] },
-  'feel-good': { movie: [35, 10751, 10749, 12, 10402], tv: [35, 10751, 10759], exclude: [27, 53, 10752, 10768, 80, 99, 10764],
+  'feel-good': { movie: [35, 10751, 10749, 12, 10402], tv: [35, 10751], exclude: [27, 53, 10752, 10768, 80, 99, 10764],
     keywords: [KEYWORDS.comingOfAge, KEYWORDS.unlikelyFriendship, KEYWORDS.maleFriendship],
-    withoutKeywords: [KEYWORDS.psychologicalThriller, KEYWORDS.dystopia, KEYWORDS.revenge] },
+    withoutKeywords: [KEYWORDS.psychologicalThriller, KEYWORDS.dystopia, KEYWORDS.revenge, KEYWORDS.murder, KEYWORDS.gore, KEYWORDS.serialKiller, KEYWORDS.zombie, KEYWORDS.darkComedy, KEYWORDS.suicide, KEYWORDS.tragedy] },
   dark: { movie: [53, 80, 9648, 27, 18], tv: [80, 9648, 18, 10765], exclude: [10751, 10762, 99, 10764],
     keywords: [KEYWORDS.psychologicalThriller, KEYWORDS.dystopia, KEYWORDS.revenge] },
   'fast-paced': { movie: [28, 12, 53, 80], tv: [10759, 80], exclude: [99, 10764, 10767],
@@ -60,6 +61,7 @@ export function validDiscoveryItem(item: TmdbListItem & { adult?: boolean }, typ
   return !item.adult && item.id > 0 && Boolean((item.title || item.name)?.trim()) && Boolean(item.poster_path && item.backdrop_path)
     && Boolean(date && /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date)) && date <= today)
     && votes >= minVotes && (item.vote_average || 0) >= (category === 'new' || category === 'trending' ? 5.5 : 6)
+    && (category !== 'feel-good' || !/\b(suicide|suicidal|serial killer|sadistic|torture|tortured|trafficking|zombies?|bloodthirsty|sexual assault|brutal murder|massacre)\b/i.test(item.overview || ''))
     && (!recipe || (item.genre_ids || []).some(id => recipe[type].includes(id)))
     && (!recipe || !(item.genre_ids || []).some(id => recipe.exclude.includes(id)));
 }

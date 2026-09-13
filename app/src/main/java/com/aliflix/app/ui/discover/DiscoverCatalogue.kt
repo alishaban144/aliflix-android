@@ -127,7 +127,7 @@ internal fun DiscoverCatalogueContent(store: DiscoverCatalogueStore, query: Stri
                 LaunchedEffect(category, filter) { store.load(category, "", filter) }
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(Modifier.fillMaxWidth().clickable { onCategory(category) }.heightIn(min = 48.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(title, color = AliflixContentPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Open $title", tint = AliflixAccentSecondary)
                     }
                     if (session.items.isEmpty()) {
@@ -181,15 +181,15 @@ internal fun CatalogueGrid(store: DiscoverCatalogueStore, category: String?, que
                 }
             }
             if (session.people.isNotEmpty()) {
-                item("people-label", span = { GridItemSpan(maxLineSpan) }) { Text("People", style = MaterialTheme.typography.titleMedium) }
+                item("people-label", span = { GridItemSpan(maxLineSpan) }) { Text("People", color = AliflixContentPrimary, style = MaterialTheme.typography.titleMedium) }
                 items(session.people, key = { "person:${it.tmdbId}" }) { person ->
                     Column(Modifier.clickable { onPerson(person) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         AsyncImage(person.profileUrl, null, contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(CircleShape).background(AliflixSurfaceSecondary))
-                        Text(person.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
+                        Text(person.name, color = AliflixContentPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
                     }
                 }
-                if (session.items.isNotEmpty()) item("titles-label", span = { GridItemSpan(maxLineSpan) }) { Text("Titles", style = MaterialTheme.typography.titleMedium) }
+                if (session.items.isNotEmpty()) item("titles-label", span = { GridItemSpan(maxLineSpan) }) { Text("Titles", color = AliflixContentPrimary, style = MaterialTheme.typography.titleMedium) }
             }
             items(session.items, key = Media::key) { item -> DiscoverPosterCard(item, onOpen) }
             if (session.items.isNotEmpty() || session.people.isNotEmpty()) item("next", span = { GridItemSpan(maxLineSpan) }) {
@@ -206,8 +206,8 @@ internal fun DiscoverCategoryScreen(category: String, filter: String, store: Dis
     Column(modifier.fillMaxSize().aliflixScreenBackground()) {
         MobileTopSafeArea()
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-            Text(discoveryCategories[category].orEmpty(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = AliflixContentPrimary) }
+            Text(discoveryCategories[category].orEmpty(), color = AliflixContentPrimary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         }
         CatalogueGrid(store, category, "", filter, onOpen, {}, Modifier.weight(1f))
     }
