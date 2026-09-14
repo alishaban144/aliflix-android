@@ -22,8 +22,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "170"
-  RELEASE_VERSION_NAME: "3.1.80"
+  RELEASE_VERSION_CODE: "171"
+  RELEASE_VERSION_NAME: "3.1.81"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -287,7 +287,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Discover now focuses on Trending, New, and Top Rated sections after removing the quick shortcut tabs. Includes mobile playback polish, embedded-first captions, compact player controls, Google sign-in, and catalogue search."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Faster playback with parallel buffered server checks, reusable startup cache, remembered series servers and next-episode warmup. Raised subtitles, working transparent-by-default backgrounds and saved subtitle settings. Responsive pinch resizing, title-level player actions and smoother transitions. Discover search button and improved My Space scrolling."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"

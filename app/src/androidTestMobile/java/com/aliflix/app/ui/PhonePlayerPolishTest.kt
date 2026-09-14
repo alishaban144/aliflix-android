@@ -116,6 +116,45 @@ class PhonePlayerPolishTest {
         before.recycle(); pressed.recycle()
     }
 
+    @Test fun pinchChangesFitWithoutWaitingForOneLargeFrame() {
+        var zoomed = false
+        compose.setContent { AliflixMobileTheme {
+            NativePlayerScreen(NativePlayerUi(title = "Pinch", ready = true), null, onFit = { zoomed = it })
+        } }
+        compose.onRoot().performTouchInput {
+            pinch(androidx.compose.ui.geometry.Offset(width * .35f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .65f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .15f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .85f, height * .5f), 300)
+        }
+        compose.runOnIdle { assertTrue(zoomed) }
+        compose.onRoot().performTouchInput {
+            pinch(androidx.compose.ui.geometry.Offset(width * .15f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .85f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .35f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .65f, height * .5f), 300)
+        }
+        compose.runOnIdle { assertFalse(zoomed) }
+    }
+
+    @Test fun firstLibrarySwipeExpandsViewportWithoutFlingingToTheBottom() {
+        val grid = androidx.compose.foundation.lazy.grid.LazyGridState()
+        val items = (1..150).map { Media(it, MediaType.MOVIE, "Library title $it") }
+        compose.setContent { AliflixMobileTheme {
+            MySpaceScreen(items, emptyList(), emptyList(), AccountState(), {}, {}, {}, {}, {},
+                grid, androidx.compose.foundation.lazy.grid.rememberLazyGridState(), androidx.compose.foundation.lazy.grid.rememberLazyGridState(),
+                0, {}, PlaybackProviderId.MOVIEPIRE, {}, {}, false, {}, RecommendationAiModel.entries.first(), {},
+                SubtitleLanguage.ENGLISH, {}, true, {}, MobileUpdateUiState(), {}, {}, {})
+        } }
+        compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 100) }
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue("The expansion gesture must not fling the list", grid.firstVisibleItemIndex < 8) }
+        compose.onNodeWithText("My Space").assertDoesNotExist()
+        compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 500) }
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue("The next gesture must scroll normally", grid.firstVisibleItemIndex > 0) }
+    }
+
     private fun capture(name: String) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         compose.waitForIdle()

@@ -42,7 +42,7 @@ internal class NativeStreamResolver(
             if (now - history.getLong("$key:at", 0) < 30 * 60_000) history.getLong("$key:ms", 5_000) else 5_000
         }
         if (catalogueProvider && candidates.isEmpty()) throw NoNativeServersException()
-        if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, onServer)
+        if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, onServer).also { close(); StartupStreamCache.awaitPlayable(activity, it) }
         val winner = try { firstSuccessful(candidates.map { (name, _) -> suspend {
             val child = NativeStreamResolver(activity, progress, host)
             children.add(child)
@@ -50,6 +50,8 @@ internal class NativeStreamResolver(
             val key = "${selection.source.provider}:$name"
             try {
                 val request = child.resolveSingle(selection, positionMs, excluded, name, embeds) {}
+                child.close()
+                StartupStreamCache.awaitPlayable(activity, request)
                 history.edit().putLong("$key:ms", SystemClock.elapsedRealtime() - started).putLong("$key:at", now).apply()
                 name to request
             } catch (error: Exception) {
@@ -62,7 +64,7 @@ internal class NativeStreamResolver(
             currentCoroutineContext().ensureActive()
             // Preferred embeds may all be unavailable while the catalogue has another server.
             if (catalogueProvider) throw error
-            return resolveSingle(selection, positionMs, excluded + candidates.map { it.first }, null, embeds, onServer)
+            return resolveSingle(selection, positionMs, excluded + candidates.map { it.first }, null, embeds, onServer).also { close(); StartupStreamCache.awaitPlayable(activity, it) }
         }
         onServer(winner.first)
         return winner.second

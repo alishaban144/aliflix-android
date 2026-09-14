@@ -21,7 +21,7 @@ data class PlayerSettings(
 
     companion object {
         const val DEFAULT_SUBTITLE_FONT_SIZE_SP = 16f
-        const val DEFAULT_SUBTITLE_BACKGROUND_OPACITY = 0.5f
+        const val DEFAULT_SUBTITLE_BACKGROUND_OPACITY = 0f
     }
 }
 

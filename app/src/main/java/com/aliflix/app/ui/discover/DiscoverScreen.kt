@@ -352,9 +352,6 @@ internal fun DiscoverScreen(
 
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Discover", color = AliflixContentPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                            IconButton(onClick = onAccount, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Rounded.AccountCircle, "Account", tint = AliflixAccentSecondary, modifier = Modifier.size(30.dp))
-                            }
                         }
 
                         Row(
@@ -424,6 +421,14 @@ internal fun DiscoverScreen(
                                     .focusRequester(focusRequester)
                                     .testTag("discover-search-field"),
                             )
+                            IconButton(onClick = {
+                                keyboard?.hide()
+                                val query = fieldValue.text.trim()
+                                fieldValue = fieldValue.copy(text = query)
+                                onSubmitSearch(query)
+                            }, modifier = Modifier.padding(start = 8.dp).size(48.dp).testTag("discover-search-button")) {
+                                Icon(Icons.Filled.Search, "Search", tint = AliflixAccentSecondary)
+                            }
                         }
 
                         AnimatedVisibility(

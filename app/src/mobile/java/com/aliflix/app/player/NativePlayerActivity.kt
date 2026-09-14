@@ -57,6 +57,9 @@ class NativePlayerActivity : FragmentActivity() {
     private var activeSubtitleCues: List<SubtitleCue> = emptyList()
     private var activeSubtitleCuesJson: String? = null
     private var episodeQueueJob: Job? = null
+    private var nextEpisodeWarmup: Job? = null
+    private var warmedEpisode: Triple<PlaybackSelection, String, NativePlaybackRequest>? = null
+    private var warmedAt = 0L
     private var introJob: Job? = null
     private var introKey: String? = null
     private var resolver: NativeStreamResolver? = null
@@ -351,8 +354,8 @@ class NativePlayerActivity : FragmentActivity() {
         val startingSource = current.source
         val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition?.takeIf { it > 0 }
             ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
+        nextEpisodeWarmup?.cancel()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
-        settingsStore.updateSubtitleDelayTenths(0)
         subtitleTimingEvidence = null
         activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
@@ -375,67 +378,102 @@ class NativePlayerActivity : FragmentActivity() {
         )
         updateSelectionUi()
         preparation = lifecycleScope.launch {
-            val auto = intent.getBooleanExtra("autoSubtitles", true)
-            val language = canonicalSubtitleLanguageCode(intent.getStringExtra("subtitleLanguage") ?: "EN")
+            val choices = getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
+            val auto = choices.getBoolean("enabled", intent.getBooleanExtra("autoSubtitles", true))
+            val language = canonicalSubtitleLanguageCode(choices.getString("language", null) ?: intent.getStringExtra("subtitleLanguage") ?: "EN")
             try {
                 val preferences = com.aliflix.app.data.PlaybackProviderRepository(this@NativePlayerActivity).preferences.value
                 val history = getSharedPreferences("native-resolver-performance", MODE_PRIVATE)
-                val now = System.currentTimeMillis()
+                val seriesKey = "series:${current.media.key}"
+                val savedProvider = if (current.media.type == com.aliflix.app.model.MediaType.TV) history.getString("$seriesKey:provider", null) else null
                 val sources = playbackSourceFallbacks(current, preferences).filter { it.source.provider !in exhaustedSources }
-                val orderedSources = if (preferredServer != null) sources else sources.sortedBy {
-                    val key = "provider:${it.source.provider}"
-                    if (now - history.getLong("$key:at", 0) < 30 * 60_000) history.getLong("$key:ms", 15_000) else 15_000
-                }
-                for (candidate in orderedSources) {
-                    val current = candidate
-                    if (selection?.source != current.source) {
-                        selection = current
-                        triedServers.clear()
-                        subtitleTimingEvidence = null
-                        ui = ui.copy(stage = "Trying ${current.source.provider.displayName}", server = "", availableServers = emptyList())
-                        updateSelectionUi()
-                    }
-                for (attempt in 0 until 2) {
+                val orderedSources = sources.sortedBy { if (it.source.provider.name == savedProvider) 0 else 1 }
+                val excludedBySource = mutableMapOf<com.aliflix.app.model.PlaybackProviderId, MutableSet<String>>()
+                excludedBySource[current.source.provider] = triedServers.toMutableSet()
+                var preferSaved = preferredServer != null || savedProvider != null
+                repeat(3) {
                     ensureActive()
-                    val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
-                    resolver = adapter
-                    var server = ""
-                    val attemptStarted = android.os.SystemClock.elapsedRealtime()
+                    val candidates = orderedSources.filter { it.source.provider !in exhaustedSources }
+                    if (candidates.isEmpty()) return@repeat
+                    val batch = if (preferSaved) listOf(candidates.firstOrNull {
+                        if (preferredServer != null) it.source == startingSource else it.source.provider.name == savedProvider
+                    } ?: candidates.first()) else candidates
+                    preferSaved = false
+                    val warmed = warmedEpisode?.takeIf { it.first.key == current.key && preferredServer == null && android.os.SystemClock.elapsedRealtime() - warmedAt < 120_000 }?.let { it.copy(third = it.third.copy(positionMs = resume)) }
+                    warmedEpisode = null
+                    val winner = try {
+                        warmed ?: firstSuccessful(batch.map { candidate -> suspend {
+                            val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
+                            var server = ""
+                            val excluded = excludedBySource.getOrPut(candidate.source.provider) { mutableSetOf() }
+                            val savedServer = if (candidate.source.provider.name == savedProvider) history.getString("$seriesKey:server", null) else null
+                            try {
+                                val request = withTimeout(if (savedServer != null || preferredServer != null) 5_000 else 16_000) {
+                                    adapter.resolve(candidate, resume, excluded,
+                                        preferredServer = (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
+                                        onServers = { resolvedServerNames[candidate.key] = it }) { server = it }
+                                }
+                                Triple(candidate, server, request)
+                            } catch (error: Exception) {
+                                ensureActive()
+                                if (server.isNotBlank()) excluded.add(server)
+                                if (error is NoNativeServersException) exhaustedSources.add(candidate.source.provider)
+                                throw error
+                            } finally { adapter.close() }
+                        } }, parallelism = 2)
+                    } catch (error: Exception) { ensureActive(); return@repeat }
+                    val (candidate, server, resolved) = winner
+                    selection = candidate.copy(availableEpisodes = selection?.availableEpisodes?.takeUnless { it.isEmpty() } ?: candidate.availableEpisodes)
+                    triedServers.clear()
+                    triedServers.addAll(excludedBySource[candidate.source.provider].orEmpty())
+                    ui = ui.copy(server = server, availableServers = resolvedServerNames[candidate.key].orEmpty())
+                    updateSelectionUi()
+                    hideSystemBars()
+                    PlaybackStartupTiming.mark("stream_resolved")
                     try {
-                        val resolved = withTimeout(24_000) { adapter.resolve(current, resume, triedServers,
-                            preferredServer = if (attempt == 0 && current.source == startingSource) preferredServer else null,
-                            onServers = { names ->
-                                resolvedServerNames[current.key] = names
-                                ui = ui.copy(availableServers = names)
-                            }) { label -> server = label } }
-                        ui = ui.copy(server = server, stage = "Preparing your video")
-                        adapter.close(); resolver = null; hideSystemBars()
-                        PlaybackStartupTiming.mark("stream_resolved")
                         startNative(resolved.copy(playing = true, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
                         awaitNativeReady(resolved.url)
-                        history.edit().putLong("provider:${current.source.provider}:ms", android.os.SystemClock.elapsedRealtime() - attemptStarted)
-                            .putLong("provider:${current.source.provider}:at", now).apply()
-                        if (auto && !NativePlaybackService.embeddedSubtitlesActive) {
-                            loadAutomaticSubtitles(current, language, resolved.url)
+                        if (candidate.media.type == com.aliflix.app.model.MediaType.TV) {
+                            history.edit().putString("$seriesKey:provider", candidate.source.provider.name)
+                                .putString("$seriesKey:server", server).apply()
                         }
-                        ensureActive()
-                        intent.putExtra("selection", current.nativeJson())
-                        ui = ui.copy(stage = null, ready = true, error = null, subtitleLoading = false)
+                        if (auto && !NativePlaybackService.embeddedSubtitlesActive) loadAutomaticSubtitles(candidate, language, resolved.url)
+                        intent.putExtra("selection", candidate.nativeJson())
+                        ui = ui.copy(stage = null, ready = true, error = null)
                         controller?.play()
+                        warmNextEpisode(candidate, server)
                         return@launch
-                    } catch (error: NoNativeServersException) { break }
-                    catch (error: Exception) { ensureActive() }
-                    finally { adapter.close(); if (resolver === adapter) resolver = null; hideSystemBars() }
-                    controller?.stop()
-                    if (server.isNotBlank()) triedServers.add(server) else break
-                    ui = ui.copy(stage = "Trying another server")
-                }
-                    history.edit().putLong("provider:${current.source.provider}:ms", 30_000).putLong("provider:${current.source.provider}:at", now).apply()
-                    exhaustedSources.add(current.source.provider)
-                    controller?.stop()
+                    } catch (error: Exception) {
+                        ensureActive()
+                        excludedBySource.getOrPut(candidate.source.provider) { mutableSetOf() }.add(server)
+                        controller?.stop()
+                    }
                 }
                 ui = ui.copy(stage = null, error = "We couldn't prepare this title. Check your connection and try again.", subtitleLoading = false)
             } finally { resolver?.close(); resolver = null }
+        }
+    }
+
+    /** Near the end, warm only the next episode on the server that actually worked. */
+    private fun warmNextEpisode(current: PlaybackSelection, server: String) {
+        nextEpisodeWarmup?.cancel()
+        if (current.media.type != com.aliflix.app.model.MediaType.TV) return
+        nextEpisodeWarmup = lifecycleScope.launch {
+            while (selection?.key == current.key) {
+                delay(2_000)
+                val player = controller ?: continue
+                if (!player.isPlaying || player.duration <= 0 || player.duration - player.currentPosition !in 1..60_000) continue
+                val next = selection?.availableEpisodes?.firstOrNull { it.seasonNumber == current.seasonNumber && it.number == (current.episodeNumber ?: 1) + 1 } ?: return@launch
+                val candidate = current.copy(episodeNumber = next.number, episodeTitle = next.title)
+                val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
+                try {
+                    val request = withTimeout(8_000) { adapter.resolve(candidate, 0, emptySet(), preferredServer = server) {} }
+                    warmedEpisode = Triple(candidate, server, request)
+                    warmedAt = android.os.SystemClock.elapsedRealtime()
+                } catch (error: Exception) { ensureActive() }
+                finally { adapter.close() }
+                return@launch
+            }
         }
     }
 
@@ -526,8 +564,7 @@ class NativePlayerActivity : FragmentActivity() {
             val result = SubdlSubtitleRepository().download(track, selection)
             ensureActive()
             result.onSuccess { cues ->
-                settingsStore.updateSubtitleDelayTenths(0)
-                activeSubtitleCues = cues
+                        activeSubtitleCues = cues
                 val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
                 activeSubtitleCuesJson = json
                 val vtt = nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
@@ -537,6 +574,7 @@ class NativePlayerActivity : FragmentActivity() {
                     Bundle().apply { putBoolean("enabled", true) }
                 )
                 updateSubtitleCues()
+                getSharedPreferences("native-subtitle-choice", MODE_PRIVATE).edit().putBoolean("enabled", true).putString("language", track.languageCode).apply()
                 ui = ui.copy(activeSubtitleTrack = track, subtitleError = null, message = "${track.languageName} subtitles enabled")
             }.onFailure {
                 ui = ui.copy(subtitleError = it.message?.takeIf { msg -> msg.isNotBlank() } ?: "This subtitle couldn't load. Try another version.")
@@ -546,6 +584,7 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun disableSubtitles() {
+        getSharedPreferences("native-subtitle-choice", MODE_PRIVATE).edit().putBoolean("enabled", false).apply()
         subtitleJob?.cancel()
         subtitleTimingEvidence = null
         activeSubtitleCues = emptyList()
@@ -603,7 +642,7 @@ class NativePlayerActivity : FragmentActivity() {
                 ((baseDp * density).toInt() + offsetPx).coerceAtLeast(0)
             }
         } else {
-            val baseDp = if (controlsVisible) 132 else 24
+            val baseDp = if (controlsVisible) 132 else 48
             ((baseDp * density).toInt() + offsetPx).coerceAtLeast(0)
         }
         val horizontalPx = (16 * density).toInt()
@@ -629,7 +668,9 @@ class NativePlayerActivity : FragmentActivity() {
             null
         )
         subtitles.setStyle(style)
-        updateSubtitlePadding(controlsVisible = true)
+        renderCaptions(renderedCaptions)
+        subtitles.invalidate()
+        updateSubtitlePadding(lastControlsVisible)
     }
 
     private fun adjustBrightness(delta: Float): Float {
@@ -683,7 +724,8 @@ class NativePlayerActivity : FragmentActivity() {
     private fun renderCaptions(cues: List<Cue>) {
         renderedCaptions = cues.map { it.buildUpon().setPosition(0.5f)
             .setPositionAnchor(Cue.ANCHOR_TYPE_MIDDLE).setSize(0.92f)
-            .setLine(Cue.DIMEN_UNSET, Cue.LINE_TYPE_FRACTION).build() }
+            .setLine(Cue.DIMEN_UNSET, Cue.LINE_TYPE_FRACTION)
+            .clearWindowColor().apply { it.text?.let { text -> setText(text.toString()) } }.build() }
         subtitles.setCues(renderedCaptions)
     }
 
@@ -765,6 +807,7 @@ class NativePlayerActivity : FragmentActivity() {
         recordCurrentProgress(urgent = true)
         if (::subtitles.isInitialized) subtitles.removeCallbacks(subtitleLayoutUpdate)
         subtitleRenderJob?.cancel()
+        nextEpisodeWarmup?.cancel()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); subtitleSyncDebounceJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
     }
     override fun onConfigurationChanged(newConfig: Configuration) {

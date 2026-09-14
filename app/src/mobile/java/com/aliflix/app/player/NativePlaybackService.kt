@@ -120,8 +120,8 @@ class NativePlaybackService : MediaSessionService() {
         }
         localPlayer = ExoPlayer.Builder(this)
             .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true))
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 750, 2_000).build())
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, scopedHttp)))
+            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 250, 1_000).build())
+            .setMediaSourceFactory(DefaultMediaSourceFactory(StartupStreamCache.factory(this, DefaultDataSource.Factory(this, scopedHttp))))
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)

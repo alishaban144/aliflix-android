@@ -72,12 +72,6 @@ internal fun MobilePlayerTopBar(
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(22.dp))
             }
         }
-        val titleText: @Composable () -> Unit = {
-            Text(title, color = Color.White, fontSize = if (compact) 18.sp else 20.sp,
-                fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
         val actions: @Composable () -> Unit = {
             Row(Modifier.clip(RoundedCornerShape(28.dp)).background(Color.White.copy(alpha = 0.07f)), verticalAlignment = Alignment.CenterVertically) {
                 if (isTv) CompactTopButton(Icons.AutoMirrored.Rounded.ViewList, "Episodes", onEpisodes)
@@ -86,16 +80,18 @@ internal fun MobilePlayerTopBar(
                 CompactTopButton(Icons.Rounded.MoreVert, "More", onMore)
             }
         }
-        if (compact) androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                 identity()
-                androidx.compose.foundation.layout.Column(Modifier.weight(1f).padding(start = 12.dp)) { titleText() }
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                    Text(title, color = Color.White, fontSize = if (compact) 16.sp else 20.sp,
+                        fontWeight = FontWeight.SemiBold)
+                    if (!compact && detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                }
+                actions()
             }
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { actions() }
-        } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            identity()
-            androidx.compose.foundation.layout.Column(Modifier.weight(1f).padding(horizontal = 12.dp)) { titleText() }
-            actions()
+            if (compact && detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp,
+                modifier = Modifier.padding(start = 56.dp))
         }
     }
 }
@@ -181,12 +177,14 @@ internal fun MobilePlayerCenterControls(
                     .border(BorderStroke(1.5.dp, Color.White), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
+                androidx.compose.animation.Crossfade(targetState = isPlaying, animationSpec = tween(160), label = "play-pause") { active ->
                 Icon(
-                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    imageVector = if (active) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    contentDescription = if (active) "Pause" else "Play",
                     tint = Color.White,
                     modifier = Modifier.size(30.dp),
                 )
+                }
             }
         }
 

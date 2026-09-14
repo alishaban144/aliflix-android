@@ -1637,6 +1637,7 @@ internal fun HomeFeed(
             .toList()
     }
 
+    var automaticHeroTransition by remember { mutableStateOf(false) }
     val heroDragged by pagerState.interactionSource.collectIsDraggedAsState()
     val heroLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(pagerState, heroCandidates, heroDragged) {
@@ -1645,6 +1646,8 @@ internal fun HomeFeed(
                 kotlinx.coroutines.delay(7_000L)
                 if (!com.aliflix.app.BuildConfig.IS_TV && (heroDragged || pagerState.isScrollInProgress ||
                     listState.firstVisibleItemIndex > 0 || !heroLifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))) continue
+                automaticHeroTransition = true
+                try {
                 pagerState.animateScrollToPage(
                     page = if (com.aliflix.app.BuildConfig.IS_TV) pagerState.currentPage + 1 else (pagerState.currentPage - 1).coerceAtLeast(0),
                     animationSpec = tween(
@@ -1652,6 +1655,7 @@ internal fun HomeFeed(
                         easing = FastOutSlowInEasing,
                     ),
                 )
+                } finally { automaticHeroTransition = false }
             }
         }
     }
@@ -1677,7 +1681,8 @@ internal fun HomeFeed(
                     HeroBanner(
                         item = featured,
                         motionOffset = if (com.aliflix.app.BuildConfig.IS_TV) 0f else
-                            (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction,
+                            ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction) *
+                                (if (automaticHeroTransition) 1f else -1f),
                         activeShot = !com.aliflix.app.BuildConfig.IS_TV && pagerState.currentPage == page && listState.firstVisibleItemIndex == 0,
                         personalMatch = PersonalizationEngine.match(featured, likes),
                         onPlay = { onPlay(featured) },
@@ -2969,7 +2974,7 @@ private fun MobileUpdatePanel(
 }
 
 @Composable
-private fun MySpaceScreen(
+internal fun MySpaceScreen(
     myList: List<Media>,
     likes: List<Media>,
     recent: List<Media>,
@@ -3008,17 +3013,23 @@ private fun MySpaceScreen(
     var chromeVisible by remember { mutableStateOf(true) }
     val chromeScroll = remember {
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            private var expandingViewport = false
             override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
-                if (available.y < -3f) chromeVisible = false
-                if (available.y > 3f) chromeVisible = true
-                return androidx.compose.ui.geometry.Offset.Zero
+                if (source != androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput) return androidx.compose.ui.geometry.Offset.Zero
+                if (chromeVisible && available.y < -3f) {
+                    chromeVisible = false
+                    expandingViewport = true
+                } else if (!expandingViewport && available.y > 3f) chromeVisible = true
+                // The gesture that expands the grid belongs to the header. Do not also fling
+                // the newly enlarged viewport with its velocity.
+                return if (expandingViewport) androidx.compose.ui.geometry.Offset(0f, available.y) else androidx.compose.ui.geometry.Offset.Zero
+            }
+            override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                val consume = expandingViewport
+                expandingViewport = false
+                return if (consume) androidx.compose.ui.unit.Velocity(0f, available.y) else androidx.compose.ui.unit.Velocity.Zero
             }
         }
-    }
-    val activeGrid = when (pagerState.currentPage) { 0 -> listGridState; 1 -> favoritesGridState; else -> historyGridState }
-    LaunchedEffect(activeGrid) {
-        snapshotFlow { activeGrid.firstVisibleItemIndex == 0 && activeGrid.firstVisibleItemScrollOffset == 0 }
-            .collect { atTop -> if (atTop) chromeVisible = true }
     }
     var showSettingsWindow by rememberSaveable { mutableStateOf(false) }
     var showClearConfirmation by remember { mutableStateOf(false) }

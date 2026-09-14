@@ -180,6 +180,78 @@ class NativeSubtitleRenderingTest {
         }
     }
 
+    @Test fun opacityChangesRenderedPixelsAndSubtitleSettingsSurviveRecreation() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        grantNativeFixtureNetworkPermission()
+        val store = (context.applicationContext as AliflixApplication).playerSettingsStore
+        val previous = store.settings.value
+        val server = NativeBackgroundPlaybackTest.FixtureServer(instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() })
+        store.updateSubtitleBackgroundOpacity(0f)
+        store.updateSubtitleFontSize(22f)
+        store.updateSubtitleVerticalOffsetDp(24)
+        store.updateSubtitleDelayTenths(7)
+        val request = NativePlaybackRequest(server.url, "video/mp4", "https://fixture.aliflix.test/", "Test", "", "Opacity", 3000, true,
+            "WEBVTT\n\n00:00:00.000 --> 00:01:20.000\nOPACITY PERSISTENCE\n\n")
+        val payload = File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json").apply { writeText(request.toJson()) }
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", payload.name), nativePhoneLaunchOptions())
+        fun darkPixels(): Int {
+            var result = 0
+            scenario.onActivity { activity ->
+                val view = requireNotNull(findSubtitles(activity.window.decorView))
+                val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+                view.draw(Canvas(bitmap))
+                for (y in 0 until bitmap.height step 2) for (x in 0 until bitmap.width step 2) {
+                    val color = bitmap.getPixel(x, y)
+                    if (android.graphics.Color.alpha(color) > 200 && android.graphics.Color.red(color) < 30) result++
+                }
+                bitmap.recycle()
+            }
+            return result
+        }
+        try {
+            awaitCaptions(scenario, "OPACITY PERSISTENCE")
+            val transparent = darkPixels()
+            store.updateSubtitleBackgroundOpacity(1f)
+            scenario.recreate()
+            awaitCaptions(scenario, "OPACITY PERSISTENCE")
+            assertTrue("Opaque caption background must add dark pixels", darkPixels() > transparent + 100)
+            val restored = PlayerSettingsStore(context).settings.value
+            assertEquals(1f, restored.subtitleBackgroundOpacity, 0f)
+            assertEquals(22f, restored.subtitleFontSizeSp, 0f)
+            assertEquals(24, restored.subtitleVerticalOffsetDp)
+            assertEquals(7, restored.subtitleDelayTenths)
+        } finally {
+            scenario.close(); context.stopService(Intent(context, NativePlaybackService::class.java)); server.close(); payload.delete()
+            store.updateSubtitleBackgroundOpacity(previous.subtitleBackgroundOpacity)
+            store.updateSubtitleFontSize(previous.subtitleFontSizeSp)
+            store.updateSubtitleVerticalOffsetDp(previous.subtitleVerticalOffsetDp)
+            store.updateSubtitleDelayTenths(previous.subtitleDelayTenths)
+        }
+    }
+
+    @Test fun startupRaceBuffersPlayableMediaAndCancelsSlowerContender() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        grantNativeFixtureNetworkPermission()
+        val server = NativeBackgroundPlaybackTest.FixtureServer(instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() })
+        val request = NativePlaybackRequest(server.url, "video/mp4", "https://fixture.aliflix.test/", "Test", "", "Race", 0, false)
+        var loserClosed = false
+        try {
+            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.Main) {
+                val winner = firstSuccessful(listOf(suspend {
+                    try { kotlinx.coroutines.delay(30_000); request.copy(title = "Slow") }
+                    finally { loserClosed = true }
+                }, suspend {
+                    StartupStreamCache.awaitPlayable(context, request)
+                    request
+                }))
+                assertEquals("Race", winner.title)
+                assertTrue("Losing work must close before handing off", loserClosed)
+            }
+        } finally { server.close() }
+    }
+
     private fun awaitCaptions(scenario: ActivityScenario<NativePlayerActivity>, expected: String) = await("Visible $expected") {
         var visible = false
         scenario.onActivity { activity ->

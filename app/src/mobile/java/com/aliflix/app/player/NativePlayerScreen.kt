@@ -18,7 +18,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -273,15 +273,33 @@ internal fun NativePlayerScreen(
             .fillMaxSize()
             .pointerInput(preparing, state.error) {
                 if (preparing || state.error != null) return@pointerInput
-                detectTransformGestures { _, _, zoomChange, _ ->
-                    if (zoomChange > 1.15f && !fill) {
-                        fill = true
-                        onFit(true)
-                        showHud(Icons.Default.AspectRatio, "Fill Screen")
-                    } else if (zoomChange < 0.85f && fill) {
-                        fill = false
-                        onFit(false)
-                        showHud(Icons.Default.AspectRatio, "Fit to Screen")
+                awaitPointerEventScope {
+                    var accumulatedZoom = 1f
+                    var pinching = false
+                    while (true) {
+                        val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        if (event.changes.count { it.pressed } >= 2) {
+                            pinching = true
+                            val zoomChange = event.calculateZoom()
+                            if ((accumulatedZoom > 1f && zoomChange < 1f) || (accumulatedZoom < 1f && zoomChange > 1f)) accumulatedZoom = 1f
+                            accumulatedZoom *= zoomChange
+                            if (accumulatedZoom > 1.06f && !fill) {
+                                accumulatedZoom = 1f
+                                fill = true
+                                onFit(true)
+                                showHud(Icons.Default.AspectRatio, "Fill Screen")
+                            } else if (accumulatedZoom < 0.94f && fill) {
+                                accumulatedZoom = 1f
+                                fill = false
+                                onFit(false)
+                                showHud(Icons.Default.AspectRatio, "Fit to Screen")
+                            }
+                        }
+                        if (pinching) event.changes.forEach { it.consume() }
+                        if (event.changes.none { it.pressed }) {
+                            accumulatedZoom = 1f
+                            pinching = false
+                        }
                     }
                 }
             }
@@ -293,7 +311,7 @@ internal fun NativePlayerScreen(
                         dragStartedInValidZone = offset.y in (size.height * 0.20f)..(size.height * 0.80f)
                     },
                     onVerticalDrag = { change, dragAmount ->
-                        if (!dragStartedInValidZone) return@detectVerticalDragGestures
+                        if (!dragStartedInValidZone || change.isConsumed) return@detectVerticalDragGestures
                         change.consume()
                         val isLeft = change.position.x < size.width / 2
                         val delta = -dragAmount / (size.height * 0.7f)
@@ -426,7 +444,7 @@ internal fun NativePlayerScreen(
         // Subtle dark scrim when controls are visible
         AnimatedVisibility(
             visible = controls,
-            enter = fadeIn(tween(200)),
+            enter = fadeIn(tween(180)) + androidx.compose.animation.scaleIn(tween(220), initialScale = 0.98f),
             exit = fadeOut(tween(200)),
             modifier = Modifier.fillMaxSize(),
         ) {
@@ -436,7 +454,7 @@ internal fun NativePlayerScreen(
         // Redesigned controls overlay (compact top bar, outlined center controls, purple timeline)
         AnimatedVisibility(
             visible = controls,
-            enter = fadeIn(tween(200)),
+            enter = fadeIn(tween(180)) + androidx.compose.animation.scaleIn(tween(220), initialScale = 0.98f),
             exit = fadeOut(tween(200)),
             modifier = Modifier.fillMaxSize(),
         ) {
