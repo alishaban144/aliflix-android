@@ -13,6 +13,10 @@ on:
         description: "Release tag, for example v3.1.74"
         required: true
         type: string
+      skip_device_tests:
+        description: "Explicitly release without emulator validation"
+        type: boolean
+        default: false
       notes:
         description: "Release notes shown inside Aliflix"
         required: true
@@ -47,6 +51,7 @@ jobs:
           fi
 
   playback-device-tests:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -163,7 +168,9 @@ jobs:
         playback-device-tests,
       ]
     if: >-
-      always() && needs.changed-paths.result == 'success' && needs.playback-device-tests.result == 'success' &&
+      always() && needs.changed-paths.result == 'success' &&
+      (needs.playback-device-tests.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped')) &&
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
     runs-on: ubuntu-latest
@@ -288,6 +295,9 @@ jobs:
         run: |
           set -euo pipefail
           RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Faster playback with parallel buffered server checks, reusable startup cache, remembered series servers and next-episode warmup. Raised subtitles, working transparent-by-default backgrounds and saved subtitle settings. Responsive pinch resizing, title-level player actions and smoother transitions. Discover search button and improved My Space scrolling."
+          if [ "${{ inputs.skip_device_tests }}" = "true" ]; then
+            RELEASE_NOTES="$RELEASE_NOTES Device validation: released without another emulator run at the owner's request; the prior run passed 19 of 20 device tests, with pinch resizing still unverified."
+          fi
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
