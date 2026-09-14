@@ -478,6 +478,10 @@ internal fun NativePlayerScreen(
                         sheet = "Audio & subtitles"
                         interaction++
                     },
+                    onQuality = {
+                        sheet = "Quality"
+                        interaction++
+                    },
                     onRotate = {
                         onRotate()
                         interaction++

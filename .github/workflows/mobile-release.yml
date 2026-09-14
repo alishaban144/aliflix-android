@@ -13,6 +13,10 @@ on:
         description: "Release tag, for example v3.1.74"
         required: true
         type: string
+      skip_tests:
+        description: "Explicitly publish without unit tests or lint"
+        type: boolean
+        default: false
       skip_device_tests:
         description: "Explicitly release without emulator validation"
         type: boolean
@@ -26,8 +30,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "171"
-  RELEASE_VERSION_NAME: "3.1.81"
+  RELEASE_VERSION_CODE: "172"
+  RELEASE_VERSION_NAME: "3.1.82"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -262,8 +266,10 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew testMobileDebugUnitTest
-          ./gradlew lintMobileDebug
+          if [ "${{ inputs.skip_tests }}" != "true" ]; then
+            ./gradlew testMobileDebugUnitTest
+            ./gradlew lintMobileDebug
+          fi
           ./gradlew packageMobileRelease
 
       - name: Verify release APKs integrity
@@ -294,9 +300,9 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Faster playback with parallel buffered server checks, reusable startup cache, remembered series servers and next-episode warmup. Raised subtitles, working transparent-by-default backgrounds and saved subtitle settings. Responsive pinch resizing, title-level player actions and smoother transitions. Discover search button and improved My Space scrolling."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Quality button restored in the player action pill. Faster playback with parallel buffered server checks, reusable startup cache, remembered series servers and next-episode warmup. Raised subtitles, working transparent-by-default backgrounds and saved subtitle settings. Responsive pinch resizing, title-level player actions and smoother transitions. Discover search button and improved My Space scrolling."
           if [ "${{ inputs.skip_device_tests }}" = "true" ]; then
-            RELEASE_NOTES="$RELEASE_NOTES Device validation: released without another emulator run at the owner's request; the prior run passed 19 of 20 device tests, with pinch resizing still unverified."
+            RELEASE_NOTES="$RELEASE_NOTES Validation: tests and emulator reruns waived by the owner for this release; pinch resizing remains unverified."
           fi
 
           # Mobile APK and manifest

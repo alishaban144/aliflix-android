@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ViewList
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
@@ -64,6 +65,7 @@ internal fun MobilePlayerTopBar(
     onMore: () -> Unit,
     modifier: Modifier = Modifier,
     detail: String = "",
+    onQuality: (() -> Unit)? = null,
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
         val compact = maxWidth < 560.dp
@@ -76,6 +78,7 @@ internal fun MobilePlayerTopBar(
             Row(Modifier.clip(RoundedCornerShape(28.dp)).background(Color.White.copy(alpha = 0.07f)), verticalAlignment = Alignment.CenterVertically) {
                 if (isTv) CompactTopButton(Icons.AutoMirrored.Rounded.ViewList, "Episodes", onEpisodes)
                 CompactTopButton(Icons.Rounded.Subtitles, "Audio & Subtitles", onSubtitles)
+                onQuality?.let { CompactTopButton(Icons.Rounded.HighQuality, "Quality", it) }
                 CompactTopButton(Icons.Rounded.ScreenRotation, "Rotate", onRotate)
                 CompactTopButton(Icons.Rounded.MoreVert, "More", onMore)
             }
