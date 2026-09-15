@@ -112,6 +112,7 @@ internal fun MobileSettingsDialog(
                             }
                         }
                     }
+                    com.aliflix.app.downloads.DownloadSettings()
                     SettingsGroup("SUBTITLES") {
                         var languageMenu by remember { mutableStateOf(false) }
                         Box {

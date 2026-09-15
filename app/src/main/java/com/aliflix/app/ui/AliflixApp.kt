@@ -3,6 +3,7 @@
 package com.aliflix.app.ui
 
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.runtime.DisposableEffect
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -542,12 +543,18 @@ fun AliflixApp(
     var updateUi by remember { mutableStateOf(MobileUpdateUiState()) }
     var urlDialogProvider by remember { mutableStateOf<PlaybackProviderId?>(null) }
     var detailProviderName by rememberSaveable { mutableStateOf<String?>(null) }
+    val sessionPreferences = remember(activity) { activity.getSharedPreferences("mobile-session", android.content.Context.MODE_PRIVATE) }
     var destinationStack by rememberSaveable(
         stateSaver = MobileDestinationStackSaver,
     ) {
         mutableStateOf<List<MobileDestination>>(
-            listOf(MobileDestination.Root(AppTab.HOME)),
+            sessionPreferences.getString("navigation", null)?.let { MobileDestinationStackSaver.restore(it) }
+                ?: listOf(MobileDestination.Root(AppTab.HOME)),
         )
+    }
+    LaunchedEffect(destinationStack) {
+        val encoded = with(MobileDestinationStackSaver) { androidx.compose.runtime.saveable.SaverScope { true }.save(destinationStack) }
+        sessionPreferences.edit().putString("navigation", encoded).apply()
     }
     var detailStateSnapshots by remember {
         mutableStateOf<Map<String, DetailUiState>>(emptyMap())
@@ -561,7 +568,7 @@ fun AliflixApp(
     val selectedTab = (destinationStack.first() as MobileDestination.Root).tab
     var playerSelection by remember { mutableStateOf<PlaybackSelection?>(null) }
     var playerVisible by remember { mutableStateOf(false) }
-    val homeScrollState = rememberLazyListState()
+    val homeScrollState = rememberLazyListState(sessionPreferences.getInt("homeIndex", 0), sessionPreferences.getInt("homeOffset", 0))
     val searchScrollState = rememberLazyGridState()
     val recommendationScrollState = rememberLazyListState()
     var askAliflixActive by remember { mutableStateOf(false) }
@@ -574,7 +581,21 @@ fun AliflixApp(
     var searchMediaFilter by rememberSaveable { mutableStateOf("All") }
     var discoverFocusRequestId by remember { mutableIntStateOf(0) }
     var consumedDiscoverFocusRequestId by remember { mutableIntStateOf(0) }
-    var libraryPage by rememberSaveable { mutableIntStateOf(0) }
+    var libraryPage by rememberSaveable { mutableIntStateOf(sessionPreferences.getInt("libraryPage", 0).coerceIn(0, 3)) }
+    LaunchedEffect(libraryPage) { sessionPreferences.edit().putInt("libraryPage", libraryPage).apply() }
+    DisposableEffect(activity) {
+        val listener = androidx.core.util.Consumer<android.content.Intent> { intent ->
+            if (intent.getBooleanExtra("openDownloads", false)) {
+                destinationStack = listOf(MobileDestination.Root(AppTab.MY_SPACE)); libraryPage = 3
+            }
+        }
+        activity.addOnNewIntentListener(listener)
+        if (activity.intent.getBooleanExtra("openDownloads", false)) {
+            destinationStack = listOf(MobileDestination.Root(AppTab.MY_SPACE)); libraryPage = 3
+            activity.intent.removeExtra("openDownloads")
+        }
+        onDispose { activity.removeOnNewIntentListener(listener) }
+    }
     var accountNotice by rememberSaveable { mutableStateOf<String?>(null) }
     var launchCompleted by rememberSaveable { mutableStateOf(false) }
     val isHomeReady = !home.loading && (home.content != null || home.error != null)
@@ -616,6 +637,20 @@ fun AliflixApp(
         ) {
             detailStateSnapshots = detailStateSnapshots + (currentDestinationKey to detail)
         }
+    }
+
+    DisposableEffect(activity) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                captureDetailStateSnapshot()
+                val encoded = with(MobileDestinationStackSaver) { androidx.compose.runtime.saveable.SaverScope { true }.save(destinationStack) }
+                sessionPreferences.edit().putString("navigation", encoded)
+                    .putInt("homeIndex", homeScrollState.firstVisibleItemIndex)
+                    .putInt("homeOffset", homeScrollState.firstVisibleItemScrollOffset).apply()
+            }
+        }
+        activity.lifecycle.addObserver(observer)
+        onDispose { activity.lifecycle.removeObserver(observer) }
     }
 
     fun openDetails(item: Media) {
@@ -3007,8 +3042,8 @@ internal fun MySpaceScreen(
     modifier: Modifier = Modifier,
 ) {
     val pagerState = rememberPagerState(
-        initialPage = page.coerceIn(0, 2),
-        pageCount = { 3 },
+        initialPage = page.coerceIn(0, 3),
+        pageCount = { 4 },
     )
     var chromeVisible by remember { mutableStateOf(true) }
     val chromeScroll = remember {
@@ -3168,6 +3203,7 @@ internal fun MySpaceScreen(
             "My List" to myList.size,
             "Favorites" to likes.size,
             "History" to recent.size,
+            "Downloads" to com.aliflix.app.downloads.downloadCount(),
         )
         Row(
             modifier = Modifier
@@ -3251,6 +3287,8 @@ internal fun MySpaceScreen(
                     emptyTitle = "No favorites yet",
                     emptyMessage = "",
                 )
+            } else if (targetPage == 3) {
+                com.aliflix.app.downloads.DownloadsSection()
             } else {
                 HistoryCollection(
                     items = recent,
@@ -4482,6 +4520,7 @@ internal fun DetailScreen(
                     key = { episode -> "${episode.seasonNumber}:${episode.number}" },
                 ) { episode ->
                     EpisodeRow(
+                        media = item,
                         episode = episode,
                         progress = playbackProgress[playbackProgressKey(
                             PlaybackSelection(
@@ -4934,8 +4973,7 @@ private fun DetailCinematicActionPanel(
     val isPartiallyWatched = latestProgress?.resumeEligible == true
 
     val ctaText = if (item.type == MediaType.TV && mainEpisode != null) {
-        if (isPartiallyWatched) "Resume S${mainEpisode.seasonNumber} E${mainEpisode.number}"
-        else "Play S${mainEpisode.seasonNumber} E${mainEpisode.number}"
+        if (isPartiallyWatched) "Resume" else "Play"
     } else {
         if (isPartiallyWatched) "Resume" else "Play"
     }
@@ -4953,7 +4991,7 @@ private fun DetailCinematicActionPanel(
             // Top row: CTA (weight 1) + Liked + My List
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
@@ -4972,7 +5010,7 @@ private fun DetailCinematicActionPanel(
                         contentColor = AliflixContentPrimary,
                     ),
                     shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -4985,13 +5023,13 @@ private fun DetailCinematicActionPanel(
                             Icon(
                                 imageVector = Icons.Filled.PlayArrow,
                                 contentDescription = null,
-                                modifier = Modifier.size(22.dp),
+                                modifier = Modifier.size(18.dp),
                             )
-                            Spacer(Modifier.width(6.dp))
+                            Spacer(Modifier.width(4.dp))
                             Text(
                                 text = ctaText,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
+                                fontSize = 14.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -5011,10 +5049,12 @@ private fun DetailCinematicActionPanel(
                     }
                 }
 
+                com.aliflix.app.downloads.DownloadButton(item)
+
                 // Compact Liked button
                 Surface(
                     onClick = { onToggleLike(item) },
-                    modifier = Modifier.size(54.dp),
+                    modifier = Modifier.size(48.dp),
                     shape = RoundedCornerShape(16.dp),
                     color = if (liked) AliflixAccentPrimaryContainer else AliflixSurfaceSecondary,
                     border = BorderStroke(
@@ -5027,7 +5067,7 @@ private fun DetailCinematicActionPanel(
                             imageVector = if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                             contentDescription = if (liked) "Liked" else "Like",
                             tint = if (liked) AliflixAccentSecondary else AliflixContentSecondary,
-                            modifier = Modifier.size(22.dp),
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }
@@ -5035,7 +5075,7 @@ private fun DetailCinematicActionPanel(
                 // Compact My List button
                 Surface(
                     onClick = { onToggleMyList(item) },
-                    modifier = Modifier.size(54.dp),
+                    modifier = Modifier.size(48.dp),
                     shape = RoundedCornerShape(16.dp),
                     color = if (inMyList) AliflixAccentPrimaryContainer else AliflixSurfaceSecondary,
                     border = BorderStroke(
@@ -5048,7 +5088,7 @@ private fun DetailCinematicActionPanel(
                             imageVector = if (inMyList) Icons.Filled.Check else Icons.Filled.Add,
                             contentDescription = if (inMyList) "In My List" else "Add to My List",
                             tint = if (inMyList) AliflixAccentSecondary else AliflixContentSecondary,
-                            modifier = Modifier.size(22.dp),
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }
@@ -5402,6 +5442,7 @@ private fun MovingMovieLoader(accent: Color) {
 
 @Composable
 private fun EpisodeRow(
+    media: Media,
     episode: Episode,
     progress: PlaybackProgress?,
     onPlay: () -> Unit,
@@ -5512,6 +5553,7 @@ private fun EpisodeRow(
                 accent = Color(0xFFF5C518),
             )
         }
+        com.aliflix.app.downloads.DownloadButton(media, episode, compact = true)
     }
 }
 

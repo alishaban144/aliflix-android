@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 172
-val mobileVersionName = "3.1.82"
+val mobileVersionCode = 173
+val mobileVersionName = "3.1.83"
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
@@ -37,8 +37,8 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 172
-        versionName = "3.1.82"
+        versionCode = 173
+        versionName = "3.1.83"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
@@ -166,7 +166,7 @@ dependencies {
     add("mobileImplementation", "com.google.firebase:firebase-firestore")
     add("mobileImplementation", "org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     add("mobileImplementation", "androidx.fragment:fragment-ktx:1.8.9")
-    listOf("exoplayer", "exoplayer-hls", "session", "ui", "cast").forEach { module ->
+    listOf("exoplayer", "exoplayer-hls", "inspector", "session", "ui", "cast").forEach { module ->
         add("mobileImplementation", "androidx.media3:media3-$module:1.11.0")
     }
 

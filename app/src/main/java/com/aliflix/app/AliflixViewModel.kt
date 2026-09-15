@@ -932,6 +932,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private val mobileEpisodes by lazy { com.aliflix.app.data.MobileEpisodeRepository(getApplication(), aiClient) }
+    private val offlineDetails = com.aliflix.app.data.OfflineDetailStore(getApplication())
     private val mobileDetailCache = object : LinkedHashMap<String, Media>(32, .75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Media>?) = size > 60
     }
@@ -958,6 +959,11 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _detail.value = DetailUiState(item = initial, selectedSeason = season, episodesLoading = item.type == MediaType.TV)
         if (item.type == MediaType.TV) loadMobileSeason(initial, season)
         detailJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
+            offlineDetails.load(item)?.let { cached ->
+                if (_detail.value.item?.key == item.key) {
+                    _detail.value = _detail.value.copy(item = cached); mobileDetailCache[item.key] = cached
+                }
+            }
             if (item.type == MediaType.TV) launch {
                 try {
                     val seasons = mobileEpisodes.seasons(item.id)
@@ -971,6 +977,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         val stable = details.toStableMobileMedia(_detail.value.item ?: initial)
                         _detail.value = _detail.value.copy(item = stable, recommendations = details.recommendations.map { it.toMedia() })
                         mobileDetailCache[item.key] = stable
+                        launch { runCatching { offlineDetails.save(stable) } }
                     }
                 } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
             }
@@ -982,6 +989,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                             val merged = current.item.mergeStableMobileDetailUpdate(update)
                             _detail.value = current.copy(item = merged)
                             mobileDetailCache[item.key] = merged; library.refreshMetadata(merged)
+                            launch { runCatching { offlineDetails.save(merged) } }
                         }
                     }
                 } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }

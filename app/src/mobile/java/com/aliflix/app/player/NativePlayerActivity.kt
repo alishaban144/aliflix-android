@@ -356,6 +356,17 @@ class NativePlayerActivity : FragmentActivity() {
             ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
         nextEpisodeWarmup?.cancel()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
+        val offlineStore = com.aliflix.app.downloads.OfflineDownloads.get(this)
+        val cached = offlineStore.manager.downloadIndex.getDownload(com.aliflix.app.data.playbackProgressKey(current))
+        if (cached?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) {
+            val saved = NativePlaybackRequest.fromJson(org.json.JSONObject(String(cached.request.data, Charsets.UTF_8)).getString("playback"))
+            val downloadedEpisodes = offlineStore.entries.value.filter { it.download.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED && it.selection.media.key == current.media.key }
+                .mapNotNull { it.selection.let { s -> if (s.media.type == com.aliflix.app.model.MediaType.TV) com.aliflix.app.model.Episode(s.seasonNumber ?: 1, s.episodeNumber ?: 1, s.episodeTitle.orEmpty()) else null } }
+            selection = current.copy(availableEpisodes = downloadedEpisodes)
+            ui = ui.copy(stage = "Loading download", error = null, ready = false, server = "", availableServers = emptyList())
+            startNative(saved.copy(positionMs = resume, playing = true, selectionJson = selection!!.nativeJson()))
+            return
+        }
         subtitleTimingEvidence = null
         activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
@@ -527,13 +538,24 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun startNative(request: NativePlaybackRequest) {
+        selection = runCatching { nativeSelection(request.selectionJson) }.getOrNull() ?: selection
+        updateSelectionUi()
+        if (request.offlineDownloadId.isNotBlank()) ui = ui.copy(server = "", availableServers = emptyList())
+        val playbackRequest = if (request.offlineDownloadId.isNotBlank() && request.subtitlesVtt.isNotBlank()) {
+            activeSubtitleCues = parseTimedTextSubtitleCues(request.subtitlesVtt)
+            activeSubtitleCuesJson = JSONArray().apply { activeSubtitleCues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
+            request.copy(subtitlesVtt = nativeSubtitlesVtt(activeSubtitleCuesJson, settingsStore.settings.value.subtitleDelaySeconds))
+        } else request
         val name = "native-request-${java.util.UUID.randomUUID()}.json"
-        java.io.File(cacheDir, name).writeText(request.toJson())
+        java.io.File(cacheDir, name).writeText(playbackRequest.toJson())
         val service = Intent(this, NativePlaybackService::class.java).putExtra("requestFile", name)
         if (request.playing) ContextCompat.startForegroundService(this, service) else startService(service)
     }
 
     private fun recover() {
+        if (NativePlaybackService.activeRequest?.offlineDownloadId?.isNotBlank() == true) {
+            ui = ui.copy(stage = null, error = "Download could not play. Delete it and download again."); return
+        }
         if (selection == null || preparation?.isActive == true) return
         stalledSince = 0
         if (ui.server.isNotBlank()) triedServers.add(ui.server)
@@ -541,7 +563,22 @@ class NativePlayerActivity : FragmentActivity() {
         else ui = ui.copy(stage = null, error = "Playback was interrupted. Retry to reconnect or choose another server.")
     }
 
+    private fun offlineSubtitleRequest(): NativePlaybackRequest? {
+        val id = NativePlaybackService.activeRequest?.offlineDownloadId?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching {
+            val saved = com.aliflix.app.downloads.OfflineDownloads.get(this).manager.downloadIndex.getDownload(id) ?: return null
+            NativePlaybackRequest.fromJson(org.json.JSONObject(String(saved.request.data, Charsets.UTF_8)).getString("playback"))
+        }.getOrNull()
+    }
+
     private fun searchSubtitles(auto: Boolean = false) {
+        offlineSubtitleRequest()?.let { saved ->
+            val tracks = if (saved.subtitlesVtt.isNotBlank() || saved.preferEmbeddedSubtitles) listOf(
+                SubtitleTrack("offline", saved.subtitleLanguage, java.util.Locale.forLanguageTag(saved.subtitleLanguage).displayLanguage,
+                    "", "", false, "vtt", null, "offline")) else emptyList()
+            ui = ui.copy(subtitleLoading = false, subtitleTracks = tracks, subtitleError = null)
+            return
+        }
         val current = selection ?: return
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
@@ -558,6 +595,20 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun applySubtitle(track: SubtitleTrack) {
+        if (track.id == "offline") {
+            offlineSubtitleRequest()?.let { saved ->
+                if (saved.subtitlesVtt.isNotBlank()) {
+                    activeSubtitleCues = parseTimedTextSubtitleCues(saved.subtitlesVtt)
+                    activeSubtitleCuesJson = JSONArray().apply { activeSubtitleCues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
+                    NativePlaybackService.updateSubtitles(nativeSubtitlesVtt(activeSubtitleCuesJson, settingsStore.settings.value.subtitleDelaySeconds), saved.subtitleLanguage, track.languageName)
+                } else {
+                    controller?.trackSelectionParameters = controller!!.trackSelectionParameters.buildUpon()
+                        .setPreferredTextLanguage(saved.subtitleLanguage).setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false).build()
+                }
+                ui = ui.copy(activeSubtitleTrack = track, subtitleError = null)
+            }
+            return
+        }
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
             ui = ui.copy(subtitleLoading = true, subtitleError = null)

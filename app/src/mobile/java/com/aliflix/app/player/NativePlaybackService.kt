@@ -121,7 +121,10 @@ class NativePlaybackService : MediaSessionService() {
         localPlayer = ExoPlayer.Builder(this)
             .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true))
             .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 250, 1_000).build())
-            .setMediaSourceFactory(DefaultMediaSourceFactory(StartupStreamCache.factory(this, DefaultDataSource.Factory(this, scopedHttp))))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory {
+                if (request?.offlineDownloadId?.isNotBlank() == true) DefaultDataSource(this, com.aliflix.app.downloads.OfflineDownloads.get(this).offlineFactory().createDataSource())
+                else StartupStreamCache.factory(this, DefaultDataSource.Factory(this, scopedHttp)).createDataSource()
+            }))
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -249,13 +252,14 @@ class NativePlaybackService : MediaSessionService() {
         preferredQualityApplied = false
         player.trackSelectionParameters = preferredQualityParameters(player.trackSelectionParameters,
             (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality)
-        externalCaptionCues = parseTimedTextSubtitleCues(next.subtitlesVtt)
+        externalCaptionCues = if (next.offlineDownloadId.isNotBlank() && !next.offlineAutoSubtitles) emptyList()
+            else parseTimedTextSubtitleCues(next.subtitlesVtt)
         embeddedSubtitlesActive = false
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setPreferredTextLanguage(next.subtitleLanguage)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, next.subtitlesVtt.isBlank() && !next.preferEmbeddedSubtitles).build()
-        relay = runCatching { CastStreamRelay(next, lanAddress()) }.getOrNull()
+        relay = if (next.offlineDownloadId.isBlank()) runCatching { CastStreamRelay(next, lanAddress()) }.getOrNull() else null
         playbackReady = false; playbackFailure = null; hasSelectedAudio = false
         activeRequest = next
         activeStreamUrl = next.url
@@ -270,7 +274,9 @@ class NativePlaybackService : MediaSessionService() {
         val headers = mutableMapOf("Referer" to next.referer, "Origin" to java.net.URI(next.referer).let { "${it.scheme}://${it.rawAuthority}" })
         // Cookie forwarding for segmented streams is handled per origin by the relay.
         httpFactory.setUserAgent(next.userAgent).setDefaultRequestProperties(headers)
-        val itemBuilder = MediaItem.Builder().setMediaId(selection?.key ?: next.title).setUri(next.url)
+        val saved = if (next.offlineDownloadId.isNotBlank()) com.aliflix.app.downloads.OfflineDownloads.get(this).manager.downloadIndex.getDownload(next.offlineDownloadId) else null
+        require(next.offlineDownloadId.isBlank() || saved?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) { "Download unavailable" }
+        val itemBuilder = (saved?.request?.toMediaItem()?.buildUpon() ?: MediaItem.Builder()).setMediaId(selection?.key ?: next.title).setUri(next.url)
             .setMimeType(next.mimeType).setMediaMetadata(MediaMetadata.Builder().setTitle(next.title)
                 .setSubtitle(selection?.episodeTitle)
                 .setArtworkUri(selection?.media?.backdropUrl?.let(android.net.Uri::parse)).build())
@@ -285,6 +291,9 @@ class NativePlaybackService : MediaSessionService() {
                 .setSelectUndeterminedTextLanguage(true)
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                 .build()
+        }
+        if (next.offlineDownloadId.isNotBlank() && !next.offlineAutoSubtitles) {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
         }
         originalItem = itemBuilder.build()
         player.setMediaItem(checkNotNull(originalItem), next.positionMs)

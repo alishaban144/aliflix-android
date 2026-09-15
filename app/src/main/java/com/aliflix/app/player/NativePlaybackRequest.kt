@@ -18,8 +18,11 @@ internal data class NativePlaybackRequest(
     val subtitleLanguage: String = "en",
     val subtitleLabel: String = "Aliflix subtitles",
     val preferEmbeddedSubtitles: Boolean = false,
+    val offlineDownloadId: String = "",
+    val offlineAutoSubtitles: Boolean = true,
 ) {
     fun toJson(): String = JSONObject().apply {
+        put("offlineDownloadId", offlineDownloadId); put("offlineAutoSubtitles", offlineAutoSubtitles)
         put("url", url); put("mimeType", mimeType); put("referer", referer)
         put("userAgent", userAgent); put("cookie", cookie); put("title", title)
         put("positionMs", positionMs); put("playing", playing); put("subtitlesVtt", subtitlesVtt)
@@ -42,6 +45,8 @@ internal data class NativePlaybackRequest(
                 json.optString("subtitleLanguage", "en"),
                 json.optString("subtitleLabel", "Aliflix subtitles"),
                 json.optBoolean("preferEmbeddedSubtitles", false),
+                json.optString("offlineDownloadId"),
+                json.optBoolean("offlineAutoSubtitles", true),
             )
         }
     }

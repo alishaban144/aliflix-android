@@ -11,7 +11,7 @@ import java.io.File
 
 /** TMDB API metadata, cached independently of ratings and title details. */
 class MobileEpisodeRepository(context: Context, private val api: RecommendationAiClient) {
-    private val directory = File(context.cacheDir, "mobile-episodes-v1")
+    private val directory = File(context.filesDir, "mobile-episodes-v1")
 
     private suspend fun document(id: Int, season: Int?, onCached: suspend (JSONObject) -> Unit): JSONObject {
         val file = File(directory, "$id-${season ?: "index"}.json")

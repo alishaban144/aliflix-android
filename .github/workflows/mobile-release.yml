@@ -21,6 +21,11 @@ on:
         description: "Explicitly release without emulator validation"
         type: boolean
         default: false
+      validation_focus:
+        description: "Phone checks to run"
+        type: choice
+        options: [full, downloads]
+        default: full
       notes:
         description: "Release notes shown inside Aliflix"
         required: true
@@ -30,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "172"
-  RELEASE_VERSION_NAME: "3.1.82"
+  RELEASE_VERSION_CODE: "173"
+  RELEASE_VERSION_NAME: "3.1.83"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -75,7 +80,9 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           chmod +x gradlew
-      - name: Verify native background playback and browser handoff
+      - name: Verify phone playback
+        env:
+          ALIFLIX_TEST_CLASSES: ${{ inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '' }}
         run: bash .github/scripts/test-phone-casting.sh '${{ matrix.api-level }}'
       - name: Upload playback test reports
         if: always()
@@ -300,10 +307,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Quality button restored in the player action pill. Faster playback with parallel buffered server checks, reusable startup cache, remembered series servers and next-episode warmup. Raised subtitles, working transparent-by-default backgrounds and saved subtitle settings. Responsive pinch resizing, title-level player actions and smoother transitions. Discover search button and improved My Space scrolling."
-          if [ "${{ inputs.skip_device_tests }}" = "true" ]; then
-            RELEASE_NOTES="$RELEASE_NOTES Validation: tests and emulator reruns waived by the owner for this release; pinch resizing remains unverified."
-          fi
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Download movies and selected episodes with quality and size selection, original or chosen subtitles, background progress, pause, retry and deletion. Play saved videos offline in the native player. Downloads in My Space, preferred download quality, storage limits and restored navigation."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -331,7 +335,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Discover now focuses on Trending, New, and Top Rated sections after removing the quick shortcut tabs. Includes mobile playback polish, embedded-first captions, compact player controls, Google sign-in, and catalogue search."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Mobile offline downloads with movie and episode selection, available qualities and sizes, saved subtitles, resumable background transfers, storage limits, and native offline playback. Downloads are available in My Space. Cached catalogue, title details and navigation remain available offline."
           files: |
             aliflix-mobile.apk
             update-mobile.json
