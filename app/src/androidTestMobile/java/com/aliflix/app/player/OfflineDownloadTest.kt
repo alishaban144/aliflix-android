@@ -53,7 +53,13 @@ class OfflineDownloadTest {
             file.writeText(saved.copy(positionMs = 2_000).toJson())
             scenario = ActivityScenario.launch(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", file.name))
             await { NativePlaybackService.playbackReady && NativePlaybackService.renderedStreamUrl == saved.url }
-            await { NativePlaybackService.currentCaptionCues().any { it.text.toString() == "Offline subtitle" } }
+            await {
+                var visible = false
+                instrumentation.runOnMainSync {
+                    visible = NativePlaybackService.currentCaptionCues().any { it.text.toString() == "Offline subtitle" }
+                }
+                visible
+            }
             scenario.recreate()
             await { NativePlaybackService.playbackReady }
             val manager = context.getSystemService(android.media.session.MediaSessionManager::class.java)
