@@ -22,27 +22,135 @@ internal data class DownloadQuality(val label: String, val height: Int, val byte
     val sizeLabel get() = (if (estimated && bytes > 0) "≈ " else "") + downloadSize(bytes)
 }
 internal data class PreparedDownload(val selection: PlaybackSelection, val playback: NativePlaybackRequest,
-    val qualities: List<DownloadQuality>, val hasOriginalSubtitles: Boolean)
+    val qualities: List<DownloadQuality>, val hasOriginalSubtitles: Boolean, val server: String = "")
 
 internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLayout, selection: PlaybackSelection,
     language: String): PreparedDownload {
     val progress = (activity.application as AliflixApplication).playbackProgressStore
     val prefs = PlaybackProviderRepository(activity).preferences.value
     var last: Exception? = null
-    // The same selected-source-first fallback as streaming; each temporary resolver is always released.
     val providers = listOf(selection.source.provider) + mobileGeneralPlaybackProviders().filter { it != selection.source.provider }
     for (provider in providers) {
         currentCoroutineContext().ensureActive()
-        val candidate = selection.copy(source = prefs.sourceFor(selection.media, provider))
+        val candidate = selection.copy(source = if (provider == selection.source.provider) selection.source else prefs.sourceFor(selection.media, provider))
         try {
+            var server = ""
             val request = NativeStreamResolver(activity, progress, host).use {
-                it.resolve(candidate, 0, emptySet(), onServer = {})
+                it.resolve(candidate, 0, emptySet(), onServer = { name -> server = name })
             }.copy(selectionJson = candidate.nativeJson(), subtitleLanguage = language.lowercase(), positionMs = 0)
-            return inspectDownload(candidate, request, language)
+            return inspectDownload(candidate, request, language).copy(server = server)
+        } catch (timeout: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            last = IllegalStateException("The provider timed out. Retry preparation.", timeout)
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { last = error }
+        catch (error: Exception) { currentCoroutineContext().ensureActive(); last = error }
     }
     throw IllegalStateException("No downloadable video found. Try again.", last)
+}
+
+internal suspend fun prepareDownloadBatch(activity: ComponentActivity, host: FrameLayout,
+    selections: List<Pair<String, PlaybackSelection>>, language: String, cached: Map<String, PreparedDownload>,
+    onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit): Unit = withContext(Dispatchers.Main.immediate) {
+    val progress = (activity.application as AliflixApplication).playbackProgressStore
+    val prefs = PlaybackProviderRepository(activity).preferences.value
+    prepareDownloadBatchInternal(selections, language, cached,
+        discover = { selection -> prepareDownload(activity, host, selection, language) },
+        resolvePinned = { selection, server ->
+            var actualServer = ""
+            val request = NativeStreamResolver(activity, progress, host).use {
+                it.resolve(selection, 0, emptySet(), preferredServer = server, strictPreferredServer = true,
+                    onServer = { name -> actualServer = name })
+            }
+            check(actualServer == server) { "The selected server changed." }
+            request.copy(selectionJson = selection.nativeJson(), subtitleLanguage = language.lowercase(), positionMs = 0)
+        },
+        inspect = ::inspectDownload,
+        sourceIsCurrent = { selection ->
+            selection.source == prefs.sourceFor(selection.media, selection.source.provider) ||
+                selections.any { it.second.source == selection.source }
+        },
+        onPrepared = onPrepared, onError = onError)
+}
+
+internal suspend fun prepareDownloadBatchInternal(
+    selections: List<Pair<String, PlaybackSelection>>, language: String, cached: Map<String, PreparedDownload>,
+    discover: suspend (PlaybackSelection) -> PreparedDownload,
+    resolvePinned: suspend (PlaybackSelection, String) -> NativePlaybackRequest,
+    inspect: suspend (PlaybackSelection, NativePlaybackRequest, String) -> PreparedDownload,
+    sourceIsCurrent: (PlaybackSelection) -> Boolean = { true },
+    onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit,
+) {
+    fun group(selection: PlaybackSelection) = selection.media.key to
+        if (selection.media.type == MediaType.TV) selection.seasonNumber ?: 1 else null
+    fun sameEpisode(first: PlaybackSelection, second: PlaybackSelection) = group(first) == group(second) &&
+        (first.media.type != MediaType.TV || (first.episodeNumber ?: 1) == (second.episodeNumber ?: 1))
+    val snapshot = cached.toMap().filterValues { it.qualities.isNotEmpty() && sourceIsCurrent(it.selection) }
+    suspend fun attempt(block: suspend () -> PreparedDownload): Result<PreparedDownload> = try {
+        Result.success(block()).also { currentCoroutineContext().ensureActive() }
+    } catch (timeout: TimeoutCancellationException) {
+        currentCoroutineContext().ensureActive()
+        Result.failure(IllegalStateException("Preparation timed out.", timeout))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        currentCoroutineContext().ensureActive()
+        Result.failure(error)
+    }
+    for ((identity, items) in selections.distinctBy { it.first }.groupBy { group(it.second) }) {
+        currentCoroutineContext().ensureActive()
+        val reusable = items.mapNotNull { (key, selection) ->
+            snapshot[key]?.takeIf { sameEpisode(it.selection, selection) }?.let { key to it }
+        }.toMap()
+        var anchor = (items.mapNotNull { reusable[it.first] } + snapshot.toSortedMap().values)
+            .firstOrNull { group(it.selection) == identity && it.server.isNotBlank() }
+        val pending = items.filter { it.first !in reusable }
+        var discoveredKey: String? = null
+        var discoveryFailure: Throwable? = null
+        if (anchor == null && pending.isNotEmpty()) {
+            val (key, selection) = pending.first()
+            val result = attempt {
+                discover(selection).also { require(it.server.isNotBlank()) { "The provider did not identify a server." } }
+            }
+            anchor = result.getOrNull()
+            discoveryFailure = result.exceptionOrNull()
+            if (anchor != null) {
+                discoveredKey = key
+                onPrepared(key, anchor)
+            }
+        }
+        val pinned = anchor
+        coroutineScope {
+            val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+            items.filter { it.first != discoveredKey }.map { (key, selection) -> async {
+                semaphore.acquire()
+                try {
+                    currentCoroutineContext().ensureActive()
+                    val saved = reusable[key]
+                    if (saved == null && pinned == null) {
+                        val detail = discoveryFailure?.message ?: "No successful provider/server found."
+                        onError(key, "Could not discover a download source: $detail Retry preparation.")
+                        return@async
+                    }
+                    val result = attempt {
+                        if (saved != null) {
+                            if (saved.playback.subtitleLanguage == language.lowercase()) saved
+                            else inspect(saved.selection, saved.playback.copy(subtitleLanguage = language.lowercase(),
+                                subtitlesVtt = "", preferEmbeddedSubtitles = false), language).copy(server = saved.server)
+                        } else {
+                            val candidate = selection.copy(source = requireNotNull(pinned).selection.source)
+                            val request = resolvePinned(candidate, pinned.server)
+                            inspect(candidate, request, language).copy(server = pinned.server)
+                        }
+                    }
+                    result.fold(onSuccess = { onPrepared(key, it) }, onFailure = {
+                        val source = if (saved != null) saved.selection.source else pinned?.selection?.source
+                        val server = saved?.server ?: pinned?.server.orEmpty()
+                        onError(key, "${source?.provider?.displayName.orEmpty()} / $server: ${it.message ?: "Video unavailable."} Retry this episode on the same server, or reopen downloads to discover another source.")
+                    })
+                } finally { semaphore.release() }
+            } }.awaitAll()
+        }
+    }
 }
 
 internal suspend fun inspectDownload(selection: PlaybackSelection, request: NativePlaybackRequest, language: String): PreparedDownload = withContext(Dispatchers.IO) {

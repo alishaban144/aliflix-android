@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "173"
-  RELEASE_VERSION_NAME: "3.1.83"
+  RELEASE_VERSION_CODE: "174"
+  RELEASE_VERSION_NAME: "3.1.84"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -307,7 +307,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Download movies and selected episodes with quality and size selection, original or chosen subtitles, background progress, pause, retry and deletion. Play saved videos offline in the native player. Downloads in My Space, preferred download quality, storage limits and restored navigation."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Select-all episode downloads now prepare together on one shared provider and server instead of searching every server per episode, with a single universal quality picker when all selected episodes offer the same qualities, live per-episode preparation progress and per-episode retry. Downloading episodes show a progress ring on the download button with pause and resume, and completed downloads show a done state."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -335,7 +335,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Mobile offline downloads with movie and episode selection, available qualities and sizes, saved subtitles, resumable background transfers, storage limits, and native offline playback. Downloads are available in My Space. Cached catalogue, title details and navigation remain available offline."
+          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: Batch episode downloads. Select all prepares every episode from the same provider and server in one pass, shows one universal quality menu when qualities match, streams per-episode progress with per-episode retry, and replaces the download button with a progress ring (pause/resume) while episodes download in the Episodes section."
           files: |
             aliflix-mobile.apk
             update-mobile.json

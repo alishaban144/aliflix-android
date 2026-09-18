@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -21,12 +22,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.exoplayer.offline.Download
+import androidx.media3.exoplayer.offline.DownloadRequest
+import kotlinx.coroutines.flow.StateFlow
 import com.aliflix.app.AliflixApplication
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.data.*
@@ -38,21 +42,134 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-@Composable internal fun DownloadButton(media: Media, episode: Episode? = null, compact: Boolean = false) {
-    var open by remember(media.key, episode?.number) { mutableStateOf(false) }
+private fun SavedDownload.progressFraction(): Float? = when {
+    download.percentDownloaded >= 0 -> download.percentDownloaded / 100f
+    estimate > 0 -> download.bytesDownloaded.toFloat() / estimate
+    else -> null
+}?.coerceIn(0f, 1f)
+
+private fun SavedDownload.statusLabel(): String = when (download.state) {
+    Download.STATE_COMPLETED -> "Downloaded"
+    Download.STATE_STOPPED -> if (download.stopReason == 2) "Paused · Check storage limit" else "Paused"
+    Download.STATE_QUEUED -> "Queued · Waiting to download"
+    Download.STATE_REMOVING -> "Deleting"
+    Download.STATE_RESTARTING -> "Restarting"
+    Download.STATE_FAILED -> "Interrupted · Retry download"
+    else -> "Downloading"
+}
+
+private fun List<DownloadQuality>.totalSizeLabel(): String = when {
+    isEmpty() || any { it.bytes <= 0 } -> "Total size unavailable"
+    any { it.estimated } -> "≈ ${downloadSize(sumOf { it.bytes })} total"
+    else -> "${downloadSize(sumOf { it.bytes })} total"
+}
+
+internal interface DownloadUiDependencies {
+    val entries: StateFlow<List<SavedDownload>>
+    val preferredHeight: Int
+    val requestNotifications: Boolean get() = true
+    suspend fun seasons(media: Media): List<Season>
+    suspend fun episodes(media: Media, season: Int): List<Episode>
+    suspend fun prepare(activity: ComponentActivity, host: FrameLayout, selections: List<Pair<String, PlaybackSelection>>,
+        language: String, cached: Map<String, PreparedDownload>, onPrepared: (String, PreparedDownload) -> Unit,
+        onError: (String, String) -> Unit)
+    fun blockedIds(): Set<String>
+    suspend fun enqueue(requests: List<DownloadRequest>)
+    fun pause(id: String)
+    fun resume(saved: SavedDownload)
+}
+
+@Composable private fun rememberDownloadUiDependencies(): DownloadUiDependencies {
+    val context = LocalContext.current
     val store = rememberDownloads()
-    val entries by store.entries.collectAsState()
-    val selection = PlaybackSelection(media, seasonNumber = episode?.seasonNumber, episodeNumber = episode?.number)
-    val saved = entries.firstOrNull { it.id == playbackProgressKey(selection) }
-    Surface(onClick = { open = true }, modifier = Modifier.size(48.dp),
-        shape = RoundedCornerShape(16.dp), color = AliflixSurfaceSecondary,
-        border = BorderStroke(1.dp, AliflixBorderSubtle)) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(if (saved?.download?.state == Download.STATE_COMPLETED) Icons.Rounded.DownloadDone else Icons.Rounded.Download,
-                "Download", tint = AliflixAccentSecondary)
+    return remember(context, store) {
+        val repository = MobileEpisodeRepository(context, RecommendationAiClient(BuildConfig.RECOMMENDATION_AI_BASE_URL))
+        object : DownloadUiDependencies {
+            override val entries = store.entries
+            override val preferredHeight get() = store.preferredHeight
+            override suspend fun seasons(media: Media) = repository.seasons(media.id)
+            override suspend fun episodes(media: Media, season: Int) = repository.episodes(media.id, season)
+            override suspend fun prepare(activity: ComponentActivity, host: FrameLayout, selections: List<Pair<String, PlaybackSelection>>,
+                language: String, cached: Map<String, PreparedDownload>, onPrepared: (String, PreparedDownload) -> Unit,
+                onError: (String, String) -> Unit) =
+                prepareDownloadBatch(activity, host, selections, language, cached, onPrepared, onError)
+            override fun blockedIds(): Set<String> = entries.value.filter { it.download.state != Download.STATE_FAILED }.map { it.id }.toSet() +
+                store.manager.currentDownloads.filter { it.state != Download.STATE_FAILED }.map { it.request.id }
+            override suspend fun enqueue(requests: List<DownloadRequest>) = store.enqueue(requests)
+            override fun pause(id: String) = store.pause(id)
+            override fun resume(saved: SavedDownload) = store.resume(saved)
         }
     }
-    if (open) DownloadPicker(media, episode) { open = false }
+}
+
+@Composable internal fun DownloadButton(media: Media, episode: Episode? = null, compact: Boolean = false,
+    dependencies: DownloadUiDependencies? = null) {
+    val selection = PlaybackSelection(media, seasonNumber = episode?.seasonNumber, episodeNumber = episode?.number)
+    val id = playbackProgressKey(selection)
+    var open by remember(id) { mutableStateOf(false) }
+    var actionPending by remember(id) { mutableStateOf(false) }
+    val store = dependencies ?: rememberDownloadUiDependencies()
+    val entries by store.entries.collectAsState()
+    val saved = entries.firstOrNull { it.id == id }
+    val state = saved?.download?.state
+    val active = state in setOf(Download.STATE_DOWNLOADING, Download.STATE_QUEUED, Download.STATE_STOPPED, Download.STATE_RESTARTING)
+    val fraction = saved?.progressFraction()
+    val paused = state == Download.STATE_STOPPED
+    val queued = state in setOf(Download.STATE_QUEUED, Download.STATE_RESTARTING)
+    val enabled = !actionPending && state !in setOf(Download.STATE_COMPLETED, Download.STATE_REMOVING, Download.STATE_RESTARTING)
+    val action = when {
+        paused -> "Resume download"
+        active -> "Pause download"
+        state == Download.STATE_COMPLETED -> "Downloaded"
+        state == Download.STATE_REMOVING -> "Deleting download"
+        state == Download.STATE_FAILED -> "Retry download"
+        else -> "Download"
+    }
+    val title = if (episode == null) media.title else "${media.title}, season ${episode.seasonNumber}, episode ${episode.number}"
+    val estimated = saved != null && saved.download.percentDownloaded < 0
+    val status = saved?.statusLabel().orEmpty() + if (active && !queued && fraction != null) {
+        " · ${if (estimated) "approximately " else ""}${(fraction * 100).toInt()} percent"
+    } else ""
+    LaunchedEffect(state) { if (active || state == Download.STATE_COMPLETED) open = false }
+    LaunchedEffect(actionPending, state) {
+        if (actionPending) { delay(1_000); actionPending = false }
+    }
+    Surface(onClick = {
+        if (!actionPending) {
+            val current = store.entries.value.firstOrNull { it.id == id }
+            when (current?.download?.state) {
+                Download.STATE_STOPPED -> { actionPending = true; store.resume(current) }
+                Download.STATE_DOWNLOADING, Download.STATE_QUEUED -> { actionPending = true; store.pause(id) }
+                Download.STATE_COMPLETED, Download.STATE_REMOVING, Download.STATE_RESTARTING -> Unit
+                else -> open = true
+            }
+        }
+    }, enabled = enabled, modifier = Modifier.size(48.dp).semantics(mergeDescendants = true) {
+        contentDescription = "$action, $title"
+        stateDescription = status
+        role = Role.Button
+        if (active) progressBarRangeInfo = if (fraction != null && !queued) ProgressBarRangeInfo(fraction, 0f..1f)
+            else ProgressBarRangeInfo.Indeterminate
+    }, shape = RoundedCornerShape(if (compact) 14.dp else 16.dp), color = AliflixSurfaceSecondary,
+        border = BorderStroke(1.dp, AliflixBorderSubtle)) {
+        Box(contentAlignment = Alignment.Center) {
+            if (active) {
+                val ring = Modifier.size(38.dp).clearAndSetSemantics { }
+                if (!queued && fraction != null) CircularProgressIndicator(
+                    progress = { fraction }, modifier = ring, strokeWidth = 2.dp,
+                    color = AliflixAccentSecondary, trackColor = AliflixBorderSubtle)
+                else CircularProgressIndicator(modifier = ring, strokeWidth = 2.dp, color = AliflixAccentSecondary)
+            }
+            Icon(when {
+                state == Download.STATE_COMPLETED -> Icons.Rounded.DownloadDone
+                paused -> Icons.Rounded.Pause
+                active -> Icons.Rounded.Pause
+                state == Download.STATE_FAILED -> Icons.Rounded.Refresh
+                else -> Icons.Rounded.Download
+            }, null, modifier = Modifier.size(if (compact || active) 20.dp else 24.dp), tint = AliflixAccentSecondary)
+        }
+    }
+    if (open) DownloadPicker(media, episode, store) { open = false }
 }
 
 @Composable private fun rememberDownloads(): OfflineDownloads {
@@ -65,70 +182,101 @@ import kotlinx.coroutines.sync.withPermit
     return entries.count { it.download.state != Download.STATE_REMOVING }
 }
 
-@Composable private fun DownloadPicker(media: Media, initialEpisode: Episode?, dismiss: () -> Unit) {
+@Composable internal fun DownloadPicker(media: Media, initialEpisode: Episode?,
+    dependencies: DownloadUiDependencies? = null, dismiss: () -> Unit) {
     val activity = LocalActivity.current as ComponentActivity
-    val store = rememberDownloads()
+    val store = dependencies ?: rememberDownloadUiDependencies()
+    val entries by store.entries.collectAsState()
     val scope = rememberCoroutineScope()
-    val prefs = remember { PlaybackProviderRepository(activity).preferences.value }
-    val repository = remember { MobileEpisodeRepository(activity, RecommendationAiClient(BuildConfig.RECOMMENDATION_AI_BASE_URL)) }
-    val host = remember { FrameLayout(activity) }
-    var seasons by remember { mutableStateOf<List<Season>>(emptyList()) }
-    var season by remember { mutableIntStateOf(initialEpisode?.seasonNumber ?: 1) }
-    var episodes by remember { mutableStateOf(listOfNotNull(initialEpisode)) }
-    var chosen by remember { mutableStateOf(if (media.type == MediaType.MOVIE) setOf("movie") else initialEpisode?.let { setOf("${it.seasonNumber}:${it.number}") }.orEmpty()) }
-    val prepared = remember { mutableStateMapOf<String, PreparedDownload>() }
-    val quality = remember { mutableStateMapOf<String, DownloadQuality>() }
-    val errors = remember { mutableStateMapOf<String, String>() }
-    var loading by remember { mutableStateOf<String?>(null) }
-    var listLoading by remember { mutableStateOf(false) }
-    var language by remember { mutableStateOf(prefs.preferredSubtitleLanguage.code) }
-    var noSubtitles by remember { mutableStateOf(false) }
-    var saving by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var retry by remember { mutableIntStateOf(0) }
-    var languageMenu by remember { mutableStateOf(false) }
+    val prefs = remember(activity, media.key) { PlaybackProviderRepository(activity).preferences.value }
+    val host = remember(activity) { FrameLayout(activity) }
+    var seasons by remember(media.key) { mutableStateOf<List<Season>>(emptyList()) }
+    var season by remember(media.key) { mutableIntStateOf(initialEpisode?.seasonNumber ?: 1) }
+    var episodes by remember(media.key, season) { mutableStateOf(listOfNotNull(initialEpisode?.takeIf { it.seasonNumber == season })) }
+    var chosen by remember(media.key) {
+        mutableStateOf(if (media.type == MediaType.MOVIE) setOf("movie") else
+            initialEpisode?.let { setOf("${it.seasonNumber}:${it.number}") }.orEmpty())
+    }
+    val prepared = remember(media.key, season) { mutableStateMapOf<String, PreparedDownload>() }
+    val quality = remember(media.key, season) { mutableStateMapOf<String, DownloadQuality>() }
+    val preferred = remember(media.key, season) { mutableStateMapOf<String, Int>() }
+    var sharedHeight by remember(media.key, season) { mutableStateOf<Int?>(null) }
+    var language by remember(media.key) { mutableStateOf(prefs.preferredSubtitleLanguage.code) }
+    val errors = remember(media.key, season, language) { mutableStateMapOf<String, String>() }
+    var listLoading by remember(media.key, season) { mutableStateOf(media.type == MediaType.TV) }
+    var listError by remember(media.key, season) { mutableStateOf<String?>(null) }
+    var listRetry by remember(media.key, season) { mutableIntStateOf(0) }
+    var noSubtitles by remember(media.key) { mutableStateOf(false) }
+    var saving by remember(media.key) { mutableStateOf(false) }
+    var error by remember(media.key, season, language, noSubtitles) { mutableStateOf<String?>(null) }
+    var retry by remember(media.key, season) { mutableIntStateOf(0) }
+    var languageMenu by remember(media.key) { mutableStateOf(false) }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(media.key) {
         if (media.type == MediaType.TV) try {
-            seasons = repository.seasons(media.id)
+            seasons = store.seasons(media)
             if (initialEpisode == null) season = seasons.firstOrNull { it.number > 0 }?.number ?: 1
         } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
     }
-    LaunchedEffect(season) {
+    LaunchedEffect(media.key, season, listRetry) {
         if (media.type == MediaType.TV) {
             listLoading = true
-            try { episodes = repository.episodes(media.id, season) }
+            listError = null
+            try { episodes = store.episodes(media, season).filter { it.seasonNumber == season } }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { if (initialEpisode == null) error = "Episodes unavailable. Retry when connected." }
+            catch (_: Exception) { listError = "Episodes unavailable. Retry when connected." }
             finally { listLoading = false }
         }
     }
     val selections = if (media.type == MediaType.MOVIE) listOf("movie" to PlaybackSelection(media)) else episodes.map {
         "${it.seasonNumber}:${it.number}" to PlaybackSelection(media, seasonNumber = it.seasonNumber, episodeNumber = it.number,
             episodeTitle = it.title, availableEpisodes = episodes)
+    }.distinctBy { it.first }
+    val savedById = entries.associateBy { it.id }
+    val eligible = selections.filter { (_, selection) ->
+        val saved = savedById[playbackProgressKey(selection)]
+        saved == null || saved.download.state == Download.STATE_FAILED
+    }.map { it.first }.toSet()
+    val selectedKeys = chosen.intersect(eligible)
+    LaunchedEffect(eligible, chosen) { if (chosen != selectedKeys) chosen = selectedKeys }
+    var preparing by remember(media.key, season, selectedKeys, language, retry, episodes) {
+        mutableStateOf(selectedKeys.isNotEmpty())
     }
-    LaunchedEffect(chosen, language, retry, episodes) {
-        loading = "preparing"
+    fun validated(key: String): Boolean {
+        val item = prepared[key] ?: return false
+        return item.playback.subtitleLanguage == language.lowercase() && item.qualities.isNotEmpty() &&
+            quality[key] in item.qualities && key !in errors
+    }
+    LaunchedEffect(media.key, season, selectedKeys, language, retry, episodes) {
+        val batch = selections.filter { it.first in selectedKeys && it.first !in errors }
+            .map { (key, raw) -> key to raw.copy(source = prefs.sourceFor(media)) }
+        val context = currentCoroutineContext()
         try {
-            coroutineScope {
-                val semaphore = Semaphore(2)
-                selections.filter { it.first in chosen }.map { (key, raw) -> launch {
-                    semaphore.withPermit {
-                        if (prepared[key]?.playback?.subtitleLanguage == language.lowercase()) return@withPermit
-                        errors.remove(key)
-                        try {
-                            val selection = raw.copy(source = prefs.sourceFor(media))
-                            val result = prepareDownload(activity, host, selection, language)
-                            prepared[key] = result
-                            quality[key] = result.qualities.firstOrNull { it.height == preferredDownloadHeight(result.qualities.map { q -> q.height }, store.preferredHeight) }
+            if (batch.isNotEmpty()) store.prepare(activity, host, batch, language, prepared.toMap(),
+                onPrepared = { key, result ->
+                    if (context.isActive) {
+                        if (result.qualities.isEmpty()) errors[key] = "No downloadable qualities found. Retry this item."
+                        else {
+                            val height = preferred[key] ?: sharedHeight ?: quality[key]?.height ?: store.preferredHeight
+                            val selected = result.qualities.firstOrNull { it.height == height }
+                                ?: result.qualities.firstOrNull { it.height == preferredDownloadHeight(result.qualities.map { q -> q.height }, height) }
                                 ?: result.qualities.first()
-                        } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (failure: Exception) { errors[key] = failure.message ?: "Video unavailable. Retry." }
+                            prepared[key] = result
+                            quality[key] = selected
+                            errors.remove(key)
+                        }
                     }
-                } }.joinAll()
-            }
-        } finally { loading = null }
+                }, onError = { key, message -> if (context.isActive) errors[key] = message })
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) {
+            batch.filterNot { validated(it.first) }.forEach { errors[it.first] = failure.message ?: "Video unavailable. Retry this item." }
+        } finally { preparing = false }
     }
+    val allValidated = selectedKeys.isNotEmpty() && selectedKeys.all { validated(it) }
+    val ready = allValidated && !preparing && !listLoading
+    val heightSets = if (ready) selectedKeys.map { prepared.getValue(it).qualities.map { q -> q.height }.toSet() } else emptyList()
+    val shared = selectedKeys.size > 1 && ready && heightSets.distinct().size == 1
+    val total = selectedKeys.mapNotNull { quality[it] }.totalSizeLabel()
     Dialog(onDismissRequest = { if (!saving) dismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth().padding(16.dp).heightIn(max = 650.dp), shape = RoundedCornerShape(24.dp),
             color = AliflixSurfacePrimary, contentColor = AliflixContentPrimary) {
@@ -138,56 +286,113 @@ import kotlinx.coroutines.sync.withPermit
                     IconButton(onClick = dismiss, enabled = !saving) { Icon(Icons.Rounded.Close, "Close") }
                 }
                 Text(media.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                // Resolver views stay attached to the Activity while their muted provider frames prepare.
-                AndroidView(factory = { host }, modifier = Modifier.size(1.dp))
+                AndroidView(factory = { host }, modifier = Modifier.size(1.dp).clearAndSetSemantics { })
                 if (media.type == MediaType.TV) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         var seasonMenu by remember { mutableStateOf(false) }
                         Box {
-                            TextButton(onClick = { seasonMenu = true }, enabled = !saving) { Text("Season $season ▾") }
+                            TextButton(onClick = { seasonMenu = true }, enabled = !saving, modifier = Modifier.heightIn(min = 48.dp)) { Text("Season $season ▾") }
                             DropdownMenu(seasonMenu, { seasonMenu = false }) { seasons.forEach {
-                                DropdownMenuItem(text = { Text(it.title) }, onClick = { season = it.number; chosen = emptySet(); seasonMenu = false })
+                                DropdownMenuItem(text = { Text(it.title) }, onClick = { chosen = emptySet(); season = it.number; seasonMenu = false })
                             } }
                         }
                         Spacer(Modifier.weight(1f))
-                        TextButton(enabled = !saving && !listLoading, onClick = {
-                            chosen = if (chosen.size == selections.size) emptySet() else selections.map { it.first }.toSet()
-                        }) { Text(if (chosen.size == selections.size && chosen.isNotEmpty()) "Clear" else "Select all") }
+                        TextButton(enabled = !saving && !listLoading && eligible.isNotEmpty(), modifier = Modifier.heightIn(min = 48.dp), onClick = {
+                            chosen = if (selectedKeys == eligible) emptySet() else eligible
+                        }) { Text(if (selectedKeys == eligible && selectedKeys.isNotEmpty()) "Clear" else "Select all") }
                     }
                 }
-                if (listLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (listLoading) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "Loading episodes" })
+                if (preparing && selectedKeys.isNotEmpty()) {
+                    val finished = selectedKeys.count { validated(it) || it in errors }
+                    Column(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
+                        Text("Preparing $finished of ${selectedKeys.size}", color = AliflixContentSecondary)
+                        LinearProgressIndicator(progress = { finished.toFloat() / selectedKeys.size }, modifier = Modifier.fillMaxWidth())
+                    }
+                }
                 LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(selections, key = { it.first }) { (key, selection) ->
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (media.type == MediaType.TV) Checkbox(key in chosen, enabled = !saving, onCheckedChange = {
-                                    chosen = if (it) chosen + key else chosen - key
-                                })
-                                Text(if (media.type == MediaType.TV) "E${selection.episodeNumber} · ${selection.episodeTitle.orEmpty()}" else "Quality",
-                                    Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                if (key in chosen && loading != null && (prepared[key]?.playback?.subtitleLanguage != language.lowercase()) && key !in errors) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    listError?.let { message -> item {
+                        Text(message, color = AliflixError)
+                        TextButton(onClick = { listRetry++ }, enabled = !saving, modifier = Modifier.heightIn(min = 48.dp)) { Text("Retry loading episodes") }
+                    } }
+                    if (!listLoading && selections.isEmpty() && listError == null) item {
+                        Text("No episodes available in this season.", color = AliflixContentSecondary)
+                    }
+                    if (ready && selectedKeys.size > 1 && !shared) item {
+                        Text("Available qualities differ by episode. Choose quality for each episode below.", color = AliflixContentSecondary)
+                    }
+                    if (shared) item {
+                        val selectedHeights = selectedKeys.map { quality.getValue(it).height }.distinct()
+                        val label = if (selectedHeights.size == 1) quality.getValue(selectedKeys.first()).label else "Mixed qualities"
+                        var menu by remember(selectedKeys, language) { mutableStateOf(false) }
+                        Text("Quality for all ${selectedKeys.size} episodes", style = MaterialTheme.typography.labelLarge)
+                        Box {
+                            OutlinedButton(onClick = { menu = true }, enabled = !saving, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                                Text("$label · $total ▾")
                             }
-                            if (key in chosen) {
-                                errors[key]?.let { Text(it, color = AliflixError); TextButton(onClick = { prepared.remove(key); retry++ }) { Text("Retry") } }
-                                val item = prepared[key]
-                                val selected = quality[key]
-                                if (item != null && selected != null) {
-                                    var menu by remember { mutableStateOf(false) }
+                            DropdownMenu(menu, { menu = false }) {
+                                prepared.getValue(selectedKeys.first()).qualities.forEach { option ->
+                                    val ownQualities = selectedKeys.associateWith { key -> prepared.getValue(key).qualities.first { it.height == option.height } }
+                                    DropdownMenuItem(text = { Text("${option.label} · ${ownQualities.values.toList().totalSizeLabel()}") }, onClick = {
+                                        sharedHeight = option.height
+                                        ownQualities.forEach { (key, ownQuality) -> preferred[key] = ownQuality.height; quality[key] = ownQuality }
+                                        menu = false
+                                    }, trailingIcon = { if (selectedHeights.singleOrNull() == option.height) Icon(Icons.Rounded.Check, "Selected") })
+                                }
+                            }
+                        }
+                        if (selectedHeights.size > 1) Text("Your episode choices are kept. Choose a quality above to apply it to all selected episodes.", color = AliflixContentSecondary)
+                    }
+                    items(selections, key = { it.first }) { (key, selection) ->
+                        val saved = savedById[playbackProgressKey(selection)]
+                        val title = if (media.type == MediaType.TV) "E${selection.episodeNumber} · ${selection.episodeTitle.orEmpty()}" else media.title
+                        val checked = key in selectedKeys
+                        Column {
+                            Row(modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(
+                                if (media.type == MediaType.TV) Modifier.toggleable(value = checked,
+                                    enabled = !saving && key in eligible, role = Role.Checkbox,
+                                    onValueChange = { chosen = if (it) chosen + key else chosen - key }) else Modifier
+                            ), verticalAlignment = Alignment.CenterVertically) {
+                                if (media.type == MediaType.TV) Checkbox(checked, enabled = !saving && key in eligible, onCheckedChange = null)
+                                Column(Modifier.weight(1f)) {
+                                    Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    saved?.let { Text(it.statusLabel(), color = AliflixContentSecondary, style = MaterialTheme.typography.bodySmall) }
+                                }
+                                if (checked && preparing && !validated(key) && key !in errors) CircularProgressIndicator(
+                                    Modifier.size(20.dp).semantics { contentDescription = "Preparing $title" }, strokeWidth = 2.dp)
+                                else if (saved?.download?.state == Download.STATE_COMPLETED) Icon(Icons.Rounded.DownloadDone, null, tint = AliflixAccentSecondary)
+                            }
+                            if (checked) {
+                                errors[key]?.let {
+                                    Text(it, color = AliflixError)
+                                    TextButton(onClick = { errors.remove(key); retry++ }, enabled = !saving && !preparing,
+                                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Retry preparation, $title" }) { Text("Retry") }
+                                }
+                                if (ready && !shared) {
+                                    val item = prepared.getValue(key)
+                                    val selected = quality.getValue(key)
+                                    var menu by remember(language, item) { mutableStateOf(false) }
                                     Box {
-                                        OutlinedButton(onClick = { menu = true }, enabled = !saving) { Text("${selected.label} · ${selected.sizeLabel} ▾") }
+                                        OutlinedButton(onClick = { menu = true }, enabled = !saving,
+                                            modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Quality for $title, ${selected.label}, ${selected.sizeLabel}" }) {
+                                            Text("${selected.label} · ${selected.sizeLabel} ▾")
+                                        }
                                         DropdownMenu(menu, { menu = false }) { item.qualities.forEach { q ->
-                                            DropdownMenuItem(text = { Text("${q.label} · ${q.sizeLabel}") }, onClick = { quality[key] = q; menu = false })
+                                            DropdownMenuItem(text = { Text("${q.label} · ${q.sizeLabel}") }, onClick = {
+                                                preferred[key] = q.height; quality[key] = q; menu = false
+                                            }, trailingIcon = { if (q == selected) Icon(Icons.Rounded.Check, "Selected") })
                                         } }
                                     }
                                 }
                             }
                         }
                     }
+                    if (ready && !shared) item { Text(total, color = AliflixContentSecondary) }
                 }
-                if (chosen.any { prepared[it]?.hasOriginalSubtitles == false }) Box {
-                    TextButton(onClick = { languageMenu = true }, enabled = !saving) {
+                if (selectedKeys.isNotEmpty()) Box {
+                    TextButton(onClick = { languageMenu = true }, enabled = !saving, modifier = Modifier.heightIn(min = 48.dp)) {
                         Icon(Icons.Rounded.Subtitles, null); Spacer(Modifier.width(8.dp))
-                        Text(if (noSubtitles) "None ▾" else "${SubtitleLanguage.entries.firstOrNull { it.code == language }?.displayName ?: language} ▾")
+                        Text(if (noSubtitles) "Subtitles: None ▾" else "Subtitles: ${SubtitleLanguage.entries.firstOrNull { it.code == language }?.displayName ?: language} ▾")
                     }
                     DropdownMenu(languageMenu, { languageMenu = false }, modifier = Modifier.heightIn(max = 280.dp)) {
                         DropdownMenuItem(text = { Text("None") }, onClick = { noSubtitles = true; languageMenu = false })
@@ -196,29 +401,37 @@ import kotlinx.coroutines.sync.withPermit
                         }) }
                     }
                 }
-                error?.let { Text(it, color = AliflixError) }
-                val ready = chosen.isNotEmpty() && loading == null && chosen.all { it in prepared && it in quality && it !in errors }
-                Button(enabled = ready && !saving, modifier = Modifier.fillMaxWidth(), onClick = {
-                    if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-                        permissions.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    saving = true; error = null
-                    scope.launch {
-                        try {
-                            val requests = coroutineScope {
-                                val semaphore = Semaphore(3)
-                                chosen.map { key -> async {
-                                    semaphore.withPermit { prepared.getValue(key).downloadRequest(quality.getValue(key),
-                                        if (noSubtitles) "" else language, prefs.autoDisplaySubtitles) }
-                                } }.awaitAll()
-                            }
-                            store.enqueue(requests); dismiss()
-                        } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (failure: Exception) { error = failure.message ?: "Download could not start." }
-                        finally { saving = false }
+                error?.let { Text(it, color = AliflixError, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+                Button(enabled = ready && !saving, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), onClick = {
+                    if (!saving && ready) {
+                        saving = true; error = null
+                        val selected = selectedKeys.map { prepared.getValue(it) to quality.getValue(it) }
+                        val requestedLanguage = if (noSubtitles) "" else language
+                        if (store.requestNotifications && Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                            permissions.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        scope.launch {
+                            try {
+                                val blocked = store.blockedIds()
+                                val requests = coroutineScope {
+                                    val semaphore = Semaphore(3)
+                                    selected.filter { playbackProgressKey(it.first.selection) !in blocked }.map { (item, selectedQuality) -> async {
+                                        semaphore.withPermit { item.downloadRequest(selectedQuality, requestedLanguage, prefs.autoDisplaySubtitles) }
+                                    } }.awaitAll()
+                                }
+                                val latestBlocked = store.blockedIds()
+                                val pending = requests.filter { it.id !in latestBlocked }.distinctBy { it.id }
+                                if (pending.isNotEmpty()) store.enqueue(pending)
+                                dismiss()
+                            } catch (cancelled: CancellationException) { throw cancelled }
+                            catch (failure: Exception) { error = failure.message ?: "Download could not start." }
+                            finally { saving = false }
+                        }
                     }
                 }) {
-                    if (saving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Text(if (chosen.size > 1) "Download ${chosen.size} episodes" else "Download")
+                    if (saving) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp)); Text("Starting downloads")
+                    } else Text(if (selectedKeys.size > 1) "Download ${selectedKeys.size} episodes" else "Download")
                 }
             }
         }

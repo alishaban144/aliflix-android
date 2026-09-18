@@ -83,7 +83,7 @@ class OfflineDownloadTest {
     }
 }
 
-private class OfflineFixtureServer(private val files: Map<String, ByteArray>, entry: String) : AutoCloseable {
+internal class OfflineFixtureServer(private val files: Map<String, ByteArray>, entry: String) : AutoCloseable {
     private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
     val url = "http://127.0.0.1:${socket.localPort}/$entry"
     init { kotlin.concurrent.thread(isDaemon = true) { while (!socket.isClosed) {
