@@ -14,6 +14,7 @@ import kotlinx.coroutines.*
 
 /** Activity-session work survives picker dismissal and navigation, and releases all WebViews on destruction. */
 internal class DownloadSession private constructor(private val activity: ComponentActivity) {
+    private val ratingsClient = CatalogClient()
     val host = FrameLayout(activity).apply {
         alpha = 0f
         importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
@@ -21,6 +22,7 @@ internal class DownloadSession private constructor(private val activity: Compone
     val pickers = mutableMapOf<String, DownloadPickerState>()
     val scope get() = activity.lifecycleScope
     fun load(state: DownloadPickerState, media: Media, episode: Episode?, store: DownloadUiDependencies, force: Boolean = false) {
+        if (!activity.hasInternetConnection()) { state.error = "Connect to the internet and try again"; return }
         if (state.loading || (state.loadedSeason == state.season && !force)) return
         state.loading = true
         state.error = null
@@ -33,6 +35,14 @@ internal class DownloadSession private constructor(private val activity: Compone
                     }
                     state.episodes = store.episodes(media, state.season).filter { it.seasonNumber == state.season }
                     state.chosen = state.episodes.map { "${it.seasonNumber}:${it.number}" }.toSet()
+                    val ratingSeason = state.season
+                    val ratingEpisodes = state.episodes
+                    scope.launch {
+                        try {
+                            val rated = ratingsClient.mobileEpisodeRatings(media, ratingSeason, ratingEpisodes)
+                            if (state.season == ratingSeason) state.episodes = rated
+                        } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+                    }
                 }
                 state.loadedSeason = state.season
                 val prefs = PlaybackProviderRepository(activity).preferences.value
@@ -66,6 +76,7 @@ internal class DownloadSession private constructor(private val activity: Compone
     fun key(selection: PlaybackSelection, language: String) = "${com.aliflix.app.data.playbackProgressKey(selection)}:$language"
     fun prepare(store: DownloadUiDependencies, selections: List<Pair<String, PlaybackSelection>>, language: String) {
         val now = android.os.SystemClock.elapsedRealtime()
+        if (!activity.hasInternetConnection()) { selections.forEach { errors[it.first] = "Connect to the internet and try again" }; return }
         val batch = selections.filter { (key, _) ->
             if (now - (timestamps[key] ?: 0L) > 10 * 60_000L) prepared.remove(key)
             key !in prepared && key !in pending && key !in errors

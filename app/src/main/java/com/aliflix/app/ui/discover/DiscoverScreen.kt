@@ -426,7 +426,7 @@ internal fun DiscoverScreen(
                                 val query = fieldValue.text.trim()
                                 fieldValue = fieldValue.copy(text = query)
                                 onSubmitSearch(query)
-                            }, modifier = Modifier.padding(start = 8.dp).size(48.dp).testTag("discover-search-button")) {
+                            }, modifier = Modifier.padding(start = 8.dp).size(48.dp).background(AliflixSurfaceSecondary, RoundedCornerShape(12.dp)).border(1.dp, AliflixAccentSecondary.copy(alpha = .22f), RoundedCornerShape(12.dp)).testTag("discover-search-button")) {
                                 Icon(Icons.Filled.Search, "Search", tint = AliflixAccentSecondary)
                             }
                         }

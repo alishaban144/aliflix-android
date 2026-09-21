@@ -125,6 +125,7 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 internal data class NativePlayerUi(
+    val videoBounds: androidx.compose.ui.geometry.Rect? = null,
     val captionDragging: Boolean = false,
     val title: String = "Aliflix",
     val detail: String = "",
@@ -215,6 +216,9 @@ internal fun NativePlayerScreen(
     val seekFeedback = remember { SeekFeedbackController() }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+    LaunchedEffect(seekFeedback.state?.token) {
+        if (seekFeedback.state != null) { delay(650); seekFeedback.dismiss() }
+    }
     val overlayOpen = sheet != null || episodesVisible || moreVisible
     LaunchedEffect(overlayOpen) { onOverlayVisibilityChanged(overlayOpen) }
     LaunchedEffect(controls) { onControlsVisibilityChanged(controls) }
@@ -303,18 +307,22 @@ internal fun NativePlayerScreen(
                     }
                 }
             }
-            .pointerInput(preparing, state.error) {
-                if (preparing || state.error != null) return@pointerInput
+            .pointerInput(preparing, state.error, state.videoBounds, overlayOpen) {
+                if (preparing || state.error != null || overlayOpen) return@pointerInput
                 var dragStartedInValidZone = false
+                var isLeft = false
+                val frame = state.videoBounds ?: return@pointerInput
+                val margin = 28.dp.toPx()
                 detectVerticalDragGestures(
                     onDragStart = { offset ->
-                        dragStartedInValidZone = offset.y in (size.height * 0.20f)..(size.height * 0.80f)
+                        dragStartedInValidZone = offset.x > frame.left + margin && offset.x < frame.right - margin &&
+                            offset.y > frame.top + margin && offset.y < frame.bottom - margin
+                        isLeft = offset.x < frame.center.x
                     },
                     onVerticalDrag = { change, dragAmount ->
                         if (!dragStartedInValidZone || change.isConsumed) return@detectVerticalDragGestures
                         change.consume()
-                        val isLeft = change.position.x < size.width / 2
-                        val delta = -dragAmount / (size.height * 0.7f)
+                        val delta = -dragAmount / (frame.height * 0.7f).coerceAtLeast(1f)
                         if (isLeft) {
                             val level = onBrightnessSwipe(delta)
                             val icon = if (level > 0.65f) Icons.Default.BrightnessHigh else if (level > 0.35f) Icons.Default.BrightnessMedium else Icons.Default.BrightnessLow
@@ -341,6 +349,8 @@ internal fun NativePlayerScreen(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+
+        if (!controls) SeekFeedbackHud(seekFeedback.state, { seekFeedback.dismiss() })
 
         // Artwork Background
         if (preparing || state.error != null || state.external || ended) {
@@ -462,7 +472,7 @@ internal fun NativePlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing),
+                    ,
             ) {
                 MobilePlayerTopBar(
                     title = state.title,
@@ -491,7 +501,7 @@ internal fun NativePlayerScreen(
                         moreVisible = true
                         interaction++
                     },
-                    modifier = Modifier.align(Alignment.TopCenter).animateEnterExit(
+                    modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(top = 8.dp).animateEnterExit(
                         enter = androidx.compose.animation.slideInVertically(tween(200)) { -it / 3 },
                         exit = androidx.compose.animation.slideOutVertically(tween(140)) { -it / 4 }),
                 )
@@ -508,9 +518,10 @@ internal fun NativePlayerScreen(
                         },
                         onSeekBack = { seekWithFeedback(false) },
                         onSeekForward = { seekWithFeedback(true) },
-                        hideSeekBack = seekFeedback.state?.isForward == false,
-                        hideSeekForward = seekFeedback.state?.isForward == true,
-                        modifier = Modifier.align(Alignment.Center),
+                        feedback = seekFeedback.state,
+                        modifier = Modifier.align(Alignment.Center).animateEnterExit(
+                            enter = fadeIn(tween(220, delayMillis = 35)) + scaleIn(tween(260, easing = FastOutSlowInEasing), initialScale = .86f),
+                            exit = fadeOut(tween(150)) + scaleOut(tween(190), targetScale = .93f)),
                     )
                 }
 
@@ -528,6 +539,7 @@ internal fun NativePlayerScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
                         .animateEnterExit(enter = androidx.compose.animation.slideInVertically(tween(200)) { it / 3 },
                             exit = androidx.compose.animation.slideOutVertically(tween(140)) { it / 4 })
                         .padding(bottom = 20.dp),
@@ -681,10 +693,7 @@ internal fun NativePlayerScreen(
         }
 
         // Cumulative double-tap / Â±15s seek feedback HUD
-        SeekFeedbackHud(
-            feedback = seekFeedback.state,
-            onDismiss = { seekFeedback.dismiss() },
-        )
+
 
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
     }
@@ -794,7 +803,7 @@ internal fun NativePlayerScreen(
                     }
 
                     "Quality" -> {
-                        SheetOption("Auto", "Adapts dynamically to network connection", selected = player?.trackSelectionParameters?.overrides?.values?.none { it.type == C.TRACK_TYPE_VIDEO } == true) {
+                        SheetOption("Auto", selected = player?.trackSelectionParameters?.overrides?.values?.none { it.type == C.TRACK_TYPE_VIDEO } == true) {
                             player?.let { it.trackSelectionParameters = it.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build() }
                             sheet = null
                         }
@@ -1006,9 +1015,9 @@ private fun SheetOption(
 private fun TrackOptions(player: Player?, type: Int, onSelect: () -> Unit) {
     val groups = player?.currentTracks?.groups.orEmpty().filter { it.type == type }
     groups.forEach { group ->
-        (0 until group.length).filter { group.isTrackSupported(it) }.forEach { index ->
+        (0 until group.length).filter { group.isTrackSupported(it, true) }.forEach { index ->
             val format = group.getTrackFormat(index)
-            val label = if (type == C.TRACK_TYPE_VIDEO) "${format.height.takeIf { it > 0 } ?: "Auto"}p"
+            val label = if (type == C.TRACK_TYPE_VIDEO) format.height.takeIf { it > 0 }?.let { "${it}p" } ?: "Original"
             else format.label ?: format.language?.let { Locale.forLanguageTag(it).displayLanguage }
             ?: if (type == C.TRACK_TYPE_AUDIO) "Original audio" else "Subtitles"
             SheetOption(label, selected = group.isTrackSelected(index)) {

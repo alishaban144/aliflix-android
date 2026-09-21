@@ -19,6 +19,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -104,6 +107,7 @@ internal interface DownloadUiDependencies {
 
 @Composable internal fun DownloadButton(media: Media, episode: Episode? = null, compact: Boolean = false,
     dependencies: DownloadUiDependencies? = null) {
+    val context = LocalContext.current
     val selection = PlaybackSelection(media, seasonNumber = episode?.seasonNumber, episodeNumber = episode?.number)
     val id = playbackProgressKey(selection)
     var open by remember(id) { mutableStateOf(false) }
@@ -144,7 +148,8 @@ internal interface DownloadUiDependencies {
                 Download.STATE_STOPPED -> { actionPending = true; store.resume(current) }
                 Download.STATE_DOWNLOADING, Download.STATE_QUEUED -> { actionPending = true; store.pause(id) }
                 Download.STATE_COMPLETED, Download.STATE_REMOVING, Download.STATE_RESTARTING -> Unit
-                else -> open = true
+                else -> if (context.hasInternetConnection()) open = true else
+                    android.widget.Toast.makeText(context, "Connect to the internet and try again", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }, enabled = enabled, modifier = Modifier.size(48.dp).semantics(mergeDescendants = true) {
@@ -217,7 +222,7 @@ internal interface DownloadUiDependencies {
     var retry by remember(media.key, season) { mutableIntStateOf(0) }
     var languageMenu by remember(media.key) { mutableStateOf(false) }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    LaunchedEffect(media.key, season) { session.load(picker, media, initialEpisode, store) }
+    LaunchedEffect(media.key, season) { if (activity.hasInternetConnection()) session.load(picker, media, initialEpisode, store) else error = "Connect to the internet and try again" }
     val rawSelections = if (media.type == MediaType.MOVIE) listOf("movie" to PlaybackSelection(media)) else episodes.map {
         "${it.seasonNumber}:${it.number}" to PlaybackSelection(media, seasonNumber = it.seasonNumber, episodeNumber = it.number,
             episodeTitle = it.title, availableEpisodes = episodes)
@@ -234,26 +239,42 @@ internal interface DownloadUiDependencies {
     val preparing = selectedKeys.any { it in session.pending }
     fun validated(key: String): Boolean = prepared[key]?.let { it.qualities.isNotEmpty() && quality[key] in it.qualities && key !in errors } == true
     LaunchedEffect(media.key, season, language, retry, episodes) {
+        if (!activity.hasInternetConnection()) { error = "Connect to the internet and try again"; return@LaunchedEffect }
         session.prepare(store, selections.filter { it.first in eligible }.map { (key, raw) -> key to raw.copy(source = prefs.sourceFor(media)) }, language)
     }
     LaunchedEffect(prepared.toMap(), sharedHeight, selectedKeys) {
         selectedKeys.forEach { key -> prepared[key]?.let { item ->
             val target = sharedHeight ?: store.preferredHeight
-            quality[key] = item.qualities.firstOrNull { it.height == preferredDownloadHeight(item.qualities.map { q -> q.height }, target) } ?: item.qualities.first()
+            if (quality[key] !in item.qualities || sharedHeight != null) {
+                quality[key] = item.qualities.firstOrNull { it.height == preferredDownloadHeight(item.qualities.map { q -> q.height }, target) } ?: item.qualities.first()
+            }
         } }
     }
     val allValidated = selectedKeys.isNotEmpty() && selectedKeys.all { validated(it) }
     val ready = allValidated && !preparing && !listLoading
     val total = selectedKeys.mapNotNull { quality[it] }.totalSizeLabel()
+    val commonHeights = if (selectedKeys.isNotEmpty() && selectedKeys.all { prepared[it] != null })
+        selectedKeys.map { key -> prepared.getValue(key).qualities.map { it.height }.toSet() }
+            .reduce { a, b -> a.intersect(b) }.sortedDescending() else emptyList()
+    val selectedLabels = selectedKeys.mapNotNull { quality[it]?.label }.distinct()
+    val qualityLabel = selectedLabels.singleOrNull() ?: if (selectedLabels.isEmpty()) "Quality" else "Mixed"
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
-        Surface(Modifier.fillMaxWidth().padding(16.dp).heightIn(max = 650.dp), shape = RoundedCornerShape(28.dp),
+        Surface(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 16.dp, vertical = 24.dp).heightIn(max = 700.dp), shape = RoundedCornerShape(30.dp),
+            border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .22f)),
             color = AliflixSurfacePrimary, contentColor = AliflixContentPrimary) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.downloadAtmosphere().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Download", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                     IconButton(onClick = dismiss) { Icon(Icons.Rounded.Close, "Close") }
                 }
-                Text(media.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    coil.compose.AsyncImage(media.posterUrl, null, Modifier.size(64.dp, 96.dp).clip(RoundedCornerShape(14.dp)),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(media.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(media.year, style = MaterialTheme.typography.labelMedium, color = AliflixContentSecondary)
+                    }
+                }
 
                 if (media.type == MediaType.TV && initialEpisode == null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -272,21 +293,20 @@ internal interface DownloadUiDependencies {
                 }
                 Box {
                     var menu by remember { mutableStateOf(false) }
-                    OutlinedButton(onClick = { menu = true }, enabled = !saving, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                    OutlinedButton(onClick = { menu = true }, enabled = !saving && commonHeights.isNotEmpty(), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                         Icon(Icons.Rounded.HighQuality, null); Spacer(Modifier.width(10.dp))
-                        Text("${sharedHeight ?: store.preferredHeight}p ▾")
+                        Text("$qualityLabel ▾")
                         Spacer(Modifier.weight(1f)); Text(total, style = MaterialTheme.typography.labelMedium)
                     }
                     DropdownMenu(menu, { menu = false }) {
-                        (listOf(360, 480, 720, 1080, 2160) + prepared.values.flatMap { it.qualities.map { q -> q.height } })
-                            .filter { it > 0 }.distinct().sortedDescending().forEach { height ->
-                                DropdownMenuItem(text = { Text("${height}p") }, onClick = { sharedHeight = height; menu = false },
+                        commonHeights.forEach { height ->
+                                DropdownMenuItem(text = { Text(if (height > 0) "${height}p" else "Original") }, onClick = { sharedHeight = height; menu = false },
                                     trailingIcon = { if ((sharedHeight ?: store.preferredHeight) == height) Icon(Icons.Rounded.Check, null) })
                             }
                     }
                 }
                 if (listLoading) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "Loading episodes" })
-                if (preparing && selectedKeys.isNotEmpty()) {
+                if (media.type == MediaType.TV && preparing && selectedKeys.isNotEmpty()) {
                     val finished = selectedKeys.count { validated(it) || it in errors }
                     Column(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
                         Text("$finished / ${selectedKeys.size}", color = AliflixContentSecondary)
@@ -313,9 +333,25 @@ internal interface DownloadUiDependencies {
                                     enabled = !saving && key in eligible, role = Role.Checkbox,
                                     onValueChange = { val rawKey = "${selection.seasonNumber}:${selection.episodeNumber}"; chosen = if (it) chosen + rawKey else chosen - rawKey }) else Modifier
                             ), verticalAlignment = Alignment.CenterVertically) {
-                                if (media.type == MediaType.TV && initialEpisode == null) Checkbox(checked, enabled = !saving && key in eligible, onCheckedChange = null)
+                                if (media.type == MediaType.TV && initialEpisode == null) {
+                                    val checkColor by androidx.compose.animation.animateColorAsState(
+                                        if (checked) AliflixAccentPrimary else AliflixSurfaceSecondary, label = "selection color")
+                                    Box(Modifier.padding(horizontal = 12.dp).size(24.dp).clip(RoundedCornerShape(8.dp))
+                                        .background(checkColor).border(1.dp, if (checked) AliflixAccentSecondary else AliflixBorderSubtle, RoundedCornerShape(8.dp)),
+                                        contentAlignment = Alignment.Center) {
+                                        androidx.compose.animation.AnimatedVisibility(checked,
+                                            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = .5f),
+                                            exit = androidx.compose.animation.fadeOut()) {
+                                            Icon(Icons.Rounded.Check, null, Modifier.size(17.dp), tint = Color.White)
+                                        }
+                                    }
+                                }
                                 Column(Modifier.weight(1f)) {
-                                    Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                                    val episode = episodes.firstOrNull { it.seasonNumber == selection.seasonNumber && it.number == selection.episodeNumber }
+                                    episode?.imdbRating?.takeIf { it > 0 }?.let { rating ->
+                                        Text("IMDb ${"%.1f".format(java.util.Locale.ROOT, rating)}", color = Color(0xFFF5C518), style = MaterialTheme.typography.labelSmall)
+                                    }
                                     saved?.let { Text(it.statusLabel(), color = AliflixContentSecondary, style = MaterialTheme.typography.bodySmall) }
                                 }
                                 if (checked && preparing && !validated(key) && key !in errors) CircularProgressIndicator(
@@ -330,9 +366,22 @@ internal interface DownloadUiDependencies {
                                     TextButton(onClick = { errors.remove(key); retry++ }, enabled = !saving && !preparing,
                                         modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Retry preparation, $title" }) { Text("Retry") }
                                 }
-                                quality[key]?.let { selected -> Text("${selected.label} · ${selected.sizeLabel}",
-                                    color = AliflixContentSecondary, style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(start = if (initialEpisode == null && media.type == MediaType.TV) 48.dp else 12.dp, bottom = 12.dp)) }
+                                quality[key]?.let { selected ->
+                                    Box {
+                                        var qualityMenu by remember(key) { mutableStateOf(false) }
+                                        TextButton(onClick = { qualityMenu = true }, enabled = !saving) {
+                                            Text("${selected.label} · ${selected.sizeLabel}", color = AliflixAccentSecondary)
+                                            Icon(Icons.Rounded.ExpandMore, "Quality", Modifier.size(18.dp))
+                                        }
+                                        DropdownMenu(qualityMenu, { qualityMenu = false }) {
+                                            prepared[key]?.qualities.orEmpty().forEach { option ->
+                                                DropdownMenuItem(text = { Text("${option.label} · ${option.sizeLabel}") },
+                                                    trailingIcon = { if (selected == option) Icon(Icons.Rounded.Check, null) },
+                                                    onClick = { sharedHeight = null; quality[key] = option; qualityMenu = false })
+                                            }
+                                        }
+                                    }
+                                }
 
                             }
                         }
@@ -400,10 +449,29 @@ internal interface DownloadUiDependencies {
         val s = saved.selection
         DownloadPicker(s.media, if (s.media.type == MediaType.TV) Episode(s.seasonNumber ?: 1, s.episodeNumber ?: 1, s.episodeTitle.orEmpty()) else null) { retrying = null }
     }
-    deleting?.let { saved -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("Delete download?") },
-        confirmButton = { TextButton(onClick = { store.remove(saved.id); deleting = null }) { Text("Delete") } },
-        dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } }) }
-    Column(Modifier.fillMaxSize()) {
+    deleting?.let { saved ->
+        Dialog(onDismissRequest = { deleting = null }) {
+            Surface(shape = RoundedCornerShape(28.dp), border = BorderStroke(1.dp, AliflixBorderSubtle), color = AliflixSurfacePrimary) {
+                Column(Modifier.downloadAtmosphere().padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        coil.compose.AsyncImage(saved.selection.media.posterUrl, null, Modifier.size(48.dp, 72.dp).clip(RoundedCornerShape(10.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Delete download?", style = MaterialTheme.typography.titleLarge)
+                            Text(saved.selection.media.title, style = MaterialTheme.typography.bodyMedium, color = AliflixContentSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(onClick = { deleting = null }, modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel") }
+                        Button(onClick = { store.remove(saved.id); deleting = null }, modifier = Modifier.weight(1f).height(48.dp),
+                            shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = AliflixError)) {
+                            Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Delete")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Column(Modifier.fillMaxSize().downloadAtmosphere()) {
         message?.let { Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(it, Modifier.weight(1f), color = AliflixError)
             IconButton(onClick = { store.message.value = null }) { Icon(Icons.Rounded.Close, "Dismiss") }
@@ -412,23 +480,23 @@ internal interface DownloadUiDependencies {
         else LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(entries, key = { it.id }) { saved ->
                 val d = saved.download
-                Surface(shape = RoundedCornerShape(24.dp), color = AliflixSurfaceSecondary, border = BorderStroke(1.dp, AliflixBorderSubtle)) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(shape = RoundedCornerShape(26.dp), color = AliflixSurfaceSecondary.copy(alpha = .88f), border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .16f))) {
+                    Column(Modifier.downloadAtmosphere().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             coil.compose.AsyncImage(saved.selection.media.posterUrl, null,
-                                modifier = Modifier.size(width = 52.dp, height = 78.dp).clip(RoundedCornerShape(12.dp)),
+                                modifier = Modifier.size(width = 68.dp, height = 102.dp).clip(RoundedCornerShape(14.dp)),
                                 contentScale = androidx.compose.ui.layout.ContentScale.Crop)
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(saved.selection.media.title, maxLines = 2, overflow = TextOverflow.Ellipsis, color = AliflixContentPrimary, style = MaterialTheme.typography.titleSmall)
                                 if (saved.selection.media.type == MediaType.TV) Text("S${saved.selection.seasonNumber} E${saved.selection.episodeNumber}", color = AliflixContentSecondary)
                                 Text("${saved.quality} · ${downloadSize(saved.downloadedBytes)}", color = AliflixContentSecondary)
                             }
-                            if (d.state == Download.STATE_COMPLETED) IconButton(onClick = {
+                            if (d.state == Download.STATE_COMPLETED) FilledIconButton(modifier = Modifier.size(52.dp), shape = RoundedCornerShape(18.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AliflixAccentPrimary, contentColor = Color.White), onClick = {
                                 val app = activity.application as AliflixApplication
                                 val position = app.playbackProgressStore.progressFor(saved.selection)?.takeIf { it.resumeEligible }?.positionSeconds ?: 0.0
                                 LibraryStore(activity).markPlayed(saved.selection.media)
                                 NativePlaybackLauncher.launch(activity, saved.playback.copy(positionMs = (position * 1000).toLong(), playing = true))
-                            }) { Icon(Icons.Rounded.PlayArrow, "Play download", tint = AliflixAccentSecondary) }
+                            }) { Icon(Icons.Rounded.PlayArrow, "Play download", modifier = Modifier.size(30.dp)) }
                             else if (d.state !in setOf(Download.STATE_REMOVING, Download.STATE_RESTARTING)) DownloadButton(
                                 saved.selection.media, if (saved.selection.media.type == MediaType.TV)
                                     Episode(saved.selection.seasonNumber ?: 1, saved.selection.episodeNumber ?: 1, saved.selection.episodeTitle.orEmpty()) else null, compact = true)
@@ -482,5 +550,19 @@ internal interface DownloadUiDependencies {
                 Text("${downloadSize(entries.sumOf { it.downloadedBytes })} used", color = AliflixContentSecondary)
             }
         }
+    }
+}
+
+private fun Modifier.downloadAtmosphere(): Modifier = background(
+    Brush.linearGradient(listOf(Color(0xFF191629), Color(0xFF0D111C), Color(0xFF11131E)))
+).drawBehind {
+    drawCircle(Brush.radialGradient(listOf(Color(0x226E59D9), Color.Transparent),
+        center = androidx.compose.ui.geometry.Offset(size.width, 0f), radius = size.width * .8f),
+        radius = size.width * .8f, center = androidx.compose.ui.geometry.Offset(size.width, 0f))
+    repeat(3) { index ->
+        drawArc(Color(0xFFB1A2EE).copy(alpha = .055f - index * .01f), 95f, 130f, false,
+            topLeft = androidx.compose.ui.geometry.Offset(size.width * .45f + index * 18.dp.toPx(), -size.width * .38f),
+            size = androidx.compose.ui.geometry.Size(size.width * .9f, size.width * .9f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(.8.dp.toPx()))
     }
 }

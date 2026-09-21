@@ -33,6 +33,7 @@ internal class NativeStreamResolver(
     private var web: WebPlayerController? = null
     private var view: FrameLayout? = null
     private var closed = false
+    private var reportServers: (List<String>) -> Unit = {}
     private val children = mutableListOf<NativeStreamResolver>()
 
     suspend fun resolve(
@@ -44,6 +45,7 @@ internal class NativeStreamResolver(
         strictPreferredServer: Boolean = false,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
+        reportServers = onServers
         if (strictPreferredServer) require(!preferredServer.isNullOrBlank()) { "A server is required for pinned preparation." }
         val catalogueProvider = selection.source.provider in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY)
         val embeds = if (catalogueProvider) FmovieNativeCatalog().embeds(selection) else preferredNativeEmbeds(selection)
@@ -118,6 +120,7 @@ internal class NativeStreamResolver(
             delay(400)
         }
         val servers = orderedNativeServers(web.moviepireServers.value)
+        if (servers.isNotEmpty()) reportServers(servers.map { it.label })
         val server = selectNativeServer(servers, preferredServer, excluded, strictPreferredServer) { it.label }
         if (servers.isNotEmpty() && server == null && preferredServer == null) throw NoNativeServersException()
         val label = server?.label ?: preferredServer ?: selection.source.provider.name.lowercase().replaceFirstChar { it.uppercase() }

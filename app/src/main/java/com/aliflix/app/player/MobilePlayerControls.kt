@@ -1,5 +1,7 @@
 package com.aliflix.app.player
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -130,6 +132,7 @@ internal fun MobilePlayerCenterControls(
     onPlayPause: () -> Unit,
     onSeekBack: () -> Unit,
     onSeekForward: () -> Unit,
+    feedback: SeekFeedbackState? = null,
     hideSeekBack: Boolean = false,
     hideSeekForward: Boolean = false,
     modifier: Modifier = Modifier,
@@ -152,7 +155,7 @@ internal fun MobilePlayerCenterControls(
             contentAlignment = Alignment.Center,
         ) {
             androidx.compose.animation.AnimatedVisibility(
-                visible = !hideSeekBack,
+                visible = !hideSeekBack && feedback?.isForward != false,
                 enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.85f),
                 exit = fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.85f),
             ) {
@@ -161,6 +164,7 @@ internal fun MobilePlayerCenterControls(
                     modifier = Modifier.size(40.dp),
                 )
             }
+            if (feedback?.isForward == false) SeekButtonFeedback(feedback)
         }
 
         // Play / Pause 64dp outlined circle
@@ -182,7 +186,10 @@ internal fun MobilePlayerCenterControls(
                     .border(BorderStroke(1.5.dp, Color.White), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                androidx.compose.animation.Crossfade(targetState = isPlaying, animationSpec = tween(160), label = "play-pause") { active ->
+                AnimatedContent(targetState = isPlaying, transitionSpec = {
+                    (fadeIn(tween(180, delayMillis = 45)) + scaleIn(tween(220), initialScale = .65f)) togetherWith
+                        (fadeOut(tween(100)) + scaleOut(tween(160), targetScale = 1.2f))
+                }, label = "play-pause") { active ->
                 Icon(
                     imageVector = if (active) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     contentDescription = if (active) "Pause" else "Play",
@@ -206,7 +213,7 @@ internal fun MobilePlayerCenterControls(
             contentAlignment = Alignment.Center,
         ) {
             androidx.compose.animation.AnimatedVisibility(
-                visible = !hideSeekForward,
+                visible = !hideSeekForward && feedback?.isForward != true,
                 enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.85f),
                 exit = fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.85f),
             ) {
@@ -215,6 +222,7 @@ internal fun MobilePlayerCenterControls(
                     modifier = Modifier.size(40.dp),
                 )
             }
+            if (feedback?.isForward == true) SeekButtonFeedback(feedback)
         }
     }
 }
@@ -238,7 +246,7 @@ internal fun Seek15Icon(
             val radius = diameter / 2f
             val center = Offset(size.width / 2f, size.height / 2f)
 
-            if (!isForward) {
+            if (isForward) {
                 // Counter-clockwise circular arc with top arrow pointing left
                 val startAngle = 60f
                 val sweepAngle = 265f
@@ -303,5 +311,19 @@ internal fun Seek15Icon(
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+@Composable
+internal fun SeekButtonFeedback(feedback: SeekFeedbackState) {
+    androidx.compose.runtime.key(feedback.token) {
+        androidx.compose.animation.AnimatedVisibility(visibleState = androidx.compose.runtime.remember {
+            androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true }
+        }, enter = fadeIn(tween(120)) + scaleIn(tween(240), initialScale = .68f)) {
+            Box(Modifier.size(52.dp).background(Color(0x336E59D9), CircleShape), contentAlignment = Alignment.Center) {
+                Text(if (feedback.accumulatedSeconds > 0) "+${feedback.accumulatedSeconds}s" else "${feedback.accumulatedSeconds}s",
+                    color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
     }
 }

@@ -246,6 +246,7 @@ import com.aliflix.app.ui.theme.AliflixSurfacePressed
 import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 import com.aliflix.app.ui.theme.AliflixTheme
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -525,6 +526,7 @@ fun AliflixApp(
     val recent by viewModel.recent.collectAsState()
     LaunchedEffect(recent.take(3).map { it.key }) { viewModel.preloadRecentlyWatchedEpisodes() }
     val likes by viewModel.likes.collectAsState()
+    LaunchedEffect(myList.map { it.key }, recent.map { it.key }, likes.map { it.key }) { viewModel.refreshLibraryMetadata() }
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
     val recommendationAiModel by viewModel.recommendationAiModel.collectAsState()
     val askUiState by viewModel.askUiState.collectAsState()
@@ -548,13 +550,8 @@ fun AliflixApp(
         stateSaver = MobileDestinationStackSaver,
     ) {
         mutableStateOf<List<MobileDestination>>(
-            sessionPreferences.getString("navigation", null)?.let { MobileDestinationStackSaver.restore(it) }
-                ?: listOf(MobileDestination.Root(AppTab.HOME)),
+            listOf(MobileDestination.Root(AppTab.HOME)),
         )
-    }
-    LaunchedEffect(destinationStack) {
-        val encoded = with(MobileDestinationStackSaver) { androidx.compose.runtime.saveable.SaverScope { true }.save(destinationStack) }
-        sessionPreferences.edit().putString("navigation", encoded).apply()
     }
     var detailStateSnapshots by remember {
         mutableStateOf<Map<String, DetailUiState>>(emptyMap())
@@ -568,7 +565,7 @@ fun AliflixApp(
     val selectedTab = (destinationStack.first() as MobileDestination.Root).tab
     var playerSelection by remember { mutableStateOf<PlaybackSelection?>(null) }
     var playerVisible by remember { mutableStateOf(false) }
-    val homeScrollState = rememberLazyListState(sessionPreferences.getInt("homeIndex", 0), sessionPreferences.getInt("homeOffset", 0))
+    val homeScrollState = rememberLazyListState()
     val searchScrollState = rememberLazyGridState()
     val recommendationScrollState = rememberLazyListState()
     var askAliflixActive by remember { mutableStateOf(false) }
@@ -581,7 +578,7 @@ fun AliflixApp(
     var searchMediaFilter by rememberSaveable { mutableStateOf("All") }
     var discoverFocusRequestId by remember { mutableIntStateOf(0) }
     var consumedDiscoverFocusRequestId by remember { mutableIntStateOf(0) }
-    var libraryPage by rememberSaveable { mutableIntStateOf(sessionPreferences.getInt("libraryPage", 0).coerceIn(0, 3)) }
+    var libraryPage by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(libraryPage) { sessionPreferences.edit().putInt("libraryPage", libraryPage).apply() }
     DisposableEffect(activity) {
         val listener = androidx.core.util.Consumer<android.content.Intent> { intent ->
@@ -643,10 +640,7 @@ fun AliflixApp(
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
                 captureDetailStateSnapshot()
-                val encoded = with(MobileDestinationStackSaver) { androidx.compose.runtime.saveable.SaverScope { true }.save(destinationStack) }
-                sessionPreferences.edit().putString("navigation", encoded)
-                    .putInt("homeIndex", homeScrollState.firstVisibleItemIndex)
-                    .putInt("homeOffset", homeScrollState.firstVisibleItemScrollOffset).apply()
+
             }
         }
         activity.lifecycle.addObserver(observer)
@@ -970,6 +964,7 @@ fun AliflixApp(
                 .semantics { testTagsAsResourceId = true },
         ) {
             Scaffold(
+                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(top = 8.dp),
                 containerColor = AliflixBlack,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 bottomBar = {
@@ -1121,6 +1116,7 @@ fun AliflixApp(
                         onReauthenticatePassword =
                             viewModel::reauthenticateAccountWithPassword,
                         onDeleteAccount = viewModel::deleteCurrentAccount,
+                        onRename = viewModel::updateAccountDisplayName,
                         onSync = viewModel::retryAccountSync,
                         onClearMessage = viewModel::clearAccountMessage,
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
@@ -1220,6 +1216,8 @@ fun AliflixApp(
                             onToggleMyList = viewModel::toggleMyList,
                             onToggleLike = viewModel::toggleLike,
                             onOpen = ::openDetails,
+                            inHistory = targetItem?.let { target -> recent.any { it.key == target.key } } == true,
+                            onDeleteHistory = viewModel::removeRecent,
                             personalMatch = targetItem?.let {
                                 PersonalizationEngine.match(it, likes)
                             },
@@ -1776,12 +1774,13 @@ internal fun HomeFeed(
             }
         }
 
-        items(filteredRails, key = { it.title }) { rail ->
-            HomeMediaRail(
-                rail = rail,
-                onOpen = onOpen,
-                compact = false,
-            )
+        items(filteredRails, key = { "${selectedFilter.name}:${it.title}" }) { rail ->
+            androidx.compose.animation.AnimatedVisibility(visibleState = remember(selectedFilter, rail.title) {
+                androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true }
+            }, enter = fadeIn(tween(320)) + slideInVertically(tween(380, easing = FastOutSlowInEasing)) { it / 8 },
+                modifier = Modifier.animateItem()) {
+                HomeMediaRail(rail = rail, onOpen = onOpen, compact = false)
+            }
         }
     }
 }
@@ -2500,6 +2499,7 @@ private fun MediaPoster(
     item: Media,
     width: androidx.compose.ui.unit.Dp,
     rank: Int? = null,
+    showLibraryMetadata: Boolean = false,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -2610,6 +2610,11 @@ private fun MediaPoster(
                 color = AliflixMuted,
                 fontSize = 11.sp,
             )
+        }
+        if (showLibraryMetadata) {
+            Text(listOfNotNull(item.rating.takeIf { it > 0 }?.let { "TMDB ${"%.1f".format(Locale.ROOT, it)}" },
+                item.runtime.takeIf(String::isNotBlank)).joinToString(" · "), color = AliflixContentSecondary,
+                fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -3045,25 +3050,14 @@ internal fun MySpaceScreen(
         initialPage = page.coerceIn(0, 3),
         pageCount = { 4 },
     )
-    var chromeVisible by remember { mutableStateOf(true) }
+    val chromeVisible = true
     val chromeScroll = remember {
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            private var expandingViewport = false
-            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
-                if (source != androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput) return androidx.compose.ui.geometry.Offset.Zero
-                if (chromeVisible && available.y < -3f) {
-                    chromeVisible = false
-                    expandingViewport = true
-                } else if (!expandingViewport && available.y > 3f) chromeVisible = true
-                // The gesture that expands the grid belongs to the header. Do not also fling
-                // the newly enlarged viewport with its velocity.
-                return if (expandingViewport) androidx.compose.ui.geometry.Offset(0f, available.y) else androidx.compose.ui.geometry.Offset.Zero
-            }
-            override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
-                val consume = expandingViewport
-                expandingViewport = false
-                return if (consume) androidx.compose.ui.unit.Velocity(0f, available.y) else androidx.compose.ui.unit.Velocity.Zero
-            }
+            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset =
+                if (source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput)
+                    androidx.compose.ui.geometry.Offset(0f, available.y * .22f) else androidx.compose.ui.geometry.Offset.Zero
+            override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity =
+                androidx.compose.ui.unit.Velocity(0f, available.y - (available.y * .55f).coerceIn(-3500f, 3500f))
         }
     }
     var showSettingsWindow by rememberSaveable { mutableStateOf(false) }
@@ -3381,6 +3375,7 @@ private fun GenreOrganizedList(
                 MediaPoster(
                     item = item,
                     width = 132.dp,
+                    showLibraryMetadata = true,
                     onClick = { onOpen(item) },
                 )
             }
@@ -3396,6 +3391,8 @@ private fun HistoryCollection(
     onClear: () -> Unit,
     gridState: LazyGridState,
 ) {
+    val removalScope = rememberCoroutineScope()
+    var removing by remember { mutableStateOf(setOf<String>()) }
     if (items.isEmpty()) {
         EmptyMessage(
             title = "Your history is quiet",
@@ -3444,17 +3441,22 @@ private fun HistoryCollection(
             modifier = Modifier.weight(1f),
         ) {
             items(items, key = { "history:${it.key}" }) { item ->
-                Box {
+                val disappearing by animateFloatAsState(if (item.key in removing) 0f else 1f, tween(260), label = "history removal")
+                Box(Modifier.graphicsLayer { alpha = disappearing; scaleX = .88f + .12f * disappearing; scaleY = scaleX; rotationZ = (1f - disappearing) * -3f }.animateItem(fadeInSpec = tween(220), fadeOutSpec = tween(280), placementSpec = spring(stiffness = 280f))) {
                     MediaPoster(
                         item = item,
                         width = 132.dp,
+                        showLibraryMetadata = true,
                         onClick = { onOpen(item) },
                     )
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .size(48.dp)
-                            .clickable { onRemove(item) },
+                            .clickable(enabled = item.key !in removing) {
+                                removing = removing + item.key
+                                removalScope.launch { delay(280); onRemove(item); removing = removing - item.key }
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -4101,8 +4103,15 @@ internal fun DetailScreen(
     initialFirstVisibleItemIndex: Int = 0,
     initialFirstVisibleItemScrollOffset: Int = 0,
     onScrollPositionChanged: (Int, Int) -> Unit = { _, _ -> },
+    inHistory: Boolean = false,
+    onDeleteHistory: (Media) -> Unit = {},
 ) {
     val item = state.item ?: return
+    var historyBanner by remember(item.key) { mutableStateOf(false) }
+    LaunchedEffect(item.key, inHistory) {
+        if (inHistory) { delay(450); historyBanner = true; delay(6500) }
+        historyBanner = false
+    }
     val latestEpisodeProgress = playbackProgress.values
         .filter { progress -> progress.media.id == item.id && progress.media.type == MediaType.TV }
         .maxByOrNull(PlaybackProgress::updatedAtMillis)
@@ -4171,6 +4180,20 @@ internal fun DetailScreen(
                             )
                         },
                 )
+                AnimatedVisibility(visible = historyBanner && inHistory,
+                    enter = fadeIn(tween(300)) + slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it / 5 } + scaleIn(tween(380), initialScale = .92f),
+                    exit = fadeOut(tween(200)) + scaleOut(tween(220), targetScale = .96f),
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(start = 76.dp, top = 16.dp, end = 16.dp)) {
+                    Surface(shape = RoundedCornerShape(24.dp), color = AliflixScrimStrong,
+                        border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .25f))) {
+                        Row(Modifier.height(48.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Delete from history?", color = AliflixContentPrimary, fontSize = 12.sp)
+                            IconButton(onClick = { historyBanner = false; onDeleteHistory(item) }, modifier = Modifier.size(44.dp)) {
+                                Icon(Icons.Filled.Close, "Delete from history", Modifier.size(16.dp), tint = AliflixAccentSecondary)
+                            }
+                        }
+                    }
+                }
                 IconButton(
                     onClick = onBack,
                     modifier = Modifier
@@ -4225,7 +4248,7 @@ internal fun DetailScreen(
                                 containerColor = AliflixAccentSecondary.copy(alpha = 0.14f),
                             )
                         }
-                        listOf(item.year, item.runtime)
+                        listOf(item.year, item.runtime, item.genres.firstOrNull().orEmpty())
                             .filter(String::isNotBlank)
                             .forEach { label -> DetailMetadataPill(label = label) }
                     }

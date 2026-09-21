@@ -124,10 +124,10 @@ class RecommendationAiClient(
             connection = URL(url).openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.connectTimeout = 8_000
-            // The Worker makes one quota-bounded provider attempt, then verifies
+            // The Worker generates an editorial list, then resolves
             // identities and metadata through TMDB. Keep the mobile deadline
-            // just above that bounded pipeline so failures return promptly.
-            connection.readTimeout = 40_000
+            // above the bounded generation and identity-resolution pipeline.
+            connection.readTimeout = 120_000
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             continuation.invokeOnCancellation { connection.disconnect() }
@@ -191,7 +191,7 @@ data class V3RecommendationFilters(
 data class V3RecommendationRequest(
     val requestId: String,
     val mode: String = "describe",
-    val aiModel: String = RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue,
+    val aiModel: String = RecommendationAiModel.GEMINI_3_8_FLASH.workerValue,
     val query: String,
     val mediaType: String,
     val anchor: V3RecommendationAnchor? = null,

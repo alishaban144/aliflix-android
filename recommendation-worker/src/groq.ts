@@ -1,3 +1,4 @@
+import { EDITORIAL_RECOMMENDATIONS_PROMPT } from './prompts';
 import {
   DESCRIBE_RECOMMENDATIONS_PROMPT,
   INTERPRET_V3_PROMPT,
@@ -31,7 +32,7 @@ export const GROQ_TIMEOUT_MS = 24_000;
 // Qwen 3.8 27B's free-plan budget is shared across the generation and
 // verification calls in one interactive search. These ceilings are ample for
 // the compact JSON contracts while leaving room for both prompts and inputs.
-export const GROQ_MAX_OUTPUT_TOKENS = 1_536;
+export const GROQ_MAX_OUTPUT_TOKENS = 4_096;
 export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 2_048;
 
 const EMPTY_FILTERS = {
@@ -311,13 +312,14 @@ export async function recommendDescribeTitlesWithGroq(
   mediaType: MediaType,
   explicitFilters: unknown,
   excludedTitles: string[] = [],
-  targetCount = 12,
+  targetCount = 20,
 ): Promise<DescribeRecommendation[]> {
   const data = await groqStructuredContent<unknown>(
     env,
-    DESCRIBE_RECOMMENDATIONS_PROMPT,
+    EDITORIAL_RECOMMENDATIONS_PROMPT,
     {
       query,
+      currentDate: new Date().toISOString().slice(0, 10),
       authoritativeMediaType: mediaType,
       explicitFilters,
       targetCount: Math.min(20, Math.max(1, targetCount)),
@@ -341,13 +343,14 @@ export async function recommendSimilarTitlesWithGroq(
   refinement: string,
   explicitFilters: unknown,
   excludedTitles: string[] = [],
-  targetCount = 12,
+  targetCount = 20,
 ): Promise<DescribeRecommendation[]> {
   const data = await groqStructuredContent<unknown>(
     env,
-    SIMILAR_RECOMMENDATIONS_PROMPT,
+    EDITORIAL_RECOMMENDATIONS_PROMPT,
     {
       anchors,
+      currentDate: new Date().toISOString().slice(0, 10),
       authoritativeMediaType: mediaType,
       refinement,
       explicitFilters,

@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var playerController: WebPlayerController
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        super.onCreate(if (BuildConfig.IS_TV || lastNonConfigurationInstance != null) savedInstanceState else null)
         if (BuildConfig.IS_TV) {
             enableEdgeToEdge()
         } else {

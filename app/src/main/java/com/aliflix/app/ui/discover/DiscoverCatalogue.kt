@@ -160,6 +160,8 @@ internal fun CatalogueGrid(store: DiscoverCatalogueStore, category: String?, que
                     ShimmerBox(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)))
                 }
             }
+                if (session.items.isNotEmpty()) item("titles-label", span = { GridItemSpan(maxLineSpan) }) { Text("Titles", color = AliflixContentPrimary, style = MaterialTheme.typography.titleMedium) }
+            items(session.items, key = Media::key) { item -> DiscoverPosterCard(item, onOpen) }
             if (session.people.isNotEmpty()) {
                 item("people-label", span = { GridItemSpan(maxLineSpan) }) { Text("People", color = AliflixContentPrimary, style = MaterialTheme.typography.titleMedium) }
                 items(session.people, key = { "person:${it.tmdbId}" }) { person ->
@@ -169,9 +171,7 @@ internal fun CatalogueGrid(store: DiscoverCatalogueStore, category: String?, que
                         Text(person.name, color = AliflixContentPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
                     }
                 }
-                if (session.items.isNotEmpty()) item("titles-label", span = { GridItemSpan(maxLineSpan) }) { Text("Titles", color = AliflixContentPrimary, style = MaterialTheme.typography.titleMedium) }
             }
-            items(session.items, key = Media::key) { item -> DiscoverPosterCard(item, onOpen) }
             if (session.items.isNotEmpty() || session.people.isNotEmpty()) item("next", span = { GridItemSpan(maxLineSpan) }) {
                 if (session.error != null || session.loading) CatalogueStatus(session) { store.load(category, query, filter, more = true) }
                 else if (session.hasMore) TextButton(onClick = { scope.launch { store.load(category, query, filter, more = true) } }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Load more") }

@@ -172,3 +172,12 @@ Rules:
 - Return exactly one assessment for every candidate, in candidate array order. Assessment N must describe candidate N and copy its index. Use an empty matchedGroupIndexes array and one concrete reason of at most 12 words.
 
 Return only JSON matching the supplied schema.`;
+
+export const EDITORIAL_RECOMMENDATIONS_PROMPT = `You are a film and television critic, connoisseur and sommelier.
+Curate exactly 20 distinct real released titles, guided by the user's natural-language taste and request.
+Understand compound themes naturally, including requests such as "Movies about aliens and AI. Recent"; do not turn them into rigid keyword intersections.
+Honor the authoritative media type, explicit preferences, dates, exclusions, and refinements. Interpret relative dates against currentDate.
+For Similar, use the supplied anchors to understand cinematic style, themes and sensibility. Exclude the anchors themselves.
+Assign each title your own editorial rating from 0 to 10 for this request and return titles in descending rating order.
+Use your judgment, not popularity or TMDB scores, to select and rank. Supply accurate release years and canonical titles for catalogue lookup.
+Never repeat excludedTitles. Output only the requested JSON with title, releaseYear and rating. No reasons, descriptions, confidence or match details.`;

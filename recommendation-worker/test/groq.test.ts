@@ -15,8 +15,8 @@ describe('Groq structured recommendation provider', () => {
         choices: [{
           finish_reason: 'stop',
           message: { content: JSON.stringify({ recommendations: [
-            { title: 'Arrival', releaseYear: 2016, confidence: .96, reason: 'Linguists confront aliens through a story centered on communication.' },
-            { title: 'Arrival', releaseYear: 2016, confidence: .90, reason: 'Duplicate.' },
+            { title: 'Arrival', releaseYear: 2016, rating: 9, confidence: .96, reason: 'Linguists confront aliens through a story centered on communication.' },
+            { title: 'Arrival', releaseYear: 2016, rating: 9, confidence: .90, reason: 'Duplicate.' },
           ] }) },
         }],
       });
@@ -46,8 +46,8 @@ describe('Groq structured recommendation provider', () => {
     expect(schema.required).toEqual(['recommendations']);
     expect(schema.properties.recommendations.items.additionalProperties).toBe(false);
     expect(requestBody.messages[0].content).toContain('"targetCount":12');
-    expect(requestBody.messages[0].content).toContain('include older, international, independent');
-    expect(requestBody.messages[0].content).toContain('Use your knowledge of the actual story');
+    expect(requestBody.messages[0].content).toContain('critic, connoisseur and sommelier');
+    expect(requestBody.messages[0].content).toContain('No reasons, descriptions, confidence or match details');
     expect(results.map(result => result.title)).toEqual(['Arrival']);
   });
 

@@ -8,6 +8,7 @@ import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.data.SafeHttpTransport
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -91,62 +92,82 @@ class AppUpdateManager(
         info: UpdateInfo,
         onProgress: suspend (Int) -> Unit,
     ): Result<File> = withContext(Dispatchers.IO) {
-        runCatching {
-            val updateDirectory = File(activity.cacheDir, UPDATE_DIRECTORY).apply {
-                mkdirs()
-            }
-            val partial = File(updateDirectory, "$UPDATE_FILE_NAME.part")
+        try {
+            val updateDirectory = File(activity.cacheDir, UPDATE_DIRECTORY).apply { mkdirs() }
+            val partial = File(updateDirectory, "${info.sha256.lowercase()}.part")
             val destination = File(updateDirectory, UPDATE_FILE_NAME)
-            partial.delete()
-
-            val connection = openConnection(info.apkUrl)
-            try {
-                val totalBytes = connection.contentLengthLong
-                val digest = MessageDigest.getInstance("SHA-256")
-                var copiedBytes = 0L
-                var lastProgress = -1
-                connection.inputStream.buffered().use { input ->
-                    partial.outputStream().buffered().use { output ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            output.write(buffer, 0, count)
-                            digest.update(buffer, 0, count)
-                            copiedBytes += count
-                            if (totalBytes > 0) {
-                                val progress = ((copiedBytes * 100L) / totalBytes)
-                                    .toInt()
-                                    .coerceIn(0, 100)
-                                if (progress != lastProgress) {
-                                    lastProgress = progress
-                                    withContext(Dispatchers.Main.immediate) {
-                                        onProgress(progress)
+            var completed = false
+            var lastFailure: Exception? = null
+            var lastProgress = -1
+            for (attempt in 0 until 5) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (attempt > 0) kotlinx.coroutines.delay((1_000L shl (attempt - 1)).coerceAtMost(8_000))
+                var connection: HttpURLConnection? = null
+                try {
+                    var offset = partial.length()
+                    connection = openConnection(info.apkUrl, offset)
+                    if (connection.responseCode == 416) {
+                        // The retained file may already be complete; the hash is authoritative.
+                        completed = true
+                        break
+                    }
+                    val append = offset > 0 && connection.responseCode == 206 &&
+                        connection.getHeaderField("Content-Range")?.startsWith("bytes $offset-") == true
+                    if (connection.responseCode == 206 && offset > 0 && !append) {
+                        partial.delete()
+                        throw java.io.IOException("Invalid download range")
+                    }
+                    if (!append) offset = 0L
+                    val contentLength = connection.contentLengthLong
+                    val total = if (contentLength > 0) offset + contentLength else -1L
+                    var copied = offset
+                    connection.inputStream.buffered(64 * 1024).use { input ->
+                        java.io.FileOutputStream(partial, append).buffered(64 * 1024).use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                output.write(buffer, 0, count)
+                                copied += count
+                                if (total > 0) {
+                                    val progress = ((copied * 100) / total).toInt().coerceIn(0, 99)
+                                    if (progress != lastProgress) {
+                                        lastProgress = progress
+                                        withContext(Dispatchers.Main.immediate) { onProgress(progress) }
                                     }
                                 }
                             }
                         }
                     }
-                }
-                val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
-                check(actualHash.equals(info.sha256, ignoreCase = true)) {
-                    "The downloaded APK failed its integrity check."
-                }
-                destination.delete()
-                check(partial.renameTo(destination)) {
-                    "The downloaded APK could not be prepared."
-                }
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress(100)
-                }
-                destination
-            } catch (error: Exception) {
-                partial.delete()
-                throw error
-            } finally {
-                connection.disconnect()
+                    if (total > 0 && copied != total) throw java.io.IOException("Download interrupted")
+                    completed = true
+                    break
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (failure: java.io.IOException) { lastFailure = failure }
+                finally { connection?.disconnect() }
             }
-        }
+            if (!completed) throw lastFailure ?: java.io.IOException("Download interrupted. Retry")
+            val digest = MessageDigest.getInstance("SHA-256")
+            partial.inputStream().buffered().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
+            }
+            val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
+            if (!actualHash.equals(info.sha256, ignoreCase = true)) {
+                partial.delete()
+                error("Update verification failed. Retry")
+            }
+            destination.delete()
+            check(partial.renameTo(destination)) { "Update could not be prepared" }
+            withContext(Dispatchers.Main.immediate) { onProgress(100) }
+            Result.success(destination)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (failure: Exception) { Result.failure(failure) }
     }
 
     fun launchInstaller(apk: File): InstallLaunchResult {
@@ -204,20 +225,24 @@ class AppUpdateManager(
         }
     }
 
-    private fun openConnection(url: String): HttpURLConnection {
+    private fun openConnection(url: String, offset: Long = 0): HttpURLConnection {
         val formFactor = if (BuildConfig.IS_TV) "TV" else "Mobile"
-        val extraHeaders = mapOf(
+        val extraHeaders = mutableMapOf(
             "Accept" to "application/json, application/octet-stream",
             "User-Agent" to "Aliflix-$formFactor/${BuildConfig.VERSION_NAME}",
         )
+        extraHeaders["Accept-Encoding"] = "identity"
+        if (offset > 0) extraHeaders["Range"] = "bytes=$offset-"
         val connection = SafeHttpTransport.openConnection(
             urlString = url,
-            connectTimeoutMs = 12_000,
-            readTimeoutMs = 30_000,
+            connectTimeoutMs = 20_000,
+            readTimeoutMs = 90_000,
             headers = extraHeaders,
         )
-        check(connection.responseCode in 200..299) {
-            "The update server returned HTTP ${connection.responseCode}."
+        val status = connection.responseCode
+        if (status !in 200..299 && !(offset > 0 && status == 416)) {
+            connection.disconnect()
+            throw java.io.IOException("Update server: $status")
         }
         return connection
     }

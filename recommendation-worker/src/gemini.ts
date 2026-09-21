@@ -1,3 +1,4 @@
+import { EDITORIAL_RECOMMENDATIONS_PROMPT } from './prompts';
 import {
   DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT,
   INTERPRET_V3_PROMPT,
@@ -26,12 +27,12 @@ import {
 } from './types';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-export const GEMINI_GENERATION_TIMEOUT_MS = 30_000;
-export const GEMINI_DESCRIBE_TIMEOUT_MS = 24_000;
+export const GEMINI_GENERATION_TIMEOUT_MS = 45_000;
+export const GEMINI_DESCRIBE_TIMEOUT_MS = 45_000;
 export const GEMINI_VERIFICATION_TIMEOUT_MS = 20_000;
 export const GEMINI_STRUCTURED_MAX_ATTEMPTS = 1;
-export const GEMINI_37_RECOMMENDATION_LIMIT = 8;
-export const GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS = 3_072;
+export const GEMINI_RECOMMENDATION_LIMIT = 20;
+export const GEMINI_RECOMMENDATION_MAX_OUTPUT_TOKENS = 8_192;
 const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [],
 };
@@ -78,10 +79,6 @@ interface GeminiEmbeddingResponse {
 }
 
 type GeminiThinkingLevel = 'low' | 'medium' | 'high';
-
-function isGemini37Flash(model: string): boolean {
-  return model === 'gemini-3.7-flash';
-}
 
 function responseJsonSchema(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(responseJsonSchema);
@@ -183,13 +180,12 @@ async function geminiFetch<T>(
           continue;
         }
         const providerMessage = providerError?.error?.message?.trim().slice(0, 300);
-        const isGemini37CapacityFailure = response.status === 503
-          && isGemini37Flash(decodeURIComponent(url).split('/').at(-1)?.split(':')[0] || '')
+        const isGeminiCapacityFailure = response.status === 503
           && /high demand/i.test(providerMessage || '');
-        if (isGemini37CapacityFailure) {
+        if (isGeminiCapacityFailure) {
           throw new ServiceError(
             'GEMINI_UNAVAILABLE',
-            'Gemini 3.7 Flash is temporarily at capacity. Switch to Gemini 3.5 Flash in Settings and try again.',
+            'Gemini 3.8 Flash is temporarily at capacity. Try again shortly.',
             503,
             true,
           );
@@ -312,18 +308,7 @@ async function geminiStructuredContent<T>(
   maxOutputTokens = 8_192,
 ): Promise<T> {
   const convertedSchema = responseJsonSchema(schema);
-  // Keep the already-proven 3.5 request shape unchanged. Gemini 3.7 uses the
-  // mature generateContent structured-output fields from Google's REST API;
-  // avoiding the newer nested responseFormat path prevents extra server-side
-  // response negotiation on its latency-sensitive recommendation requests.
-  const structuredOutputConfig = isGemini37Flash(model)
-    ? {
-        responseMimeType: 'application/json',
-        responseJsonSchema: convertedSchema,
-      }
-    : {
-        responseFormat: { text: { mimeType: 'APPLICATION_JSON', schema: convertedSchema } },
-      };
+  const structuredOutputConfig = { responseMimeType: 'application/json', responseJsonSchema: convertedSchema };
   const data = await geminiFetch<GeminiGenerateContentResponse>(
     env,
     `${API_BASE}/${encodeURIComponent(model)}:generateContent`,
@@ -373,7 +358,7 @@ export async function interpretQuery(env: RecommendationEnv, query: string, medi
     };
   }
 
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.8-flash';
 
   const data = await geminiStructuredContent<unknown>(
     env,
@@ -394,17 +379,17 @@ export async function recommendDescribeTitles(
   mediaType: MediaType,
   explicitFilters: unknown,
   excludedTitles: string[] = [],
-  targetCount = 12,
+  targetCount = 20,
 ): Promise<DescribeRecommendation[]> {
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
-  const optimized37 = isGemini37Flash(model);
-  const recommendationLimit = optimized37 ? GEMINI_37_RECOMMENDATION_LIMIT : 12;
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.8-flash';
+  const recommendationLimit = GEMINI_RECOMMENDATION_LIMIT;
   const data = await geminiStructuredContent<unknown>(
     env,
     model,
-    DESCRIBE_RECOMMENDATIONS_COMPACT_PROMPT,
+    EDITORIAL_RECOMMENDATIONS_PROMPT,
     {
       query,
+      currentDate: new Date().toISOString().slice(0, 10),
       authoritativeMediaType: mediaType,
       explicitFilters,
       targetCount: Math.min(recommendationLimit, Math.max(1, targetCount)),
@@ -415,7 +400,7 @@ export async function recommendDescribeTitles(
     GEMINI_DESCRIBE_TIMEOUT_MS,
     'low',
     'Describe candidate generation',
-    GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS,
+    8_192,
   );
   let parsed: ReturnType<typeof GeminiDescribeResponseSchema.parse>;
   try {
@@ -444,17 +429,17 @@ export async function recommendSimilarTitles(
   refinement: string,
   explicitFilters: unknown,
   excludedTitles: string[] = [],
-  targetCount = 12,
+  targetCount = 20,
 ): Promise<DescribeRecommendation[]> {
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
-  const optimized37 = isGemini37Flash(model);
-  const recommendationLimit = optimized37 ? GEMINI_37_RECOMMENDATION_LIMIT : 12;
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.8-flash';
+  const recommendationLimit = GEMINI_RECOMMENDATION_LIMIT;
   const data = await geminiStructuredContent<unknown>(
     env,
     model,
-    optimized37 ? SIMILAR_RECOMMENDATIONS_COMPACT_PROMPT : SIMILAR_RECOMMENDATIONS_PROMPT,
+    EDITORIAL_RECOMMENDATIONS_PROMPT,
     {
       anchors,
+      currentDate: new Date().toISOString().slice(0, 10),
       authoritativeMediaType: mediaType,
       refinement,
       explicitFilters,
@@ -466,7 +451,7 @@ export async function recommendSimilarTitles(
     GEMINI_GENERATION_TIMEOUT_MS,
     'medium',
     'Similar candidate generation',
-    optimized37 ? GEMINI_37_RECOMMENDATION_MAX_OUTPUT_TOKENS : 8_192,
+    GEMINI_RECOMMENDATION_MAX_OUTPUT_TOKENS,
   );
   const parsed = GeminiDescribeResponseSchema.parse(data);
   const seen = new Set<string>();
@@ -486,7 +471,7 @@ export async function assessPremiseCandidates(
   candidates: PremiseCandidateDocument[],
 ): Promise<PremiseAssessment[]> {
   if (!candidates.length) return [];
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.8-flash';
   const data = await geminiStructuredContent<unknown>(
     env,
     model,
@@ -519,7 +504,7 @@ export async function assessSimilarCandidates(
   candidates: PremiseCandidateDocument[],
 ): Promise<PremiseAssessment[]> {
   if (!candidates.length) return [];
-  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.5-flash';
+  const model = env.GEMINI_GENERATION_MODEL || 'gemini-3.8-flash';
   const data = await geminiStructuredContent<unknown>(
     env,
     model,

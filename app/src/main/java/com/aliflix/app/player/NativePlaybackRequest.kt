@@ -114,6 +114,7 @@ internal fun nativeStreamDiscoveryScript(): String = """
       };
       window.__aliflixNativeStream = video => {
         if (video.mediaKeys) return null;
+        if (manifest?.master) return {url:manifest.url, mimeType:'application/x-mpegURL', referer:location.href};
         const src = video.currentSrc || video.src;
         if (/^https?:\/\//.test(src)) return {url:src, mimeType:/\.m3u8(?:[?#]|$)/i.test(src) ? 'application/x-mpegURL' : 'video/mp4', referer:location.href};
         return manifest ? {url:manifest.url, mimeType:'application/x-mpegURL', referer:location.href} : null;

@@ -43,15 +43,44 @@ class FirebaseAccountRepository(
     override val state: StateFlow<AccountState> = _state.asStateFlow()
     override val currentFirebaseUser: FirebaseUser? get() = auth.currentUser
 
+    private var profileListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var profileUid: String? = null
+
     private val authListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
         _state.value = _state.value.copy(
             user = firebaseAuth.currentUser?.toVerifiedAccountUser(),
             isLoading = false,
         )
+        watchProfile(firebaseAuth.currentUser)
+    }
+
+    private fun watchProfile(user: FirebaseUser?) {
+        if (profileUid == user?.uid) return
+        profileListener?.remove()
+        profileUid = user?.uid
+        profileListener = user?.let { current ->
+            com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("users").document(current.uid)
+                .collection("profile").document("main").addSnapshotListener { snapshot, _ ->
+                    val name = snapshot?.getString("displayName")?.trim()?.takeIf { it.isNotEmpty() }
+                    if (name != null && _state.value.uid == current.uid) {
+                        _state.value = _state.value.copy(user = _state.value.user?.copy(displayName = name))
+                    }
+                }
+        }
     }
 
     init {
         auth.addAuthStateListener(authListener)
+    }
+
+    override suspend fun updateDisplayName(name: String): AccountActionResult = runOperation {
+        val cleanName = name.trim()
+        require(cleanName.isNotBlank() && cleanName.length <= 60) { "Enter a name (1–60 characters)" }
+        val user = auth.currentUser ?: error("Sign in")
+        user.updateProfile(UserProfileChangeRequest.Builder().setDisplayName(cleanName).build()).await()
+        com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("users").document(user.uid)
+            .collection("profile").document("main").set(mapOf("displayName" to cleanName),
+                com.google.firebase.firestore.SetOptions.merge()).await()
     }
 
     override suspend fun signInWithGoogle(activity: Activity): AccountActionResult =
@@ -142,6 +171,7 @@ class FirebaseAccountRepository(
     }
 
     override fun close() {
+        profileListener?.remove()
         auth.removeAuthStateListener(authListener)
     }
 

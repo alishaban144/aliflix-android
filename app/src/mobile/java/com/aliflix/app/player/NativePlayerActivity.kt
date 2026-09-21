@@ -1,5 +1,6 @@
 package com.aliflix.app.player
 
+import com.aliflix.app.data.hasInternetConnection
 import android.content.ComponentName
 import android.content.Intent
 import android.content.res.Configuration
@@ -126,6 +127,9 @@ class NativePlayerActivity : FragmentActivity() {
             resizeMode = if (settingsStore.settings.value.resizeModeZoom) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
             addView(video, FrameLayout.LayoutParams(-1, -1))
             addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                ui = ui.copy(videoBounds = androidx.compose.ui.geometry.Rect(
+                    left.toFloat().coerceAtLeast(0f), top.toFloat().coerceAtLeast(0f),
+                    right.toFloat().coerceAtMost(root.width.toFloat()), bottom.toFloat().coerceAtMost(root.height.toFloat())))
                 updateSubtitlePadding(lastControlsVisible)
             }
         }
@@ -381,6 +385,11 @@ class NativePlayerActivity : FragmentActivity() {
             }
             return
         }
+        if (!hasInternetConnection()) {
+            controller?.pause()
+            ui = ui.copy(stage = null, ready = false, error = "Connect to the internet and try again")
+            return
+        }
         subtitleTimingEvidence = null
         activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
@@ -436,7 +445,7 @@ class NativePlayerActivity : FragmentActivity() {
                                 val request = withTimeout(if (savedServer != null || preferredServer != null) 5_000 else 16_000) {
                                     adapter.resolve(candidate, resume, excluded,
                                         preferredServer = (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
-                                        onServers = { resolvedServerNames[candidate.key] = it }) { server = it }
+                                        onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[candidate.key] = (resolvedServerNames[candidate.key].orEmpty() + names).distinct() }) { server = it }
                                 }
                                 Triple(candidate, server, request)
                             } catch (error: Exception) {
@@ -451,7 +460,7 @@ class NativePlayerActivity : FragmentActivity() {
                     selection = candidate.copy(availableEpisodes = selection?.availableEpisodes?.takeUnless { it.isEmpty() } ?: candidate.availableEpisodes)
                     triedServers.clear()
                     triedServers.addAll(excludedBySource[candidate.source.provider].orEmpty())
-                    ui = ui.copy(server = server, availableServers = resolvedServerNames[candidate.key].orEmpty())
+                    ui = ui.copy(server = server, availableServers = resolvedServerNames[candidate.key].orEmpty().ifEmpty { ui.availableServers })
                     updateSelectionUi()
                     hideSystemBars()
                     PlaybackStartupTiming.mark("stream_resolved")

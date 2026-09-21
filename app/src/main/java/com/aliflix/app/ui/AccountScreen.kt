@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.DeleteForever
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Sync
@@ -140,6 +141,7 @@ internal fun AccountScreen(
     onReauthenticateGoogle: suspend () -> AccountActionResult,
     onReauthenticatePassword: suspend (String) -> AccountActionResult,
     onDeleteAccount: suspend () -> AccountActionResult,
+    onRename: suspend (String) -> AccountActionResult = { AccountActionResult(false) },
     onSync: () -> Unit,
     onClearMessage: () -> Unit,
     modifier: Modifier = Modifier,
@@ -148,9 +150,24 @@ internal fun AccountScreen(
     var working by rememberSaveable(route) { mutableStateOf(false) }
     var localMessage by rememberSaveable(route) { mutableStateOf<String?>(null) }
     var localError by rememberSaveable(route) { mutableStateOf<String?>(null) }
+    var editingName by remember { mutableStateOf(false) }
+    var editedName by remember(accountState.displayName) { mutableStateOf(accountState.displayName.orEmpty()) }
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     var showPasswordReauthentication by remember { mutableStateOf(false) }
     val busy = working || accountState.isLoading
+
+    if (editingName) AlertDialog(onDismissRequest = { if (!busy) editingName = false },
+        title = { Text("Display name") }, shape = RoundedCornerShape(24.dp), containerColor = AliflixSurfaceElevated,
+        text = { OutlinedTextField(editedName, { editedName = it.take(60) }, singleLine = true, enabled = !busy,
+            shape = RoundedCornerShape(14.dp), label = { Text("Name") }) },
+        confirmButton = { TextButton(enabled = !busy && editedName.isNotBlank(), onClick = {
+            scope.launch {
+                working = true
+                val result = onRename(editedName.trim())
+                working = false
+                if (result.succeeded) editingName = false else localError = result.message
+            }
+        }) { Text("Save") } }, dismissButton = { TextButton(enabled = !busy, onClick = { editingName = false }) { Text("Cancel") } })
 
     LaunchedEffect(route) {
         onClearMessage()
@@ -317,6 +334,7 @@ internal fun AccountScreen(
                         )
                     },
                     onDelete = { showDeleteConfirmation = true },
+                    onEditName = { editingName = true },
                 )
             }
 
@@ -497,6 +515,7 @@ private fun ManageAccountContent(
     onSync: () -> Unit,
     onSignOut: () -> Unit,
     onDelete: () -> Unit,
+    onEditName: () -> Unit,
 ) {
     val user = accountState.user
     val sync = accountSyncPresentation(syncState)
@@ -512,6 +531,9 @@ private fun ManageAccountContent(
                     fontSize = 18.sp,
                 )
                 user?.email?.let { Text(it, color = AliflixContentSecondary, fontSize = 12.sp) }
+            }
+            IconButton(onClick = onEditName, enabled = !busy, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Rounded.Edit, "Edit display name", tint = AliflixAccentSecondary, modifier = Modifier.size(18.dp))
             }
         }
         AccountInfoRow("Sign-in method", accountProviderLabel(user?.providerIds.orEmpty()))

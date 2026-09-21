@@ -24,7 +24,7 @@ import {
 export { embedForSearch } from './gemini';
 export { fallbackIntentFromQuery };
 
-export const DEFAULT_AI_MODEL: RecommendationAiModel = 'gemini-3.5-flash';
+export const DEFAULT_AI_MODEL: RecommendationAiModel = 'gemini-3.8-flash';
 
 export function selectedAiModel(env: RecommendationEnv): RecommendationAiModel {
   return env.AI_GENERATION_MODEL || env.GEMINI_GENERATION_MODEL || DEFAULT_AI_MODEL;

@@ -353,6 +353,7 @@ private fun ResultsList(
                 onClick = { onOpenMedia(item.media) },
                 inMyList = item.media.key in myListKeys,
                 onToggleMyList = { onToggleMyList(item.media) },
+                editorial = !isFilterMode,
                 modifier = Modifier.animateItem(),
             )
         }
@@ -426,6 +427,7 @@ private fun ResultCard(
     onClick: () -> Unit,
     inMyList: Boolean,
     onToggleMyList: () -> Unit,
+    editorial: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -540,32 +542,13 @@ private fun ResultCard(
                             )
                         }
                     }
-                    if (item.media.rating > 0.0) {
+                    if ((if (editorial) item.matchScore else item.media.rating) > 0.0) {
                         Icon(Icons.Rounded.Star, contentDescription = null, tint = Color(0xFFFFC857), modifier = Modifier.size(13.dp))
                         Spacer(Modifier.width(3.dp))
-                        Text("${"%.1f".format(item.media.rating)}", color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("${if (editorial) "AI " else "TMDB "}${"%.1f".format(if (editorial) item.matchScore else item.media.rating)}", color = AliflixContentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
-                item.media.overview.takeIf { it.isNotBlank() }?.let { plot ->
-                    Spacer(Modifier.height(10.dp))
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(AliflixBorderSubtle.copy(alpha = 0.72f)),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = plot,
-                        color = AliflixContentSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Normal,
-                        lineHeight = 17.sp,
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
 
                 Spacer(Modifier.height(9.dp))
                 Row(

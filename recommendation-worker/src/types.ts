@@ -1,7 +1,7 @@
 export type MediaType = 'movie' | 'tv';
 export type RequestMode = 'describe' | 'similar' | 'filters';
 export type RecommendationSort = 'most_popular' | 'highest_rated' | 'most_voted' | 'newest_first' | 'oldest_first' | 'runtime_short_to_long';
-export type GeminiAiModel = 'gemini-3.5-flash' | 'gemini-3.7-flash';
+export type GeminiAiModel = 'gemini-3.8-flash';
 export type GroqAiModel = 'groq-qwen-3.8-27b';
 export type RecommendationAiModel = GeminiAiModel | GroqAiModel;
 
@@ -68,6 +68,7 @@ export interface InterpretedIntent {
 }
 
 export interface DescribeRecommendation {
+  rating?: number;
   title: string;
   releaseYear: number;
   confidence: number;

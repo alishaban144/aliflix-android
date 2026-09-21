@@ -1,3 +1,4 @@
+import { editorialRecommendations } from './editorial';
 import {
   assessRecommendationPremise,
   assessRecommendationSimilarity,
@@ -1754,27 +1755,9 @@ export async function processRecommendation(
   const recommendationEnv = requestedAiModel
     ? { ...env, AI_GENERATION_MODEL: requestedAiModel }
     : env;
-  let providerFallbackIntent: InterpretedIntent | undefined;
+  if (request.mode !== 'filters') return editorialRecommendations(recommendationEnv, request, tmdb, dependencies);
+  const providerFallbackIntent: InterpretedIntent | undefined = undefined;
   let disableGeminiEmbeddings = isGroqAiModel(selectedAiModel(recommendationEnv));
-  const continuationPass = Math.max(0, Math.min(MAX_GENERATED_CONTINUATION_PASSES, options.continuationPass || 0));
-  if (request.mode === 'describe') {
-    try {
-      return await processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass);
-    } catch (error) {
-      if (!isRetryableAiProviderError(error)) throw error;
-      const fallbackQuery = request.query || request.refinementQuery || '';
-      providerFallbackIntent = fallbackIntentFromQuery(fallbackQuery);
-      disableGeminiEmbeddings = true;
-      console.warn(JSON.stringify({
-        event: 'describe_tmdb_fallback',
-        model: selectedAiModel(recommendationEnv),
-        reason: error.message,
-      }));
-    }
-  }
-  if (request.mode === 'similar') {
-    return processSimilarRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass);
-  }
   const interpret = dependencies.interpret || interpretQuery;
   const queryToInterpret = request.previousQuery && request.refinementQuery
     ? `${request.previousQuery} [Refinement adjustment: ${request.refinementQuery}]`
@@ -2038,5 +2021,5 @@ export async function processRecommendation(
     embeddingsAvailable,
     false,
   );
-  return ranked.slice(0, request.mode === 'describe' ? request.pageSize : MAX_CANDIDATES);
+  return ranked.slice(0, MAX_CANDIDATES);
 }

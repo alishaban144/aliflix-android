@@ -20,6 +20,7 @@ interface AccountRepository : AutoCloseable {
     ): AccountActionResult
     suspend fun signInWithEmail(email: String, password: String): AccountActionResult
     suspend fun sendPasswordResetEmail(email: String): AccountActionResult
+    suspend fun updateDisplayName(name: String): AccountActionResult = AccountActionResult(false, "Unavailable")
     suspend fun signOut(): AccountActionResult
     suspend fun reauthenticateWithPassword(password: String): AccountActionResult
     suspend fun reauthenticateWithGoogle(activity: Activity): AccountActionResult

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -138,44 +139,9 @@ internal fun SeekFeedbackHud(
         onDismiss()
     }
 
-    Box(
-        modifier = modifier.fillMaxSize(),
-        contentAlignment = if (feedback.isForward) Alignment.CenterEnd else Alignment.CenterStart,
-    ) {
-        AnimatedVisibility(
-            visible = true,
-            enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.82f),
-            exit = fadeOut(tween(180)) + scaleOut(tween(180), targetScale = 0.82f),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight(0.6f)
-                    .fillMaxWidth(0.35f)
-                    .padding(16.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(110.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(AliflixPurpleRadial, Color.Transparent),
-                            ),
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = if (feedback.accumulatedSeconds > 0)
-                            "+${feedback.accumulatedSeconds}s"
-                        else
-                            "${feedback.accumulatedSeconds}s",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-            }
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(Modifier.offset(x = if (feedback.isForward) 118.dp else (-118).dp)) {
+            SeekButtonFeedback(feedback)
         }
     }
 }

@@ -292,7 +292,6 @@ class FirebaseAccountSyncRepository(
                 reference = user.collection(PROFILE).document(MAIN_DOCUMENT),
                 data = mapOf(
                     "uid" to account.uid,
-                    "displayName" to account.displayName,
                     "email" to account.email,
                     "photoUrl" to account.photoUrl,
                     "providerIds" to account.providerIds.sorted(),

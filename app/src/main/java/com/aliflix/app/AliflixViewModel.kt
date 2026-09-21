@@ -1,5 +1,6 @@
 package com.aliflix.app
 
+import com.aliflix.app.data.hasInternetConnection
 import android.app.Application
 import android.app.Activity
 import androidx.lifecycle.AndroidViewModel
@@ -1209,6 +1210,23 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun isLiked(item: Media): Boolean = library.isLiked(item)
 
+    private val libraryMetadataRequested = mutableSetOf<String>()
+    fun refreshLibraryMetadata() {
+        val context = getApplication<android.app.Application>()
+        if (!context.hasInternetConnection()) return
+        val missing = (myList.value + recent.value + likes.value).distinctBy { it.key }
+            .filter { (it.runtime.isBlank() || it.rating <= 0) && libraryMetadataRequested.add(it.key) }
+        viewModelScope.launch {
+            for (item in missing) {
+                try {
+                    val details = aiClient.getTitleDetails(item.type.routeName, item.id)
+                    library.refreshMetadata(details.toStableMobileMedia(item))
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { libraryMetadataRequested.remove(item.key) }
+            }
+        }
+    }
+
     fun markPlayed(item: Media) = library.markPlayed(item)
 
     fun removeRecent(item: Media) = library.removeRecent(item)
@@ -1246,6 +1264,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     suspend fun sendPasswordResetEmail(email: String): AccountActionResult =
         accountServices.accountRepository.sendPasswordResetEmail(email)
+
+    suspend fun updateAccountDisplayName(name: String): AccountActionResult {
+        val result = accountServices.accountRepository.updateDisplayName(name)
+        if (result.succeeded) accountServices.syncRepository.retry()
+        return result
+    }
 
     suspend fun signOutAccount(): AccountActionResult =
         accountServices.accountRepository.signOut()

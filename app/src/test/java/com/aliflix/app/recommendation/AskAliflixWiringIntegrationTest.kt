@@ -13,13 +13,13 @@ import org.junit.Test
 
 class AskAliflixWiringIntegrationTest {
     @Test
-    fun groqIsTheDefaultForFreshSettingsAndUnspecifiedRequests() {
+    fun gemini38IsTheDefaultForFreshSettingsAndUnspecifiedRequests() {
         assertEquals(
-            RecommendationAiModel.GROQ_QWEN_3_8_27B,
+            RecommendationAiModel.GEMINI_3_8_FLASH,
             RecommendationAiModel.fromWorkerValue(null),
         )
         assertEquals(
-            RecommendationAiModel.GROQ_QWEN_3_8_27B,
+            RecommendationAiModel.GEMINI_3_8_FLASH,
             RecommendationAiModel.fromWorkerValue("unknown-model"),
         )
 
@@ -33,19 +33,19 @@ class AskAliflixWiringIntegrationTest {
             mediaType = "movie",
         )
 
-        assertEquals(RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue, mapped.aiModel)
-        assertEquals(RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue, direct.aiModel)
+        assertEquals(RecommendationAiModel.GEMINI_3_8_FLASH.workerValue, mapped.aiModel)
+        assertEquals(RecommendationAiModel.GEMINI_3_8_FLASH.workerValue, direct.aiModel)
     }
 
     @Test
     fun explicitSavedGeminiChoiceIsStillHonored() {
         assertEquals(
-            RecommendationAiModel.GEMINI_3_5_FLASH,
-            RecommendationAiModel.fromWorkerValue("gemini-3.5-flash"),
+            RecommendationAiModel.GEMINI_3_8_FLASH,
+            RecommendationAiModel.fromWorkerValue("gemini-3.8-flash"),
         )
         assertEquals(
-            RecommendationAiModel.GEMINI_3_7_FLASH,
-            RecommendationAiModel.fromWorkerValue("gemini-3.7-flash"),
+            RecommendationAiModel.GEMINI_3_8_FLASH,
+            RecommendationAiModel.fromWorkerValue("gemini-3.8-flash"),
         )
     }
 
@@ -54,11 +54,11 @@ class AskAliflixWiringIntegrationTest {
         val json = AskAliflixRequestMapper.map(
             request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
             requestId = "00000000-0000-4000-8000-000000000010",
-            aiModel = RecommendationAiModel.GEMINI_3_7_FLASH,
+            aiModel = RecommendationAiModel.GEMINI_3_8_FLASH,
         ).workerRequest.toJson()
 
-        assertEquals("gemini-3.7-flash", json.getString("aiModel"))
-        assertEquals("gemini-3.7-flash", json.getString("geminiModel"))
+        assertEquals("gemini-3.8-flash", json.getString("aiModel"))
+        assertEquals("gemini-3.8-flash", json.getString("geminiModel"))
     }
 
     @Test
