@@ -471,7 +471,7 @@ internal interface DownloadUiDependencies {
             }
         }
     }
-    Column(Modifier.fillMaxSize().downloadAtmosphere()) {
+    Column(Modifier.fillMaxSize()) {
         message?.let { Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(it, Modifier.weight(1f), color = AliflixError)
             IconButton(onClick = { store.message.value = null }) { Icon(Icons.Rounded.Close, "Dismiss") }
@@ -480,8 +480,8 @@ internal interface DownloadUiDependencies {
         else LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(entries, key = { it.id }) { saved ->
                 val d = saved.download
-                Surface(shape = RoundedCornerShape(26.dp), color = AliflixSurfaceSecondary.copy(alpha = .88f), border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .16f))) {
-                    Column(Modifier.downloadAtmosphere().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(shape = RoundedCornerShape(26.dp), color = Color.Transparent, border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .24f))) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             coil.compose.AsyncImage(saved.selection.media.posterUrl, null,
                                 modifier = Modifier.size(width = 68.dp, height = 102.dp).clip(RoundedCornerShape(14.dp)),
@@ -553,7 +553,7 @@ internal interface DownloadUiDependencies {
     }
 }
 
-private fun Modifier.downloadAtmosphere(): Modifier = background(
+internal fun Modifier.downloadAtmosphere(): Modifier = background(
     Brush.linearGradient(listOf(Color(0xFF191629), Color(0xFF0D111C), Color(0xFF11131E)))
 ).drawBehind {
     drawCircle(Brush.radialGradient(listOf(Color(0x226E59D9), Color.Transparent),

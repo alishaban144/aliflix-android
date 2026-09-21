@@ -348,17 +348,16 @@ internal fun DiscoverScreen(
                         .padding(bottom = preservedCatalogBottomPadding),
                 ) {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        MobileTopSafeArea()
+                        MobileTopSafeArea(extraPadding = 18.dp)
 
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Discover", color = AliflixContentPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         }
 
                         Row(
-
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             OutlinedTextField(

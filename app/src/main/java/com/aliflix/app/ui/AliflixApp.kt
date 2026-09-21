@@ -255,6 +255,7 @@ import java.util.Locale
 import kotlin.math.absoluteValue
 import com.aliflix.app.ui.common.MobileTopSafeArea
 import com.aliflix.app.ui.common.aliflixScreenBackground
+import com.aliflix.app.downloads.downloadAtmosphere
 
 internal enum class AppTab(val label: String) {
     HOME("Home"),
@@ -964,8 +965,7 @@ fun AliflixApp(
                 .semantics { testTagsAsResourceId = true },
         ) {
             Scaffold(
-                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(top = 8.dp),
-                containerColor = AliflixBlack,
+                containerColor = Color.Transparent,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 bottomBar = {
                     if (currentDestination is MobileDestination.Root && !askAliflixActive) {
@@ -3053,11 +3053,23 @@ internal fun MySpaceScreen(
     val chromeVisible = true
     val chromeScroll = remember {
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset =
-                if (source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput)
-                    androidx.compose.ui.geometry.Offset(0f, available.y * .22f) else androidx.compose.ui.geometry.Offset.Zero
-            override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity =
-                androidx.compose.ui.unit.Velocity(0f, available.y - (available.y * .55f).coerceIn(-3500f, 3500f))
+            override fun onPreScroll(
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+            ): androidx.compose.ui.geometry.Offset = androidx.compose.ui.geometry.Offset.Zero
+
+            override suspend fun onPreFling(
+                available: androidx.compose.ui.unit.Velocity,
+            ): androidx.compose.ui.unit.Velocity {
+                val absY = kotlin.math.abs(available.y)
+                val consumedY = when {
+                    absY > 7000f -> available.y * 0.35f
+                    absY > 2000f -> available.y * 0.25f
+                    absY > 500f -> available.y * 0.15f
+                    else -> 0f
+                }
+                return androidx.compose.ui.unit.Velocity(0f, consumedY)
+            }
         }
     }
     var showSettingsWindow by rememberSaveable { mutableStateOf(false) }
@@ -3136,9 +3148,15 @@ internal fun MySpaceScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .aliflixScreenBackground(),
+            .then(
+                if (pagerState.currentPage == 3) {
+                    Modifier.downloadAtmosphere()
+                } else {
+                    Modifier.aliflixScreenBackground()
+                },
+            ),
     ) {
-        MobileTopSafeArea()
+        MobileTopSafeArea(extraPadding = 18.dp)
         androidx.compose.animation.AnimatedVisibility(
             visible = chromeVisible,
             enter = androidx.compose.animation.expandVertically(tween(220)) + fadeIn(tween(160)),
@@ -3148,7 +3166,7 @@ internal fun MySpaceScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 12.dp, top = 0.dp, bottom = 6.dp),
+                .padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(

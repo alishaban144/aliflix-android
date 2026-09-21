@@ -9,3 +9,5 @@ import com.aliflix.app.model.Episode
 @Composable internal fun downloadCount(): Int = 0
 @Composable internal fun DownloadsSection() = Unit
 @Composable internal fun DownloadSettings() = Unit
+internal fun androidx.compose.ui.Modifier.downloadAtmosphere(): androidx.compose.ui.Modifier = this
+
