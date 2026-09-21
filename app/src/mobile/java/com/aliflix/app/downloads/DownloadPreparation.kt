@@ -15,6 +15,7 @@ import com.aliflix.app.data.playbackProgressKey
 import com.aliflix.app.model.*
 import com.aliflix.app.player.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -72,6 +73,8 @@ internal suspend fun prepareDownloadBatch(activity: ComponentActivity, host: Fra
         onPrepared = onPrepared, onError = onError)
 }
 
+private val preparationSlots = kotlinx.coroutines.sync.Semaphore(4)
+
 internal suspend fun prepareDownloadBatchInternal(
     selections: List<Pair<String, PlaybackSelection>>, language: String, cached: Map<String, PreparedDownload>,
     discover: suspend (PlaybackSelection) -> PreparedDownload,
@@ -82,74 +85,40 @@ internal suspend fun prepareDownloadBatchInternal(
 ) {
     fun group(selection: PlaybackSelection) = selection.media.key to
         if (selection.media.type == MediaType.TV) selection.seasonNumber ?: 1 else null
-    fun sameEpisode(first: PlaybackSelection, second: PlaybackSelection) = group(first) == group(second) &&
-        (first.media.type != MediaType.TV || (first.episodeNumber ?: 1) == (second.episodeNumber ?: 1))
-    val snapshot = cached.toMap().filterValues { it.qualities.isNotEmpty() && sourceIsCurrent(it.selection) }
-    suspend fun attempt(block: suspend () -> PreparedDownload): Result<PreparedDownload> = try {
-        Result.success(block()).also { currentCoroutineContext().ensureActive() }
-    } catch (timeout: TimeoutCancellationException) {
-        currentCoroutineContext().ensureActive()
-        Result.failure(IllegalStateException("Preparation timed out.", timeout))
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (error: Exception) {
-        currentCoroutineContext().ensureActive()
-        Result.failure(error)
-    }
-    for ((identity, items) in selections.distinctBy { it.first }.groupBy { group(it.second) }) {
-        currentCoroutineContext().ensureActive()
-        val reusable = items.mapNotNull { (key, selection) ->
-            snapshot[key]?.takeIf { sameEpisode(it.selection, selection) }?.let { key to it }
-        }.toMap()
-        var anchor = (items.mapNotNull { reusable[it.first] } + snapshot.toSortedMap().values)
-            .firstOrNull { group(it.selection) == identity && it.server.isNotBlank() }
-        val pending = items.filter { it.first !in reusable }
-        var discoveredKey: String? = null
-        var discoveryFailure: Throwable? = null
-        if (anchor == null && pending.isNotEmpty()) {
-            val (key, selection) = pending.first()
-            val result = attempt {
-                discover(selection).also { require(it.server.isNotBlank()) { "The provider did not identify a server." } }
-            }
-            anchor = result.getOrNull()
-            discoveryFailure = result.exceptionOrNull()
-            if (anchor != null) {
-                discoveredKey = key
-                onPrepared(key, anchor)
-            }
-        }
-        val pinned = anchor
-        coroutineScope {
-            val semaphore = kotlinx.coroutines.sync.Semaphore(4)
-            items.filter { it.first != discoveredKey }.map { (key, selection) -> async {
-                semaphore.acquire()
+    val snapshot = cached.filterValues { it.qualities.isNotEmpty() && sourceIsCurrent(it.selection) }
+    coroutineScope {
+        val anchors = snapshot.values.filter { it.server.isNotBlank() }.associateBy { group(it.selection) }.toMutableMap()
+        selections.distinctBy { it.first }.map { (key, selection) -> async {
+            preparationSlots.withPermit {
                 try {
-                    currentCoroutineContext().ensureActive()
-                    val saved = reusable[key]
-                    if (saved == null && pinned == null) {
-                        val detail = discoveryFailure?.message ?: "No successful provider/server found."
-                        onError(key, "Could not discover a download source: $detail Retry preparation.")
-                        return@async
-                    }
-                    val result = attempt {
-                        if (saved != null) {
-                            if (saved.playback.subtitleLanguage == language.lowercase()) saved
-                            else inspect(saved.selection, saved.playback.copy(subtitleLanguage = language.lowercase(),
-                                subtitlesVtt = "", preferEmbeddedSubtitles = false), language).copy(server = saved.server)
-                        } else {
-                            val candidate = selection.copy(source = requireNotNull(pinned).selection.source)
-                            val request = resolvePinned(candidate, pinned.server)
-                            inspect(candidate, request, language).copy(server = pinned.server)
+                    val saved = snapshot[key]?.takeIf { it.selection.key == selection.key }
+                    val result = if (saved != null) {
+                        if (saved.playback.subtitleLanguage == language.lowercase()) saved
+                        else inspect(saved.selection, saved.playback.copy(subtitleLanguage = language.lowercase(),
+                            subtitlesVtt = "", preferEmbeddedSubtitles = false), language).copy(server = saved.server)
+                    } else {
+                        val anchor = anchors[group(selection)]
+                        if (anchor == null) discover(selection)
+                        else {
+                            try {
+                                val candidate = selection.copy(source = anchor.selection.source)
+                                inspect(candidate, resolvePinned(candidate, anchor.server), language).copy(server = anchor.server)
+                            } catch (timeout: TimeoutCancellationException) {
+                                currentCoroutineContext().ensureActive(); discover(selection)
+                            } catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { discover(selection) }
                         }
                     }
-                    result.fold(onSuccess = { onPrepared(key, it) }, onFailure = {
-                        val source = if (saved != null) saved.selection.source else pinned?.selection?.source
-                        val server = saved?.server ?: pinned?.server.orEmpty()
-                        onError(key, "${source?.provider?.displayName.orEmpty()} / $server: ${it.message ?: "Video unavailable."} Retry this episode on the same server, or reopen downloads to discover another source.")
-                    })
-                } finally { semaphore.release() }
-            } }.awaitAll()
-        }
+                    currentCoroutineContext().ensureActive()
+                    require(result.qualities.isNotEmpty())
+                    if (result.server.isNotBlank()) anchors[group(selection)] = result
+                    onPrepared(key, result)
+                } catch (timeout: TimeoutCancellationException) {
+                    currentCoroutineContext().ensureActive(); onError(key, "Timed out")
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { currentCoroutineContext().ensureActive(); onError(key, "Unavailable") }
+            }
+        } }.awaitAll()
     }
 }
 

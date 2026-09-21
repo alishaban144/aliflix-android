@@ -14,13 +14,15 @@ import com.aliflix.app.player.*
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.data.playbackProgressKey
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executors
 
-internal data class SavedDownload(val download: Download, val playback: NativePlaybackRequest, val quality: String, val estimate: Long) {
+internal data class SavedDownload(val download: Download, val playback: NativePlaybackRequest, val quality: String, val estimate: Long,
+    val downloadedBytes: Long = download.bytesDownloaded, val percent: Float = download.percentDownloaded) {
     val id get() = download.request.id
     val selection get() = nativeSelection(playback.selectionJson)
 }
@@ -37,6 +39,7 @@ internal class OfflineDownloads private constructor(val context: Context) {
     val message = MutableStateFlow<String?>(null)
     private val lock = Any()
     private var pendingBytes = 0L
+    private val refreshLock = kotlinx.coroutines.sync.Mutex()
     private val index = DefaultDownloadIndex(database)
     val manager: DownloadManager = DownloadManager(context, index, DownloaderFactory { request ->
         val native = NativePlaybackRequest.fromJson(JSONObject(String(request.data, Charsets.UTF_8)).getString("playback"))
@@ -66,11 +69,19 @@ internal class OfflineDownloads private constructor(val context: Context) {
         })
         // Media3's index restores completed and interrupted downloads after process death.
         scope.launch {
-            while (isActive) { refresh(); delay(1_000) }
+            while (isActive) {
+                withContext(Dispatchers.Main.immediate) {
+                    val live = manager.currentDownloads.associateBy { it.request.id }
+                    entries.value = entries.value.map { saved -> live[saved.id]?.let {
+                        saved.copy(download = it, downloadedBytes = it.bytesDownloaded, percent = it.percentDownloaded)
+                    } ?: saved }
+                }
+                delay(250)
+            }
         }
     }
 
-    private fun refresh() { scope.launch {
+    private fun refresh() { scope.launch { refreshLock.withLock {
         val values = runCatching { index.getDownloads().use { cursor -> buildList {
             while (cursor.moveToNext()) {
                 val d = cursor.download
@@ -80,8 +91,13 @@ internal class OfflineDownloads private constructor(val context: Context) {
                 }.getOrNull()?.let(::add)
             }
         } } }.getOrDefault(emptyList())
-        entries.value = values.sortedByDescending { it.download.startTimeMs }
-    } }
+        withContext(Dispatchers.Main.immediate) {
+            val live = manager.currentDownloads.associateBy { it.request.id }
+            entries.value = values.map { saved -> live[saved.id]?.let {
+                saved.copy(download = it, downloadedBytes = it.bytesDownloaded, percent = it.percentDownloaded)
+            } ?: saved }.sortedByDescending { it.download.startTimeMs }
+        }
+    } } }
 
     fun completed(selection: PlaybackSelection): SavedDownload? = entries.value.firstOrNull {
         it.id == playbackProgressKey(selection) && it.download.state == Download.STATE_COMPLETED
@@ -146,10 +162,12 @@ internal class OfflineDownloads private constructor(val context: Context) {
         DownloadService.sendResumeDownloads(context, OfflineDownloadService::class.java, false)
     }
 
-    fun pause(id: String) = DownloadService.sendSetStopReason(context, OfflineDownloadService::class.java, id, 1, false)
+    fun pause(id: String) {
+        manager.setStopReason(id, 1)
+    }
     fun resume(item: SavedDownload) {
         preferences.edit().remove("error:${item.id}").apply()
-        manager.addDownload(item.download.request, 0)
+        manager.setStopReason(item.id, 0)
         DownloadService.sendResumeDownloads(context, OfflineDownloadService::class.java, false)
     }
     fun remove(id: String) = DownloadService.sendRemoveDownload(context, OfflineDownloadService::class.java, id, false)

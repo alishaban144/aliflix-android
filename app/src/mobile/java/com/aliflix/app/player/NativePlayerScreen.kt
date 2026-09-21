@@ -351,9 +351,11 @@ internal fun NativePlayerScreen(
         }
 
         // Preparing / Loading Overlay
-        if (preparing) {
+        AnimatedVisibility(visible = preparing, modifier = Modifier.align(Alignment.Center),
+            enter = fadeIn(tween(160)) + androidx.compose.animation.scaleIn(tween(180), initialScale = .96f),
+            exit = fadeOut(tween(120))) {
             Column(
-                Modifier.align(Alignment.Center).widthIn(max = 520.dp).padding(horizontal = 32.dp),
+                Modifier.widthIn(max = 520.dp).padding(horizontal = 32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -375,7 +377,6 @@ internal fun NativePlayerScreen(
                     trackColor = Color.White.copy(alpha = 0.12f)
                 )
                 Text(state.stage ?: "Preparing your video", color = AliflixAccentSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                Text("Sit back. Playback will begin shortly.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
             }
         }
 
@@ -490,7 +491,9 @@ internal fun NativePlayerScreen(
                         moreVisible = true
                         interaction++
                     },
-                    modifier = Modifier.align(Alignment.TopCenter),
+                    modifier = Modifier.align(Alignment.TopCenter).animateEnterExit(
+                        enter = androidx.compose.animation.slideInVertically(tween(200)) { -it / 3 },
+                        exit = androidx.compose.animation.slideOutVertically(tween(140)) { -it / 4 }),
                 )
 
                 if (!preparing && state.error == null) {
@@ -525,6 +528,8 @@ internal fun NativePlayerScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        .animateEnterExit(enter = androidx.compose.animation.slideInVertically(tween(200)) { it / 3 },
+                            exit = androidx.compose.animation.slideOutVertically(tween(140)) { it / 4 })
                         .padding(bottom = 20.dp),
                 )
             }

@@ -83,18 +83,20 @@ internal fun MobilePlayerTopBar(
                 CompactTopButton(Icons.Rounded.MoreVert, "More", onMore)
             }
         }
-        androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                identity()
-                androidx.compose.foundation.layout.Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                    Text(title, color = Color.White, fontSize = if (compact) 16.sp else 20.sp,
-                        fontWeight = FontWeight.SemiBold)
-                    if (!compact && detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-                }
-                actions()
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            identity()
+            androidx.compose.foundation.layout.Column(
+                Modifier.weight(1f).padding(start = 12.dp, end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(title, color = Color.White, fontSize = if (compact) 15.sp else 20.sp,
+                    lineHeight = if (compact) 20.sp else 25.sp,
+                    maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold)
+                if (detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp,
+                    lineHeight = 16.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
-            if (compact && detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp,
-                modifier = Modifier.padding(start = 56.dp))
+            actions()
         }
     }
 }

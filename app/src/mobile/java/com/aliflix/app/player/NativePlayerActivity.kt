@@ -364,7 +364,21 @@ class NativePlayerActivity : FragmentActivity() {
                 .mapNotNull { it.selection.let { s -> if (s.media.type == com.aliflix.app.model.MediaType.TV) com.aliflix.app.model.Episode(s.seasonNumber ?: 1, s.episodeNumber ?: 1, s.episodeTitle.orEmpty()) else null } }
             selection = current.copy(availableEpisodes = downloadedEpisodes)
             ui = ui.copy(stage = "Loading download", error = null, ready = false, server = "", availableServers = emptyList())
-            startNative(saved.copy(positionMs = resume, playing = true, selectionJson = selection!!.nativeJson()))
+            activeSubtitleCues = emptyList()
+            activeSubtitleCuesJson = null
+            renderCaptions(emptyList())
+            controller?.pause()
+            preparation = lifecycleScope.launch {
+                try {
+                    startNative(saved.copy(positionMs = resume, playing = true, selectionJson = selection!!.nativeJson()))
+                    awaitNativeReady(saved.url)
+                    ui = ui.copy(stage = null, ready = true, error = null)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    controller?.pause()
+                    ui = ui.copy(stage = null, ready = false, error = "Download unavailable. Retry.")
+                }
+            }
             return
         }
         subtitleTimingEvidence = null
