@@ -35,9 +35,10 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "176"
-  RELEASE_VERSION_NAME: "3.1.86"
+  RELEASE_VERSION_CODE: "177"
+  RELEASE_VERSION_NAME: "3.1.87"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
+
 
 jobs:
   changed-paths:
@@ -307,7 +308,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Video-bounded gestures, stable server options, full stream qualities, redesigned downloads with actual qualities, safe page insets, home on cold launch, and LLM-led Gemini 3.8 Flash recommendations."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Fixed notification bar overlap in My Space and Discover, full-screen downloads atmosphere, and balanced smooth scrolling."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -335,7 +336,8 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile player gesture bounds, seek motion, stable servers and stream qualities; redesigned downloads with real qualities; safe page insets and cold-start Home; LLM-led Gemini 3.8 Flash and optional Groq recommendations. Tests and emulator validation were explicitly skipped at user request."
+          body: "Fixed notification bar overlap in My Space and Discover, full-screen downloads atmosphere behind header, and balanced smooth scrolling across My Space tabs. Tests and emulator validation were explicitly skipped at user request."
           files: |
             aliflix-mobile.apk
             update-mobile.json
+
