@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.aliflix.app.ui.common
 
 import androidx.compose.foundation.layout.Spacer
