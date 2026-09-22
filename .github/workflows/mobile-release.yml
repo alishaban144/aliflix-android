@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "182"
-  RELEASE_VERSION_NAME: "3.1.92"
+  RELEASE_VERSION_CODE: "183"
+  RELEASE_VERSION_NAME: "3.1.93"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -308,7 +308,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Align the Ask Aliflix card with Ask Aliflix on one line above Describe and Find similar; play trailers in YouTube's player with true fullscreen; give Discover the full-screen My Space atmosphere background and remove the logo beside the Discover title."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Fix trailer playback so the YouTube frame shows real video instead of a black screen, and keep trailer fullscreen inside the app window so audio and video stay in sync."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -336,7 +336,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Ask Aliflix card now sits on one line above Describe and Find similar; trailers play in YouTube's player with a real fullscreen button; Discover uses the full-screen My Space atmosphere background without the title logo. Unit tests and emulator validation skipped as requested; production-signed APK integrity is checked."
+          body: "Trailer playback fixed: the YouTube frame now renders video in both the inline player and fullscreen instead of a black screen with audio only, and fullscreen stays in the app window so playback never detaches. Unit tests and lint run in CI; emulator validation skipped as requested; production-signed APK integrity is checked."
           files: |
             aliflix-mobile.apk
             update-mobile.json

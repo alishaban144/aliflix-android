@@ -13,6 +13,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.BorderStroke
@@ -29,17 +30,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
-import androidx.compose.ui.platform.LocalView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -67,24 +64,60 @@ private fun TrailerPlayer(videoId: String) {
     val wasWindowFullscreen = remember(activity) {
         activity?.window?.attributes?.flags?.and(WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0
     }
+    val systemBarsWereVisible = remember(activity) {
+        activity?.window?.decorView?.let { decor ->
+            ViewCompat.getRootWindowInsets(decor)?.isVisible(WindowInsetsCompat.Type.systemBars())
+        } ?: true
+    }
     var started by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var manuallyFullscreen by remember { mutableStateOf(false) }
     var customView by remember { mutableStateOf<View?>(null) }
     var customCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
     var loadingError by remember { mutableStateOf(false) }
+    var fullscreenContainer by remember { mutableStateOf<FrameLayout?>(null) }
 
     fun setFullscreenWindow(fullscreen: Boolean) {
+        val window = activity?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
         if (fullscreen) {
-            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            window?.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            controller?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         } else {
-            if (!wasWindowFullscreen) activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            if (!wasWindowFullscreen) window?.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            if (systemBarsWereVisible) controller?.show(WindowInsetsCompat.Type.systemBars())
             originalOrientation?.let { activity?.requestedOrientation = it }
         }
     }
 
+    // Fullscreen content lives in the ACTIVITY window. Moving the live player into a
+    // separate Compose Dialog window changes its window token, so YouTube's decoded
+    // frames stop arriving: audio keeps playing against a black surface.
+    fun showFullscreenContent(view: View) {
+        val content = activity?.window?.decorView
+            ?.findViewById<FrameLayout>(android.R.id.content) ?: return
+        val container = fullscreenContainer ?: FrameLayout(context).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            isClickable = true
+        }.also { overlay ->
+            fullscreenContainer = overlay
+            content.addView(
+                overlay,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        (view.parent as? ViewGroup)?.removeView(view)
+        container.addView(view)
+    }
+
     fun exitFullscreen() {
+        val wasActive = customView != null || manuallyFullscreen
         if (customView != null) {
             val oldView = customView
             customView = null
@@ -94,7 +127,16 @@ private fun TrailerPlayer(videoId: String) {
             callback?.onCustomViewHidden()
         }
         manuallyFullscreen = false
-        setFullscreenWindow(false)
+        if (wasActive) setFullscreenWindow(false)
+        // Detach the player from the overlay right away; the inline AndroidView
+        // re-attaches it during the recomposition this state change schedules.
+        webView?.let { player ->
+            (player.parent as? ViewGroup)?.takeIf { it === fullscreenContainer }?.removeView(player)
+        }
+        fullscreenContainer?.let { overlay ->
+            if (overlay.childCount == 0) (overlay.parent as? ViewGroup)?.removeView(overlay)
+        }
+        fullscreenContainer = null
     }
 
     fun openYouTube() {
@@ -111,7 +153,8 @@ private fun TrailerPlayer(videoId: String) {
         webView?.let { return it }
         return WebView(context).apply {
             setBackgroundColor(android.graphics.Color.BLACK)
-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            // Never force LAYER_TYPE_HARDWARE here: a mandated hardware layer makes
+            // YouTube's decoded video frames composite to black while audio plays.
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -130,8 +173,11 @@ private fun TrailerPlayer(videoId: String) {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     if (!request.isForMainFrame) return false
                     val host = request.url.host?.lowercase()
-                    val embed = request.url.path?.startsWith("/embed/") == true
-                    if (host in setOf("www.youtube.com", "www.youtube-nocookie.com") && embed) return false
+                    val path = request.url.path ?: ""
+                    val embed = host in setOf("www.youtube.com", "www.youtube-nocookie.com", "m.youtube.com") &&
+                        path.startsWith("/embed/")
+                    val consent = host in setOf("consent.youtube.com", "consent.google.com", "accounts.google.com")
+                    if (embed || consent) return false
                     if (request.url.scheme == "https") {
                         runCatching {
                             context.startActivity(Intent(Intent.ACTION_VIEW, request.url).addCategory(Intent.CATEGORY_BROWSABLE))
@@ -146,16 +192,16 @@ private fun TrailerPlayer(videoId: String) {
                         callback.onCustomViewHidden()
                         return
                     }
-                    manuallyFullscreen = false
                     customView = view
                     customCallback = callback
                     setFullscreenWindow(true)
+                    showFullscreenContent(view)
                 }
 
                 override fun onHideCustomView() { exitFullscreen() }
             }
-            // Give YouTube an explicitly sized viewport, its own controls and a valid
-            // app origin. A top-level embed document can render a blank video surface.
+            // A real HTTPS base URL plus YouTube's own sized viewport keeps the frame
+            // visible; a synthetic package origin lets YouTube render a black embed.
             val origin = "https://github.com"
             loadDataWithBaseURL(
                 origin,
@@ -175,6 +221,13 @@ private fun TrailerPlayer(videoId: String) {
         }
     }
 
+    fun enterFullscreen() {
+        started = true
+        showFullscreenContent(obtainPlayer())
+        manuallyFullscreen = true
+        setFullscreenWindow(true)
+    }
+
     BackHandler(enabled = customView != null || manuallyFullscreen) { exitFullscreen() }
     DisposableEffect(lifecycleOwner, activity) {
         val observer = LifecycleEventObserver { _, event ->
@@ -185,7 +238,15 @@ private fun TrailerPlayer(videoId: String) {
                     )
                     webView?.onPause()
                 }
-                Lifecycle.Event.ON_RESUME -> webView?.onResume()
+                Lifecycle.Event.ON_RESUME -> {
+                    webView?.onResume()
+                    // MainActivity.onResume force-shows the bars; restore fullscreen after it.
+                    if (manuallyFullscreen || customView != null) {
+                        activity?.window?.decorView?.post {
+                            if (manuallyFullscreen || customView != null) setFullscreenWindow(true)
+                        }
+                    }
+                }
                 else -> Unit
             }
         }
@@ -234,7 +295,7 @@ private fun TrailerPlayer(videoId: String) {
                                 Icon(Icons.Rounded.PlayArrow, contentDescription = "Play trailer", tint = Color.White)
                             }
                         }
-                        !manuallyFullscreen && customView == null -> {
+                        !manuallyFullscreen -> {
                             AndroidView(
                                 modifier = Modifier.fillMaxSize(),
                                 factory = {
@@ -255,43 +316,10 @@ private fun TrailerPlayer(videoId: String) {
                     IconButton(onClick = ::openYouTube) {
                         Icon(Icons.Rounded.OpenInNew, "Open in YouTube", tint = AliflixContentSecondary)
                     }
-                    IconButton(onClick = {
-                        started = true
-                        manuallyFullscreen = true
-                        setFullscreenWindow(true)
-                    }) {
+                    IconButton(onClick = ::enterFullscreen) {
                         Icon(Icons.Rounded.Fullscreen, "Fullscreen trailer", tint = AliflixContentSecondary)
                     }
                 }
-            }
-        }
-    }
-
-    // Both fullscreen buttons use one immersive window and retain the same player.
-    if (manuallyFullscreen || customView != null) {
-        Dialog(
-            onDismissRequest = ::exitFullscreen,
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-        ) {
-            val dialogView = LocalView.current
-            DisposableEffect(dialogView) {
-                (dialogView.parent as? DialogWindowProvider)?.window?.let { window ->
-                    WindowCompat.getInsetsController(window, dialogView).apply {
-                        hide(WindowInsetsCompat.Type.systemBars())
-                        systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                    }
-                }
-                onDispose { }
-            }
-            key(customView) {
-                AndroidView(
-                    factory = {
-                        (customView ?: obtainPlayer()).also { view ->
-                            (view.parent as? ViewGroup)?.removeView(view)
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize().background(Color.Black),
-                )
             }
         }
     }
