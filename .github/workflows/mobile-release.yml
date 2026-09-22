@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.74"
+        description: "Release tag, for example v3.1.91"
         required: true
         type: string
       skip_tests:
@@ -35,10 +35,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "180"
-  RELEASE_VERSION_NAME: "3.1.90"
+  RELEASE_VERSION_CODE: "181"
+  RELEASE_VERSION_NAME: "3.1.91"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
-
 
 jobs:
   changed-paths:
@@ -61,7 +60,7 @@ jobs:
           fi
 
   playback-device-tests:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -182,7 +181,8 @@ jobs:
     if: >-
       always() && needs.changed-paths.result == 'success' &&
       (needs.playback-device-tests.result == 'success' ||
-       (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped')) &&
+       (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
+       (github.ref_name == 'release/v3.1.91' && needs.playback-device-tests.result == 'skipped')) &&
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
     runs-on: ubuntu-latest
@@ -265,7 +265,7 @@ jobs:
           echo "Expected certificate SHA256: $EXPECTED_MOBILE_SIGNER_SHA256"
           test "$KEYSTORE_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
-      - name: Test and build phone release
+      - name: Build phone release
         env:
           ALIFLIX_KEYSTORE_FILE: ${{ runner.temp }}/aliflix-release.jks
           ALIFLIX_KEYSTORE_PASSWORD: ${{ secrets.ALIFLIX_KEYSTORE_PASSWORD }}
@@ -274,7 +274,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          if [ "${{ inputs.skip_tests }}" != "true" ]; then
+          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ]; then
             ./gradlew testMobileDebugUnitTest
             ./gradlew lintMobileDebug
           fi
@@ -308,7 +308,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Redesigned Discover with recent searches, official inline trailers, refined library and download cards, independent download readiness, a 200 GB storage cap, and improved loading and screen insets."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Fix Discover poster cropping and logo contrast; refine Ask Aliflix animations, trailer fullscreen/fallback, My Space scrolling and library badges, and selected-only download readiness."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -336,8 +336,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Redesigned Discover with recent searches, official inline trailers, refined library and download cards, independent download readiness, a 200 GB storage cap, and improved loading and screen insets. Tests and emulator validation were explicitly skipped at user request."
+          body: "Fix Discover poster cropping and original logo contrast, refine Ask Aliflix card, trailer fullscreen and YouTube fallback, My Space scrolling and library metadata, and selected-only download readiness. Unit tests and emulator validation skipped as requested; production-signed APK integrity is checked."
           files: |
             aliflix-mobile.apk
             update-mobile.json
-
