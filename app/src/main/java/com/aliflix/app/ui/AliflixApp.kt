@@ -4163,7 +4163,7 @@ internal fun DetailScreen(
     val visibleCast = if (castExpanded) item.cast else item.cast.take(8)
     LazyColumn(
         state = detailListState,
-        modifier = Modifier
+        modifier = Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
             .fillMaxSize()
             .aliflixScreenBackground(),
         contentPadding = PaddingValues(bottom = 40.dp),
@@ -4202,7 +4202,7 @@ internal fun DetailScreen(
                 AnimatedVisibility(visible = historyBanner && inHistory,
                     enter = fadeIn(tween(300)) + slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it / 5 } + scaleIn(tween(380), initialScale = .92f),
                     exit = fadeOut(tween(200)) + scaleOut(tween(220), targetScale = .96f),
-                    modifier = Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility).padding(start = 76.dp, top = 16.dp, end = 16.dp)) {
+                    modifier = Modifier.padding(start = 76.dp, top = 16.dp, end = 16.dp)) {
                     Surface(shape = RoundedCornerShape(24.dp), color = AliflixScrimStrong,
                         border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .25f))) {
                         Row(Modifier.height(48.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -4216,7 +4216,7 @@ internal fun DetailScreen(
                 IconButton(
                     onClick = onBack,
                     modifier = Modifier
-                        .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
+                        
                         .padding(16.dp)
                         .size(48.dp)
                         .clip(CircleShape)
