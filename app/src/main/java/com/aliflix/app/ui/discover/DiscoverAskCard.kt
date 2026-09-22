@@ -83,9 +83,9 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                             )
                         }
                     }
-                    // 0f leaves the original heat-sweep logo almost black. A fixed phase
-                    // exposes its existing purple/lilac gradient without replacing the mark.
-                    AliflixHeatmapLogo(timeSeconds = 5f, modifier = Modifier.size(57.dp))
+                    // The original heatmap renderer now starts at its illuminated
+                    // lilac phase; use that same authentic mark as the Discover header.
+                    AliflixHeatmapLogo(timeSeconds = 0f, modifier = Modifier.size(57.dp))
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
