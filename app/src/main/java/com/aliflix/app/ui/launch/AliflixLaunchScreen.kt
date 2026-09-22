@@ -290,7 +290,8 @@ private fun AliflixLaunchStage(
         Box(
             modifier = Modifier
                 .height(26.dp)
-                .width(210.dp),
+                .width(210.dp)
+                .graphicsLayer { alpha = rotatorProgress },
             contentAlignment = Alignment.Center,
         ) {
             val words = listOf("MOVIES", "SERIES", "STORIES")
@@ -439,8 +440,8 @@ fun AliflixHeatmapLogo(
 
         val logoPath = AliflixLogoGeometry.createCombinedLogoPath(unit, left, top)
 
-        // Start at the original artwork's illuminated lilac phase, not its nearly
-        // black introductory frame. Geometry and heatmap animation stay unchanged.
+        // Mathematical motion values from reference HTML, offset to the original
+        // artwork's illuminated lilac phase without replacing its geometry.
         val t = (timeSeconds + 4.4f) * LAUNCH_LOGO_MOTION_RATE
         val sweepX = -104f + ((t * 24f) % 194f)
         val pulseX = -14f + ((t * 31f) % 148f)
