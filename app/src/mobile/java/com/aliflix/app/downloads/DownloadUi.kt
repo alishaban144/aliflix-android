@@ -305,12 +305,12 @@ internal interface DownloadUiDependencies {
                             }
                     }
                 }
-                if (listLoading) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "Loading episodes" })
+                if (listLoading) CircularProgressIndicator(Modifier.size(20.dp).semantics { contentDescription = "Loading episodes" }, strokeWidth = 2.dp)
                 if (media.type == MediaType.TV && preparing && selectedKeys.isNotEmpty()) {
                     val finished = selectedKeys.count { validated(it) || it in errors }
                     Column(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
                         Text("$finished / ${selectedKeys.size}", color = AliflixContentSecondary)
-                        LinearProgressIndicator(progress = { finished.toFloat() / selectedKeys.size }, modifier = Modifier.fillMaxWidth())
+                        
                     }
                 }
                 LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -327,7 +327,7 @@ internal interface DownloadUiDependencies {
                         val checked = key in selectedKeys
                         Surface(shape = RoundedCornerShape(18.dp), color = if (checked) AliflixAccentSecondary.copy(alpha = .08f) else AliflixSurfaceSecondary,
                             border = BorderStroke(1.dp, if (checked) AliflixAccentSecondary.copy(alpha = .25f) else AliflixBorderSubtle)) {
-                        Column(Modifier.padding(8.dp)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(
                                 if (media.type == MediaType.TV && initialEpisode == null) Modifier.toggleable(value = checked,
                                     enabled = !saving && key in eligible, role = Role.Checkbox,
@@ -349,7 +349,7 @@ internal interface DownloadUiDependencies {
                                 Column(Modifier.weight(1f)) {
                                     Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
                                     val episode = episodes.firstOrNull { it.seasonNumber == selection.seasonNumber && it.number == selection.episodeNumber }
-                                    episode?.imdbRating?.takeIf { it > 0 }?.let { rating ->
+                                    (if (media.type == MediaType.MOVIE) media.imdbRating else episode?.imdbRating)?.takeIf { it > 0 }?.let { rating ->
                                         Text("IMDb ${"%.1f".format(java.util.Locale.ROOT, rating)}", color = Color(0xFFF5C518), style = MaterialTheme.typography.labelSmall)
                                     }
                                     saved?.let { Text(it.statusLabel(), color = AliflixContentSecondary, style = MaterialTheme.typography.bodySmall) }
@@ -369,7 +369,7 @@ internal interface DownloadUiDependencies {
                                 quality[key]?.let { selected ->
                                     Box {
                                         var qualityMenu by remember(key) { mutableStateOf(false) }
-                                        TextButton(onClick = { qualityMenu = true }, enabled = !saving) {
+                                        TextButton(onClick = { qualityMenu = true }, enabled = !saving, shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.textButtonColors(containerColor = AliflixAccentPrimary.copy(alpha = .14f))) {
                                             Text("${selected.label} · ${selected.sizeLabel}", color = AliflixAccentSecondary)
                                             Icon(Icons.Rounded.ExpandMore, "Quality", Modifier.size(18.dp))
                                         }
@@ -545,7 +545,7 @@ internal interface DownloadUiDependencies {
                     }
                 }
                 Text("Storage limit · ${limit.toInt()} GB")
-                Slider(value = limit, onValueChange = { limit = it }, valueRange = 1f..500f, steps = 498,
+                Slider(value = limit, onValueChange = { limit = it }, valueRange = 1f..200f, steps = 198,
                     onValueChangeFinished = { store.preferences.edit().putInt("limitGb", limit.toInt()).apply() })
                 Text("${downloadSize(entries.sumOf { it.downloadedBytes })} used", color = AliflixContentSecondary)
             }

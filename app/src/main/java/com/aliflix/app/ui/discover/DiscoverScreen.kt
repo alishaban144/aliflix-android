@@ -66,6 +66,9 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -186,6 +189,18 @@ internal fun DiscoverScreen(
     catalogBottomPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val historyPrefs = remember(context) { context.getSharedPreferences("aliflix_search_history", android.content.Context.MODE_PRIVATE) }
+    var history by remember { mutableStateOf(runCatching {
+        val values = org.json.JSONArray(historyPrefs.getString("queries", "[]"))
+        (0 until values.length()).map { values.getString(it) }.take(4)
+    }.getOrDefault(emptyList<String>())) }
+    fun recordSearch(query: String) {
+        val value = query.trim().take(200)
+        if (value.isEmpty()) return
+        history = (listOf(value) + history.filterNot { it.equals(value, true) }).take(4)
+        historyPrefs.edit().putString("queries", org.json.JSONArray(history).toString()).apply()
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
     var fieldValue by rememberSaveable(stateSaver = TextFieldValue.Saver) {
@@ -347,10 +362,12 @@ internal fun DiscoverScreen(
                         .fillMaxSize()
                         .padding(bottom = preservedCatalogBottomPadding),
                 ) {
-                    Column(modifier = Modifier.fillMaxSize()) {
+                    val catalogueHeader: @Composable () -> Unit = { Column {
                         MobileTopSafeArea(extraPadding = 18.dp)
 
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            com.aliflix.app.ui.launch.AliflixHeatmapLogo(0f, Modifier.size(36.dp))
+                            Spacer(Modifier.width(12.dp))
                             Text("Discover", color = AliflixContentPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         }
 
@@ -368,13 +385,13 @@ internal fun DiscoverScreen(
                                 },
                                 placeholder = {
                                     Text(
-                                        text = "Search titles and people",
+                                        text = "What are you looking for?",
                                         color = AliflixContentTertiary,
                                         fontSize = 14.sp,
                                     )
                                 },
                                 leadingIcon = {
-                                    IconButton(onClick = { keyboard?.hide(); fieldValue = fieldValue.copy(text = fieldValue.text.trim()) }) {
+                                    IconButton(onClick = { keyboard?.hide(); fieldValue = fieldValue.copy(text = fieldValue.text.trim()); recordSearch(fieldValue.text) }) {
                                         Icon(Icons.Filled.Search, "Search catalogue", tint = AliflixContentSecondary)
                                     }
                                 },
@@ -398,7 +415,7 @@ internal fun DiscoverScreen(
                                 keyboardActions = KeyboardActions(
                                     onSearch = { 
                                         keyboard?.hide()
-                                        fieldValue = fieldValue.copy(text = fieldValue.text.trim())
+                                        fieldValue = fieldValue.copy(text = fieldValue.text.trim()); recordSearch(fieldValue.text)
                                     },
                                 ),
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -424,70 +441,42 @@ internal fun DiscoverScreen(
                                 keyboard?.hide()
                                 val query = fieldValue.text.trim()
                                 fieldValue = fieldValue.copy(text = query)
+                                recordSearch(query)
                                 onSubmitSearch(query)
                             }, modifier = Modifier.padding(start = 8.dp).size(48.dp).background(AliflixSurfaceSecondary, RoundedCornerShape(12.dp)).border(1.dp, AliflixAccentSecondary.copy(alpha = .22f), RoundedCornerShape(12.dp)).testTag("discover-search-button")) {
                                 Icon(Icons.Filled.Search, "Search", tint = AliflixAccentSecondary)
                             }
                         }
 
-                        AnimatedVisibility(
-                            visible = aiEnabled,
-                            enter = fadeIn(DiscoverMotion.standard()),
-                            exit = fadeOut(DiscoverMotion.standard()),
-                        ) {
-                            Surface(
-                                onClick = {
-                                    recommendModeActive = true
-                                    onModeChange(SearchMode.AI)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                                    .testTag("discover-ask-aliflix-card"),
-                                shape = RoundedCornerShape(22.dp),
-                                color = Color.Transparent,
-                                contentColor = AliflixContentPrimary,
-                                tonalElevation = 0.dp,
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(
-                                            Brush.linearGradient(
-                                                listOf(
-                                                    AliflixAccentPrimary.copy(alpha = 0.32f),
-                                                    AliflixSurfaceElevated,
-                                                    AliflixSurfacePrimary,
-                                                )
-                                            )
-                                        )
-                                        .border(1.dp, AliflixAccentPrimary.copy(alpha = 0.34f), RoundedCornerShape(22.dp))
-                                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    AnimatedAliflixHeatmapLogo(
-                                        modifier = Modifier.size(36.dp),
-                                    )
-                                    Spacer(modifier = Modifier.width(13.dp))
-                                    Row(
-                                        modifier = Modifier.weight(1f),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            text = "Ask Aliflix",
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontSize = 17.sp,
-                                            color = AliflixContentPrimary,
-                                        )
+                        if (history.isNotEmpty() && fieldValue.text.isBlank()) {
+                            Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Recent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                    IconButton(onClick = { history = emptyList(); historyPrefs.edit().remove("queries").apply() }) {
+                                        Icon(Icons.Rounded.DeleteOutline, "Clear search history", tint = AliflixAccentSecondary)
                                     }
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                                        contentDescription = "Open Ask Aliflix recommendations",
-                                        tint = AliflixAccentSecondary,
-                                        modifier = Modifier.size(21.dp)
-                                    )
+                                }
+                                history.chunked(2).forEach { pair ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        pair.forEach { query ->
+                                            Surface(onClick = { fieldValue = TextFieldValue(query); recordSearch(query); keyboard?.hide() },
+                                                modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp), color = AliflixSurfaceSecondary,
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong)) {
+                                                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                                    Icon(Icons.Rounded.History, null, Modifier.size(18.dp), tint = AliflixAccentSecondary)
+                                                    Text(query, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                                                }
+                                            }
+                                        }
+                                        if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                    }
                                 }
                             }
+                        }
+                        if (aiEnabled && fieldValue.text.isBlank()) DiscoverAskCard { mode ->
+                            onSetAskEditorState(askEditorState.copy(mode = mode))
+                            recommendModeActive = true
+                            onModeChange(SearchMode.AI)
                         }
 
                         CatalogueTypeSelector(
@@ -496,13 +485,13 @@ internal fun DiscoverScreen(
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)
                         )
 
-                        if (catalogueStore != null) DiscoverCatalogueContent(
-                            store = catalogueStore, query = fieldValue.text.trim(), filter = mediaFilter,
-                            onOpen = onOpen, onPerson = onPerson, onCategory = onCategory,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                        )
-
-                    }
+                    } }
+                    if (catalogueStore != null) DiscoverCatalogueContent(
+                        store = catalogueStore, query = fieldValue.text.trim(), filter = mediaFilter,
+                        onOpen = { recordSearch(fieldValue.text); onOpen(it) },
+                        onPerson = { recordSearch(fieldValue.text); onPerson(it) }, onCategory = onCategory,
+                        modifier = Modifier.fillMaxSize(), header = catalogueHeader,
+                    ) else catalogueHeader()
 
                 }
             }

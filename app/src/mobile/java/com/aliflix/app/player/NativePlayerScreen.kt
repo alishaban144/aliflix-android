@@ -525,7 +525,8 @@ internal fun NativePlayerScreen(
                     )
                 }
 
-                MobilePlayerTimeline(
+                if (!preparing && state.ready && state.error == null &&
+                    player?.playbackState in setOf(Player.STATE_READY, Player.STATE_ENDED)) MobilePlayerTimeline(
                     currentPositionMs = position,
                     durationMs = duration,
                     bufferedPositionMs = player?.bufferedPosition ?: 0L,

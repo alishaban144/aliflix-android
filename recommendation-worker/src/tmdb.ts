@@ -48,6 +48,7 @@ export interface TmdbDetails extends TmdbListItem {
   status?: string; created_by?: Array<{ id: number; name: string; profile_path?: string | null }>;
   imdb_id?: string | null;
   external_ids?: { imdb_id?: string | null; tvdb_id?: number | null };
+  videos?: { results?: Array<{ key: string; site: string; type: string; official: boolean; iso_639_1?: string }> };
   reviews?: { results?: TmdbReviewItem[] };
   recommendations?: TmdbPage;
   similar?: TmdbPage;
@@ -159,8 +160,8 @@ export class TmdbClient {
   details(type: MediaType, id: number): Promise<TmdbDetails> {
     return this.request(`/${type}/${id}`, {
       append_to_response: type === 'tv'
-        ? 'keywords,aggregate_credits,external_ids,reviews,content_ratings,recommendations,similar'
-        : 'keywords,credits,external_ids,reviews,release_dates,recommendations,similar',
+        ? 'keywords,aggregate_credits,external_ids,reviews,videos,content_ratings,recommendations,similar'
+        : 'keywords,credits,external_ids,reviews,videos,release_dates,recommendations,similar',
     });
   }
   externalIds(type: MediaType, id: number): Promise<TmdbExternalIds> {

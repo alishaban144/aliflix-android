@@ -83,6 +83,7 @@ private fun V3CatalogMedia.toMedia(fallback: Media? = null): Media {
 }
 
 private fun V3TitleDetails.toMedia(fallback: Media): Media = media.toMedia(fallback).copy(
+    trailerKey = trailerKey,
     imdbId = imdbId ?: fallback.imdbId,
     status = status.orEmpty(),
     creators = creators.map { creator ->

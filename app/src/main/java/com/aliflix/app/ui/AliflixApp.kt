@@ -65,6 +65,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -1693,10 +1694,12 @@ internal fun HomeFeed(
         }
     }
 
+    val feedEntrance = remember(selectedFilter) { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(selectedFilter) { feedEntrance.animateTo(1f, tween(380, easing = FastOutSlowInEasing)) }
     LazyColumn(
         state = listState,
         modifier = modifier
-            .fillMaxSize()
+            .fillMaxSize().graphicsLayer { alpha = feedEntrance.value; translationY = (1f - feedEntrance.value) * 24.dp.toPx() }
             .aliflixScreenBackground(),
         contentPadding = PaddingValues(bottom = 40.dp),
     ) {
@@ -1741,7 +1744,7 @@ internal fun HomeFeed(
                     onSearch = onSearch,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .windowInsetsPadding(WindowInsets.statusBars),
+                        .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility),
                 )
             }
         }
@@ -2102,7 +2105,7 @@ private fun FilterBar(
             )
             .then(
                 if (pinned) {
-                    Modifier.windowInsetsPadding(WindowInsets.statusBars)
+                    Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
                 } else {
                     Modifier
                 },
@@ -2531,7 +2534,7 @@ private fun MediaPoster(
                     )
                 },
             ),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Box(
             modifier = Modifier
@@ -2573,6 +2576,17 @@ private fun MediaPoster(
                     letterSpacing = 0.8.sp,
                 )
             }
+            if (showLibraryMetadata) {
+                Column(Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 34.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOfNotNull(item.rating.takeIf { it > 0 }?.let { "%.1f".format(Locale.ROOT, it) },
+                        item.runtime.takeIf(String::isNotBlank)).forEach { value ->
+                        Text(value, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clip(RoundedCornerShape(7.dp)).background(Color.Black.copy(alpha = .72f))
+                                .border(1.dp, Color.White.copy(alpha = .14f), RoundedCornerShape(7.dp)).padding(horizontal = 7.dp, vertical = 4.dp))
+                    }
+                }
+            }
             if (rank != null) {
                 Box(
                     modifier = Modifier
@@ -2602,7 +2616,7 @@ private fun MediaPoster(
             lineHeight = 17.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.height(34.dp),
+            modifier = if (showLibraryMetadata) Modifier else Modifier.height(34.dp),
         )
         if (item.year.isNotBlank()) {
             Text(
@@ -2611,11 +2625,7 @@ private fun MediaPoster(
                 fontSize = 11.sp,
             )
         }
-        if (showLibraryMetadata) {
-            Text(listOfNotNull(item.rating.takeIf { it > 0 }?.let { "TMDB ${"%.1f".format(Locale.ROOT, it)}" },
-                item.runtime.takeIf(String::isNotBlank)).joinToString(" · "), color = AliflixContentSecondary,
-                fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
+
     }
 }
 
@@ -3050,28 +3060,24 @@ internal fun MySpaceScreen(
         initialPage = page.coerceIn(0, 3),
         pageCount = { 4 },
     )
-    val chromeVisible = true
+    var chromeVisible by remember { mutableStateOf(true) }
     val chromeScroll = remember {
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            override fun onPreScroll(
+            private var travel = 0f
+            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset,
                 available: androidx.compose.ui.geometry.Offset,
-                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
-            ): androidx.compose.ui.geometry.Offset = androidx.compose.ui.geometry.Offset.Zero
-
-            override suspend fun onPreFling(
-                available: androidx.compose.ui.unit.Velocity,
-            ): androidx.compose.ui.unit.Velocity {
-                val absY = kotlin.math.abs(available.y)
-                val consumedY = when {
-                    absY > 7000f -> available.y * 0.35f
-                    absY > 2000f -> available.y * 0.25f
-                    absY > 500f -> available.y * 0.15f
-                    else -> 0f
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                if (source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput) {
+                    if (consumed.y * travel < 0) travel = 0f
+                    travel += consumed.y
+                    if (travel < -48f) chromeVisible = false
+                    if (travel > 32f || available.y > 12f) chromeVisible = true
                 }
-                return androidx.compose.ui.unit.Velocity(0f, consumedY)
+                return androidx.compose.ui.geometry.Offset.Zero
             }
         }
     }
+    LaunchedEffect(pagerState.settledPage) { chromeVisible = true }
     var showSettingsWindow by rememberSaveable { mutableStateOf(false) }
     var showClearConfirmation by remember { mutableStateOf(false) }
 
@@ -3148,13 +3154,7 @@ internal fun MySpaceScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .then(
-                if (pagerState.currentPage == 3) {
-                    Modifier.downloadAtmosphere()
-                } else {
-                    Modifier.aliflixScreenBackground()
-                },
-            ),
+            .downloadAtmosphere(),
     ) {
         MobileTopSafeArea(extraPadding = 18.dp)
         androidx.compose.animation.AnimatedVisibility(
@@ -3648,7 +3648,7 @@ private fun PersonCreditsScreen(
         modifier = modifier
             .fillMaxSize()
             .aliflixScreenBackground()
-            .windowInsetsPadding(WindowInsets.statusBars),
+            .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility),
     ) {
         Row(
             modifier = Modifier
@@ -3791,7 +3791,7 @@ private fun GenreExploreScreen(
         modifier = modifier
             .fillMaxSize()
             .aliflixScreenBackground()
-            .windowInsetsPadding(WindowInsets.statusBars),
+            .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility),
     ) {
         Row(
             modifier = Modifier
@@ -4201,7 +4201,7 @@ internal fun DetailScreen(
                 AnimatedVisibility(visible = historyBanner && inHistory,
                     enter = fadeIn(tween(300)) + slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it / 5 } + scaleIn(tween(380), initialScale = .92f),
                     exit = fadeOut(tween(200)) + scaleOut(tween(220), targetScale = .96f),
-                    modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(start = 76.dp, top = 16.dp, end = 16.dp)) {
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility).padding(start = 76.dp, top = 16.dp, end = 16.dp)) {
                     Surface(shape = RoundedCornerShape(24.dp), color = AliflixScrimStrong,
                         border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .25f))) {
                         Row(Modifier.height(48.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -4215,7 +4215,7 @@ internal fun DetailScreen(
                 IconButton(
                     onClick = onBack,
                     modifier = Modifier
-                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
                         .padding(16.dp)
                         .size(48.dp)
                         .clip(CircleShape)
@@ -4235,7 +4235,7 @@ internal fun DetailScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Text(
-                        text = if (item.type == MediaType.MOVIE) "FEATURE FILM" else "SERIES",
+                        text = if (item.type == MediaType.MOVIE) "MOVIE" else "SERIES",
                         color = AliflixAccentSecondary,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Black,
@@ -4338,55 +4338,6 @@ internal fun DetailScreen(
                         }
                     }
                 }
-                if (item.creators.isNotEmpty()) {
-                    DetailInfoSection(title = "Creators") {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            contentPadding = PaddingValues(end = 4.dp),
-                        ) {
-                            items(item.creators.distinctBy { it.tmdbId }, key = { creator -> creator.tmdbId }) { creator ->
-                                DetailCreatorCard(
-                                    creator = creator,
-                                    onClick = { onOpenCreator(creator) },
-                                )
-                            }
-                        }
-                    }
-                }
-                if (item.genres.isNotEmpty()) {
-                    DetailInfoSection(title = "Genres") {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            item.genres.distinct().forEach { genre ->
-                                Row(
-                                    modifier = Modifier
-                                        .heightIn(min = 48.dp)
-                                        .clip(CircleShape)
-                                        .background(AliflixSurface)
-                                        .border(1.dp, AliflixBorderStrong, CircleShape)
-                                        .clickable { onOpenGenre(genre, item.type) }
-                                        .padding(start = 14.dp, end = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        text = genre,
-                                        color = AliflixContentPrimary,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Rounded.ChevronRight,
-                                        contentDescription = null,
-                                        tint = AliflixAccentSecondary,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
                 if (item.originalLanguage.isNotBlank() || item.cast.isNotEmpty()) {
                     DetailInfoSection(title = "Details") {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -4446,6 +4397,56 @@ internal fun DetailScreen(
                         }
                     }
                 }
+                if (item.creators.isNotEmpty()) {
+                    DetailInfoSection(title = "Creators") {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(end = 4.dp),
+                        ) {
+                            items(item.creators.distinctBy { it.tmdbId }, key = { creator -> creator.tmdbId }) { creator ->
+                                DetailCreatorCard(
+                                    creator = creator,
+                                    onClick = { onOpenCreator(creator) },
+                                )
+                            }
+                        }
+                    }
+                }
+                if (item.genres.isNotEmpty()) {
+                    DetailInfoSection(title = "Genres") {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            item.genres.distinct().forEach { genre ->
+                                Row(
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .clip(CircleShape)
+                                        .background(AliflixSurface)
+                                        .border(1.dp, AliflixBorderStrong, CircleShape)
+                                        .clickable { onOpenGenre(genre, item.type) }
+                                        .padding(start = 14.dp, end = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = genre,
+                                        color = AliflixContentPrimary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Rounded.ChevronRight,
+                                        contentDescription = null,
+                                        tint = AliflixAccentSecondary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!com.aliflix.app.BuildConfig.IS_TV) InlineTrailerSection(item)
                 if (item.reviews.isNotEmpty()) {
                     DetailInfoSection(
                         title = "Reviews",
@@ -4652,8 +4653,8 @@ private fun DetailCreatorCard(
     )
     Surface(
         modifier = Modifier
-            .widthIn(min = 210.dp, max = 260.dp)
-            .heightIn(min = 76.dp)
+            .widthIn(min = 160.dp, max = 210.dp)
+            .heightIn(min = 56.dp)
             .scale(cardScale)
             .clickable(
                 interactionSource = interactionSource,
@@ -4671,7 +4672,7 @@ private fun DetailCreatorCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(52.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
                     .background(AliflixSurfacePressed),
                 contentAlignment = Alignment.Center,
@@ -4699,7 +4700,7 @@ private fun DetailCreatorCard(
                 Text(
                     text = creator.name,
                     color = AliflixContentPrimary,
-                    fontSize = 14.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -5800,7 +5801,7 @@ private fun ConfigurationError(
                     ),
                 ),
             )
-            .windowInsetsPadding(WindowInsets.statusBars)
+            .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
             .padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,

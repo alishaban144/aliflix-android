@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
@@ -23,7 +23,7 @@ fun MobileTopSafeArea(
     modifier: Modifier = Modifier,
     extraPadding: Dp = 16.dp,
 ) {
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val statusBarTop = WindowInsets.statusBarsIgnoringVisibility.asPaddingValues().calculateTopPadding()
     val cutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
     val topInset = max(statusBarTop, cutoutTop)
     Spacer(

@@ -45,7 +45,7 @@ internal class OfflineDownloads private constructor(val context: Context) {
         val native = NativePlaybackRequest.fromJson(JSONObject(String(request.data, Charsets.UTF_8)).getString("playback"))
         DefaultDownloaderFactory(cacheFactory(native), executor).createDownloader(request)
     })
-    val limitBytes get() = preferences.getInt("limitGb", 50).coerceIn(1, 500) * DOWNLOAD_GB
+    val limitBytes get() = preferences.getInt("limitGb", 50).coerceIn(1, 200) * DOWNLOAD_GB
     val preferredHeight get() = preferences.getInt("quality", 720)
 
     init {

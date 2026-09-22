@@ -94,32 +94,45 @@ internal class DiscoverCatalogueStore(private val client: RecommendationAiClient
 
 @Composable
 internal fun DiscoverCatalogueContent(store: DiscoverCatalogueStore, query: String, filter: String,
-    onOpen: (Media) -> Unit, onPerson: (MediaCreator) -> Unit, onCategory: (String) -> Unit, modifier: Modifier = Modifier) {
-    if (query.isNotBlank()) {
-        key(query.trim(), filter) {
-            CatalogueGrid(store, null, query, filter, onOpen, onPerson, modifier)
-        }
-    } else {
-        val listState = rememberLazyListState()
-        LazyColumn(state = listState, modifier = modifier.testTag("discover-idle"), contentPadding = PaddingValues(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-            items(discoveryCategories.entries.take(3), key = { it.key }) { (category, title) ->
-                val session = store.session(category, "", filter)
-                LaunchedEffect(category, filter) { store.load(category, "", filter) }
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(Modifier.fillMaxWidth().clickable { onCategory(category) }.heightIn(min = 48.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(title, color = AliflixContentPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Open $title", tint = AliflixAccentSecondary)
-                    }
-                    if (session.items.isEmpty()) {
-                        if (session.error != null || (!session.loading && session.updatedAt > 0)) CatalogueStatus(session, onRetry = { store.load(category, "", filter, force = true) })
-                        else LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(4) { ShimmerBox(Modifier.width(118.dp).height(177.dp).clip(RoundedCornerShape(16.dp))) }
-                        }
-                    } else LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(session.items.take(16), key = Media::key) { item -> DiscoverPosterCard(item, onOpen, Modifier.width(118.dp)) }
+    onOpen: (Media) -> Unit, onPerson: (MediaCreator) -> Unit, onCategory: (String) -> Unit,
+    modifier: Modifier = Modifier, header: @Composable () -> Unit = {}) {
+    val category = if (query.isBlank()) "trending" else null
+    val session = store.session(category, query, filter)
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(query, filter) { if (query.isNotBlank()) delay(280); store.load(category, query, filter) }
+    LazyVerticalGrid(columns = GridCells.Adaptive(112.dp), modifier = modifier,
+        contentPadding = PaddingValues(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item("header", span = { GridItemSpan(maxLineSpan) }) { header() }
+        if (query.isBlank()) {
+            item("explore", span = { GridItemSpan(maxLineSpan) }) {
+                Row(Modifier.fillMaxWidth().clickable { onCategory("trending") }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Explore", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Explore", tint = AliflixAccentSecondary)
+                }
+            }
+            item("explore-posters", span = { GridItemSpan(maxLineSpan) }) {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(session.items.take(16), key = Media::key) { item ->
+                        AsyncImage(item.posterUrl, item.title, contentScale = ContentScale.Crop,
+                            modifier = Modifier.width(118.dp).height(128.dp).clip(RoundedCornerShape(16.dp)).clickable { onOpen(item) })
                     }
                 }
             }
+        } else {
+            items(session.items, key = Media::key) { item -> DiscoverPosterCard(item, onOpen, Modifier.padding(horizontal = 8.dp)) }
+            items(session.people, key = { "person:${it.tmdbId}" }) { person ->
+                Column(Modifier.padding(horizontal = 8.dp).clickable { onPerson(person) }) {
+                    AsyncImage(person.profileUrl, null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(CircleShape))
+                    Text(person.name, maxLines = 2, style = MaterialTheme.typography.labelLarge)
+                }
+            }
+            if (session.hasMore && session.items.isNotEmpty()) item("more", span = { GridItemSpan(maxLineSpan) }) {
+                TextButton(onClick = { scope.launch { store.load(null, query, filter, more = true) } }, modifier = Modifier.fillMaxWidth()) { Text("Load more") }
+            }
+        }
+        if (session.loading || session.error != null || (session.updatedAt > 0 && session.items.isEmpty() && session.people.isEmpty())) {
+            item("status", span = { GridItemSpan(maxLineSpan) }) { CatalogueStatus(session) { store.load(category, query, filter, force = true) } }
         }
     }
 }
@@ -138,7 +151,7 @@ private fun CatalogueStatus(session: CatalogueSession, onRetry: suspend () -> Un
 
 @Composable
 internal fun CatalogueGrid(store: DiscoverCatalogueStore, category: String?, query: String, filter: String,
-    onOpen: (Media) -> Unit, onPerson: (MediaCreator) -> Unit, modifier: Modifier = Modifier) {
+    onOpen: (Media) -> Unit, onPerson: (MediaCreator) -> Unit, modifier: Modifier = Modifier, header: @Composable () -> Unit = {}) {
     val session = store.session(category, query, filter)
     val grid = rememberLazyGridState()
     val scope = rememberCoroutineScope()
@@ -155,6 +168,7 @@ internal fun CatalogueGrid(store: DiscoverCatalogueStore, category: String?, que
         }
         LazyVerticalGrid(state = grid, columns = GridCells.Adaptive(112.dp), modifier = Modifier.weight(1f).testTag("discover-catalogue-results"),
             contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            item("header", span = { GridItemSpan(maxLineSpan) }) { header() }
             if ((waiting || session.loading) && session.items.isEmpty() && session.people.isEmpty()) {
                 items(9, key = { "skeleton:$it" }) {
                     ShimmerBox(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)))

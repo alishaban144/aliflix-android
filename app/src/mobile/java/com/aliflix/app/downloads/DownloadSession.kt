@@ -87,8 +87,8 @@ internal class DownloadSession private constructor(private val activity: Compone
         jobs[jobKey] = activity.lifecycleScope.launch {
             try {
                 store.prepare(activity, host, batch, language, prepared.toMap(), { key, result ->
-                    prepared[key] = result; timestamps[key] = android.os.SystemClock.elapsedRealtime(); errors.remove(key)
-                }, { key, _ -> errors[key] = "Unavailable" })
+                    pending.remove(key); prepared[key] = result; timestamps[key] = android.os.SystemClock.elapsedRealtime(); errors.remove(key)
+                }, { key, _ -> pending.remove(key); errors[key] = "Unavailable" })
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { batch.filter { it.first !in prepared }.forEach { errors[it.first] = "Unavailable" } }
             finally { batch.forEach { pending.remove(it.first) }; jobs.remove(jobKey) }

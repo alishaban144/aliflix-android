@@ -43,6 +43,7 @@ internal fun V3TitleDetails.toStableMobileMedia(fallback: Media): Media {
     val mapped = media.toMobileMedia(fallback = fallback, preserveArtwork = true)
     return mapped.copy(
         rating = mapped.rating,
+        trailerKey = trailerKey,
         imdbId = imdbId ?: fallback.imdbId,
         imdbRating = fallback.imdbRating,
         imdbRatingState = fallback.imdbRatingState,
@@ -98,6 +99,7 @@ internal fun Media.mergeStableMobileDetailUpdate(update: Media): Media {
         originalLanguage = originalLanguage.ifBlank { update.originalLanguage },
         creators = creators.ifEmpty { update.creators },
         runtime = runtime.ifBlank { update.runtime },
+        trailerKey = trailerKey ?: update.trailerKey,
         reviews = update.reviews.ifEmpty { reviews },
     )
 }

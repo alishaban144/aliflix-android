@@ -47,6 +47,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (!BuildConfig.IS_TV) {
+            androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+                .show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            androidx.core.view.ViewCompat.requestApplyInsets(window.decorView)
+        }
+    }
+
     override fun onDestroy() {
         playerController.destroy()
         super.onDestroy()

@@ -60,6 +60,7 @@ data class Media(
     val omdbGenres: List<String> = emptyList(),
     val omdbFullPlot: String? = null,
     val reviews: List<MediaReview> = emptyList(),
+    val trailerKey: String? = null,
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
@@ -169,6 +170,7 @@ data class Media(
                 )
             }
         })
+        put("trailerKey", trailerKey)
         put("runtime", runtime)
         put("omdbGenres", org.json.JSONArray(omdbGenres))
         omdbFullPlot?.let { put("omdbFullPlot", it) }
@@ -246,6 +248,7 @@ data class Media(
                     }
                 }.orEmpty(),
                 runtime = json.optString("runtime", ""),
+                trailerKey = json.optString("trailerKey").takeIf { it.matches(Regex("[a-zA-Z0-9_-]{11}")) },
                 omdbGenres = json.optJSONArray("omdbGenres")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         array.optString(index).takeIf(String::isNotBlank)

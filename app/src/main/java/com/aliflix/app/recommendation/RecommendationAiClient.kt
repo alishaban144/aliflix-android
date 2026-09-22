@@ -406,6 +406,7 @@ data class V3Review(
 }
 
 data class V3TitleDetails(
+    val trailerKey: String? = null,
     val media: V3CatalogMedia,
     val imdbId: String? = null,
     val status: String?,
@@ -416,6 +417,7 @@ data class V3TitleDetails(
 ) {
     companion object {
         fun fromJson(json: JSONObject) = V3TitleDetails(
+            trailerKey = json.nullableString("trailerKey")?.takeIf { it.matches(Regex("[a-zA-Z0-9_-]{11}")) },
             media = V3CatalogMedia.fromJson(json),
             imdbId = json.nullableString("imdbId"),
             status = json.nullableString("status"),
