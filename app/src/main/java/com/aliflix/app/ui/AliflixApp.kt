@@ -2597,6 +2597,7 @@ private fun MediaPoster(
         }
         Text(
             text = item.title,
+            color = AliflixContentPrimary,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             lineHeight = 17.sp,
@@ -4219,12 +4220,13 @@ internal fun DetailScreen(
                         .padding(16.dp)
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(AliflixScrimStrong)
+                        .background(AliflixSurfaceSecondary.copy(alpha = 0.96f))
                         .border(1.dp, AliflixBorderStrong, CircleShape),
                 ) {
                     Icon(
                         Icons.AutoMirrored.Rounded.ArrowBack,
                         contentDescription = "Back to previous screen",
+                        tint = AliflixContentPrimary,
                     )
                 }
                 Column(
@@ -4243,6 +4245,7 @@ internal fun DetailScreen(
                     )
                     Text(
                         text = item.title,
+                        color = AliflixContentPrimary,
                         style = MaterialTheme.typography.displayMedium,
                         fontWeight = FontWeight.Black,
                         maxLines = 3,
@@ -5575,6 +5578,7 @@ private fun EpisodeRow(
             }
             Text(
                 text = episode.title,
+                color = AliflixContentPrimary,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
