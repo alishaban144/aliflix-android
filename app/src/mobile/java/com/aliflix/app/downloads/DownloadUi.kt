@@ -238,9 +238,9 @@ internal interface DownloadUiDependencies {
 
     val preparing = selectedKeys.any { it in session.pending }
     fun validated(key: String): Boolean = prepared[key]?.let { it.qualities.isNotEmpty() && quality[key] in it.qualities && key !in errors } == true
-    LaunchedEffect(media.key, season, language, retry, episodes) {
+    LaunchedEffect(media.key, season, language, retry, episodes, selectedKeys) {
         if (!activity.hasInternetConnection()) { error = "Connect to the internet and try again"; return@LaunchedEffect }
-        session.prepare(store, selections.filter { it.first in eligible }.map { (key, raw) -> key to raw.copy(source = prefs.sourceFor(media)) }, language)
+        session.prepare(store, selections.filter { it.first in selectedKeys }.map { (key, raw) -> key to raw.copy(source = prefs.sourceFor(media)) }, language)
     }
     LaunchedEffect(prepared.toMap(), sharedHeight, selectedKeys) {
         selectedKeys.forEach { key -> prepared[key]?.let { item ->
@@ -251,7 +251,7 @@ internal interface DownloadUiDependencies {
         } }
     }
     val allValidated = selectedKeys.isNotEmpty() && selectedKeys.all { validated(it) }
-    val ready = allValidated && !preparing && !listLoading
+    val ready = allValidated && !preparing
     val total = selectedKeys.mapNotNull { quality[it] }.totalSizeLabel()
     val commonHeights = if (selectedKeys.isNotEmpty() && selectedKeys.all { prepared[it] != null })
         selectedKeys.map { key -> prepared.getValue(key).qualities.map { it.height }.toSet() }
