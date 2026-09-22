@@ -1,4 +1,4 @@
-name: v3.1.91 mobile compile check
+name: v3.1.91 source repair and compile
 
 on:
   push:
@@ -6,19 +6,37 @@ on:
       - fix/v3.1.91-discover-trailer-regressions
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: v3191-source-repair
+  cancel-in-progress: false
 
 jobs:
   compile-mobile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: true
+      - name: Apply exact-match source repairs and commit only changed files
+        run: |
+          set -euo pipefail
+          python3 tools/apply_v3191_repairs.py
+          git diff --check
+          if ! git diff --quiet -- app/src/main/java/com/aliflix/app/ui/AliflixApp.kt app/src/mobile/java/com/aliflix/app/downloads/DownloadUi.kt; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add app/src/main/java/com/aliflix/app/ui/AliflixApp.kt app/src/mobile/java/com/aliflix/app/downloads/DownloadUi.kt
+            git commit -m 'Repair My Space scroll, library badges and download selection'
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - name: Compile phone app without tests or emulators
+      - name: Compile phone app without unit tests or emulators
         run: |
           set -euo pipefail
           chmod +x gradlew
