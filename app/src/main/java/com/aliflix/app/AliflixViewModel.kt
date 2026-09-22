@@ -419,11 +419,115 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _askEditorState.value = state
     }
 
+    fun setRecommendationAiModel(model: RecommendationAiModel) {
+        val changed = recommendationStore.aiModel.value != model
+        recommendationStore.setAiModel(model)
+        if (changed) regenerateAskAliflix(model)
+    }
+
+    /**
+     * Re-runs the active Ask Aliflix request with [model] under a brand-new
+     * request id, which resets the signed session and pagination cursors so an
+     * incompatible session can never leak into the regenerated results.
+     */
+    private fun regenerateAskAliflix(model: RecommendationAiModel) {
+        val uiRequest = activeAskUiRequest ?: return
+        val state = _askUiState.value
+        if (state is com.aliflix.app.ui.discover.AskAliflixUiState.Editing ||
+            state is com.aliflix.app.ui.discover.AskAliflixUiState.Interpreting
+        ) return
+
+        activeAskJob?.cancel()
+        val token = ++askSessionToken
+        val mapped = com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(
+            request = uiRequest,
+            aiModel = model,
+        )
+        activeAskRequest = mapped.workerRequest
+        activeAskSummary = mapped.summary
+        activeAskSpec = mapped.spec
+
+        val previous = state as? com.aliflix.app.ui.discover.AskAliflixUiState.Results
+        val keepVisible = previous != null
+        val keepLoadingMore = previous?.loadingMore == true
+        _askUiState.value = when {
+            previous == null -> com.aliflix.app.ui.discover.AskAliflixUiState.Searching(mapped.summary)
+            keepLoadingMore -> previous.copy(loadingMore = true, loadMoreError = null, refining = false, refineError = null)
+            else -> previous.copy(refining = true, refineError = null, loadingMore = false, loadMoreError = null)
+        }
+
+        activeAskJob = viewModelScope.launch {
+            try {
+                val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    aiClient.getRecommendations(mapped.workerRequest)
+                }
+                if (token != askSessionToken) return@launch
+                val candidates = response.results.map(::mapAskResult)
+                if (candidates.isEmpty()) {
+                    _askUiState.value = if (previous != null) {
+                        previous.copy(
+                            refining = false,
+                            loadingMore = false,
+                            refineError = "No titles found with the selected model yet.",
+                            loadMoreError = null,
+                        )
+                    } else {
+                        com.aliflix.app.ui.discover.AskAliflixUiState.Empty(mapped.summary, "No titles found.")
+                    }
+                } else {
+                    _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Results(
+                        requestSummary = mapped.summary,
+                        spec = mapped.spec,
+                        items = candidates,
+                        totalAvailable = response.totalResults,
+                        hasMore = response.hasMore,
+                        nextCursor = response.nextCursor,
+                        appliedRefinements = previous?.appliedRefinements.orEmpty(),
+                        activeRequest = uiRequest,
+                    )
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (token != askSessionToken) return@launch
+                _askUiState.value = when {
+                    previous != null && keepVisible -> previous.copy(
+                        refining = false,
+                        loadingMore = false,
+                        refineError = askAliflixErrorMessage(
+                            error,
+                            "The selected model could not refresh these results. Your previous results are shown.",
+                        ),
+                        loadMoreError = null,
+                    )
+                    error is com.aliflix.app.recommendation.RecommendationAiClientException &&
+                        error.code in setOf("TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED") -> {
+                        com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(
+                            mapped.summary,
+                            askAliflixErrorMessage(error, "Movie and series details are temporarily unavailable. Please try again."),
+                        )
+                    }
+                    else -> com.aliflix.app.ui.discover.AskAliflixUiState.Error(
+                        mapped.summary,
+                        askAliflixErrorMessage(error, "Ask Aliflix could not complete this search."),
+                    )
+                }
+            }
+        }
+    }
+
     fun loadMoreAskAliflix() {
         val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results ?: return
         val original = activeAskRequest ?: return
         if (currentResults.loadingMore || !currentResults.hasMore) return
         val cursor = currentResults.nextCursor ?: return
+        val selectedModel = recommendationStore.aiModel.value
+        // Find More must always run on the selected provider. If the saved model
+        // changed underneath the active session, rebuild the session first.
+        if (original.aiModel != selectedModel.workerValue) {
+            regenerateAskAliflix(selectedModel)
+            return
+        }
         val nextRequest = buildAskAliflixShowMoreRequest(original, cursor)
 
         val token = askSessionToken
@@ -452,6 +556,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 throw cancelled
             } catch (error: Exception) {
                 if (token != askSessionToken) return@launch
+                val code = (error as? com.aliflix.app.recommendation.RecommendationAiClientException)?.code
+                if (code == "SESSION_EXPIRED" || code == "INVALID_CURSOR" || code == "REQUEST_ID_CONFLICT") {
+                    // The signed session or cursor is unusable. Rebuild it from
+                    // the active request instead of letting the user retry a
+                    // cursor that can never succeed again.
+                    regenerateAskAliflix(selectedModel)
+                    return@launch
+                }
                 _askUiState.value = currentResults.copy(
                     loadingMore = false,
                     loadMoreError = askAliflixErrorMessage(error, "Could not find another batch right now."),
@@ -461,21 +573,29 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun retryAskAliflix() {
-        val original = activeAskRequest ?: return
         val uiRequest = activeAskUiRequest
+        val original = activeAskRequest ?: return
         val summary = activeAskSummary ?: return
         val spec = activeAskSpec ?: return
+        // Retries mint a fresh request id so a previously stored session with a
+        // different model fingerprint can never reject the retried request.
+        val selectedModel = recommendationStore.aiModel.value
+        val nextRequest = uiRequest?.let {
+            com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(
+                request = it,
+                aiModel = selectedModel,
+            ).workerRequest
+        } ?: original.copy(
+            cursor = null,
+            aiModel = selectedModel.workerValue,
+        )
+        activeAskRequest = nextRequest
         activeAskJob?.cancel()
         val token = ++askSessionToken
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Searching(summary)
         activeAskJob = viewModelScope.launch {
             try {
-                val response = aiClient.getRecommendations(
-                    original.copy(
-                        cursor = null,
-                        aiModel = recommendationStore.aiModel.value.workerValue,
-                    ),
-                )
+                val response = aiClient.getRecommendations(nextRequest)
                 if (token != askSessionToken) return@launch
                 val candidates = response.results.map(::mapAskResult)
                 _askUiState.value = if (candidates.isEmpty()) {
@@ -529,11 +649,25 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     private fun askAliflixErrorMessage(error: Exception, fallback: String): String {
         val clientError = error as? com.aliflix.app.recommendation.RecommendationAiClientException
-        return when (clientError?.code) {
+            ?: return fallback
+        return when (clientError.code) {
             "NETWORK_ERROR" -> "Check your connection and try again."
             "TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED" -> "Movie and series details are temporarily unavailable. Please try again."
             "RATE_LIMITED", "RESOURCE_EXHAUSTED", "GROQ_RATE_LIMITED" -> "Ask Aliflix is busy right now. Please wait a moment and try again."
-            "GROQ_UNAVAILABLE", "GEMINI_UNAVAILABLE", "AI_UNAVAILABLE" -> "The selected recommendation model is temporarily unavailable. Please try again."
+            // Configuration and authentication failures are permanent for this
+            // deploy; never present them as a temporary outage to retry.
+            "GROQ_NOT_CONFIGURED", "GEMINI_NOT_CONFIGURED" ->
+                "This recommendation model is not configured on the service yet. Choose the other model in Settings."
+            "GROQ_AUTH_FAILED", "GEMINI_AUTH_FAILED" ->
+                "The recommendation service credentials were rejected. This is not a temporary outage."
+            "GROQ_QUOTA_EXCEEDED" ->
+                "The recommendation model has reached its capacity limit. Try the other model or try again later."
+            "GROQ_UNAVAILABLE", "GEMINI_UNAVAILABLE", "AI_UNAVAILABLE" ->
+                if (clientError.retryable) {
+                    "The selected recommendation model is temporarily unavailable. Please try again."
+                } else {
+                    "The selected recommendation model rejected this request. Choose the other model in Settings."
+                }
             else -> fallback
         }
     }
@@ -1240,10 +1374,6 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 selectSearchMode(SearchMode.TITLE)
             }
         }
-    }
-
-    fun setRecommendationAiModel(model: RecommendationAiModel) {
-        recommendationStore.setAiModel(model)
     }
 
     suspend fun signInWithGoogle(activity: Activity): AccountActionResult =

@@ -93,7 +93,7 @@ describe('Cloudflare Worker', () => {
     const parsed: any = {
       requestId: '00000000-0000-4000-8000-000000000045',
       mode: 'describe',
-      aiModel: 'groq-qwen-3.8-27b',
+      aiModel: 'groq-gpt-oss-120b',
       query: 'movies about aliens and ufos',
       mediaType: 'movie',
       filters: {

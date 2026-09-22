@@ -741,7 +741,7 @@ private fun DocumentSnapshot.toSettingsSnapshot(): AccountSettingsSnapshot = Acc
         ?: PlaybackProviderId.DORABY.defaultBaseUrl,
     askAliflixEnabled = getBoolean("askAliflixEnabled") ?: true,
     recommendationAiModel = getString("recommendationAiModel")
-        ?: RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue,
+        ?: RecommendationAiModel.GROQ_GPT_OSS_120B.workerValue,
     preferredSubtitleLanguage = getString("preferredSubtitleLanguage") ?: "EN",
     autoDisplaySubtitles = getBoolean("autoDisplaySubtitles") ?: false,
     updatedAtMillis = getTimestamp("updatedAt")?.toDate()?.time

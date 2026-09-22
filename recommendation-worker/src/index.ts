@@ -1,6 +1,7 @@
 import { catalogueSearch, discoverArguments, discoverCategory, DISCOVER_CATEGORIES, DiscoverCategory } from './discover';
 import { ZodError } from 'zod';
 import { processFilterDiscoveryPage, processRecommendation, supportsDirectFilterPagination } from './engine';
+import { aiProviderName, selectedAiModel } from './ai';
 import { ParsedRecommendationRequest, RecommendationRequestSchema } from './schemas';
 import { ContinuationReservation, createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
 import { RecommendationEnv, RecommendationResponse, RecommendationResult, ServiceError } from './types';
@@ -101,6 +102,8 @@ export async function expandGeneratedContinuation(
           event: 'generated_continuation_retry_skipped',
           requestId: parsed.requestId,
           mode: parsed.mode,
+          provider: aiProviderName(selectedAiModel(env)),
+          model: selectedAiModel(env),
           pass: reservation.pass,
           available: availableAfterExpansion,
         }));
@@ -114,6 +117,8 @@ export async function expandGeneratedContinuation(
       event: 'generated_continuation_completed',
       requestId: parsed.requestId,
       mode: parsed.mode,
+      provider: aiProviderName(selectedAiModel(env)),
+      model: selectedAiModel(env),
       pass: reservation.pass,
       added: completed.added,
       available: availableAfterExpansion,
@@ -132,7 +137,16 @@ async function enforceRateLimit(request: Request, env: RecommendationEnv): Promi
 }
 
 function errorResponse(error: unknown): Response {
-  if (error instanceof ServiceError) return json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, error.status);
+  if (error instanceof ServiceError) {
+    // Log only sanitized error codes; never bodies, cursors, or secrets.
+    console.warn(JSON.stringify({
+      event: 'recommendation_request_failed',
+      code: error.code,
+      status: error.status,
+      retryable: error.retryable,
+    }));
+    return json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, error.status);
+  }
   if (error instanceof ZodError) return json({ error: { code: 'INVALID_REQUEST', message: 'The recommendation request is invalid', retryable: false, issues: error.issues } }, 400);
   if (error instanceof SyntaxError) return json({ error: { code: 'INVALID_JSON', message: 'The request body is not valid JSON', retryable: false } }, 400);
   console.error('Unhandled recommendation error', error);

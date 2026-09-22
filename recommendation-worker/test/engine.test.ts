@@ -65,8 +65,12 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     }).aiModel).toBe('gemini-3.8-flash');
     expect(RecommendationRequestSchema.parse({
       ...request,
+      aiModel: 'groq-gpt-oss-120b',
+    }).aiModel).toBe('groq-gpt-oss-120b');
+    expect(RecommendationRequestSchema.parse({
+      ...request,
       aiModel: 'groq-qwen-3.8-27b',
-    }).aiModel).toBe('groq-qwen-3.8-27b');
+    }).aiModel).toBe('groq-gpt-oss-120b');
     expect(() => RecommendationRequestSchema.parse({
       ...request,
       aiModel: 'groq-unapproved',
@@ -76,7 +80,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
   it('rejects conflicting current and legacy model fields', () => {
     expect(() => RecommendationRequestSchema.parse({
       ...request,
-      aiModel: 'groq-qwen-3.8-27b',
+      aiModel: 'groq-gpt-oss-120b',
       geminiModel: 'gemini-3.8-flash',
     })).toThrow('aiModel and legacy geminiModel must match');
   });
@@ -85,7 +89,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
     let routedModel: string | undefined;
     await processRecommendation({ GEMINI_GENERATION_MODEL: 'gemini-3.8-flash' } as any, {
       ...request,
-      aiModel: 'groq-qwen-3.8-27b',
+      aiModel: 'groq-gpt-oss-120b',
     }, {
       tmdb: fakeTmdb({ empty: true }),
       interpret: async env => {
@@ -93,7 +97,7 @@ describe('AI-generated, TMDB-grounded recommendation engine', () => {
         return interpreted;
       },
     });
-    expect(routedModel).toBe('groq-qwen-3.8-27b');
+    expect(routedModel).toBe('groq-gpt-oss-120b');
   });
 
   it('requires a canonical TMDB ID for similar requests', () => {

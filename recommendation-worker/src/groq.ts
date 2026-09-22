@@ -27,13 +27,13 @@ import {
 import { ZodError } from 'zod';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-export const GROQ_MODEL = 'qwen/qwen3.8-27b';
+export const GROQ_MODEL = 'openai/gpt-oss-120b';
 export const GROQ_TIMEOUT_MS = 24_000;
-// Qwen 3.8 27B's free-plan budget is shared across the generation and
-// verification calls in one interactive search. These ceilings are ample for
-// the compact JSON contracts while leaving room for both prompts and inputs.
+// GPT-OSS 120B counts hidden reasoning tokens inside max_completion_tokens.
+// These ceilings cover the compact JSON contracts plus low-effort reasoning
+// for the generation and verification calls in one interactive search.
 export const GROQ_MAX_OUTPUT_TOKENS = 4_096;
-export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 2_048;
+export const GROQ_VERIFICATION_MAX_OUTPUT_TOKENS = 3_072;
 
 const EMPTY_FILTERS = {
   originCountries: [], includedGenres: [], excludedGenres: [], productionCompanyIds: [], excludedTmdbIds: [], excludedTitles: [],
@@ -81,6 +81,8 @@ function parseGroqOutput<T>(operation: string, parse: () => T): T {
   } catch (error) {
     console.warn(JSON.stringify({
       event: 'groq_schema_validation_failed',
+      provider: 'groq',
+      model: GROQ_MODEL,
       operation,
       error: error instanceof ZodError ? error.issues.slice(0, 4) : String(error),
     }));
@@ -147,7 +149,7 @@ function alignAssessmentsToCandidateOrder(
 ): PremiseAssessment[] {
   return assessments.slice(0, candidates.length).map((assessment, position) => ({
     ...assessment,
-    // Qwen can satisfy the fixed-size schema while repeating or inventing
+    // GPT-OSS can satisfy the fixed-size schema while repeating or inventing
     // index values. The response contract is positional, so restore the
     // authoritative index from the candidate array before the engine joins it.
     index: candidates[position].index,
@@ -162,7 +164,7 @@ async function groqStructuredContent<T>(
   schemaName: string,
   operation: string,
   maxOutputTokens = GROQ_MAX_OUTPUT_TOKENS,
-  reasoningEffort: 'none' | 'low' = 'low',
+  reasoningEffort: 'low' | 'medium' | 'high' = 'low',
   temperature = 0.6,
 ): Promise<T> {
   if (!env.GROQ_API_KEY) {
@@ -186,8 +188,9 @@ async function groqStructuredContent<T>(
       },
       body: JSON.stringify({
         model: GROQ_MODEL,
-        // Groq recommends placing Qwen reasoning instructions in the user
-        // message and hiding reasoning when structured output is requested.
+        // GPT-OSS reasons in-band. Keep every instruction in one user message
+        // and hide reasoning so the strict schema-constrained content is the
+        // only output. Groq rejects reasoning_format for GPT-OSS models.
         messages: [{
           role: 'user',
           content: `${systemInstruction}\n\nInput JSON:\n${JSON.stringify(input)}`,
@@ -201,7 +204,7 @@ async function groqStructuredContent<T>(
           },
         },
         reasoning_effort: reasoningEffort,
-        reasoning_format: 'hidden',
+        include_reasoning: false,
         temperature,
         max_completion_tokens: maxOutputTokens,
       }),
@@ -213,12 +216,19 @@ async function groqStructuredContent<T>(
       const providerError = await response.json().catch(() => undefined) as {
         error?: { code?: string; type?: string; message?: string };
       } | undefined;
+      const providerCode = providerError?.error?.code;
+      const providerType = providerError?.error?.type;
+      const quotaExhausted = providerCode === 'insufficient_quota'
+        || providerType === 'insufficient_quota'
+        || /^insufficient_quota$/.test(providerCode || '');
       console.warn(JSON.stringify({
         event: 'groq_request_failed',
+        provider: 'groq',
+        model: GROQ_MODEL,
         operation,
         status: response.status,
-        providerCode: providerError?.error?.code,
-        providerType: providerError?.error?.type,
+        providerCode,
+        providerType,
         providerMessage: providerError?.error?.message?.slice(0, 300),
         retryAfter: response.headers.get('retry-after'),
         remainingTokens: response.headers.get('x-ratelimit-remaining-tokens'),
@@ -226,6 +236,14 @@ async function groqStructuredContent<T>(
         retryable,
         elapsedMs: Date.now() - startedAt,
       }));
+      // Configuration/authentication failures are permanent for this deploy;
+      // never present them as a temporary outage the user should keep retrying.
+      if (response.status === 401 || response.status === 403) {
+        throw new ServiceError('GROQ_AUTH_FAILED', 'Groq rejected the recommendation service credentials.', 502, false);
+      }
+      if (quotaExhausted) {
+        throw new ServiceError('GROQ_QUOTA_EXCEEDED', 'The Groq project quota is exhausted.', 503, false);
+      }
       throw new ServiceError(
         'GROQ_UNAVAILABLE',
         retryable ? 'Groq is temporarily unavailable. Please try again.' : 'Groq rejected the recommendation request.',
@@ -236,6 +254,8 @@ async function groqStructuredContent<T>(
 
     console.log(JSON.stringify({
       event: 'groq_request_completed',
+      provider: 'groq',
+      model: GROQ_MODEL,
       operation,
       elapsedMs: Date.now() - startedAt,
       remainingTokens: response.headers.get('x-ratelimit-remaining-tokens'),
@@ -260,6 +280,8 @@ async function groqStructuredContent<T>(
     } catch (error) {
       console.warn(JSON.stringify({
         event: 'groq_json_parse_failed',
+        provider: 'groq',
+        model: GROQ_MODEL,
         operation,
         finishReason: choice?.finish_reason,
         error: error instanceof Error ? error.message : String(error),
@@ -273,6 +295,8 @@ async function groqStructuredContent<T>(
     }
     console.warn(JSON.stringify({
       event: 'groq_network_failed',
+      provider: 'groq',
+      model: GROQ_MODEL,
       operation,
       error: error instanceof Error ? error.message.slice(0, 300) : String(error),
     }));
@@ -402,7 +426,7 @@ export async function assessPremiseCandidatesWithGroq(
     'premise verification',
     GROQ_VERIFICATION_MAX_OUTPUT_TOKENS,
     'low',
-    0,
+    0.5,
   );
   const validIndexes = new Set(candidates.map(candidate => candidate.index));
   const assessments = parseGroqOutput(
@@ -435,7 +459,7 @@ export async function assessSimilarCandidatesWithGroq(
     'similarity verification',
     GROQ_VERIFICATION_MAX_OUTPUT_TOKENS,
     'low',
-    0,
+    0.5,
   );
   const validIndexes = new Set(candidates.map(candidate => candidate.index));
   const assessments = parseGroqOutput(

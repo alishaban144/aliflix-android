@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "177"
-  RELEASE_VERSION_NAME: "3.1.87"
+  RELEASE_VERSION_CODE: "178"
+  RELEASE_VERSION_NAME: "3.1.88"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 
@@ -308,7 +308,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Fixed notification bar overlap in My Space and Discover, full-screen downloads atmosphere, and balanced smooth scrolling."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Ask Aliflix now runs GPT-OSS 120B with instant model switching and a more reliable Find More flow."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -336,7 +336,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Fixed notification bar overlap in My Space and Discover, full-screen downloads atmosphere behind header, and balanced smooth scrolling across My Space tabs. Tests and emulator validation were explicitly skipped at user request."
+          body: "Ask Aliflix now runs GPT-OSS 120B with instant model switching and a more reliable Find More flow. Tests and emulator validation were explicitly skipped at user request."
           files: |
             aliflix-mobile.apk
             update-mobile.json

@@ -31,7 +31,9 @@ export function selectedAiModel(env: RecommendationEnv): RecommendationAiModel {
 }
 
 export function isGroqAiModel(model: RecommendationAiModel): model is GroqAiModel {
-  return model === 'groq-qwen-3.8-27b';
+  // Any groq-* id (including values persisted by older clients) routes to Groq,
+  // which exclusively serves GPT-OSS 120B. Never silently fall back to Gemini.
+  return model.startsWith('groq-');
 }
 
 export function aiProviderName(model: RecommendationAiModel): 'gemini' | 'groq' {

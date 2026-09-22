@@ -50,10 +50,10 @@ enum class RecommendationAiModel(
     val workerValue: String,
     val supportingText: String,
 ) {
-    GROQ_QWEN_3_8_27B(
+    GROQ_GPT_OSS_120B(
         label = "Groq",
-        workerValue = "groq-qwen-3.8-27b",
-        supportingText = "Qwen 3.8 27B",
+        workerValue = "groq-gpt-oss-120b",
+        supportingText = "GPT-OSS 120B",
     ),
     GEMINI_3_8_FLASH(
         label = "Gemini 3.8 Flash",
@@ -62,8 +62,14 @@ enum class RecommendationAiModel(
     );
 
     companion object {
-        fun fromWorkerValue(value: String?): RecommendationAiModel =
-            entries.firstOrNull { it.workerValue == value } ?: GEMINI_3_8_FLASH
+        private const val LEGACY_GROQ_QWEN_3_8_27B = "groq-qwen-3.8-27b"
+
+        fun fromWorkerValue(value: String?): RecommendationAiModel = when (value) {
+            // Migrate settings persisted by older builds instead of silently
+            // dropping Groq users onto Gemini.
+            GROQ_GPT_OSS_120B.workerValue, LEGACY_GROQ_QWEN_3_8_27B -> GROQ_GPT_OSS_120B
+            else -> GEMINI_3_8_FLASH
+        }
     }
 }
 

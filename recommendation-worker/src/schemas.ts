@@ -2,10 +2,15 @@ import { z } from 'zod';
 
 const mediaType = z.enum(['movie', 'tv']);
 const trimmed = z.string().trim();
-export const RecommendationAiModelSchema = z.enum([
-  'gemini-3.8-flash',
-  'groq-qwen-3.8-27b',
-]);
+export const RecommendationAiModelSchema = z.preprocess(
+  // Older Android builds persisted the retired Qwen id. Normalize it so every
+  // Groq request runs on GPT-OSS 120B instead of failing or switching provider.
+  value => value === 'groq-qwen-3.8-27b' ? 'groq-gpt-oss-120b' : value,
+  z.enum([
+    'gemini-3.8-flash',
+    'groq-gpt-oss-120b',
+  ]),
+);
 
 const RecommendationFiltersObjectSchema = z.object({
   minimumYear: z.number().int().min(1870).max(2200).nullish().transform(value => value ?? undefined),

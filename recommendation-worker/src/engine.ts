@@ -760,6 +760,7 @@ async function processGeneratedRecommendations(
     console.warn(JSON.stringify({
       event: 'generated_candidate_fallback',
       mode: request.mode,
+      provider: aiProviderName(selectedAiModel(env)),
       model: selectedAiModel(env),
       reason: error.message,
     }));
@@ -803,6 +804,7 @@ async function processGeneratedRecommendations(
     console.log(JSON.stringify({
       event: 'generated_recommendation_pipeline',
       mode: request.mode,
+      provider: aiProviderName(selectedAiModel(env)),
       model: selectedAiModel(env),
       generated: recommendations.length,
       resolved: 0,
@@ -836,6 +838,7 @@ async function processGeneratedRecommendations(
     console.log(JSON.stringify({
       event: 'generated_recommendation_pipeline',
       mode: request.mode,
+      provider: aiProviderName(selectedAiModel(env)),
       model: selectedAiModel(env),
       generated: recommendations.length,
       resolved: resolved.length,
@@ -857,6 +860,7 @@ async function processGeneratedRecommendations(
       console.warn(JSON.stringify({
         event: 'generated_verification_fallback',
         mode: request.mode,
+        provider: aiProviderName(selectedAiModel(env)),
         model: selectedAiModel(env),
         reason: error.message,
         candidates: candidateDocuments.length,
@@ -915,6 +919,7 @@ async function processGeneratedRecommendations(
   console.log(JSON.stringify({
     event: 'generated_recommendation_pipeline',
     mode: request.mode,
+    provider: aiProviderName(selectedAiModel(env)),
     model: selectedAiModel(env),
     generated: recommendations.length,
     resolved: resolved.length,

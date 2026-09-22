@@ -17,12 +17,7 @@ class RecommendationStore(context: Context) {
     )
     private val _enabled = MutableStateFlow(preferences.getBoolean(KEY_ENABLED, true))
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
-    private val _aiModel = MutableStateFlow(
-        RecommendationAiModel.fromWorkerValue(
-            preferences.getString(KEY_AI_MODEL, null)
-                ?: preferences.getString(LEGACY_KEY_GEMINI_MODEL, null),
-        ),
-    )
+    private val _aiModel = MutableStateFlow(loadAiModel())
     val aiModel: StateFlow<RecommendationAiModel> = _aiModel.asStateFlow()
     private val _updatedAtMillis = MutableStateFlow(
         preferences.getLong(KEY_UPDATED_AT_MILLIS, 0L),
@@ -70,6 +65,20 @@ class RecommendationStore(context: Context) {
             putLong(KEY_UPDATED_AT_MILLIS, _updatedAtMillis.value)
             remove(LEGACY_KEY_GEMINI_MODEL)
         }
+    }
+
+    private fun loadAiModel(): RecommendationAiModel {
+        val raw = preferences.getString(KEY_AI_MODEL, null)
+            ?: preferences.getString(LEGACY_KEY_GEMINI_MODEL, null)
+        val migrated = RecommendationAiModel.fromWorkerValue(raw)
+        val hasLegacyKey = preferences.contains(LEGACY_KEY_GEMINI_MODEL)
+        if ((raw != null && raw != migrated.workerValue) || hasLegacyKey) {
+            preferences.edit {
+                putString(KEY_AI_MODEL, migrated.workerValue)
+                remove(LEGACY_KEY_GEMINI_MODEL)
+            }
+        }
+        return migrated
     }
 
     private fun recordLocalChange() {

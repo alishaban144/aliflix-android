@@ -66,12 +66,24 @@ class AskAliflixWiringIntegrationTest {
         val json = AskAliflixRequestMapper.map(
             request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
             requestId = "00000000-0000-4000-8000-000000000012",
-            aiModel = RecommendationAiModel.GROQ_QWEN_3_8_27B,
+            aiModel = RecommendationAiModel.GROQ_GPT_OSS_120B,
         ).workerRequest.toJson()
 
-        assertEquals("groq-qwen-3.8-27b", json.getString("aiModel"))
-        assertEquals("groq-qwen-3.8-27b", json.getString("geminiModel"))
+        assertEquals("groq-gpt-oss-120b", json.getString("aiModel"))
+        assertEquals("groq-gpt-oss-120b", json.getString("geminiModel"))
         assertEquals(20, json.getInt("pageSize"))
+    }
+
+    @Test
+    fun legacySavedGroqChoiceMigratesToGptOssInsteadOfSilentlySwitchingProviders() {
+        assertEquals(
+            RecommendationAiModel.GROQ_GPT_OSS_120B,
+            RecommendationAiModel.fromWorkerValue("groq-qwen-3.8-27b"),
+        )
+        assertEquals(
+            RecommendationAiModel.GROQ_GPT_OSS_120B,
+            RecommendationAiModel.fromWorkerValue("groq-gpt-oss-120b"),
+        )
     }
 
     @Test

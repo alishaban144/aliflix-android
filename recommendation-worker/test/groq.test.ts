@@ -24,7 +24,7 @@ describe('Groq structured recommendation provider', () => {
     vi.stubGlobal('fetch', providerFetch);
 
     const results = await recommendDescribeTitles(
-      { GROQ_API_KEY: 'secret-test-key', AI_GENERATION_MODEL: 'groq-qwen-3.8-27b' } as any,
+      { GROQ_API_KEY: 'secret-test-key', AI_GENERATION_MODEL: 'groq-gpt-oss-120b' } as any,
       'first contact through language',
       'movie',
       {},
@@ -36,7 +36,8 @@ describe('Groq structured recommendation provider', () => {
     expect(requestHeaders?.get('authorization')).toBe('Bearer secret-test-key');
     expect(requestBody.model).toBe(GROQ_MODEL);
     expect(requestBody.reasoning_effort).toBe('low');
-    expect(requestBody.reasoning_format).toBe('hidden');
+    expect(requestBody.reasoning_format).toBeUndefined();
+    expect(requestBody.include_reasoning).toBe(false);
     expect(requestBody.messages).toHaveLength(1);
     expect(requestBody.messages[0].role).toBe('user');
     expect(requestBody.max_completion_tokens).toBe(GROQ_MAX_OUTPUT_TOKENS);
@@ -56,7 +57,7 @@ describe('Groq structured recommendation provider', () => {
     vi.stubGlobal('fetch', providerFetch);
 
     await expect(recommendDescribeTitles(
-      { AI_GENERATION_MODEL: 'groq-qwen-3.8-27b' } as any,
+      { AI_GENERATION_MODEL: 'groq-gpt-oss-120b' } as any,
       'a precise premise',
       'movie',
       {},
@@ -83,7 +84,7 @@ describe('Groq structured recommendation provider', () => {
     vi.stubGlobal('fetch', providerFetch);
 
     const assessments = await assessRecommendationPremise(
-      { GROQ_API_KEY: 'secret-test-key', AI_GENERATION_MODEL: 'groq-qwen-3.8-27b' } as any,
+      { GROQ_API_KEY: 'secret-test-key', AI_GENERATION_MODEL: 'groq-gpt-oss-120b' } as any,
       'movies about alien abduction',
       'movie',
       [
@@ -107,7 +108,7 @@ describe('Groq structured recommendation provider', () => {
     expect(assessments[0].relevanceScore).toBe(.96);
     expect(assessments[0].reason.length).toBeLessThanOrEqual(180);
     expect(requestBody.reasoning_effort).toBe('low');
-    expect(requestBody.temperature).toBe(0);
+    expect(requestBody.temperature).toBe(0.5);
     expect(requestBody.max_completion_tokens).toBe(GROQ_VERIFICATION_MAX_OUTPUT_TOKENS);
     expect(requestBody.messages[0].content).toContain('exact compound TMDB keyword');
     expect(requestBody.messages[0].content).toContain('belief/hoax/hallucination');
@@ -130,7 +131,7 @@ describe('Groq structured recommendation provider', () => {
     vi.stubGlobal('fetch', providerFetch);
 
     await expect(recommendDescribeTitles(
-      { GROQ_API_KEY: 'secret-test-key', AI_GENERATION_MODEL: 'groq-qwen-3.8-27b' } as any,
+      { GROQ_API_KEY: 'secret-test-key', AI_GENERATION_MODEL: 'groq-gpt-oss-120b' } as any,
       'a precise premise',
       'movie',
       {},
@@ -145,7 +146,7 @@ describe('Groq structured recommendation provider', () => {
     vi.stubGlobal('fetch', providerFetch);
 
     await expect(recommendDescribeTitles(
-      { GROQ_API_KEY: 'secret-test-key', AI_GENERATION_MODEL: 'groq-qwen-3.8-27b' } as any,
+      { GROQ_API_KEY: 'secret-test-key', AI_GENERATION_MODEL: 'groq-gpt-oss-120b' } as any,
       'a precise premise',
       'movie',
       {},

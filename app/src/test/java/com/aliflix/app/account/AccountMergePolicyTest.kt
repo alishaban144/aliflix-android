@@ -150,7 +150,7 @@ class AccountMergePolicyTest {
         moviepireUrl = "https://moviepire.example/",
         dorabyUrl = "https://doraby.example/",
         askAliflixEnabled = true,
-        recommendationAiModel = "groq-qwen-3.8-27b",
+        recommendationAiModel = "groq-gpt-oss-120b",
         updatedAtMillis = updatedAt,
         preferredSubtitleLanguage = subtitleLanguage,
         autoDisplaySubtitles = autoSubtitles,

@@ -231,7 +231,7 @@ Create the Groq secret without exposing it to Android or Git:
 4. Paste the key only into Wrangler's hidden prompt. Do not put it in `wrangler.jsonc`, Gradle files, Android resources, or a `.env` file committed to Git.
 5. Confirm only the secret name with `npx wrangler secret list`, run the checks above, then deploy the Worker before distributing the Android build.
 
-The Groq option uses the preview `qwen/qwen3.8-27b` model with strict JSON-schema output, low hidden reasoning effort, and a 3,072-token completion ceiling. Describe and Similar each make exactly one provider call; deterministic tests mock the provider and consume no Groq tokens. A live quality check still needs one real request after the secret is installed. Because Qwen 3.8 is a preview model, re-check Groq's model/deprecation page before each release.
+The Groq option uses the production `openai/gpt-oss-120b` model with strict JSON-schema structured output, low reasoning effort (`reasoning_effort: "low"` with `include_reasoning: false`), and a 4,096-token completion ceiling (3,072 for verification). Describe and Similar each make exactly one provider call; deterministic tests mock the provider and consume no Groq tokens. Groq requests never fall back to Gemini: missing secrets, rejected credentials, and exhausted quotas surface as distinct non-retryable error codes. Re-check Groq's model/deprecation page before each release.
 
 The worker includes:
 
