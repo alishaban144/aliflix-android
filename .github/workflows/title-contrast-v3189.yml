@@ -1,0 +1,52 @@
+name: Aliflix v3.1.89 title contrast hotfix
+
+on:
+  push:
+    branches:
+      - automation/title-contrast-v3.1.89
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  patch-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Apply verified scoped edits
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor v3.1.88 HEAD
+          python3 .github/scripts/fix-title-contrast-v3189.py
+          git diff --check
+          git diff --stat
+      - name: Commit fix and dispatch v3.1.89 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code origin 'refs/heads/release/v3.1.89' >/dev/null; then
+            echo 'Release branch already exists; refusing to overwrite it.' >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code origin 'refs/tags/v3.1.89' >/dev/null; then
+            echo 'Release tag already exists; refusing to overwrite it.' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/aliflix/app/ui/theme/AliflixTheme.kt app/src/main/java/com/aliflix/app/ui/AliflixApp.kt app/build.gradle.kts .github/workflows/mobile-release.yml
+          git commit -m 'v3.1.89: restore title contrast and cinematic back button'
+          git push origin HEAD:refs/heads/release/v3.1.89
+          curl --fail-with-body --silent --show-error --retry 3 \
+            -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GH_REPO}/actions/workflows/mobile-release.yml/dispatches" \
+            --data '{"ref":"release/v3.1.89","inputs":{"tag":"v3.1.89","skip_tests":"true","skip_device_tests":"true","notes":"Restore white title contrast across Aliflix and improve detail back-button visibility."}}'
+          echo 'v3.1.89 release workflow dispatched; publication requires the downstream workflow to succeed.'
