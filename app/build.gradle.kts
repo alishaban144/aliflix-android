@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 180
-val mobileVersionName = "3.1.90"
+val mobileVersionCode = 181
+val mobileVersionName = "3.1.91"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
@@ -141,7 +141,7 @@ val validateReleaseSigning by tasks.registering {
 
 // The Firebase project currently registers only the mobile application ID.
 // Account UI and Firebase initialization are intentionally mobile-only; keep
-// the TV flavor buildable until a deliberate TV account experience exists.
+// the TV flavor buildable until a deliberate TV account experience is designed.
 tasks.matching {
     it.name.startsWith("processTv") && it.name.endsWith("GoogleServices")
 }.configureEach {
