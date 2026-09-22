@@ -50,18 +50,19 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().height(102.dp),
+                modifier = Modifier.fillMaxWidth().height(84.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Ask\nAliflix",
-                    fontSize = 29.sp,
+                    text = "Ask Aliflix",
+                    maxLines = 1,
+                    fontSize = 27.sp,
                     lineHeight = 31.sp,
                     fontWeight = FontWeight.Bold,
                     color = AliflixContentPrimary,
                     modifier = Modifier.weight(1f),
                 )
-                Box(Modifier.size(102.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
                     Canvas(Modifier.fillMaxSize()) {
                         val r = size.minDimension * .41f
                         val angle = phase * (2f * PI.toFloat())
@@ -85,14 +86,14 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                     }
                     // The original heatmap renderer now starts at its illuminated
                     // lilac phase; use that same authentic mark as the Discover header.
-                    AliflixHeatmapLogo(timeSeconds = 0f, modifier = Modifier.size(57.dp))
+                    AliflixHeatmapLogo(timeSeconds = 0f, modifier = Modifier.size(46.dp))
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 listOf("Describe", "Find similar").forEachIndexed { index, label ->
                     Button(
                         onClick = { onMode(index) },
-                        modifier = Modifier.weight(1f).height(44.dp),
+                        modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(13.dp),
                         contentPadding = PaddingValues(horizontal = 9.dp),
                         border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .35f)),
@@ -101,7 +102,8 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                             contentColor = if (index == 0) Color(0xFF271337) else Color.White,
                         ),
                     ) {
-                        Text(label, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                        Text(label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
+                        Spacer(Modifier.width(8.dp))
                         Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, Modifier.size(16.dp))
                     }
                 }

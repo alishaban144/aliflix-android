@@ -3,6 +3,8 @@
 
 package com.aliflix.app.ui.discover
 
+import com.aliflix.app.downloads.downloadAtmosphere
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -261,7 +263,7 @@ internal fun DiscoverScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .aliflixScreenBackground(),
+            .downloadAtmosphere(),
     ) {
         AnimatedContent(
             targetState = recommendModeActive,
@@ -366,8 +368,6 @@ internal fun DiscoverScreen(
                         MobileTopSafeArea(extraPadding = 18.dp)
 
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            com.aliflix.app.ui.launch.AliflixHeatmapLogo(0f, Modifier.size(36.dp))
-                            Spacer(Modifier.width(12.dp))
                             Text("Discover", color = AliflixContentPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         }
 

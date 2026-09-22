@@ -38,6 +38,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -93,6 +98,7 @@ private fun TrailerPlayer(videoId: String) {
     }
 
     fun openYouTube() {
+        webView?.evaluateJavascript("document.querySelector('iframe')?.contentWindow.postMessage(JSON.stringify({event:'command',func:'pauseVideo',args:[]}), 'https://www.youtube.com');", null)
         runCatching {
             context.startActivity(
                 Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$videoId"))
@@ -148,11 +154,22 @@ private fun TrailerPlayer(videoId: String) {
 
                 override fun onHideCustomView() { exitFullscreen() }
             }
-            // A valid app-identifying HTTPS Referer is required by YouTube embeds.
-            // Do not use a fake Android package origin or spoof YouTube as the app.
-            loadUrl(
-                "https://www.youtube.com/embed/$videoId?autoplay=1&playsinline=1&rel=0&fs=1",
-                mapOf("Referer" to "https://github.com/alishaban144/aliflix-android/"),
+            // Give YouTube an explicitly sized viewport, its own controls and a valid
+            // app origin. A top-level embed document can render a blank video surface.
+            val origin = "https://github.com"
+            loadDataWithBaseURL(
+                origin,
+                """
+                <!doctype html><html><head>
+                <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+                <style>html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}
+                iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}</style>
+                </head><body>
+                <iframe src="https://www.youtube.com/embed/$videoId?autoplay=1&amp;playsinline=1&amp;controls=1&amp;fs=1&amp;rel=0&amp;enablejsapi=1&amp;origin=$origin"
+                allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen></iframe>
+                </body></html>
+                """.trimIndent(),
+                "text/html", "UTF-8", null,
             )
             webView = this
         }
@@ -164,7 +181,7 @@ private fun TrailerPlayer(videoId: String) {
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
                     webView?.evaluateJavascript(
-                        "document.querySelectorAll('video').forEach(function(v){v.pause()})", null,
+                        "document.querySelector('iframe')?.contentWindow.postMessage(JSON.stringify({event:'command',func:'pauseVideo',args:[]}), 'https://www.youtube.com');", null,
                     )
                     webView?.onPause()
                 }
@@ -217,7 +234,7 @@ private fun TrailerPlayer(videoId: String) {
                                 Icon(Icons.Rounded.PlayArrow, contentDescription = "Play trailer", tint = Color.White)
                             }
                         }
-                        !manuallyFullscreen -> {
+                        !manuallyFullscreen && customView == null -> {
                             AndroidView(
                                 modifier = Modifier.fillMaxSize(),
                                 factory = {
@@ -250,28 +267,32 @@ private fun TrailerPlayer(videoId: String) {
         }
     }
 
-    // WebChromeClient hands us a separate view for YouTube's own fullscreen control.
-    // The app fullscreen control instead moves the EXISTING WebView so playback continues.
-    customView?.let { view ->
+    // Both fullscreen buttons use one immersive window and retain the same player.
+    if (manuallyFullscreen || customView != null) {
         Dialog(
             onDismissRequest = ::exitFullscreen,
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
-            AndroidView(
-                factory = { (view.parent as? ViewGroup)?.removeView(view); view },
-                modifier = Modifier.fillMaxSize().background(Color.Black),
-            )
-        }
-    }
-    if (manuallyFullscreen && customView == null) {
-        Dialog(
-            onDismissRequest = ::exitFullscreen,
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-        ) {
-            AndroidView(
-                factory = { obtainPlayer().also { (it.parent as? ViewGroup)?.removeView(it) } },
-                modifier = Modifier.fillMaxSize().background(Color.Black),
-            )
+            val dialogView = LocalView.current
+            DisposableEffect(dialogView) {
+                (dialogView.parent as? DialogWindowProvider)?.window?.let { window ->
+                    WindowCompat.getInsetsController(window, dialogView).apply {
+                        hide(WindowInsetsCompat.Type.systemBars())
+                        systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    }
+                }
+                onDispose { }
+            }
+            key(customView) {
+                AndroidView(
+                    factory = {
+                        (customView ?: obtainPlayer()).also { view ->
+                            (view.parent as? ViewGroup)?.removeView(view)
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize().background(Color.Black),
+                )
+            }
         }
     }
 }
