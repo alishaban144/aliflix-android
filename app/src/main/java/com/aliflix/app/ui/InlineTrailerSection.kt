@@ -16,7 +16,6 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -76,6 +75,18 @@ private fun TrailerPlayer(videoId: String) {
     var customCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
     var loadingError by remember { mutableStateOf(false) }
     var fullscreenContainer by remember { mutableStateOf<FrameLayout?>(null) }
+    var inlineContainer by remember { mutableStateOf<FrameLayout?>(null) }
+
+    fun attachPlayer(container: FrameLayout, player: View) {
+        if (player.parent !== container) {
+            (player.parent as? ViewGroup)?.removeView(player)
+            container.addView(player, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+        }
+        player.requestLayout()
+        player.invalidate()
+    }
 
     fun setFullscreenWindow(fullscreen: Boolean) {
         val window = activity?.window
@@ -93,12 +104,11 @@ private fun TrailerPlayer(videoId: String) {
         }
     }
 
-    // Fullscreen content lives in the ACTIVITY window. Moving the live player into a
-    // separate Compose Dialog window changes its window token, so YouTube's decoded
-    // frames stop arriving: audio keeps playing against a black surface.
-    fun showFullscreenContent(view: View) {
+    // Keep Compose's AndroidView host attached. Only native children move, with
+    // fresh MATCH_PARENT params instead of retaining the inline player's bounds.
+    fun showFullscreenContent(view: View): Boolean {
         val content = activity?.window?.decorView
-            ?.findViewById<FrameLayout>(android.R.id.content) ?: return
+            ?.findViewById<FrameLayout>(android.R.id.content) ?: return false
         val container = fullscreenContainer ?: FrameLayout(context).apply {
             setBackgroundColor(android.graphics.Color.BLACK)
             isClickable = true
@@ -112,31 +122,27 @@ private fun TrailerPlayer(videoId: String) {
                 ),
             )
         }
-        (view.parent as? ViewGroup)?.removeView(view)
-        container.addView(view)
+        attachPlayer(container, view)
+        container.bringToFront()
+        return true
     }
 
     fun exitFullscreen() {
         val wasActive = customView != null || manuallyFullscreen
-        if (customView != null) {
-            val oldView = customView
-            customView = null
-            (oldView?.parent as? ViewGroup)?.removeView(oldView)
-            val callback = customCallback
-            customCallback = null
-            callback?.onCustomViewHidden()
-        }
+        val oldView = customView
+        val callback = customCallback
+        customView = null
+        customCallback = null
         manuallyFullscreen = false
-        if (wasActive) setFullscreenWindow(false)
-        // Detach the player from the overlay right away; the inline AndroidView
-        // re-attaches it during the recomposition this state change schedules.
-        webView?.let { player ->
-            (player.parent as? ViewGroup)?.takeIf { it === fullscreenContainer }?.removeView(player)
-        }
+        (oldView?.parent as? ViewGroup)?.removeView(oldView)
+        webView?.let { player -> inlineContainer?.let { attachPlayer(it, player) } }
         fullscreenContainer?.let { overlay ->
-            if (overlay.childCount == 0) (overlay.parent as? ViewGroup)?.removeView(overlay)
+            overlay.removeAllViews()
+            (overlay.parent as? ViewGroup)?.removeView(overlay)
         }
         fullscreenContainer = null
+        callback?.onCustomViewHidden()
+        if (wasActive) setFullscreenWindow(false)
     }
 
     fun openYouTube() {
@@ -149,12 +155,28 @@ private fun TrailerPlayer(videoId: String) {
         }.onFailure { loadingError = true }
     }
 
+    fun stopFailedPlayer() {
+        exitFullscreen()
+        webView?.apply {
+            stopLoading()
+            loadUrl("about:blank")
+            (parent as? ViewGroup)?.removeView(this)
+            destroy()
+        }
+        webView = null
+        loadingError = true
+    }
+
     fun obtainPlayer(): WebView {
         webView?.let { return it }
         return WebView(context).apply {
             setBackgroundColor(android.graphics.Color.BLACK)
-            // Never force LAYER_TYPE_HARDWARE here: a mandated hardware layer makes
-            // YouTube's decoded video frames composite to black while audio plays.
+            // Use the activity's hardware-accelerated compositor without an
+            // additional offscreen layer around the embedded video.
+            setLayerType(View.LAYER_TYPE_NONE, null)
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+            )
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -163,11 +185,13 @@ private fun TrailerPlayer(videoId: String) {
             settings.setSupportMultipleWindows(false)
             webViewClient = object : WebViewClient() {
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                    if (request.isForMainFrame) loadingError = true
+                    if (request.isForMainFrame) view.post { if (webView === view) stopFailedPlayer() }
                 }
 
                 override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-                    if (request.isForMainFrame && response.statusCode >= 400) loadingError = true
+                    if (request.isForMainFrame && response.statusCode >= 400) {
+                        view.post { if (webView === view) stopFailedPlayer() }
+                    }
                 }
 
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -192,26 +216,30 @@ private fun TrailerPlayer(videoId: String) {
                         callback.onCustomViewHidden()
                         return
                     }
+                    if (!showFullscreenContent(view)) {
+                        callback.onCustomViewHidden()
+                        return
+                    }
                     customView = view
                     customCallback = callback
                     setFullscreenWindow(true)
-                    showFullscreenContent(view)
                 }
 
                 override fun onHideCustomView() { exitFullscreen() }
             }
-            // A real HTTPS base URL plus YouTube's own sized viewport keeps the frame
-            // visible; a synthetic package origin lets YouTube render a black embed.
-            val origin = "https://github.com"
+            // YouTube requires the installed app identity as the embed referrer.
+            val origin = "https://${context.packageName}"
             loadDataWithBaseURL(
                 origin,
                 """
                 <!doctype html><html><head>
                 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+                <meta name="referrer" content="strict-origin-when-cross-origin">
                 <style>html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}
                 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}</style>
                 </head><body>
                 <iframe src="https://www.youtube.com/embed/$videoId?autoplay=1&amp;playsinline=1&amp;controls=1&amp;fs=1&amp;rel=0&amp;enablejsapi=1&amp;origin=$origin"
+                referrerpolicy="strict-origin-when-cross-origin"
                 allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen></iframe>
                 </body></html>
                 """.trimIndent(),
@@ -223,7 +251,8 @@ private fun TrailerPlayer(videoId: String) {
 
     fun enterFullscreen() {
         started = true
-        showFullscreenContent(obtainPlayer())
+        if (customView != null || manuallyFullscreen) return
+        if (!showFullscreenContent(obtainPlayer())) return
         manuallyFullscreen = true
         setFullscreenWindow(true)
     }
@@ -261,18 +290,16 @@ private fun TrailerPlayer(videoId: String) {
                 destroy()
             }
             webView = null
+            inlineContainer = null
         }
     }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Trailer", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = AliflixSurfacePrimary,
-            border = BorderStroke(1.dp, AliflixBorderStrong),
-        ) {
+        // Do not clip the Android video surface into a rounded Compose layer.
+        Box(Modifier.fillMaxWidth().background(AliflixSurfacePrimary)) {
             Column {
-                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().heightIn(min = 200.dp).aspectRatio(16f / 9f), contentAlignment = Alignment.Center) {
                     when {
                         loadingError -> {
                             Button(onClick = ::openYouTube, shape = RoundedCornerShape(14.dp)) {
@@ -295,17 +322,20 @@ private fun TrailerPlayer(videoId: String) {
                                 Icon(Icons.Rounded.PlayArrow, contentDescription = "Play trailer", tint = Color.White)
                             }
                         }
-                        !manuallyFullscreen -> {
+                        else -> {
                             AndroidView(
                                 modifier = Modifier.fillMaxSize(),
-                                factory = {
-                                    obtainPlayer().also { view ->
-                                        (view.parent as? ViewGroup)?.removeView(view)
+                                factory = { viewContext ->
+                                    FrameLayout(viewContext).apply {
+                                        setBackgroundColor(android.graphics.Color.BLACK)
+                                        inlineContainer = this
                                     }
+                                },
+                                update = { container ->
+                                    if (!manuallyFullscreen) attachPlayer(container, obtainPlayer())
                                 },
                             )
                         }
-                        else -> Box(Modifier.fillMaxSize().background(Color.Black))
                     }
                 }
                 Row(
