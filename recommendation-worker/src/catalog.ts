@@ -42,6 +42,7 @@ export interface CatalogTitleDetails extends CatalogMediaSummary {
   creators: CatalogPerson[];
   cast: CatalogPerson[];
   reviews: CatalogReview[];
+  keywords: Array<{ id: number; name: string }>;
   trailerKey?: string;
   recommendations: CatalogMediaSummary[];
 }
@@ -216,6 +217,7 @@ function detailsSummary(details: TmdbDetails, mediaType: MediaType): CatalogTitl
       .filter((person, index, values) => values.findIndex(other => other.id === person.id) === index)
       .slice(0, 12)
       .map(person => ({ tmdbId: person.id, name: person.name })),
+    keywords: details.keywords?.keywords || details.keywords?.results || [],
     trailerKey: (details.videos?.results || [])
       .filter(video => video.official && video.site === 'YouTube' && video.type === 'Trailer' && /^[a-zA-Z0-9_-]{11}$/.test(video.key))
       .sort((a, b) => Number(b.iso_639_1 === 'en') - Number(a.iso_639_1 === 'en'))[0]?.key,

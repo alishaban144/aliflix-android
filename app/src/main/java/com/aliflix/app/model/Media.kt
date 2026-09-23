@@ -35,6 +35,8 @@ data class MediaCreator(
         }
 }
 
+data class MediaKeyword(val id: Int, val name: String)
+
 data class Media(
     val id: Int,
     val type: MediaType,
@@ -60,6 +62,7 @@ data class Media(
     val omdbGenres: List<String> = emptyList(),
     val omdbFullPlot: String? = null,
     val reviews: List<MediaReview> = emptyList(),
+    val keywords: List<MediaKeyword> = emptyList(),
     val trailerKey: String? = null,
 ) {
     val key: String get() = "${type.routeName}:$id"
@@ -170,6 +173,7 @@ data class Media(
                 )
             }
         })
+        put("keywords", org.json.JSONArray().apply { keywords.forEach { put(JSONObject().put("id", it.id).put("name", it.name)) } })
         put("trailerKey", trailerKey)
         put("runtime", runtime)
         put("omdbGenres", org.json.JSONArray(omdbGenres))
@@ -187,6 +191,7 @@ data class Media(
 
         fun fromJson(json: JSONObject): Media {
             return Media(
+                keywords = json.optJSONArray("keywords")?.let { a -> (0 until a.length()).map { a.getJSONObject(it).let { k -> MediaKeyword(k.getInt("id"), k.getString("name")) } } }.orEmpty(),
                 id = json.getInt("id"),
                 type = MediaType.from(json.optString("type")),
                 title = json.optString("title", "Untitled"),

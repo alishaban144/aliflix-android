@@ -60,7 +60,7 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                     lineHeight = 31.sp,
                     fontWeight = FontWeight.Bold,
                     color = AliflixContentPrimary,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).padding(start = 9.dp),
                 )
                 Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
                     Canvas(Modifier.fillMaxSize()) {
@@ -86,7 +86,7 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                     }
                     // The original heatmap renderer now starts at its illuminated
                     // lilac phase; use that same authentic mark as the Discover header.
-                    AliflixHeatmapLogo(timeSeconds = 0f, modifier = Modifier.size(46.dp))
+                    AliflixHeatmapLogo(timeSeconds = 0f, modifier = Modifier.size(32.dp))
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -102,7 +102,7 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                             contentColor = if (index == 0) Color(0xFF271337) else Color.White,
                         ),
                     ) {
-                        Text(label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
+                        Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
                         Spacer(Modifier.width(8.dp))
                         Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, Modifier.size(16.dp))
                     }

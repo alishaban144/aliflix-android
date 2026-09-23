@@ -50,7 +50,7 @@ internal class OfflineDownloads private constructor(val context: Context) {
 
     init {
         manager.maxParallelDownloads = 2
-        manager.minRetryCount = 3
+        manager.minRetryCount = 12
         manager.requirements = Requirements(Requirements.NETWORK)
         manager.addListener(object : DownloadManager.Listener {
             override fun onInitialized(downloadManager: DownloadManager) { refresh() }
@@ -159,7 +159,7 @@ internal class OfflineDownloads private constructor(val context: Context) {
             // Large caption payloads stay in-process instead of crossing Binder's 1 MB limit.
             manager.addDownload(it, 0)
         }
-        DownloadService.sendResumeDownloads(context, OfflineDownloadService::class.java, false)
+        DownloadService.sendResumeDownloads(context, OfflineDownloadService::class.java, true)
     }
 
     fun pause(id: String) {
@@ -168,7 +168,7 @@ internal class OfflineDownloads private constructor(val context: Context) {
     fun resume(item: SavedDownload) {
         preferences.edit().remove("error:${item.id}").apply()
         manager.setStopReason(item.id, 0)
-        DownloadService.sendResumeDownloads(context, OfflineDownloadService::class.java, false)
+        DownloadService.sendResumeDownloads(context, OfflineDownloadService::class.java, true)
     }
     fun remove(id: String) = DownloadService.sendRemoveDownload(context, OfflineDownloadService::class.java, id, false)
 

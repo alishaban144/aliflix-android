@@ -144,6 +144,7 @@ internal fun AccountScreen(
     onRename: suspend (String) -> AccountActionResult = { AccountActionResult(false) },
     onSync: () -> Unit,
     onClearMessage: () -> Unit,
+    shelves: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -279,6 +280,7 @@ internal fun AccountScreen(
                 .padding(horizontal = 18.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            shelves()
             if (onGoogleSignIn != null && route in setOf(AccountRoute.SIGN_IN, AccountRoute.CREATE_ACCOUNT)) {
                 OutlinedButton(
                     onClick = { runAction(action = onGoogleSignIn) },

@@ -314,3 +314,8 @@ fun AliflixMobileTheme(content: @Composable () -> Unit) {
         },
     )
 }
+
+// Shared translucent navigation surfaces.
+val AliflixGlassIcon = Color(0x38211B30)
+val AliflixGlassIdle = Color(0x142B2239)
+val AliflixGlassSelected = Color(0x337D4BB1)

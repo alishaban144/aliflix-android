@@ -203,6 +203,30 @@ internal fun DiscoverScreen(
         history = (listOf(value) + history.filterNot { it.equals(value, true) }).take(4)
         historyPrefs.edit().putString("queries", org.json.JSONArray(history).toString()).apply()
     }
+    val shelves = remember(context) { com.aliflix.app.data.ActivityShelves(context) }
+    var recentSearches by remember { mutableStateOf(shelves.read("search")) }
+    var confirmClear by remember { mutableStateOf(false) }
+    if (confirmClear) androidx.compose.ui.window.Dialog(onDismissRequest = { confirmClear = false }) {
+        Surface(shape = RoundedCornerShape(28.dp), color = AliflixSurfacePrimary,
+            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle)) {
+            Column(Modifier.downloadAtmosphere().padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Icon(Icons.Rounded.History, null, Modifier.size(36.dp), tint = AliflixAccentSecondary)
+                    Text("Delete search history?", style = MaterialTheme.typography.titleLarge)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { confirmClear = false }, modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel") }
+                    Button(onClick = {
+                        history = emptyList(); recentSearches = emptyList()
+                        historyPrefs.edit().remove("queries").apply(); shelves.clear("search"); confirmClear = false
+                    }, modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AliflixError)) {
+                        Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Delete")
+                    }
+                }
+            }
+        }
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
     var fieldValue by rememberSaveable(stateSaver = TextFieldValue.Saver) {
@@ -443,8 +467,8 @@ internal fun DiscoverScreen(
                                 fieldValue = fieldValue.copy(text = query)
                                 recordSearch(query)
                                 onSubmitSearch(query)
-                            }, modifier = Modifier.padding(start = 8.dp).size(48.dp).background(AliflixSurfaceSecondary, RoundedCornerShape(12.dp)).border(1.dp, AliflixAccentSecondary.copy(alpha = .22f), RoundedCornerShape(12.dp)).testTag("discover-search-button")) {
-                                Icon(Icons.Filled.Search, "Search", tint = AliflixAccentSecondary)
+                            }, modifier = Modifier.padding(start = 8.dp).size(48.dp).background(if (fieldValue.text.isNotBlank()) AliflixAccentPrimary.copy(alpha = .38f) else com.aliflix.app.ui.theme.AliflixGlassIdle, RoundedCornerShape(12.dp)).border(1.dp, AliflixAccentSecondary.copy(alpha = .22f), RoundedCornerShape(12.dp)).testTag("discover-search-button")) {
+                                Icon(if (fieldValue.text.isNotBlank()) Icons.AutoMirrored.Rounded.ArrowForward else Icons.Filled.Search, "Search", tint = AliflixAccentSecondary)
                             }
                         }
 
@@ -452,7 +476,7 @@ internal fun DiscoverScreen(
                             Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Recent", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                    IconButton(onClick = { history = emptyList(); historyPrefs.edit().remove("queries").apply() }) {
+                                    IconButton(onClick = { confirmClear = true }) {
                                         Icon(Icons.Rounded.DeleteOutline, "Clear search history", tint = AliflixAccentSecondary)
                                     }
                                 }
@@ -479,6 +503,18 @@ internal fun DiscoverScreen(
                             onModeChange(SearchMode.AI)
                         }
 
+                        if (fieldValue.text.isBlank() && recentSearches.isNotEmpty()) {
+                            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Recent searches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                IconButton(onClick = { confirmClear = true }) { Icon(Icons.Rounded.DeleteOutline, "Delete search history") }
+                            }
+                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(recentSearches, key = Media::key) { media ->
+                                    AsyncImage(media.posterUrl, media.title, contentScale = ContentScale.Fit,
+                                        modifier = Modifier.width(118.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(15.dp)).clickable { onOpen(media) })
+                                }
+                            }
+                        }
                         CatalogueTypeSelector(
                             selected = mediaFilter,
                             onSelect = onMediaFilterChange,
@@ -488,7 +524,7 @@ internal fun DiscoverScreen(
                     } }
                     if (catalogueStore != null) DiscoverCatalogueContent(
                         store = catalogueStore, query = fieldValue.text.trim(), filter = mediaFilter,
-                        onOpen = { recordSearch(fieldValue.text); onOpen(it) },
+                        onOpen = { recordSearch(fieldValue.text); if (fieldValue.text.isNotBlank()) { shelves.record("search", it); recentSearches = shelves.read("search") }; onOpen(it) },
                         onPerson = { recordSearch(fieldValue.text); onPerson(it) }, onCategory = onCategory,
                         modifier = Modifier.fillMaxSize(), header = catalogueHeader,
                     ) else catalogueHeader()
@@ -511,7 +547,7 @@ private fun CatalogueTypeSelector(
         listOf("All", "Movies", "Series").forEach { option ->
             val active = option == selected
             val bgColor by androidx.compose.animation.animateColorAsState(
-                targetValue = if (active) AliflixAccentPrimary.copy(alpha = 0.22f) else AliflixSurfaceSecondary,
+                targetValue = if (active) com.aliflix.app.ui.theme.AliflixGlassSelected else com.aliflix.app.ui.theme.AliflixGlassIdle,
                 animationSpec = DiscoverMotion.fast(),
                 label = "catalogueBg"
             )

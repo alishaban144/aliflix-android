@@ -59,6 +59,7 @@ class NativePlayerActivity : FragmentActivity() {
     private var activeSubtitleCuesJson: String? = null
     private var episodeQueueJob: Job? = null
     private var nextEpisodeWarmup: Job? = null
+    private var warmingEpisodeKey: String? = null
     private var warmedEpisode: Triple<PlaybackSelection, String, NativePlaybackRequest>? = null
     private var warmedAt = 0L
     private var introJob: Job? = null
@@ -358,7 +359,7 @@ class NativePlayerActivity : FragmentActivity() {
         val startingSource = current.source
         val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition?.takeIf { it > 0 }
             ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
-        nextEpisodeWarmup?.cancel()
+        if (warmingEpisodeKey != current.key) nextEpisodeWarmup?.cancel()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
         val offlineStore = com.aliflix.app.downloads.OfflineDownloads.get(this)
         val cached = offlineStore.manager.downloadIndex.getDownload(com.aliflix.app.data.playbackProgressKey(current))
@@ -429,21 +430,26 @@ class NativePlayerActivity : FragmentActivity() {
                     ensureActive()
                     val candidates = orderedSources.filter { it.source.provider !in exhaustedSources }
                     if (candidates.isEmpty()) return@repeat
-                    val batch = if (preferSaved) listOf(candidates.firstOrNull {
+                    val batch = if (preferSaved && preferredServer != null) listOf(candidates.firstOrNull {
                         if (preferredServer != null) it.source == startingSource else it.source.provider.name == savedProvider
                     } ?: candidates.first()) else candidates
                     preferSaved = false
+                    if (warmingEpisodeKey == current.key && nextEpisodeWarmup?.isActive == true) {
+                        kotlinx.coroutines.withTimeoutOrNull(2_000) { nextEpisodeWarmup?.join() }
+                        if (nextEpisodeWarmup?.isActive == true) nextEpisodeWarmup?.cancel()
+                    }
                     val warmed = warmedEpisode?.takeIf { it.first.key == current.key && preferredServer == null && android.os.SystemClock.elapsedRealtime() - warmedAt < 120_000 }?.let { it.copy(third = it.third.copy(positionMs = resume)) }
                     warmedEpisode = null
                     val winner = try {
                         warmed ?: firstSuccessful(batch.map { candidate -> suspend {
+                            if (savedProvider != null && candidate.source.provider.name != savedProvider) delay(650)
                             val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                             var server = ""
                             val excluded = excludedBySource.getOrPut(candidate.source.provider) { mutableSetOf() }
                             val savedServer = if (candidate.source.provider.name == savedProvider) history.getString("$seriesKey:server", null) else null
                             try {
                                 val request = withTimeout(if (savedServer != null || preferredServer != null) 5_000 else 16_000) {
-                                    adapter.resolve(candidate, resume, excluded,
+                                    adapter.resolve(candidate, resume, excluded, validateSingle = false,
                                         preferredServer = (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
                                         onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[candidate.key] = (resolvedServerNames[candidate.key].orEmpty() + names).distinct() }) { server = it }
                                 }
@@ -494,17 +500,18 @@ class NativePlayerActivity : FragmentActivity() {
         if (current.media.type != com.aliflix.app.model.MediaType.TV) return
         nextEpisodeWarmup = lifecycleScope.launch {
             while (selection?.key == current.key) {
-                delay(2_000)
+                delay(250)
                 val player = controller ?: continue
-                if (!player.isPlaying || player.duration <= 0 || player.duration - player.currentPosition !in 1..60_000) continue
+                if (player.duration <= 45_000 || player.duration - player.currentPosition !in 1..90_000) continue
                 val next = selection?.availableEpisodes?.firstOrNull { it.seasonNumber == current.seasonNumber && it.number == (current.episodeNumber ?: 1) + 1 } ?: return@launch
-                val candidate = current.copy(episodeNumber = next.number, episodeTitle = next.title)
+                val candidate = current.copy(seasonNumber = next.seasonNumber, episodeNumber = next.number, episodeTitle = next.title)
+                warmingEpisodeKey = candidate.key
                 val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                 try {
-                    val request = withTimeout(8_000) { adapter.resolve(candidate, 0, emptySet(), preferredServer = server) {} }
+                    val request = withTimeout(16_000) { adapter.resolve(candidate, 0, emptySet(), preferredServer = server) {} }
                     warmedEpisode = Triple(candidate, server, request)
                     warmedAt = android.os.SystemClock.elapsedRealtime()
-                } catch (error: Exception) { ensureActive() }
+                } catch (error: Exception) { ensureActive(); delay(3_000); continue }
                 finally { adapter.close() }
                 return@launch
             }

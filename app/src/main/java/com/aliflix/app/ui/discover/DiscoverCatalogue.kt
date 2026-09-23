@@ -33,6 +33,8 @@ import com.aliflix.app.ui.theme.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 internal val discoveryCategories = linkedMapOf(
     "trending" to "Trending", "new" to "New", "top-rated" to "Top Rated",
@@ -46,12 +48,15 @@ internal class CatalogueSession {
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
     var hasMore by mutableStateOf(true)
+    var sections by mutableStateOf<List<Pair<String, String>>>(emptyList())
     var nextPage = 1
     var updatedAt = 0L
 }
 
 /** ViewModel-owned results survive tab/destination changes; bounded cache and one request per session. */
 internal class DiscoverCatalogueStore(private val client: RecommendationAiClient) {
+    suspend fun categories() = client.categories()
+    private val requests = Semaphore(3)
     private val sessions = linkedMapOf<String, CatalogueSession>()
     fun session(category: String?, query: String, filter: String): CatalogueSession {
         val key = "$category:${query.trim()}:$filter"
@@ -67,7 +72,9 @@ internal class DiscoverCatalogueStore(private val client: RecommendationAiClient
         session.loading = true
         session.error = null
         try {
-            val json = client.cataloguePage(category, query, filter, if (more) session.nextPage else 1)
+            val json = requests.withPermit { client.cataloguePage(category, query, filter, if (more) session.nextPage else 1) }
+            val definitions = json.optJSONArray("sections")
+            session.sections = (0 until (definitions?.length() ?: 0)).map { definitions!!.getJSONObject(it).let { it.getString("id") to it.getString("name") } }
             val results = json.optJSONArray("results")
             val items = (0 until (results?.length() ?: 0)).map { index ->
                 val item = V3CatalogMedia.fromJson(results!!.getJSONObject(index))
@@ -88,11 +95,11 @@ internal class DiscoverCatalogueStore(private val client: RecommendationAiClient
                     )
                 }
             }
-            session.items = if (more || session.items.isNotEmpty())
+            session.items = if (more)
                 (session.items + items).distinctBy(Media::key) else items
-            session.people = if (more || session.people.isNotEmpty())
+            session.people = if (more)
                 (session.people + people).distinctBy(MediaCreator::tmdbId) else people
-            if (more || session.nextPage == 1) {
+            if (true) {
                 session.nextPage = json.getInt("page") + 1
                 session.hasMore = json.optBoolean("hasMore")
             }

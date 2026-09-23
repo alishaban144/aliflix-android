@@ -50,12 +50,12 @@ import com.aliflix.app.ui.theme.*
 @Composable
 internal fun InlineTrailerSection(media: Media) {
     val videoId = media.trailerKey?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) } ?: return
-    key(media.key, videoId) { TrailerPlayer(videoId) }
+    key(media.key, videoId) { TrailerPlayer(videoId, media) }
 }
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun TrailerPlayer(videoId: String) {
+private fun TrailerPlayer(videoId: String, media: Media) {
     val context = LocalContext.current
     val activity = LocalActivity.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -250,7 +250,7 @@ private fun TrailerPlayer(videoId: String) {
     }
 
     fun enterFullscreen() {
-        started = true
+        com.aliflix.app.data.ActivityShelves(context).record("trailers", media); started = true
         if (customView != null || manuallyFullscreen) return
         if (!showFullscreenContent(obtainPlayer())) return
         manuallyFullscreen = true
@@ -294,11 +294,11 @@ private fun TrailerPlayer(videoId: String) {
         }
     }
 
-    DetailInfoSection(title = "Trailer", clipCardContent = false) {
+    DetailInfoSection(title = "Trailer", clipCardContent = false, cardPadding = 8.dp) {
         // Do not clip the Android video surface into a rounded Compose layer.
         Box(Modifier.fillMaxWidth().background(AliflixSurfaceSecondary)) {
             Column {
-                Box(Modifier.fillMaxWidth().heightIn(min = 200.dp).aspectRatio(16f / 9f), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentAlignment = Alignment.Center) {
                     when {
                         loadingError -> {
                             Button(onClick = ::openYouTube, shape = RoundedCornerShape(14.dp)) {
@@ -312,10 +312,10 @@ private fun TrailerPlayer(videoId: String) {
                                 model = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
                                 contentDescription = "Trailer thumbnail",
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize().clickable { started = true },
+                                modifier = Modifier.fillMaxSize().clickable { com.aliflix.app.data.ActivityShelves(context).record("trailers", media); started = true },
                             )
                             IconButton(
-                                onClick = { started = true },
+                                onClick = { com.aliflix.app.data.ActivityShelves(context).record("trailers", media); started = true },
                                 modifier = Modifier.size(58.dp).background(AliflixAccentPrimary, CircleShape),
                             ) {
                                 Icon(Icons.Rounded.PlayArrow, contentDescription = "Play trailer", tint = Color.White)
@@ -338,10 +338,10 @@ private fun TrailerPlayer(videoId: String) {
                     }
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Play trailer", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.weight(1f))
                     IconButton(onClick = ::openYouTube) {
                         Icon(Icons.Rounded.OpenInNew, "Open in YouTube", tint = AliflixContentSecondary)
                     }

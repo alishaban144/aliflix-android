@@ -43,6 +43,7 @@ internal class NativeStreamResolver(
         preferredServer: String? = null,
         onServers: (List<String>) -> Unit = {},
         strictPreferredServer: Boolean = false,
+        validateSingle: Boolean = true,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
         reportServers = onServers
@@ -60,7 +61,7 @@ internal class NativeStreamResolver(
             selectNativeServer(embeds, preferredServer, excluded, true) { it.first }
         }
         if (catalogueProvider && candidates.isEmpty()) throw NoNativeServersException()
-        if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, strictPreferredServer, onServer).also { close(); StartupStreamCache.awaitPlayable(activity, it) }
+        if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, strictPreferredServer, onServer).also { close(); if (validateSingle) StartupStreamCache.awaitPlayable(activity, it) }
         val winner = try { firstSuccessful(candidates.map { (name, _) -> suspend {
             val child = NativeStreamResolver(activity, progress, host)
             children.add(child)

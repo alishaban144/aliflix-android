@@ -62,6 +62,8 @@ class RecommendationAiClient(
             .toStringList { V3CatalogMedia.fromJson(it) }
     }
 
+    suspend fun categories(): JSONObject = withContext(ioDispatcher) { JSONObject(getJson("$baseUrl/v3/categories")) }
+
     suspend fun cataloguePage(category: String?, query: String, filter: String, page: Int): JSONObject = withContext(ioDispatcher) {
         val type = when (filter) { "Movies" -> "movie"; "Series" -> "tv"; else -> "all" }
         val endpoint = if (category != null) "discover?category=${URLEncoder.encode(category, "UTF-8")}" else
@@ -406,6 +408,7 @@ data class V3Review(
 }
 
 data class V3TitleDetails(
+    val keywords: List<com.aliflix.app.model.MediaKeyword> = emptyList(),
     val trailerKey: String? = null,
     val media: V3CatalogMedia,
     val imdbId: String? = null,
@@ -417,6 +420,7 @@ data class V3TitleDetails(
 ) {
     companion object {
         fun fromJson(json: JSONObject) = V3TitleDetails(
+            keywords = json.optJSONArray("keywords").toStringList { com.aliflix.app.model.MediaKeyword(it.getInt("id"), it.getString("name")) },
             trailerKey = json.nullableString("trailerKey")?.takeIf { it.matches(Regex("[a-zA-Z0-9_-]{11}")) },
             media = V3CatalogMedia.fromJson(json),
             imdbId = json.nullableString("imdbId"),

@@ -83,6 +83,7 @@ private fun V3CatalogMedia.toMedia(fallback: Media? = null): Media {
 }
 
 private fun V3TitleDetails.toMedia(fallback: Media): Media = media.toMedia(fallback).copy(
+    keywords = keywords,
     trailerKey = trailerKey,
     imdbId = imdbId ?: fallback.imdbId,
     status = status.orEmpty(),
@@ -1350,7 +1351,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         val context = getApplication<android.app.Application>()
         if (!context.hasInternetConnection()) return
         val missing = (myList.value + recent.value + likes.value).distinctBy { it.key }
-            .filter { (it.runtime.isBlank() || it.rating <= 0) && libraryMetadataRequested.add(it.key) }
+            .filter { (it.runtime.isBlank() || it.rating <= 0 || (it.key in likes.value.map { liked -> liked.key } && it.keywords.isEmpty())) && libraryMetadataRequested.add(it.key) }
         viewModelScope.launch {
             for (item in missing) {
                 try {

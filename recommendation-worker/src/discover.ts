@@ -1,3 +1,4 @@
+import { correctedTitles, titleSimilarity } from './search-spelling';
 import { summary } from './catalog';
 import { TmdbClient, TmdbPage } from './tmdb';
 import { MediaType, RecommendationEnv, ServiceError, TmdbListItem } from './types';
@@ -100,9 +101,21 @@ export async function discoverCategory(env: RecommendationEnv, category: Discove
 export async function catalogueSearch(env: RecommendationEnv, query: string, filter: 'all' | MediaType, page: number) {
   query = query.trim().slice(0, 160);
   if (!query) return { results: [], people: [], page, hasMore: false };
-  const tmdb = new TmdbClient(env, 9);
+  const tmdb = new TmdbClient(env, 14);
   const response = filter === 'all' ? await tmdb.searchMulti(query, page) : await tmdb.searchTitle(filter, query, page);
   const rows = response.results as Array<TmdbListItem & { media_type?: MediaType | 'person'; profile_path?: string; adult?: boolean }>;
+  if (page === 1 && !rows.some(r => titleSimilarity(query, r.title || r.name || '') >= .92 || (r.title || r.name || '').toLocaleLowerCase().startsWith(query.toLocaleLowerCase()))) {
+    const words = query.split(/\s+/).filter(w => w.length > 2);
+    const corrections = await correctedTitles(env, query);
+    const variants = [...new Set([...corrections, ...(words.length > 1 ? [words.slice(0, -1).join(' '), words.slice(1).join(' ')] : [query.slice(0, Math.max(3, query.length - 2))])])].filter(v => v && v !== query).slice(0, 4);
+    const batches = await Promise.allSettled(variants.map(v => filter === 'all' ? tmdb.searchMulti(v, 1) : tmdb.searchTitle(filter, v, 1)));
+    const seen = new Set(rows.map(r => `${r.media_type || filter}:${r.id}`));
+    batches.forEach(batch => { if (batch.status === 'fulfilled') for (const item of batch.value.results as typeof rows) {
+      const key = `${item.media_type || filter}:${item.id}`;
+      if (!seen.has(key) && titleSimilarity(query, item.title || item.name || '') >= .55) { seen.add(key); rows.push(item); }
+    } });
+    rows.sort((a, b) => titleSimilarity(query, b.title || b.name || '') - titleSimilarity(query, a.title || a.name || ''));
+  }
   const types: MediaType[] = filter === 'all' ? ['movie', 'tv'] : [filter];
   const maps = new Map(await Promise.all(types.map(async type => [type, new Map((await tmdb.genres(type)).genres.map(g => [g.id, g.name]))] as const)));
   return {
