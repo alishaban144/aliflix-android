@@ -44,6 +44,7 @@ internal fun V3TitleDetails.toStableMobileMedia(fallback: Media): Media {
     return mapped.copy(
         rating = mapped.rating,
         trailerKey = trailerKey,
+        keywords = keywords.ifEmpty { fallback.keywords },
         imdbId = imdbId ?: fallback.imdbId,
         imdbRating = fallback.imdbRating,
         imdbRatingState = fallback.imdbRatingState,
@@ -100,6 +101,7 @@ internal fun Media.mergeStableMobileDetailUpdate(update: Media): Media {
         creators = creators.ifEmpty { update.creators },
         runtime = runtime.ifBlank { update.runtime },
         trailerKey = trailerKey ?: update.trailerKey,
+        keywords = update.keywords.ifEmpty { keywords },
         reviews = update.reviews.ifEmpty { reviews },
     )
 }
