@@ -4942,9 +4942,10 @@ private fun DetailReviewCard(
 }
 
 @Composable
-private fun DetailInfoSection(
+internal fun DetailInfoSection(
     title: String,
     badge: (@Composable () -> Unit)? = null,
+    clipCardContent: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     Column(
@@ -4974,7 +4975,18 @@ private fun DetailInfoSection(
             )
             badge?.invoke()
         }
-        Surface(
+        if (!clipCardContent) {
+            // Decorate around native video without clipping its Android surface.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(AliflixSurfaceSecondary, RoundedCornerShape(24.dp))
+                    .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(24.dp))
+                    .padding(18.dp),
+            ) {
+                content()
+            }
+        } else Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .animateContentSize(),

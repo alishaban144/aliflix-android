@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "185"
-  RELEASE_VERSION_NAME: "3.1.95"
+  RELEASE_VERSION_CODE: "186"
+  RELEASE_VERSION_NAME: "3.1.96"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
           fi
 
   playback-device-tests:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -182,7 +182,7 @@ jobs:
       always() && needs.changed-paths.result == 'success' &&
       (needs.playback-device-tests.result == 'success' ||
        (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
-       (github.ref_name == 'release/v3.1.91' && needs.playback-device-tests.result == 'skipped')) &&
+       ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96') && needs.playback-device-tests.result == 'skipped')) &&
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
     runs-on: ubuntu-latest
@@ -274,7 +274,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ]; then
+          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ]; then
             ./gradlew testMobileDebugUnitTest
             ./gradlew lintMobileDebug
           fi
@@ -308,7 +308,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Rebuild My Space scrolling with controlled fling speed, progressive edge braking, and a stable header across My List, Favorites, History, and Downloads."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Match the trailer section heading and card to Genres and Creators while preserving the YouTube player."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -336,7 +336,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Rebuild My Space scrolling across My List, Favorites, History, and Downloads. Keep dragging one-to-one, limit released momentum, brake progressively near collection edges, and keep the header and tabs stable. Unit tests, lint, and emulator validation skipped at user request; production-signed APK integrity checked. On-device scrolling remains unverified."
+          body: "Match the trailer section to Genres and Creators with the same heading, accent, spacing, rounded card, and border. Preserve YouTube playback and fullscreen implementation without clipping the native video surface. Unit tests, lint, and emulators skipped at user request; production-signed APK integrity checked. Device behavior remains unverified."
           files: |
             aliflix-mobile.apk
             update-mobile.json

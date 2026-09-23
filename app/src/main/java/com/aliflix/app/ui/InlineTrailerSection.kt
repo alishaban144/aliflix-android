@@ -294,10 +294,9 @@ private fun TrailerPlayer(videoId: String) {
         }
     }
 
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Trailer", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    DetailInfoSection(title = "Trailer", clipCardContent = false) {
         // Do not clip the Android video surface into a rounded Compose layer.
-        Box(Modifier.fillMaxWidth().background(AliflixSurfacePrimary)) {
+        Box(Modifier.fillMaxWidth().background(AliflixSurfaceSecondary)) {
             Column {
                 Box(Modifier.fillMaxWidth().heightIn(min = 200.dp).aspectRatio(16f / 9f), contentAlignment = Alignment.Center) {
                     when {
