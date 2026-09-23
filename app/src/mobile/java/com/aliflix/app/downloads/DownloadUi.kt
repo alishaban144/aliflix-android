@@ -439,6 +439,8 @@ internal interface DownloadUiDependencies {
 }
 
 @Composable internal fun DownloadsSection() {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val flingBehavior = com.aliflix.app.ui.rememberLibraryFlingBehavior(listState)
     val store = rememberDownloads()
     val entries by store.entries.collectAsState()
     val message by store.message.collectAsState()
@@ -477,7 +479,7 @@ internal interface DownloadUiDependencies {
             IconButton(onClick = { store.message.value = null }) { Icon(Icons.Rounded.Close, "Dismiss") }
         } }
         if (entries.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No downloads", color = AliflixContentSecondary) }
-        else LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        else LazyColumn(state = listState, flingBehavior = flingBehavior, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(entries, key = { it.id }) { saved ->
                 val d = saved.download
                 Surface(shape = RoundedCornerShape(26.dp), color = Color.Transparent, border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .24f))) {

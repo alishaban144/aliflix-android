@@ -2,7 +2,6 @@
 
 package com.aliflix.app.ui
 
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.runtime.DisposableEffect
 
 import androidx.activity.ComponentActivity
@@ -3081,44 +3080,6 @@ internal fun MySpaceScreen(
         initialPage = page.coerceIn(0, 3),
         pageCount = { 4 },
     )
-    var chromeVisible by remember { mutableStateOf(true) }
-    var chromeTravel by remember { mutableFloatStateOf(0f) }
-    val maxFlingVelocity = with(LocalDensity.current) { 4600.dp.toPx() }
-    val chromeScroll = remember(maxFlingVelocity) {
-        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset,
-                available: androidx.compose.ui.geometry.Offset,
-                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
-                if (source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput) {
-                    if (consumed.y * chromeTravel < 0f) chromeTravel = 0f
-                    chromeTravel = (chromeTravel + consumed.y).coerceIn(-72f, 72f)
-                    if (chromeTravel < -48f) chromeVisible = false
-                    if (chromeTravel > 32f || available.y > 12f) chromeVisible = true
-                }
-                // Only observe drag distance; never eat pointer movement.
-                return androidx.compose.ui.geometry.Offset.Zero
-            }
-
-            override suspend fun onPreFling(
-                available: androidx.compose.ui.unit.Velocity,
-            ): androidx.compose.ui.unit.Velocity {
-                // Retain native fling physics except for extreme vertical impulses.
-                // Consume ONLY the excess, never horizontal swipes between tabs.
-                if (kotlin.math.abs(available.y) <= maxFlingVelocity ||
-                    kotlin.math.abs(available.x) >= kotlin.math.abs(available.y)) {
-                    return androidx.compose.ui.unit.Velocity.Zero
-                }
-                return androidx.compose.ui.unit.Velocity(
-                    0f,
-                    available.y - available.y.coerceIn(-maxFlingVelocity, maxFlingVelocity),
-                )
-            }
-        }
-    }
-    LaunchedEffect(pagerState.settledPage) {
-        chromeTravel = 0f
-        chromeVisible = true
-    }
     var showSettingsWindow by rememberSaveable { mutableStateOf(false) }
     var showClearConfirmation by remember { mutableStateOf(false) }
 
@@ -3198,12 +3159,6 @@ internal fun MySpaceScreen(
             .downloadAtmosphere(),
     ) {
         MobileTopSafeArea(extraPadding = 18.dp)
-        androidx.compose.animation.AnimatedVisibility(
-            visible = chromeVisible,
-            enter = androidx.compose.animation.expandVertically(tween(220)) + fadeIn(tween(160)),
-            exit = androidx.compose.animation.shrinkVertically(tween(220)) + fadeOut(tween(160)),
-        ) { Column {
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3317,12 +3272,10 @@ internal fun MySpaceScreen(
                 }
             }
         }
-        } }
-
         HorizontalPager(
             state = pagerState,
             modifier = Modifier
-                .fillMaxWidth().nestedScroll(chromeScroll)
+                .fillMaxWidth()
                 .weight(1f),
             beyondViewportPageCount = 1,
         ) { targetPage ->
@@ -3386,6 +3339,7 @@ private fun GenreOrganizedList(
     }
     LazyVerticalGrid(
         state = gridState,
+        flingBehavior = rememberLibraryFlingBehavior(gridState),
         columns = GridCells.Adaptive(132.dp),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 28.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -3493,6 +3447,7 @@ private fun HistoryCollection(
         }
         LazyVerticalGrid(
             state = gridState,
+            flingBehavior = rememberLibraryFlingBehavior(gridState),
             columns = GridCells.Adaptive(132.dp),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
