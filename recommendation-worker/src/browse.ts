@@ -23,7 +23,7 @@ export function refinements(type: MediaType, genres: Array<{ id: number; name: s
   ];
 }
 
-export async function browse(env: RecommendationEnv, token: string, page: number) {
+export async function browse(env: RecommendationEnv, token: string, page: number, excludedTmdbIds: number[] = []) {
   const match = /^(genre|keyword):(movie|tv):(\d+)(?::([a-z0-9-]+))?$/.exec(token);
   if (!match) throw new ServiceError('INVALID_REQUEST', 'Invalid category', 400, false);
   const [, kind, rawType, rawId, refinement = 'popular'] = match;
@@ -35,13 +35,14 @@ export async function browse(env: RecommendationEnv, token: string, page: number
   const selected = sections.find(s => s.id === refinement);
   if (!selected) throw new ServiceError('INVALID_REQUEST', 'Unknown refinement', 400, false);
   const map = new Map(genres.map(g => [g.id, g.name]));
+  const excluded = new Set(excludedTmdbIds.filter(id => Number.isInteger(id) && id > 0).slice(0, 500));
   const results: ReturnType<typeof summary>[] = [];
   let cursor = page, totalPages = page;
   // Fill sparse pages without duplicating cards or leaving the requested category.
-  for (let count = 0; count < 4 && results.length < 20 && cursor <= Math.min(totalPages, 500); count++, cursor++) {
+  for (let count = 0; count < 8 && results.length < 20 && cursor <= Math.min(totalPages, 500); count++, cursor++) {
     const data = await tmdb.discover(type, { ...(kind === 'genre' ? { with_genres: String(id), ...selected.params } : { with_keywords: String(id), sort_by: 'popularity.desc' }), page: cursor });
     totalPages = data.total_pages;
-    for (const row of data.results) if (!results.some(r => r.tmdbId === row.id)) results.push(summary(row, type, map));
+    for (const row of data.results) if (!excluded.has(row.id) && !results.some(r => r.tmdbId === row.id)) results.push(summary(row, type, map));
   }
   return { results, page: cursor - 1, hasMore: cursor <= Math.min(totalPages, 500), sections: sections.map(({ id, name }) => ({ id, name })) };
 }

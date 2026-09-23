@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import { catalogueSearch, discoverCategory, discoveryParams, validDiscoveryItem, confidenceScore, MOODS } from '../src/discover';
+import { browse, refinements } from '../src/browse';
 const env: any = { TMDB_API_KEY: 'test', RECOMMENDATION_RATE_LIMITER: { limit: async () => ({ success: true }) } };
 const today = '2026-09-13';
 const item = { id: 12, title: 'Example', name: 'Example', poster_path: '/p.jpg', backdrop_path: '/b.jpg', release_date: '2026-09-01', first_air_date: '2026-08-01', vote_count: 800, vote_average: 7.5, popularity: 20, genre_ids: [878, 9648] };
@@ -16,6 +17,23 @@ describe('deterministic mobile Discover', () => {
     }
     expect(confidenceScore({ ...item, vote_count: 5, vote_average: 10 }, 'top-rated')).toBeLessThan(confidenceScore(item, 'top-rated'));
   });
+  it('keeps allocated titles out of later category refinements', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.includes('/genre/')) return response({ genres: [{ id: 1, name: 'Drama' }] });
+      return response(page([item, { ...item, id: 13 }]));
+    }));
+    const result = await browse(env, 'genre:movie:1', 1, [12]);
+    expect(result.results.map(title => title.tmdbId)).toEqual([13]);
+  });
+
+  it('offers at least twenty deterministic refinements for every selected genre', () => {
+    const movieGenres = Array.from({ length: 19 }, (_, index) => ({ id: index + 1, name: `Movie ${index + 1}` }));
+    const tvGenres = Array.from({ length: 16 }, (_, index) => ({ id: index + 1, name: `TV ${index + 1}` }));
+    expect(refinements('movie', movieGenres, 1).length).toBeGreaterThanOrEqual(20);
+    expect(refinements('tv', tvGenres, 1).length).toBeGreaterThanOrEqual(20);
+  });
+
   it('retains concept and exclusion constraints in every controlled mood fallback', () => {
     for (const category of Object.keys(MOODS)) {
       for (const type of ['movie', 'tv'] as const) {

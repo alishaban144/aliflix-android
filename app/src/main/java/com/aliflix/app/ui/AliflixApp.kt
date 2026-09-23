@@ -232,6 +232,7 @@ import com.aliflix.app.ui.launch.AliflixLaunchOverlay
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentPrimaryContainer
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
+import com.aliflix.app.ui.theme.AliflixGlassIdle
 import com.aliflix.app.ui.theme.AliflixSurfacePrimary
 import com.aliflix.app.ui.theme.AliflixAccentPrimary as AliflixRed
 import com.aliflix.app.ui.theme.AliflixAccentSecondary as AliflixIce
@@ -585,6 +586,7 @@ fun AliflixApp(
     val genreScrollState = rememberLazyGridState()
     val personScrollState = rememberLazyGridState()
     var homeFilterName by rememberSaveable { mutableStateOf(HomeFilter.FOR_YOU.name) }
+    var previousHomeFilterName by rememberSaveable { mutableStateOf(HomeFilter.FOR_YOU.name) }
     var searchMediaFilter by rememberSaveable { mutableStateOf("All") }
     var discoverFocusRequestId by remember { mutableIntStateOf(0) }
     var consumedDiscoverFocusRequestId by remember { mutableIntStateOf(0) }
@@ -1103,11 +1105,41 @@ fun AliflixApp(
                         accountState = accountState,
                         syncState = accountSyncState,
                         shelves = {
-                            val trailers = remember { com.aliflix.app.data.ActivityShelves(activity).read("trailers") }
-                            val watched = playbackProgress.values.filter { it.completed || it.progressFraction >= .9 }
-                                .sortedByDescending { it.updatedAtMillis }.map { it.media }.distinctBy { it.key }
-                            listOf(ContentRail("My List", myList), ContentRail("Trailers you watched", trailers), ContentRail("Recently watched", watched)).forEach { rail ->
-                                if (rail.items.isNotEmpty()) HomeMediaRail(rail, ::openDetails, compact = false)
+                            val activityShelves = remember(activity) {
+                                com.aliflix.app.data.ActivityShelves(activity)
+                            }
+                            var trailers by remember(activityShelves) {
+                                mutableStateOf(activityShelves.read("trailers"))
+                            }
+                            val watched = playbackProgress.values.filter {
+                                it.completed || it.progressFraction >= com.aliflix.app.data.PLAYBACK_WATCHED_FRACTION
+                            }
+                                .sortedByDescending { it.updatedAtMillis }
+                                .map { it.media }
+                                .distinctBy { it.key }
+                            listOf(
+                                ContentRail("My List", myList),
+                                ContentRail("Trailers you watched", trailers),
+                                ContentRail("Recently watched", watched),
+                            ).forEach { rail ->
+                                if (rail.items.isNotEmpty()) {
+                                    val onRemove = when (rail.title) {
+                                        "Trailers you watched" -> { media: Media ->
+                                            activityShelves.remove("trailers", media)
+                                            trailers = activityShelves.read("trailers")
+                                        }
+                                        "Recently watched" -> { media: Media ->
+                                            viewModel.removeWatched(media)
+                                        }
+                                        else -> null
+                                    }
+                                    HomeMediaRail(
+                                        rail = rail,
+                                        onOpen = ::openDetails,
+                                        compact = false,
+                                        onRemove = onRemove,
+                                    )
+                                }
                             }
                         },
                         onBack = ::popDestination,
@@ -1265,7 +1297,11 @@ fun AliflixApp(
                         selectedFilter = HomeFilter.entries.firstOrNull { filter ->
                             filter.name == homeFilterName
                         } ?: HomeFilter.FOR_YOU,
+                        previousFilter = HomeFilter.entries.firstOrNull { filter ->
+                            filter.name == previousHomeFilterName
+                        } ?: HomeFilter.FOR_YOU,
                         onSelectFilter = {
+                            if (it != HomeFilter.NEW) previousHomeFilterName = it.name
                             homeFilterName = it.name
                         },
                         modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
@@ -1561,6 +1597,7 @@ private fun HomeScreen(
     onSearch: () -> Unit,
     listState: LazyListState,
     selectedFilter: HomeFilter,
+    previousFilter: HomeFilter = HomeFilter.FOR_YOU,
     onSelectFilter: (HomeFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1581,9 +1618,11 @@ private fun HomeScreen(
             onOpen = onOpen,
             onPlay = onPlay,
             onSearch = onSearch,
-            listState = listState,
-            selectedFilter = visibleFilter,
-            onSelectFilter = onSelectFilter,
+             listState = listState,
+             selectedFilter = visibleFilter,
+             previousFilter = previousFilter,
+             onSelectFilter = onSelectFilter,
+
             modifier = modifier,
         )
         }
@@ -1611,6 +1650,7 @@ internal fun HomeFeed(
     onSearch: () -> Unit,
     listState: LazyListState,
     selectedFilter: HomeFilter,
+    previousFilter: HomeFilter = HomeFilter.FOR_YOU,
     onSelectFilter: (HomeFilter) -> Unit,
     modifier: Modifier,
 ) {
@@ -1619,7 +1659,11 @@ internal fun HomeFeed(
             MobileTopSafeArea()
             HomeHeader(onSearch)
             FilterBar(selectedFilter, onSelectFilter, pinned = false)
-            com.aliflix.app.ui.discover.CategoryBrowser(catalogueStore, onOpen)
+            com.aliflix.app.ui.discover.CategoryBrowser(
+                catalogueStore,
+                onOpen,
+                onBack = { onSelectFilter(previousFilter) },
+            )
         }
         return
     }
@@ -1814,7 +1858,13 @@ internal fun HomeFeed(
         }
 
         if (selectedFilter == HomeFilter.NEW && catalogueStore != null) {
-            item(key = "categories") { com.aliflix.app.ui.discover.CategoryBrowser(catalogueStore, onOpen) }
+            item(key = "categories") {
+                com.aliflix.app.ui.discover.CategoryBrowser(
+                    catalogueStore,
+                    onOpen,
+                    onBack = { onSelectFilter(previousFilter) },
+                )
+            }
         }
         items(if (selectedFilter == HomeFilter.NEW) emptyList() else filteredRails, key = { "${selectedFilter.name}:${it.title}" }) { rail ->
             androidx.compose.animation.AnimatedVisibility(visibleState = remember(selectedFilter, rail.title) {
@@ -2200,6 +2250,7 @@ internal fun HomeMediaRail(
     rail: ContentRail,
     onOpen: (Media) -> Unit,
     compact: Boolean,
+    onRemove: ((Media) -> Unit)? = null,
 ) {
     val trending = rail.title.contains("Trending", ignoreCase = true)
     val editorialLandscape = !trending && listOf(
@@ -2233,16 +2284,22 @@ internal fun HomeMediaRail(
                         width = if (compact) 112.dp else 130.dp,
                         rank = index + 1,
                         onClick = { onOpen(item) },
+                        onRemove = onRemove?.let { remove -> { remove(item) } },
+                        removeDescription = "Remove ${item.title} from ${rail.title}",
                     )
                     editorialLandscape -> HomeLandscapeCard(
                         item = item,
                         compact = compact,
                         onClick = { onOpen(item) },
+                        onRemove = onRemove?.let { remove -> { remove(item) } },
+                        removeDescription = "Remove ${item.title} from ${rail.title}",
                     )
                     else -> HomePosterCard(
                         item = item,
                         width = if (compact) 112.dp else 128.dp,
                         onClick = { onOpen(item) },
+                        onRemove = onRemove?.let { remove -> { remove(item) } },
+                        removeDescription = "Remove ${item.title} from ${rail.title}",
                     )
                 }
             }
@@ -2256,6 +2313,8 @@ private fun HomePosterCard(
     width: androidx.compose.ui.unit.Dp,
     rank: Int? = null,
     onClick: () -> Unit,
+    onRemove: (() -> Unit)? = null,
+    removeDescription: String = "Remove ${item.title}",
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -2364,6 +2423,25 @@ private fun HomePosterCard(
                         )
                     }
                 }
+                if (onRemove != null) {
+                    IconButton(
+                        onClick = onRemove,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(AliflixBlack.copy(alpha = 0.78f))
+                            .border(1.dp, AliflixBorderStrong, CircleShape),
+                    ) {
+                        Icon(
+                            Icons.Rounded.DeleteSweep,
+                            contentDescription = removeDescription,
+                            tint = AliflixContentPrimary,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
+                }
             }
         }
         Text(
@@ -2408,6 +2486,8 @@ private fun HomeLandscapeCard(
     item: Media,
     compact: Boolean,
     onClick: () -> Unit,
+    onRemove: (() -> Unit)? = null,
+    removeDescription: String = "Remove ${item.title}",
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -2457,6 +2537,25 @@ private fun HomeLandscapeCard(
                     ),
                 ),
         )
+        if (onRemove != null) {
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(AliflixBlack.copy(alpha = 0.78f))
+                    .border(1.dp, AliflixBorderStrong, CircleShape),
+            ) {
+                Icon(
+                    Icons.Rounded.DeleteSweep,
+                    contentDescription = removeDescription,
+                    tint = AliflixContentPrimary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -4194,7 +4293,20 @@ internal fun DetailScreen(
         }
     }
     var historyBanner by remember(item.key) { mutableStateOf(false) }
+    var historyDragX by remember(item.key) { mutableFloatStateOf(0f) }
+    var historySettleTargetX by remember(item.key) { mutableFloatStateOf(0f) }
+    var historySettling by remember(item.key) { mutableStateOf(false) }
+    val historySettleX by animateFloatAsState(
+        targetValue = historySettleTargetX,
+        animationSpec = tween(220, easing = FastOutSlowInEasing),
+        label = "history-banner-dismiss",
+    )
+    val historyScope = rememberCoroutineScope()
+    val historyDensity = LocalDensity.current
     LaunchedEffect(item.key, inHistory) {
+        historyDragX = 0f
+        historySettleTargetX = 0f
+        historySettling = false
         if (inHistory) { delay(450); historyBanner = true; delay(6500) }
         historyBanner = false
     }
@@ -4270,14 +4382,45 @@ internal fun DetailScreen(
                     enter = fadeIn(tween(300)) + slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it / 5 } + scaleIn(tween(380), initialScale = .92f),
                     exit = fadeOut(tween(200)) + scaleOut(tween(220), targetScale = .96f),
                     modifier = Modifier.padding(start = 76.dp, top = 16.dp, end = 16.dp)) {
-                    Surface(modifier = Modifier.pointerInput(item.key) {
-                        var distance = 0f
-                        detectHorizontalDragGestures(
-                            onDragStart = { distance = 0f },
-                            onHorizontalDrag = { change, delta -> change.consume(); distance += delta },
-                            onDragEnd = { if (kotlin.math.abs(distance) > 48.dp.toPx()) historyBanner = false },
-                        )
-                    }, shape = RoundedCornerShape(24.dp), color = AliflixSurfaceSecondary.copy(alpha = .55f),
+                    Surface(modifier = Modifier
+                        .graphicsLayer {
+                            translationX = if (historySettling) historySettleX else historyDragX
+                        }
+                        .pointerInput(item.key) {
+                            detectHorizontalDragGestures(
+                                onDragStart = { historySettling = false },
+                                onHorizontalDrag = { change, delta ->
+                                    change.consume()
+                                    historyDragX += delta
+                                },
+                                onDragEnd = {
+                                    val shouldDismiss = kotlin.math.abs(historyDragX) > with(historyDensity) { 64.dp.toPx() }
+                                    historySettling = true
+                                    historySettleTargetX = if (shouldDismiss) {
+                                        if (historyDragX > 0f) with(historyDensity) { 420.dp.toPx() } else -with(historyDensity) { 420.dp.toPx() }
+                                    } else {
+                                        0f
+                                    }
+                                    historyScope.launch {
+                                        delay(if (shouldDismiss) 220 else 180)
+                                        if (shouldDismiss) historyBanner = false
+                                        historyDragX = 0f
+                                        historySettleTargetX = 0f
+                                        historySettling = false
+                                    }
+                                },
+                                onDragCancel = {
+                                    historySettling = true
+                                    historySettleTargetX = 0f
+                                    historyScope.launch {
+                                        delay(180)
+                                        historyDragX = 0f
+                                        historySettling = false
+                                    }
+                                },
+                            )
+                        },
+                        shape = RoundedCornerShape(24.dp), color = AliflixSurfaceSecondary.copy(alpha = .55f),
                         border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .25f))) {
                         Row(Modifier.height(48.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("In your history", color = AliflixContentPrimary, fontSize = 12.sp)
@@ -4525,14 +4668,6 @@ internal fun DetailScreen(
                         }
                     }
                 }
-                if (item.keywords.isNotEmpty() && keywordStore != null) DetailInfoSection(title = "Keywords") {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        item.keywords.forEach { keyword ->
-                            androidx.compose.material3.AssistChip(onClick = { selectedKeyword = keyword }, label = { Text(keyword.name) },
-                                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(containerColor = com.aliflix.app.ui.theme.AliflixGlassIdle))
-                        }
-                    }
-                }
                 if (!com.aliflix.app.BuildConfig.IS_TV) InlineTrailerSection(item)
                 if (item.reviews.isNotEmpty()) {
                     DetailInfoSection(
@@ -4555,6 +4690,17 @@ internal fun DetailScreen(
                         },
                     ) {
                         DetailReviewsCarousel(reviews = item.reviews)
+                    }
+                }
+                if (item.keywords.isNotEmpty() && keywordStore != null) DetailInfoSection(title = "Keywords") {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        item.keywords.distinctBy { it.id }.forEach { keyword ->
+                            AssistChip(
+                                onClick = { selectedKeyword = keyword },
+                                label = { Text(keyword.name) },
+                                colors = AssistChipDefaults.assistChipColors(containerColor = AliflixGlassIdle),
+                            )
+                        }
                     }
                 }
                 if (state.error != null) {
@@ -5594,21 +5740,22 @@ private fun EpisodeRow(
     val ratings = episodeRatingsPresentation(episode)
     Row(
         modifier = Modifier
-            .fillMaxWidth().animateContentSize(tween(260, easing = FastOutSlowInEasing))
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .fillMaxWidth()
+            .animateContentSize(tween(220, easing = FastOutSlowInEasing))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(18.dp))
             .background(AliflixSurfaceSecondary)
-            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(20.dp))
+            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(18.dp))
             .clickable(onClick = onPlay)
-            .padding(10.dp),
+            .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(
             modifier = Modifier
-                .width(140.dp)
-                .height(84.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .width(112.dp)
+                .height(72.dp)
+                .clip(RoundedCornerShape(11.dp))
                 .background(AliflixSurface),
             ) {
             ArtworkPlaceholder(title = episode.title)
@@ -5621,7 +5768,7 @@ private fun EpisodeRow(
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .size(36.dp)
+                    .size(30.dp)
                     .clip(CircleShape)
                     .background(AliflixContentPrimary.copy(alpha = 0.94f)),
                 contentAlignment = Alignment.Center,
@@ -5630,6 +5777,7 @@ private fun EpisodeRow(
                     Icons.Rounded.PlayArrow,
                     contentDescription = "Play episode ${episode.number}: ${episode.title}",
                     tint = Color.Black,
+                    modifier = Modifier.size(19.dp),
                 )
             }
             if (shouldShowPlaybackProgressRing(progress)) {
@@ -5637,42 +5785,42 @@ private fun EpisodeRow(
                     fraction = progress!!.progressFraction.toFloat(),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(6.dp),
+                        .padding(4.dp),
                 )
             }
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(6.dp)
+                    .padding(4.dp)
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.68f))
-                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                    .padding(horizontal = 5.dp, vertical = 3.dp),
             ) {
                 Text(
                     text = episode.number.toString().padStart(2, '0'),
-                    fontSize = 9.sp,
+                    fontSize = 8.sp,
                     fontWeight = FontWeight.Black,
                 )
             }
         }
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "S${episode.seasonNumber} \u2022 E${episode.number}",
                     color = AliflixAccentSecondary,
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
-                    letterSpacing = 0.5.sp,
+                    letterSpacing = 0.35.sp,
                 )
                 if (episode.runtime.isNotBlank()) {
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         text = episode.runtime,
                         color = AliflixMuted,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                     )
                 }
             }
@@ -5682,29 +5830,42 @@ private fun EpisodeRow(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                lineHeight = 19.sp,
+                lineHeight = 16.sp,
             )
             Text(
                 text = episode.overview.ifBlank {
-                    "English episode summary is not available yet."
+                    "Episode summary unavailable."
                 },
                 color = Color.White.copy(alpha = 0.66f),
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                maxLines = if (expanded) Int.MAX_VALUE else 3,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                maxLines = if (expanded) Int.MAX_VALUE else 2,
                 overflow = TextOverflow.Ellipsis,
                 onTextLayout = { if (!expanded) expandable = it.hasVisualOverflow },
             )
-            if (expandable || expanded) TextButton(
-                onClick = { expanded = !expanded },
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.heightIn(min = 32.dp),
-            ) { Text(if (expanded) "Show less" else "Show more", fontSize = 11.sp, color = AliflixAccentSecondary) }
-            EpisodeRatingPill(
-                source = "IMDb",
-                value = ratings.imdb,
-                accent = Color(0xFFF5C518),
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                EpisodeRatingPill(
+                    source = "IMDb",
+                    value = ratings.imdb,
+                    accent = Color(0xFFF5C518),
+                )
+                if (expandable || expanded) {
+                    TextButton(
+                        onClick = { expanded = !expanded },
+                        contentPadding = PaddingValues(horizontal = 2.dp),
+                        modifier = Modifier.heightIn(min = 28.dp),
+                    ) {
+                        Text(
+                            if (expanded) "Show less" else "Show more",
+                            fontSize = 10.sp,
+                            color = AliflixAccentSecondary,
+                        )
+                    }
+                }
+            }
         }
         com.aliflix.app.downloads.DownloadButton(media, episode, compact = true)
     }

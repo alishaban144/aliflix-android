@@ -65,14 +65,23 @@ internal class DiscoverCatalogueStore(private val client: RecommendationAiClient
             CatalogueSession()
         }
     }
-    suspend fun load(category: String?, query: String, filter: String, more: Boolean = false, force: Boolean = false) {
+    suspend fun load(
+        category: String?,
+        query: String,
+        filter: String,
+        more: Boolean = false,
+        force: Boolean = false,
+        excludedTmdbIds: Set<Int> = emptySet(),
+    ) {
         val session = session(category, query, filter)
         if (session.loading || (more && !session.hasMore)) return
         if (!more && !force && System.currentTimeMillis() - session.updatedAt < 900_000) return
         session.loading = true
         session.error = null
         try {
-            val json = requests.withPermit { client.cataloguePage(category, query, filter, if (more) session.nextPage else 1) }
+            val json = requests.withPermit {
+                client.cataloguePage(category, query, filter, if (more) session.nextPage else 1, excludedTmdbIds)
+            }
             val definitions = json.optJSONArray("sections")
             session.sections = (0 until (definitions?.length() ?: 0)).map { definitions!!.getJSONObject(it).let { it.getString("id") to it.getString("name") } }
             val results = json.optJSONArray("results")

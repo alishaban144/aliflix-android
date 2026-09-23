@@ -64,11 +64,19 @@ class RecommendationAiClient(
 
     suspend fun categories(): JSONObject = withContext(ioDispatcher) { JSONObject(getJson("$baseUrl/v3/categories")) }
 
-    suspend fun cataloguePage(category: String?, query: String, filter: String, page: Int): JSONObject = withContext(ioDispatcher) {
+    suspend fun cataloguePage(
+        category: String?,
+        query: String,
+        filter: String,
+        page: Int,
+        excludedTmdbIds: Set<Int> = emptySet(),
+    ): JSONObject = withContext(ioDispatcher) {
         val type = when (filter) { "Movies" -> "movie"; "Series" -> "tv"; else -> "all" }
         val endpoint = if (category != null) "discover?category=${URLEncoder.encode(category, "UTF-8")}" else
             "search/catalogue?query=${URLEncoder.encode(query.trim(), "UTF-8")}"
-        JSONObject(getJson("$baseUrl/v3/$endpoint&type=$type&page=$page"))
+        val exclusions = excludedTmdbIds.filter { it > 0 }.take(500).joinToString(",")
+        val exclusionQuery = if (exclusions.isBlank()) "" else "&exclude=$exclusions"
+        JSONObject(getJson("$baseUrl/v3/$endpoint&type=$type&page=$page$exclusionQuery"))
     }
 
     suspend fun searchCompanies(query: String): List<ProductionCompanyFilter> = withContext(ioDispatcher) {

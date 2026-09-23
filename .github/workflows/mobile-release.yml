@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "187"
-  RELEASE_VERSION_NAME: "3.1.97"
+  RELEASE_VERSION_CODE: "188"
+  RELEASE_VERSION_NAME: "3.1.98"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -308,7 +308,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Refined mobile navigation, library fullscreen scrolling, Discover search and history, TMDB categories and keywords, richer personal matching, account shelves, and playback/download lifecycle improvements."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Glidable history dismissal, TMDB keywords under Reviews, compact episode cards, safe category refinement browsing with distinct TMDB sections, back navigation from Categories, removed duplicate Discover Recent, account shelf deletion, and 80-percent watched-state latching."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -336,7 +336,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile polish with translucent navigation, continuous home transitions, collapsible library headers, compact detail metadata, expandable episode summaries, and a compact trailer card. Adds TMDB genre refinement shelves, keyword browsing, typo recovery, recent search cards, and account activity shelves. Replaces inflated match scores with metadata affinity and improves saved-server startup, next-episode preparation, and foreground downloads. Unit tests, lint, and emulators skipped at user request; production-signed APK integrity checked. Device behavior remains unverified."
+          body: "Mobile polish with glidable history dismissal, TMDB keyword browsing, compact episode cards, safe category refinements, refined back navigation, cleaner Discover search history, account shelf deletion, and durable watched-state progress. Production-signed APK integrity checked; emulator behavior remains unverified."
           files: |
             aliflix-mobile.apk
             update-mobile.json

@@ -447,6 +447,14 @@ class FirebaseAccountSyncRepository(
                         writeProgressIfNewer(uid, progress).observeWriteResult(uid)
                     }
                 }
+                is PlaybackProgressMutation.Removed -> {
+                    val batch = firestore.batch()
+                    mutation.progressKeys.forEach { key ->
+                        lastCloudWriteAt.remove(key)
+                        batch.delete(userDocument(uid).collection(PROGRESS).document(key))
+                    }
+                    batch.commit().observeWriteResult(uid)
+                }
             }
         }
     }

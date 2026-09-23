@@ -15,5 +15,9 @@ class ActivityShelves(context: Context) {
         val items = (listOf(media) + read(shelf).filterNot { it.key == media.key }).take(60)
         prefs.edit().putString(shelf, JSONArray().apply { items.forEach { put(it.toJson()) } }.toString()).apply()
     }
+    fun remove(shelf: String, media: Media) {
+        val items = read(shelf).filterNot { it.key == media.key }
+        prefs.edit().putString(shelf, JSONArray().apply { items.forEach { put(it.toJson()) } }.toString()).apply()
+    }
     fun clear(shelf: String) { prefs.edit().remove(shelf).apply() }
 }

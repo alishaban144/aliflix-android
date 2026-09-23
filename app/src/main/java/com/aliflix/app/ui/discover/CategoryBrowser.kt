@@ -1,7 +1,15 @@
 package com.aliflix.app.ui.discover
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -11,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.aliflix.app.model.ContentRail
@@ -21,7 +30,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun CategoryBrowser(store: DiscoverCatalogueStore, onOpen: (Media) -> Unit) {
+internal fun CategoryBrowser(
+    store: DiscoverCatalogueStore,
+    onOpen: (Media) -> Unit,
+    onBack: () -> Unit = {},
+) {
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedName by rememberSaveable { mutableStateOf("") }
     var categories by remember { mutableStateOf<List<Triple<String, String, String>>>(emptyList()) }
@@ -36,52 +49,153 @@ internal fun CategoryBrowser(store: DiscoverCatalogueStore, onOpen: (Media) -> U
             } }
         } catch (e: CancellationException) { throw e } catch (_: Exception) { failed = true }
     }
-    BackHandler(selected != null) { selected = null }
+    BackHandler(enabled = selected != null) { selected = null }
+    BackHandler(enabled = selected == null) { onBack() }
     val base = selected
-    val session = base?.let { store.session(it, "", "All") }
     LaunchedEffect(base) { if (base != null) store.load(base, "", "All") }
-    androidx.compose.runtime.key(base ?: "categories") {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        if (selected == null) {
-            if (failed) item { TextButton(onClick = { retry++ }) { Text("Retry categories") } }
-            if (categories.isEmpty() && !failed) item { CircularProgressIndicator(Modifier.padding(20.dp).size(24.dp)) }
-            categories.groupBy { it.third }.forEach { (type, entries) ->
-                item { Text(if (type == "movie") "Movies" else "Series", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp)) }
-                items(entries.chunked(2)) { pair ->
-                    Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        pair.forEach { (key, name, _) ->
-                            Surface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).heightIn(min = 64.dp),
-                                shape = RoundedCornerShape(16.dp), color = AliflixGlassSelected) {
-                                Text(name, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall)
+    AnimatedContent(
+        targetState = base ?: "categories",
+        transitionSpec = {
+            val spec = tween<Float>(280, easing = FastOutSlowInEasing)
+            if (targetState == "categories") {
+                fadeIn(spec) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 8 } togetherWith
+                    fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -it / 10 }
+            } else {
+                fadeIn(spec) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 5 } togetherWith
+                    fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -it / 12 }
+            }
+        },
+        label = "category-browser-transition",
+    ) { visibleBase ->
+        if (visibleBase == "categories") {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                if (failed) item { TextButton(onClick = { retry++ }) { Text("Retry categories") } }
+                if (categories.isEmpty() && !failed) item { CircularProgressIndicator(Modifier.padding(20.dp).size(24.dp)) }
+                categories.groupBy { it.third }.forEach { (type, entries) ->
+                    item { Text(if (type == "movie") "Movies" else "Series", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp)) }
+                    items(entries.chunked(2), key = { pair -> pair.joinToString("|") { it.first } }) { pair ->
+                        Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            pair.forEach { (key, name, _) ->
+                                Surface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).heightIn(min = 64.dp),
+                                    shape = RoundedCornerShape(16.dp), color = AliflixGlassSelected) {
+                                    Text(name, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall)
+                                }
                             }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
-                        if (pair.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
             }
         } else {
-            item { TextButton(onClick = { selected = null }) { Text("‹  $selectedName") } }
-            item(key = "popular") { BrowseRail(store, base!!, "Popular", onOpen) }
-            items(session!!.sections.filterNot { it.first == "popular" }, key = { it.first }) { (id, name) ->
-                BrowseRail(store, "$base:$id", name, onOpen)
-            }
+            CategorySections(store, visibleBase, selectedName, onOpen, onBack = { selected = null })
         }
-    }
     }
 }
 
 @Composable
-private fun BrowseRail(store: DiscoverCatalogueStore, key: String, title: String, onOpen: (Media) -> Unit) {
-    val session = store.session(key, "", "All")
+private fun CategorySections(
+    store: DiscoverCatalogueStore,
+    base: String,
+    selectedName: String,
+    onOpen: (Media) -> Unit,
+    onBack: () -> Unit,
+) {
+    val root = store.session(base, "", "All")
+    val sections = if (root.sections.isEmpty()) emptyList() else listOf("popular" to "Popular") + root.sections.filterNot { it.first == "popular" }
+    var loadedSections by remember(base) { mutableStateOf(emptySet<String>()) }
+    var exclusions by remember(base) { mutableStateOf(emptyMap<String, Set<Int>>()) }
     var retry by remember { mutableIntStateOf(0) }
-    LaunchedEffect(key, retry) { store.load(key, "", "All", force = retry > 0) }
+    LaunchedEffect(base, sections, retry) {
+        if (sections.isEmpty()) return@LaunchedEffect
+        loadedSections = emptySet()
+        exclusions = emptyMap()
+        var seen = emptySet<Int>()
+        for ((id, _) in sections) {
+            val key = if (id == "popular") base else "$base:$id"
+            val sectionExclusions = seen
+            exclusions = exclusions + (id to sectionExclusions)
+            repeat(6) {
+                val session = store.session(key, "", "All")
+                if (session.items.size >= 20 || !session.hasMore) return@repeat
+                store.load(
+                    category = key,
+                    query = "",
+                    filter = "All",
+                    more = session.items.isNotEmpty(),
+                    force = retry > 0,
+                    excludedTmdbIds = sectionExclusions,
+                )
+            }
+            val loaded = store.session(key, "", "All")
+            if (loaded.error == null) {
+                loadedSections = loadedSections + id
+                seen = seen + loaded.items.map { it.id }
+            }
+        }
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        item {
+            TextButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text("‹  $selectedName")
+            }
+        }
+        if (sections.isEmpty()) {
+            item {
+                when {
+                    root.error != null -> TextButton(onClick = { retry++ }) { Text("Retry category") }
+                    root.updatedAt == 0L -> CircularProgressIndicator(Modifier.padding(20.dp).size(24.dp))
+                    else -> Text("Preparing category sections…", modifier = Modifier.padding(20.dp), color = AliflixContentSecondary)
+                }
+            }
+        }
+        items(sections, key = { it.first }) { (id, name) ->
+            val key = if (id == "popular") base else "$base:$id"
+            val session = store.session(key, "", "All")
+            when {
+                id in loadedSections && session.items.isNotEmpty() -> BrowseRail(
+                    store = store,
+                    key = key,
+                    title = name,
+                    onOpen = onOpen,
+                    excludedTmdbIds = exclusions[id].orEmpty(),
+                    autoLoad = false,
+                )
+                session.error != null -> TextButton(onClick = { retry++ }) { Text("$name · Retry") }
+                id in loadedSections -> Text("$name · No titles", modifier = Modifier.padding(16.dp), color = AliflixContentTertiary)
+                else -> Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(name, modifier = Modifier.weight(1f), color = AliflixContentSecondary)
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowseRail(
+    store: DiscoverCatalogueStore,
+    key: String,
+    title: String,
+    onOpen: (Media) -> Unit,
+    excludedTmdbIds: Set<Int> = emptySet(),
+    autoLoad: Boolean = true,
+) {
+    val session = store.session(key, "", "All")
+    var retry by remember(key) { mutableIntStateOf(0) }
+    LaunchedEffect(key, retry, autoLoad, excludedTmdbIds) {
+        if (autoLoad || retry > 0) store.load(key, "", "All", force = retry > 0, excludedTmdbIds = excludedTmdbIds)
+    }
     val scope = rememberCoroutineScope()
     if (session.items.isNotEmpty()) Column {
         HomeMediaRail(ContentRail(title, session.items), onOpen, compact = false)
-        if (session.hasMore) TextButton(enabled = !session.loading, onClick = { scope.launch { store.load(key, "", "All", more = true) } }) {
+        if (session.hasMore) TextButton(
+            enabled = !session.loading,
+            onClick = { scope.launch { store.load(key, "", "All", more = true, excludedTmdbIds = excludedTmdbIds) } },
+        ) {
             Text(if (session.loading) "Loading" else "Load more")
         }
-    }
-    else if (session.loading) Row(Modifier.padding(16.dp)) { Text(title, Modifier.weight(1f)); CircularProgressIndicator(Modifier.size(20.dp)) }
-    else if (session.error != null) TextButton(onClick = { retry++ }) { Text("$title · Retry") }
+    } else if (session.loading) Row(Modifier.padding(16.dp)) {
+        Text(title, Modifier.weight(1f))
+        CircularProgressIndicator(Modifier.size(20.dp))
+    } else if (session.error != null) TextButton(onClick = { retry++ }) { Text("$title · Retry") }
 }

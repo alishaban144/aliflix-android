@@ -26,10 +26,10 @@ object PersonalizationEngine {
         add("cast", media.cast.take(6), .55)
         add("plot", media.overview.lowercase(Locale.ROOT).split(Regex("[^\\p{L}\\p{N}]+"))
             .filter { it.length >= 4 && it !in stopWords }, .8)
-        Features(values, media.keywords.isNotEmpty() || media.creators.isNotEmpty() || media.overview.length > 80)
+        Features(values, media.genres.isNotEmpty() || media.keywords.isNotEmpty() || media.creators.isNotEmpty() || media.overview.length > 80)
     }
     fun match(item: Media, likes: List<Media>): PersonalMatch? {
-        if (likes.any { it.key == item.key }) return PersonalMatch(100)
+        if (likes.any { it.key == item.key }) return PersonalMatch(98)
         val anchors = likes.distinctBy(Media::key).take(100).map(::features).filter { it.values.isNotEmpty() }
         val candidate = features(item)
         if (anchors.isEmpty() || !candidate.rich || anchors.none { it.rich }) return null

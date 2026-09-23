@@ -279,11 +279,13 @@ export default {
         const cacheUrl = new URL(url.origin + url.pathname);
         cacheUrl.searchParams.set('v', '3'); cacheUrl.searchParams.set('type', filter); cacheUrl.searchParams.set('page', String(page));
         cacheUrl.searchParams.set(url.pathname === '/v3/discover' ? 'category' : 'query', url.pathname === '/v3/discover' ? category : (url.searchParams.get('query') || '').trim().slice(0, 160));
+        const excluded = (url.searchParams.get('exclude') || '').split(',').map(value => Number(value)).filter(value => Number.isInteger(value) && value > 0).slice(0, 500);
+        if (excluded.length) cacheUrl.searchParams.set('exclude', excluded.join(','));
         const cacheKey = new Request(cacheUrl.toString());
         const cached = await caches.default.match(cacheKey);
         if (cached) return cached;
         await enforceRateLimit(request, env);
-        const body = url.pathname === '/v3/discover' ? (/^(genre|keyword):/.test(category) ? await browse(env, category, page) : await discoverCategory(env, category, filter, page))
+        const body = url.pathname === '/v3/discover' ? (/^(genre|keyword):/.test(category) ? await browse(env, category, page, excluded) : await discoverCategory(env, category, filter, page))
           : await catalogueSearch(env, url.searchParams.get('query') || '', filter, page);
         const response = catalogJson(body);
         response.headers.set('cache-control', 'public, max-age=900');

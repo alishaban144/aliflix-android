@@ -1367,6 +1367,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun removeRecent(item: Media) = library.removeRecent(item)
 
+    fun removeWatched(item: Media) = playbackProgressStore.removeMedia(item)
+
     fun clearRecent() = library.clearRecent()
 
     fun setAiRecommendationsEnabled(enabled: Boolean) {

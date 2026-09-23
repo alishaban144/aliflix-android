@@ -85,28 +85,66 @@ internal suspend fun prepareDownloadBatchInternal(
 ) {
     fun group(selection: PlaybackSelection) = selection.media.key to
         if (selection.media.type == MediaType.TV) selection.seasonNumber ?: 1 else null
+    fun sameContent(first: PlaybackSelection, second: PlaybackSelection) =
+        first.media.key == second.media.key && first.seasonNumber == second.seasonNumber && first.episodeNumber == second.episodeNumber
     val snapshot = cached.filterValues { it.qualities.isNotEmpty() && sourceIsCurrent(it.selection) }
     coroutineScope {
         val anchors = snapshot.values.filter { it.server.isNotBlank() }.associateBy { group(it.selection) }.toMutableMap()
+        val discoveries = mutableMapOf<String, CompletableDeferred<PreparedDownload>>()
+        suspend fun discoverOnce(selection: PlaybackSelection): Pair<PreparedDownload, Boolean> {
+            var leader = false
+            val key = group(selection).toString()
+            val deferred = synchronized(discoveries) {
+                discoveries[key] ?: CompletableDeferred<PreparedDownload>().also {
+                    discoveries[key] = it
+                    leader = true
+                }
+            }
+            if (leader) {
+                try {
+                    deferred.complete(discover(selection))
+                } catch (cancelled: CancellationException) {
+                    deferred.completeExceptionally(cancelled)
+                    throw cancelled
+                } catch (error: Exception) {
+                    deferred.completeExceptionally(error)
+                    throw error
+                }
+            }
+            return deferred.await() to leader
+        }
+        suspend fun inspectFromAnchor(selection: PlaybackSelection, anchor: PreparedDownload): PreparedDownload {
+            val candidate = selection.copy(source = anchor.selection.source)
+            return try {
+                inspect(candidate, resolvePinned(candidate, anchor.server), language).copy(server = anchor.server)
+            } catch (timeout: TimeoutCancellationException) {
+                throw IllegalStateException("${anchor.server}: timed out", timeout)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                throw IllegalStateException("${anchor.server}: ${error.message.orEmpty().ifBlank { "Unavailable" }}", error)
+            }
+        }
         selections.distinctBy { it.first }.map { (key, selection) -> async {
             preparationSlots.withPermit {
                 try {
-                    val saved = snapshot[key]?.takeIf { it.selection.key == selection.key }
+                    val saved = snapshot[key]?.takeIf { sameContent(it.selection, selection) }
                     val result = if (saved != null) {
                         if (saved.playback.subtitleLanguage == language.lowercase()) saved
                         else inspect(saved.selection, saved.playback.copy(subtitleLanguage = language.lowercase(),
                             subtitlesVtt = "", preferEmbeddedSubtitles = false), language).copy(server = saved.server)
                     } else {
-                        val anchor = anchors[group(selection)]
-                        if (anchor == null) discover(selection)
-                        else {
-                            try {
-                                val candidate = selection.copy(source = anchor.selection.source)
-                                inspect(candidate, resolvePinned(candidate, anchor.server), language).copy(server = anchor.server)
-                            } catch (timeout: TimeoutCancellationException) {
-                                currentCoroutineContext().ensureActive(); discover(selection)
-                            } catch (cancelled: CancellationException) { throw cancelled }
-                            catch (_: Exception) { discover(selection) }
+                        val existingAnchor = anchors[group(selection)]
+                        if (existingAnchor != null) {
+                            inspectFromAnchor(selection, existingAnchor)
+                        } else {
+                            val (discovered, leader) = discoverOnce(selection)
+                            if (leader) {
+                                anchors[group(selection)] = discovered
+                                discovered
+                            } else {
+                                inspectFromAnchor(selection, anchors[group(selection)] ?: discovered)
+                            }
                         }
                     }
                     currentCoroutineContext().ensureActive()
@@ -114,9 +152,18 @@ internal suspend fun prepareDownloadBatchInternal(
                     if (result.server.isNotBlank()) anchors[group(selection)] = result
                     onPrepared(key, result)
                 } catch (timeout: TimeoutCancellationException) {
-                    currentCoroutineContext().ensureActive(); onError(key, "Timed out")
+                    currentCoroutineContext().ensureActive(); onError(key, "The episode timed out. Retry this episode.")
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { currentCoroutineContext().ensureActive(); onError(key, "Unavailable") }
+                catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    val message = error.message.orEmpty().ifBlank { "Unavailable" }
+                    val retry = if (message.contains("No playable", ignoreCase = true)) {
+                        "$message. Retry."
+                    } else {
+                        "$message. Retry this episode."
+                    }
+                    onError(key, retry)
+                }
             }
         } }.awaitAll()
     }
