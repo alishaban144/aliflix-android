@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "189"
-  RELEASE_VERSION_NAME: "3.1.99"
+  RELEASE_VERSION_CODE: "190"
+  RELEASE_VERSION_NAME: "3.1.100"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
           fi
 
   playback-device-tests:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -182,7 +182,7 @@ jobs:
       always() && needs.changed-paths.result == 'success' &&
       (needs.playback-device-tests.result == 'success' ||
        (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
-        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99') && needs.playback-device-tests.result == 'skipped')) &&
+        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100') && needs.playback-device-tests.result == 'skipped')) &&
 
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
@@ -309,7 +309,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Glidable history dismissal, TMDB keywords under Reviews, compact episode cards, safe category refinement browsing with distinct TMDB sections, back navigation from Categories, removed duplicate Discover Recent, account shelf deletion, and 80-percent watched-state latching."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: TMDB keyword results now show 20+ matching titles in a polished keyword catalogue, with keyword metadata mapping and same-keyword pagination coverage."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -337,7 +337,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile polish with glidable history dismissal, TMDB keyword browsing, compact episode cards, safe category refinements, refined back navigation, cleaner Discover search history, account shelf deletion, and durable watched-state progress. Production-signed APK integrity checked; emulator behavior remains unverified."
+          body: "TMDB keyword metadata now appears under Reviews, and each keyword opens a polished catalogue with 20+ same-keyword titles in TMDB order. Production-signed APK integrity checked; emulator behavior remains unverified."
           files: |
             aliflix-mobile.apk
             update-mobile.json

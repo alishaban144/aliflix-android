@@ -27,6 +27,19 @@ describe('deterministic mobile Discover', () => {
     expect(result.results.map(title => title.tmdbId)).toEqual([13]);
   });
 
+  it('returns more than twenty titles for a TMDB keyword', async () => {
+    const rows = Array.from({ length: 40 }, (_, index) => ({ ...item, id: index + 1 }));
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.includes('/genre/')) return response({ genres: [{ id: 1, name: 'Drama' }] });
+      expect(url.searchParams.get('with_keywords')).toBe('42');
+      const requestedPage = Number(url.searchParams.get('page') || '1');
+      return response(page(rows.slice((requestedPage - 1) * 20, requestedPage * 20), requestedPage));
+    }));
+    const result = await browse(env, 'keyword:movie:42', 1);
+    expect(result.results.length).toBeGreaterThanOrEqual(24);
+  });
+
   it('offers at least twenty deterministic refinements for every selected genre', () => {
     const movieGenres = Array.from({ length: 19 }, (_, index) => ({ id: index + 1, name: `Movie ${index + 1}` }));
     const tvGenres = Array.from({ length: 16 }, (_, index) => ({ id: index + 1, name: `TV ${index + 1}` }));

@@ -29,10 +29,12 @@ class V3CatalogMappingTest {
                   "tmdbVoteCount": 15000,
                   "status": "Ended",
                   "creators": [{"tmdbId": 66633, "name": "Vince Gilligan", "profilePath": "/vince.jpg"}],
+                  "keywords": [{"id": 123, "name": "time travel"}],
                   "cast": [{"tmdbId": 17419, "name": "Bryan Cranston"}]
                 }
                 """.trimIndent(),
             ),
+
         )
 
         assertEquals("tv", parsed.media.mediaType)
@@ -41,11 +43,14 @@ class V3CatalogMappingTest {
         assertEquals("Ended", parsed.status)
         assertEquals(66633, parsed.creators.single().tmdbId)
         assertEquals("/vince.jpg", parsed.creators.single().profilePath)
+        assertEquals(123, parsed.keywords.single().id)
+        assertEquals("time travel", parsed.keywords.single().name)
         assertNull(parsed.cast.single().profilePath)
     }
 
     @Test
     fun personCreditsParserPreservesMixedMovieAndSeriesTypes() {
+
         val parsed = V3PersonCredits.fromJson(
             JSONObject(
                 """

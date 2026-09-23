@@ -31,16 +31,19 @@ export async function browse(env: RecommendationEnv, token: string, page: number
   const tmdb = new TmdbClient(env, 6);
   const genres = (await tmdb.genres(type)).genres;
   if (kind === 'genre' && !genres.some(g => g.id === id)) throw new ServiceError('INVALID_REQUEST', 'Unknown genre', 400, false);
-  const sections = refinements(type, genres, id);
-  const selected = sections.find(s => s.id === refinement);
-  if (!selected) throw new ServiceError('INVALID_REQUEST', 'Unknown refinement', 400, false);
+  const keyword = kind === 'keyword';
+  const sections = keyword ? [] : refinements(type, genres, id);
+  const selected = keyword ? null : sections.find(s => s.id === refinement);
+  if (!keyword && !selected) throw new ServiceError('INVALID_REQUEST', 'Unknown refinement', 400, false);
   const map = new Map(genres.map(g => [g.id, g.name]));
   const excluded = new Set(excludedTmdbIds.filter(id => Number.isInteger(id) && id > 0).slice(0, 500));
   const results: ReturnType<typeof summary>[] = [];
+  const minimumResults = keyword ? 24 : 20;
+  const maximumPages = keyword ? 4 : 5;
   let cursor = page, totalPages = page;
   // Fill sparse pages without duplicating cards or leaving the requested category.
-  for (let count = 0; count < 8 && results.length < 20 && cursor <= Math.min(totalPages, 500); count++, cursor++) {
-    const data = await tmdb.discover(type, { ...(kind === 'genre' ? { with_genres: String(id), ...selected.params } : { with_keywords: String(id), sort_by: 'popularity.desc' }), page: cursor });
+  for (let count = 0; count < maximumPages && results.length < minimumResults && cursor <= Math.min(totalPages, 500); count++, cursor++) {
+    const data = await tmdb.discover(type, { ...(keyword ? { with_keywords: String(id), sort_by: 'popularity.desc' } : { with_genres: String(id), ...selected!.params }), page: cursor });
     totalPages = data.total_pages;
     for (const row of data.results) if (!excluded.has(row.id) && !results.some(r => r.tmdbId === row.id)) results.push(summary(row, type, map));
   }

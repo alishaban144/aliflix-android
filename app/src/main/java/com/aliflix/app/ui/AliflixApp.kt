@@ -4285,11 +4285,41 @@ internal fun DetailScreen(
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Column(Modifier.fillMaxSize().aliflixScreenBackground().windowInsetsPadding(WindowInsets.systemBars)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { selectedKeyword = null }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to details") }
-                Text(selectedKeyword!!.name, style = MaterialTheme.typography.titleLarge)
-            }
-            com.aliflix.app.ui.discover.CatalogueGrid(keywordStore, "keyword:${item.type.routeName}:${selectedKeyword!!.id}", "", "All", onOpen, {}, Modifier.weight(1f))
+            com.aliflix.app.ui.discover.CatalogueGrid(
+                store = keywordStore,
+                category = "keyword:${item.type.routeName}:${selectedKeyword!!.id}",
+                query = "",
+                filter = "All",
+                onOpen = onOpen,
+                onPerson = {},
+                modifier = Modifier.weight(1f),
+                header = {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        IconButton(onClick = { selectedKeyword = null }) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to details")
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = selectedKeyword!!.name,
+                                color = AliflixContentPrimary,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "TMDB keyword  •  20+ matching titles",
+                                color = AliflixAccentSecondary,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
+                },
+            )
         }
     }
     var historyBanner by remember(item.key) { mutableStateOf(false) }
@@ -4693,7 +4723,13 @@ internal fun DetailScreen(
                     }
                 }
                 if (item.keywords.isNotEmpty() && keywordStore != null) DetailInfoSection(title = "Keywords") {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Select a keyword to browse 20+ titles from TMDB",
+                            color = AliflixContentTertiary,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(bottom = 2.dp),
+                        )
                         item.keywords.distinctBy { it.id }.forEach { keyword ->
                             AssistChip(
                                 onClick = { selectedKeyword = keyword },
