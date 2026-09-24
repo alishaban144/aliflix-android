@@ -196,6 +196,9 @@ class RottenTomatoesTransportTest {
         {},
     )
 
-    private fun validPage(title: String, canonical: String, content: String) =
-        """<html><head><title>$title - Rotten Tomatoes</title><link rel="canonical" href="$canonical"></head><body><main>$content</main></body></html>"""
+    private fun validPage(title: String, canonical: String, content: String): String {
+        val year = when (title) { "The Godfather" -> 1972; "The Last of Us" -> 2023; "Breaking Bad" -> 2008; else -> null }
+        val datedTitle = if (year != null) "$title ($year)" else title
+        return """<html><head><title>$datedTitle - Rotten Tomatoes</title><link rel="canonical" href="$canonical"></head><body><main>$content</main></body></html>"""
+    }
 }

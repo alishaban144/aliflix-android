@@ -22,7 +22,7 @@ class RottenTomatoesCacheV3Test {
         store.saveRottenTomatoesRating("movie:2", RottenTomatoesSnapshot(null, RatingSourceState.LOADING))
         assertNull(store.loadRottenTomatoesRating("movie:1", Long.MAX_VALUE))
         assertNull(store.loadRottenTomatoesRating("movie:2", Long.MAX_VALUE))
-        assertFalse(File(directory, "rotten-tomatoes-ratings-v3.json").exists())
+        assertFalse(File(directory, "rotten-tomatoes-ratings-v4.json").exists())
     }
 
     @Test fun `verified and confirmed not rated are restored`() = runBlocking {
@@ -34,7 +34,7 @@ class RottenTomatoesCacheV3Test {
         assertEquals(97, store.loadRottenTomatoesRating("movie:1", Long.MAX_VALUE)?.rating)
         assertEquals(RatingSourceState.NOT_RATED, store.loadRottenTomatoesRating("movie:2", Long.MAX_VALUE)?.state)
         assertEquals(0, store.loadRottenTomatoesRating("episode:tv:3:s1:e1", Long.MAX_VALUE)?.rating)
-        assertTrue(File(directory, "rotten-tomatoes-ratings-v3.json").exists())
+        assertTrue(File(directory, "rotten-tomatoes-ratings-v4.json").exists())
     }
 
     @Test fun `legacy negative cache generations are ignored`() = runBlocking {

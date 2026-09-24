@@ -118,7 +118,7 @@ data class Media(
     ): Boolean {
         val currentImdbId = imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
         val returnedImdbId = omdb.imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
-        if (currentImdbId != null) return returnedImdbId == currentImdbId
+        if (currentImdbId != null && returnedImdbId != currentImdbId) return false
 
         val returnedType = omdb.type?.lowercase().orEmpty()
         val typeMatches = when (type) {
@@ -138,7 +138,7 @@ data class Media(
         if (returnedTitle.isBlank() || returnedTitle != normalized(title)) return false
 
         val currentYear = year.take(4).toIntOrNull()
-        return currentYear == null || omdb.year == null || kotlin.math.abs(currentYear - omdb.year) <= 2
+        return currentYear == null || (omdb.year != null && currentYear == omdb.year)
     }
 
     private fun String?.isNull_or_blank(): Boolean = this == null || this.isBlank()

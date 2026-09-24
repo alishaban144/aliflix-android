@@ -66,8 +66,8 @@ class AndroidCatalogCacheStore internal constructor(
     )
 
     private val homeFile = File(cacheDir, "home-v4.json")
-    private val imdbRatingFile = File(cacheDir, "imdb-ratings-v2.json")
-    private val rottenTomatoesRatingFile = File(cacheDir, "rotten-tomatoes-ratings-v3.json")
+    private val imdbRatingFile = File(cacheDir, "imdb-ratings-v3.json")
+    private val rottenTomatoesRatingFile = File(cacheDir, "rotten-tomatoes-ratings-v4.json")
     private val mutex = Mutex()
 
     init {
@@ -77,7 +77,7 @@ class AndroidCatalogCacheStore internal constructor(
                 "recommendation-pages-v3.json",
                 "recommendation-metadata-v1.json",
                 "imdb-ratings-v1.json",
-                "rotten-tomatoes-ratings-v1.json",
+                "rotten-tomatoes-ratings-v2.json",
                 "rotten-tomatoes-ratings-v2.json",
             ).map { File(cacheDir, it) }
                 .filter(File::exists)

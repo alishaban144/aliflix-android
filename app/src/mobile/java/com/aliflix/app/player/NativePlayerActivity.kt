@@ -353,6 +353,8 @@ class NativePlayerActivity : FragmentActivity() {
         prepareSelection(preferredServer = serverName)
     }
 
+    private val routeStore by lazy { PlaybackRouteStore(java.io.File(noBackupFilesDir, "playback-routes")) }
+
     private fun prepareSelection(positionMs: Long? = null, preferredServer: String? = null) {
         val current = selection ?: return
         recordCurrentProgress(urgent = true)
@@ -420,17 +422,40 @@ class NativePlayerActivity : FragmentActivity() {
                 val preferences = com.aliflix.app.data.PlaybackProviderRepository(this@NativePlayerActivity).preferences.value
                 val history = getSharedPreferences("native-resolver-performance", MODE_PRIVATE)
                 val seriesKey = "series:${current.media.key}"
-                val savedProvider = if (current.media.type == com.aliflix.app.model.MediaType.TV) history.getString("$seriesKey:provider", null) else null
-                val sources = playbackSourceFallbacks(current, preferences).filter { it.source.provider !in exhaustedSources }
+                val savedRoute = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { routeStore.load(current) }
+                    ?.takeIf { preferredServer == null && it.selection.source.provider !in exhaustedSources }
+                val savedProvider = savedRoute?.selection?.source?.provider?.name ?: if (current.media.type == com.aliflix.app.model.MediaType.TV) history.getString("$seriesKey:provider", null) else null
+                val sources = (listOfNotNull(savedRoute?.selection) + playbackSourceFallbacks(current, preferences)).distinctBy { it.source }.filter { it.source.provider !in exhaustedSources }
                 val orderedSources = sources.sortedBy { if (it.source.provider.name == savedProvider) 0 else 1 }
                 val excludedBySource = mutableMapOf<com.aliflix.app.model.PlaybackProviderId, MutableSet<String>>()
                 excludedBySource[current.source.provider] = triedServers.toMutableSet()
                 var preferSaved = preferredServer != null || savedProvider != null
-                repeat(3) {
+                if (savedRoute?.request != null && triedServers.isEmpty()) {
+                    val restored = savedRoute.selection
+                    val request = savedRoute.request.copy(positionMs = resume, playing = true,
+                        selectionJson = restored.nativeJson(), preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase())
+                    try {
+                        ui = ui.copy(server = savedRoute.server)
+                        startNative(request)
+                        withTimeout(4_000) { awaitNativeReady(request.url) }
+                        intent.putExtra("selection", restored.nativeJson())
+                        ui = ui.copy(stage = null, ready = true, error = null)
+                        controller?.play()
+                        if (auto && !NativePlaybackService.embeddedSubtitlesActive) loadAutomaticSubtitles(restored, language, request.url)
+                        warmNextEpisode(restored, savedRoute.server)
+                        return@launch
+                    } catch (error: Exception) {
+                        ensureActive()
+                        controller?.stop()
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { routeStore.invalidateStream(current) }
+                        // Refresh this exact server before permitting any other provider.
+                    }
+                }
+                repeat(4) {
                     ensureActive()
                     val candidates = orderedSources.filter { it.source.provider !in exhaustedSources }
                     if (candidates.isEmpty()) return@repeat
-                    val batch = if (preferSaved && preferredServer != null) listOf(candidates.firstOrNull {
+                    val batch = if (preferSaved) listOf(candidates.firstOrNull {
                         if (preferredServer != null) it.source == startingSource else it.source.provider.name == savedProvider
                     } ?: candidates.first()) else candidates
                     preferSaved = false
@@ -442,13 +467,12 @@ class NativePlayerActivity : FragmentActivity() {
                     warmedEpisode = null
                     val winner = try {
                         warmed ?: firstSuccessful(batch.map { candidate -> suspend {
-                            if (savedProvider != null && candidate.source.provider.name != savedProvider) delay(650)
                             val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                             var server = ""
                             val excluded = excludedBySource.getOrPut(candidate.source.provider) { mutableSetOf() }
-                            val savedServer = if (candidate.source.provider.name == savedProvider) history.getString("$seriesKey:server", null) else null
+                            val savedServer = if (candidate.source == savedRoute?.selection?.source) savedRoute.server else if (candidate.source.provider.name == savedProvider) history.getString("$seriesKey:server", null) else null
                             try {
-                                val request = withTimeout(if (savedServer != null || preferredServer != null) 5_000 else 16_000) {
+                                val request = withTimeout(16_000) {
                                     adapter.resolve(candidate, resume, excluded, validateSingle = false,
                                         preferredServer = (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
                                         onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[candidate.key] = (resolvedServerNames[candidate.key].orEmpty() + names).distinct() }) { server = it }
@@ -473,6 +497,9 @@ class NativePlayerActivity : FragmentActivity() {
                     try {
                         startNative(resolved.copy(playing = true, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
                         awaitNativeReady(resolved.url)
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            runCatching { routeStore.save(candidate, server, resolved) }
+                        }
                         if (candidate.media.type == com.aliflix.app.model.MediaType.TV) {
                             history.edit().putString("$seriesKey:provider", candidate.source.provider.name)
                                 .putString("$seriesKey:server", server).apply()

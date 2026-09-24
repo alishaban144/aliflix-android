@@ -277,7 +277,7 @@ export default {
         if (url.pathname === '/v3/discover' && !DISCOVER_CATEGORIES.includes(category) && !/^(genre|keyword):(movie|tv):\d+(?::[a-z0-9-]+)?$/.test(category))
           throw new ServiceError('INVALID_REQUEST', 'Unknown Discover category', 400, false);
         const cacheUrl = new URL(url.origin + url.pathname);
-        cacheUrl.searchParams.set('v', '3'); cacheUrl.searchParams.set('type', filter); cacheUrl.searchParams.set('page', String(page));
+        cacheUrl.searchParams.set('v', '4'); cacheUrl.searchParams.set('type', filter); cacheUrl.searchParams.set('page', String(page));
         cacheUrl.searchParams.set(url.pathname === '/v3/discover' ? 'category' : 'query', url.pathname === '/v3/discover' ? category : (url.searchParams.get('query') || '').trim().slice(0, 160));
         const excluded = (url.searchParams.get('exclude') || '').split(',').map(value => Number(value)).filter(value => Number.isInteger(value) && value > 0).slice(0, 500);
         if (excluded.length) cacheUrl.searchParams.set('exclude', excluded.join(','));

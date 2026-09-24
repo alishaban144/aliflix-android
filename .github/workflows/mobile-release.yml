@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "191"
-  RELEASE_VERSION_NAME: "3.1.101"
+  RELEASE_VERSION_CODE: "192"
+  RELEASE_VERSION_NAME: "3.1.102"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
           fi
 
   playback-device-tests:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -118,7 +118,7 @@ jobs:
           set -euo pipefail
           npm ci
           npm run typecheck
-          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != "release/v3.1.97" ]; then npm test; fi
+          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != "release/v3.1.97" ] && [ "$GITHUB_REF_NAME" != "release/v3.1.102" ]; then npm test; fi
 
   deploy-recommendations:
     needs: worker-checks
@@ -170,6 +170,11 @@ jobs:
             sleep 2
           done
 
+      - name: Verify live genre-specific browsing
+        if: github.ref_name != 'release/v3.1.102'
+        working-directory: recommendation-worker
+        run: node scripts/verify-browse.mjs
+
   release:
     needs:
       [
@@ -182,7 +187,7 @@ jobs:
       always() && needs.changed-paths.result == 'success' &&
       (needs.playback-device-tests.result == 'success' ||
        (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
-        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101') && needs.playback-device-tests.result == 'skipped')) &&
+        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102') && needs.playback-device-tests.result == 'skipped')) &&
 
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
@@ -275,7 +280,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.97' ]; then
+          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.97' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.102' ]; then
             ./gradlew testMobileDebugUnitTest
             ./gradlew lintMobileDebug
           fi
@@ -309,7 +314,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Fixes TMDB keyword propagation into mobile details, keeps Keywords under Reviews, and preserves keyword metadata through progressive detail refreshes."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Compact keywords with standard navigation, genre-specific category sections, stricter rating identity and recovery, saved movie and episode playback routes, smoother History dismissal, and refined player gesture controls."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -337,7 +342,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Fixes the mobile details keyword data path so TMDB keywords render under Reviews and remain available through progressive detail refreshes. Production-signed APK integrity checked; emulator behavior remains unverified."
+          body: "Compact keywords with standard navigation, genre-specific category sections, stricter rating identity and recovery, saved movie and episode playback routes, smoother History dismissal, and refined player gesture controls. Tests and emulator validation skipped at the user's request. Production signing and APK integrity verified."
           files: |
             aliflix-mobile.apk
             update-mobile.json

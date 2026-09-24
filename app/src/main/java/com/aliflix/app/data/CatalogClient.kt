@@ -1059,18 +1059,10 @@ class CatalogClient(
             parsed.copy(imdbId = parsed.imdbId ?: current.imdbId ?: item.imdbId)
         }
         val metadataWithPendingRatings = metadata.copy(
-            imdbRatingState = when {
-                metadata.imdbRating != null -> metadata.imdbRatingState ?: RatingSourceState.VERIFIED
-                metadata.imdbRatingState == RatingSourceState.NOT_RATED -> RatingSourceState.NOT_RATED
-                else -> RatingSourceState.LOADING
-            },
-            rottenTomatoesState = when {
-                metadata.rottenTomatoesRating != null -> metadata.rottenTomatoesState ?: RatingSourceState.VERIFIED
-                metadata.rottenTomatoesState == RatingSourceState.NOT_RATED -> RatingSourceState.NOT_RATED
-                else -> RatingSourceState.LOADING
-            },
-
+            imdbRating = null, imdbVoteCount = null, imdbRatingState = RatingSourceState.LOADING,
+            rottenTomatoesRating = null, rottenTomatoesState = RatingSourceState.LOADING,
         )
+
         val pageRecommendations = pageHtml?.let {
             runCatching { parseRelatedResults(it) }.getOrDefault(emptyList())
         }.orEmpty()
@@ -1091,7 +1083,7 @@ class CatalogClient(
 
         var omdbEnriched = metadataWithPendingRatings
         suspend fun enrichOmdb() {
-            if (metadata.imdbId?.matches(Regex("tt\\d{5,12}")) == true) {
+            if (metadata.title.isNotBlank()) {
                 try {
                     val req = com.aliflix.app.data.omdb.OmdbLookupRequest(
                         imdbId = metadata.imdbId,
@@ -1118,13 +1110,15 @@ class CatalogClient(
                 val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
 
                 val imdbSnapshot = imdbRatingRepository.ratingFor(current)
-                val enriched = catalogue.firstOrNull { it.key == current.key }?.copy(
-                    imdbId = imdbSnapshot.identity.imdbId.takeIf { it.isNotBlank() } ?: current.imdbId,
-                    imdbRating = imdbSnapshot.rating,
-                    imdbVoteCount = imdbSnapshot.voteCount,
+                val latest = catalogue.firstOrNull { it.key == current.key } ?: current
+                val keepVerified = imdbSnapshot.rating == null && latest.imdbRating != null &&
+                    latest.imdbRatingState in setOf(RatingSourceState.VERIFIED, RatingSourceState.STALE)
+                val enriched = if (keepVerified) latest else latest.copy(
+                    imdbId = imdbSnapshot.identity.imdbId.takeIf { it.isNotBlank() } ?: latest.imdbId,
+                    imdbRating = imdbSnapshot.rating, imdbVoteCount = imdbSnapshot.voteCount,
                     imdbRatingState = imdbSnapshot.state,
                 )
-                if (enriched != null) {
+                run {
                     catalogue = (listOf(enriched) + catalogue.filterNot { it.key == enriched.key })
                     onProgress(enriched, recommendations)
                     enriched.imdbRating?.let { imdbRatingsCache[enriched.key] = it }
@@ -1133,7 +1127,7 @@ class CatalogClient(
                 throw cancelled
             } catch (_: Throwable) {
                 val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
-                val unavailable = current.copy(imdbRatingState = RatingSourceState.UNAVAILABLE)
+                val unavailable = if (current.imdbRating != null) current else current.copy(imdbRatingState = RatingSourceState.UNAVAILABLE)
                 catalogue = listOf(unavailable) + catalogue.filterNot { it.key == unavailable.key }
                 onProgress(unavailable, recommendations)
             }
@@ -1147,10 +1141,10 @@ class CatalogClient(
                 }
 
                 suspend fun publish(snapshot: RottenTomatoesSnapshot) {
-                    val enriched = catalogue.firstOrNull { it.key == current.key }?.copy(
-                        rottenTomatoesRating = snapshot.rating,
-                        rottenTomatoesState = snapshot.state,
-                    ) ?: return
+                    val latest = catalogue.firstOrNull { it.key == current.key } ?: return
+                    if (snapshot.rating == null && latest.rottenTomatoesRating != null &&
+                        latest.rottenTomatoesState in setOf(RatingSourceState.VERIFIED, RatingSourceState.STALE)) return
+                    val enriched = latest.copy(rottenTomatoesRating = snapshot.rating, rottenTomatoesState = snapshot.state)
                     catalogue = listOf(enriched) + catalogue.filterNot { it.key == enriched.key }
                     onProgress(enriched, recommendations)
                 }
@@ -1179,7 +1173,7 @@ class CatalogClient(
                 throw cancelled
             } catch (_: Throwable) {
                 val current = catalogue.firstOrNull { it.key == metadata.key } ?: omdbEnriched
-                val unavailable = current.copy(rottenTomatoesState = RatingSourceState.UNAVAILABLE)
+                val unavailable = if (current.rottenTomatoesRating != null) current else current.copy(rottenTomatoesState = RatingSourceState.UNAVAILABLE)
                 catalogue = listOf(unavailable) + catalogue.filterNot { it.key == unavailable.key }
                 onProgress(unavailable, recommendations)
             }

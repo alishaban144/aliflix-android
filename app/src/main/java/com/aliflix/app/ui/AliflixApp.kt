@@ -341,7 +341,7 @@ internal sealed interface MobileDestination {
         val firstVisibleItemScrollOffset: Int = 0,
     ) : MobileDestination
 
-    data class DiscoverCategory(val category: String, val filter: String) : MobileDestination
+    data class DiscoverCategory(val category: String, val filter: String, val title: String = "") : MobileDestination
 
     data class Account(val route: AccountRoute) : MobileDestination
 }
@@ -355,6 +355,7 @@ private data class MobileAnimatedDestination(
     val detailScrollIndex: Int = 0,
     val detailScrollOffset: Int = 0,
     val discoverCategory: String? = null,
+    val discoverTitle: String = "",
     val discoverFilter: String = "All",
     val genreName: String? = null,
     val genreMediaType: MediaType? = null,
@@ -429,7 +430,7 @@ private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>
                                 destination.firstVisibleItemScrollOffset,
                             )
                         is MobileDestination.DiscoverCategory -> JSONObject().put("kind", "discover")
-                            .put("category", destination.category).put("filter", destination.filter)
+                            .put("category", destination.category).put("filter", destination.filter).put("title", destination.title)
                         is MobileDestination.Account -> JSONObject()
                             .put("kind", "account")
                             .put("route", destination.route.name)
@@ -485,7 +486,7 @@ private val MobileDestinationStackSaver = Saver<List<MobileDestination>, String>
                                     value.optInt("firstVisibleItemScrollOffset").coerceAtLeast(0),
                             ),
                         )
-                        "discover" -> add(MobileDestination.DiscoverCategory(value.getString("category"), value.optString("filter", "All")))
+                        "discover" -> add(MobileDestination.DiscoverCategory(value.getString("category"), value.optString("filter", "All"), value.optString("title")))
                         "account" -> add(
                             MobileDestination.Account(
                                 AccountRoute.entries.firstOrNull {
@@ -1015,6 +1016,7 @@ fun AliflixApp(
                 detailScrollIndex = savedDetailScroll?.first ?: currentDetailDestination?.firstVisibleItemIndex ?: 0,
                 detailScrollOffset = savedDetailScroll?.second ?: currentDetailDestination?.firstVisibleItemScrollOffset ?: 0,
                 discoverCategory = (currentDestination as? MobileDestination.DiscoverCategory)?.category,
+                discoverTitle = (currentDestination as? MobileDestination.DiscoverCategory)?.title.orEmpty(),
                 discoverFilter = (currentDestination as? MobileDestination.DiscoverCategory)?.filter ?: "All",
                 genreName = (currentDestination as? MobileDestination.Genre)?.name,
                 genreMediaType =
@@ -1192,6 +1194,7 @@ fun AliflixApp(
                         if (targetDestination.discoverCategory != null) {
                             com.aliflix.app.ui.discover.DiscoverCategoryScreen(
                                 category = targetDestination.discoverCategory, filter = targetDestination.discoverFilter,
+                                title = targetDestination.discoverTitle,
                                 store = viewModel.discoverCatalogue, onBack = ::popDestination, onOpen = ::openDetails,
                                 modifier = Modifier.padding(bottom = padding.calculateBottomPadding()),
                             )
@@ -1266,7 +1269,11 @@ fun AliflixApp(
                             onToggleLike = viewModel::toggleLike,
                             onOpen = ::openDetails,
                             inHistory = targetItem?.let { target -> recent.any { it.key == target.key } } == true,
-                            keywordStore = viewModel.discoverCatalogue,
+                            onOpenKeyword = { keyword ->
+                                destinationStack = destinationStack + MobileDestination.DiscoverCategory(
+                                    "keyword:${targetItem!!.type.routeName}:${keyword.id}", "All", keyword.name,
+                                )
+                            },
                             onDeleteHistory = viewModel::removeRecent,
                             personalMatch = targetItem?.let {
                                 PersonalizationEngine.match(it, likes)
@@ -4276,70 +4283,9 @@ internal fun DetailScreen(
     onScrollPositionChanged: (Int, Int) -> Unit = { _, _ -> },
     inHistory: Boolean = false,
     onDeleteHistory: (Media) -> Unit = {},
-    keywordStore: com.aliflix.app.ui.discover.DiscoverCatalogueStore? = null,
+    onOpenKeyword: ((com.aliflix.app.model.MediaKeyword) -> Unit)? = null,
 ) {
     val item = state.item ?: return
-    var selectedKeyword by remember(item.key) { mutableStateOf<com.aliflix.app.model.MediaKeyword?>(null) }
-    if (selectedKeyword != null && keywordStore != null) androidx.compose.ui.window.Dialog(
-        onDismissRequest = { selectedKeyword = null },
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Column(Modifier.fillMaxSize().aliflixScreenBackground().windowInsetsPadding(WindowInsets.systemBars)) {
-            com.aliflix.app.ui.discover.CatalogueGrid(
-                store = keywordStore,
-                category = "keyword:${item.type.routeName}:${selectedKeyword!!.id}",
-                query = "",
-                filter = "All",
-                onOpen = onOpen,
-                onPerson = {},
-                modifier = Modifier.weight(1f),
-                header = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        IconButton(onClick = { selectedKeyword = null }) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to details")
-                        }
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = selectedKeyword!!.name,
-                                color = AliflixContentPrimary,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = "TMDB keyword  •  20+ matching titles",
-                                color = AliflixAccentSecondary,
-                                style = MaterialTheme.typography.labelMedium,
-                            )
-                        }
-                    }
-                },
-            )
-        }
-    }
-    var historyBanner by remember(item.key) { mutableStateOf(false) }
-    var historyDragX by remember(item.key) { mutableFloatStateOf(0f) }
-    var historySettleTargetX by remember(item.key) { mutableFloatStateOf(0f) }
-    var historySettling by remember(item.key) { mutableStateOf(false) }
-    val historySettleX by animateFloatAsState(
-        targetValue = historySettleTargetX,
-        animationSpec = tween(220, easing = FastOutSlowInEasing),
-        label = "history-banner-dismiss",
-    )
-    val historyScope = rememberCoroutineScope()
-    val historyDensity = LocalDensity.current
-    LaunchedEffect(item.key, inHistory) {
-        historyDragX = 0f
-        historySettleTargetX = 0f
-        historySettling = false
-        if (inHistory) { delay(450); historyBanner = true; delay(6500) }
-        historyBanner = false
-    }
     val latestEpisodeProgress = playbackProgress.values
         .filter { progress -> progress.media.id == item.id && progress.media.type == MediaType.TV }
         .maxByOrNull(PlaybackProgress::updatedAtMillis)
@@ -4408,58 +4354,10 @@ internal fun DetailScreen(
                             )
                         },
                 )
-                AnimatedVisibility(visible = historyBanner && inHistory,
-                    enter = fadeIn(tween(300)) + slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it / 5 } + scaleIn(tween(380), initialScale = .92f),
-                    exit = fadeOut(tween(200)) + scaleOut(tween(220), targetScale = .96f),
-                    modifier = Modifier.padding(start = 76.dp, top = 16.dp, end = 16.dp)) {
-                    Surface(modifier = Modifier
-                        .graphicsLayer {
-                            translationX = if (historySettling) historySettleX else historyDragX
-                        }
-                        .pointerInput(item.key) {
-                            detectHorizontalDragGestures(
-                                onDragStart = { historySettling = false },
-                                onHorizontalDrag = { change, delta ->
-                                    change.consume()
-                                    historyDragX += delta
-                                },
-                                onDragEnd = {
-                                    val shouldDismiss = kotlin.math.abs(historyDragX) > with(historyDensity) { 64.dp.toPx() }
-                                    historySettling = true
-                                    historySettleTargetX = if (shouldDismiss) {
-                                        if (historyDragX > 0f) with(historyDensity) { 420.dp.toPx() } else -with(historyDensity) { 420.dp.toPx() }
-                                    } else {
-                                        0f
-                                    }
-                                    historyScope.launch {
-                                        delay(if (shouldDismiss) 220 else 180)
-                                        if (shouldDismiss) historyBanner = false
-                                        historyDragX = 0f
-                                        historySettleTargetX = 0f
-                                        historySettling = false
-                                    }
-                                },
-                                onDragCancel = {
-                                    historySettling = true
-                                    historySettleTargetX = 0f
-                                    historyScope.launch {
-                                        delay(180)
-                                        historyDragX = 0f
-                                        historySettling = false
-                                    }
-                                },
-                            )
-                        },
-                        shape = RoundedCornerShape(24.dp), color = AliflixSurfaceSecondary.copy(alpha = .55f),
-                        border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .25f))) {
-                        Row(Modifier.height(48.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("In your history", color = AliflixContentPrimary, fontSize = 12.sp)
-                            TextButton(onClick = { historyBanner = false; onDeleteHistory(item) }) {
-                                Text("Remove", color = AliflixAccentSecondary, fontSize = 12.sp)
-                            }
-                        }
-                    }
-                }
+                HistoryReminder(
+                    itemKey = item.key, inHistory = inHistory, onDelete = { onDeleteHistory(item) },
+                    modifier = Modifier.padding(start = 76.dp, top = 16.dp, end = 16.dp),
+                )
                 IconButton(
                     onClick = onBack,
                     modifier = Modifier
@@ -4722,18 +4620,13 @@ internal fun DetailScreen(
                         DetailReviewsCarousel(reviews = item.reviews)
                     }
                 }
-                if (item.keywords.isNotEmpty() && keywordStore != null) DetailInfoSection(title = "Keywords") {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "Select a keyword to browse 20+ titles from TMDB",
-                            color = AliflixContentTertiary,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(bottom = 2.dp),
-                        )
+                if (item.keywords.isNotEmpty() && onOpenKeyword != null) DetailInfoSection(title = "Keywords", cardPadding = 12.dp) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
                         item.keywords.distinctBy { it.id }.forEach { keyword ->
                             AssistChip(
-                                onClick = { selectedKeyword = keyword },
-                                label = { Text(keyword.name) },
+                                onClick = { onOpenKeyword(keyword) },
+                                modifier = Modifier.height(32.dp),
+                                label = { Text(keyword.name, fontSize = 11.sp) },
                                 colors = AssistChipDefaults.assistChipColors(containerColor = AliflixGlassIdle),
                             )
                         }

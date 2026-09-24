@@ -40,11 +40,9 @@ describe('deterministic mobile Discover', () => {
     expect(result.results.length).toBeGreaterThanOrEqual(24);
   });
 
-  it('offers at least twenty deterministic refinements for every selected genre', () => {
-    const movieGenres = Array.from({ length: 19 }, (_, index) => ({ id: index + 1, name: `Movie ${index + 1}` }));
-    const tvGenres = Array.from({ length: 16 }, (_, index) => ({ id: index + 1, name: `TV ${index + 1}` }));
-    expect(refinements('movie', movieGenres, 1).length).toBeGreaterThanOrEqual(20);
-    expect(refinements('tv', tvGenres, 1).length).toBeGreaterThanOrEqual(20);
+  it('does not invent sections for an unknown genre', () => {
+    expect(refinements('movie', [], 1)).toEqual([]);
+    expect(refinements('tv', [], 1)).toEqual([]);
   });
 
   it('retains concept and exclusion constraints in every controlled mood fallback', () => {

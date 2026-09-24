@@ -151,7 +151,7 @@ class ImdbRatingRepositoryTest {
                 if (url.contains("suggestion")) {
                     """
                     {"d":[
-                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"y":2025},
+                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"y":2026},
                       {"id":"tt39365308","l":"Obsession","q":"short","qid":"short","rank":35788,"y":2026}
                     ]}
                     """.trimIndent()
@@ -160,8 +160,8 @@ class ImdbRatingRepositoryTest {
                 }
             },
             graphQlTransport = ImdbGraphQlTransport { _, body, _ ->
-                assertTrue(body.contains("tt37287335"))
-                ratedPayload("tt37287335", "Obsession", 2025, "movie", 7.8, 325_953)
+                if (body.contains("tt37287335")) ratedPayload("tt37287335", "Obsession", 2026, "movie", 7.8, 325_953)
+                else ratedPayload("tt1234567", "Unrelated Title", 1990, "movie", 6.2, 100)
             },
         )
 
@@ -225,11 +225,11 @@ class ImdbRatingRepositoryTest {
                 else "{malformed"
             },
             pageLoader = { url ->
-                assertTrue(url.endsWith("/title/tt0468569/reference/"))
+                assertTrue(url.endsWith("/title/tt0468569/"))
                 """
                     <link rel="canonical" href="https://www.imdb.com/title/tt0468569/">
                     <script type="application/ld+json">
-                    {"url":"https://www.imdb.com/title/tt0468569/","name":"The Dark Knight",
+                    {"@type":"Movie","datePublished":"2008-07-18","url":"https://www.imdb.com/title/tt0468569/","name":"The Dark Knight",
                      "aggregateRating":{"ratingValue":9.0,"ratingCount":3000000}}
                     </script>
                 """.trimIndent()
@@ -330,7 +330,7 @@ class ImdbRatingRepositoryTest {
                 if (url.contains("suggestion")) {
                     """
                     {"d":[
-                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"tl":"2025","y":2025},
+                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"tl":"2026","y":2026},
                       {"id":"tt39365308","l":"Obsession","q":"short","qid":"short","rank":35788,"tl":"2026 Short","y":2026}
                     ]}
                     """.trimIndent()
@@ -358,7 +358,7 @@ class ImdbRatingRepositoryTest {
     }
 
     @Test
-    fun releaseYearDriftWithinTwoYearsIsAcceptedInGraphQL() = runTest {
+    fun knownExternalIdAllowsOneYearFestivalReleaseDriftInGraphQL() = runTest {
         val repository = DefaultImdbRatingRepository(
             cacheStore = null,
             pageLoader = { error("HTML fallback must not run") },

@@ -101,38 +101,8 @@ private fun CategorySections(
     onBack: () -> Unit,
 ) {
     val root = store.session(base, "", "All")
-    val sections = if (root.sections.isEmpty()) emptyList() else listOf("popular" to "Popular") + root.sections.filterNot { it.first == "popular" }
-    var loadedSections by remember(base) { mutableStateOf(emptySet<String>()) }
-    var exclusions by remember(base) { mutableStateOf(emptyMap<String, Set<Int>>()) }
-    var retry by remember { mutableIntStateOf(0) }
-    LaunchedEffect(base, sections, retry) {
-        if (sections.isEmpty()) return@LaunchedEffect
-        loadedSections = emptySet()
-        exclusions = emptyMap()
-        var seen = emptySet<Int>()
-        for ((id, _) in sections) {
-            val key = if (id == "popular") base else "$base:$id"
-            val sectionExclusions = seen
-            exclusions = exclusions + (id to sectionExclusions)
-            repeat(6) {
-                val session = store.session(key, "", "All")
-                if (session.items.size >= 20 || !session.hasMore) return@repeat
-                store.load(
-                    category = key,
-                    query = "",
-                    filter = "All",
-                    more = session.items.isNotEmpty(),
-                    force = retry > 0,
-                    excludedTmdbIds = sectionExclusions,
-                )
-            }
-            val loaded = store.session(key, "", "All")
-            if (loaded.error == null) {
-                loadedSections = loadedSections + id
-                seen = seen + loaded.items.map { it.id }
-            }
-        }
-    }
+    val sections = root.sections
+    val scope = rememberCoroutineScope()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             TextButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp)) {
@@ -142,31 +112,14 @@ private fun CategorySections(
         if (sections.isEmpty()) {
             item {
                 when {
-                    root.error != null -> TextButton(onClick = { retry++ }) { Text("Retry category") }
+                    root.error != null -> TextButton(onClick = { scope.launch { store.load(base, "", "All", force = true) } }) { Text("Retry category") }
                     root.updatedAt == 0L -> CircularProgressIndicator(Modifier.padding(20.dp).size(24.dp))
                     else -> Text("Preparing category sections…", modifier = Modifier.padding(20.dp), color = AliflixContentSecondary)
                 }
             }
         }
         items(sections, key = { it.first }) { (id, name) ->
-            val key = if (id == "popular") base else "$base:$id"
-            val session = store.session(key, "", "All")
-            when {
-                id in loadedSections && session.items.isNotEmpty() -> BrowseRail(
-                    store = store,
-                    key = key,
-                    title = name,
-                    onOpen = onOpen,
-                    excludedTmdbIds = exclusions[id].orEmpty(),
-                    autoLoad = false,
-                )
-                session.error != null -> TextButton(onClick = { retry++ }) { Text("$name · Retry") }
-                id in loadedSections -> Text("$name · No titles", modifier = Modifier.padding(16.dp), color = AliflixContentTertiary)
-                else -> Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(name, modifier = Modifier.weight(1f), color = AliflixContentSecondary)
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                }
-            }
+            BrowseRail(store = store, key = "$base:$id", title = name, onOpen = onOpen)
         }
     }
 }
@@ -194,8 +147,9 @@ private fun BrowseRail(
         ) {
             Text(if (session.loading) "Loading" else "Load more")
         }
-    } else if (session.loading) Row(Modifier.padding(16.dp)) {
+    } else if (session.loading || session.updatedAt == 0L && session.error == null) Row(Modifier.padding(16.dp)) {
         Text(title, Modifier.weight(1f))
         CircularProgressIndicator(Modifier.size(20.dp))
     } else if (session.error != null) TextButton(onClick = { retry++ }) { Text("$title · Retry") }
+    else Text("$title · No titles", modifier = Modifier.padding(16.dp), color = AliflixContentTertiary)
 }

@@ -537,11 +537,17 @@ class RottenTomatoesClient internal constructor(
              titleIdentityScore(wanted, pageTitle) >= 65)
         if (!titleMatches) return false
         val expectedYear = item.year.take(4).toIntOrNull()
-        val pageYear = dateCreatedPattern.find(html)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            ?: yearInTitlePattern.find(doc.title())?.groupValues?.getOrNull(1)?.toIntOrNull()
-        if (expectedYear != null && pageYear != null) {
-            if (kotlin.math.abs(expectedYear - pageYear) > 2) return false
+        val structuredYear = doc.select("script[type=application/ld+json]").firstNotNullOfOrNull { script ->
+            val json = runCatching { JSONObject(script.data()) }.getOrNull()
+            val name = json?.optString("name").orEmpty()
+            if (name.isNotBlank() && normalizeText(name) != wanted) null
+            else listOf("dateCreated", "datePublished", "startDate").firstNotNullOfOrNull { field ->
+                json?.optString(field)?.take(4)?.toIntOrNull()
+            }
         }
+        val pageYear = structuredYear ?: yearInTitlePattern.find(doc.title())?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: doc.selectFirst("[slot=releaseYear], [data-qa=release-year]")?.text()?.take(4)?.toIntOrNull()
+        if (expectedYear != null && pageYear != expectedYear) return false
         return true
     }
 

@@ -1,6 +1,7 @@
 import { summary } from './catalog';
 import { TmdbClient } from './tmdb';
 import { MediaType, RecommendationEnv, ServiceError } from './types';
+import { subgenres } from './subgenres';
 
 export async function categories(env: RecommendationEnv) {
   const tmdb = new TmdbClient(env, 2);
@@ -8,19 +9,9 @@ export async function categories(env: RecommendationEnv) {
     (await tmdb.genres(type)).genres.map(g => ({ id: g.id, name: g.name, type }))))).flat() };
 }
 
-// TMDB has a flat genre taxonomy. These are explicit Discover refinements, not invented TMDB genres.
+// Keep the public helper stable, while replacing arbitrary genre cross-products.
 export function refinements(type: MediaType, genres: Array<{ id: number; name: string }>, selected: number) {
-  return [
-    { id: 'popular', name: 'Popular', params: { sort_by: 'popularity.desc' } },
-    { id: 'rated', name: 'Top rated', params: { sort_by: 'vote_average.desc', 'vote_count.gte': 100 } },
-    { id: 'latest', name: 'Latest releases', params: { sort_by: type === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc',
-      [type === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte']: new Date().toISOString().slice(0, 10) } },
-    ...genres.filter(g => g.id !== selected).map(g => ({ id: `genre-${g.id}`, name: g.name, params: { with_genres: `${selected},${g.id}`, sort_by: 'popularity.desc' } })),
-    ...[2020, 2010, 2000, 1990, 1980, 1970].map(year => ({ id: `decade-${year}`, name: `${year}s`, params: {
-      sort_by: 'popularity.desc', [type === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte']: `${year}-01-01`,
-      [type === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte']: `${year + 9}-12-31`,
-    } })),
-  ];
+  return subgenres(type, selected);
 }
 
 export async function browse(env: RecommendationEnv, token: string, page: number, excludedTmdbIds: number[] = []) {
@@ -28,13 +19,26 @@ export async function browse(env: RecommendationEnv, token: string, page: number
   if (!match) throw new ServiceError('INVALID_REQUEST', 'Invalid category', 400, false);
   const [, kind, rawType, rawId, refinement = 'popular'] = match;
   const type = rawType as MediaType, id = Number(rawId);
-  const tmdb = new TmdbClient(env, 6);
+  const tmdb = new TmdbClient(env, 16);
   const genres = (await tmdb.genres(type)).genres;
   if (kind === 'genre' && !genres.some(g => g.id === id)) throw new ServiceError('INVALID_REQUEST', 'Unknown genre', 400, false);
   const keyword = kind === 'keyword';
   const sections = keyword ? [] : refinements(type, genres, id);
   const selected = keyword ? null : sections.find(s => s.id === refinement);
-  if (!keyword && !selected) throw new ServiceError('INVALID_REQUEST', 'Unknown refinement', 400, false);
+  if (!keyword && !selected && refinement !== 'popular') throw new ServiceError('INVALID_REQUEST', 'Unknown refinement', 400, false);
+  const params: Record<string, string | number> = { sort_by: 'popularity.desc' };
+  if (keyword) params.with_keywords = String(id);
+  else {
+    params.with_genres = [...new Set([id, ...(selected?.genres ?? [])])].join(',');
+    if (selected?.keywords.length) {
+      const normalize = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const matches = await Promise.all(selected.keywords.map(async name =>
+        (await tmdb.searchKeyword(name)).results.filter(k => normalize(k.name) === normalize(name)).map(k => k.id)));
+      const ids = [...new Set(matches.flat())];
+      if (!ids.length) return { results: [], page, hasMore: false, sections: sections.map(({ id, name }) => ({ id, name })) };
+      params.with_keywords = ids.join('|');
+    }
+  }
   const map = new Map(genres.map(g => [g.id, g.name]));
   const excluded = new Set(excludedTmdbIds.filter(id => Number.isInteger(id) && id > 0).slice(0, 500));
   const results: ReturnType<typeof summary>[] = [];
@@ -43,7 +47,7 @@ export async function browse(env: RecommendationEnv, token: string, page: number
   let cursor = page, totalPages = page;
   // Fill sparse pages without duplicating cards or leaving the requested category.
   for (let count = 0; count < maximumPages && results.length < minimumResults && cursor <= Math.min(totalPages, 500); count++, cursor++) {
-    const data = await tmdb.discover(type, { ...(keyword ? { with_keywords: String(id), sort_by: 'popularity.desc' } : { with_genres: String(id), ...selected!.params }), page: cursor });
+    const data = await tmdb.discover(type, { ...params, page: cursor });
     totalPages = data.total_pages;
     for (const row of data.results) if (!excluded.has(row.id) && !results.some(r => r.tmdbId === row.id)) results.push(summary(row, type, map));
   }

@@ -317,6 +317,7 @@ internal fun CatalogueGrid(
 internal fun DiscoverCategoryScreen(
     category: String,
     filter: String,
+    title: String = "",
     store: DiscoverCatalogueStore,
     onBack: () -> Unit,
     onOpen: (Media) -> Unit,
@@ -332,7 +333,7 @@ internal fun DiscoverCategoryScreen(
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = AliflixContentPrimary)
             }
             Text(
-                discoveryCategories[category].orEmpty(), color = AliflixContentPrimary,
+                title.ifBlank { discoveryCategories[category].orEmpty() }, color = AliflixContentPrimary,
                 style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
             )
         }

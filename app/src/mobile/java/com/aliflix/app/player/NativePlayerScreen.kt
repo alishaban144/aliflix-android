@@ -20,7 +20,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.verticalDrag
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -210,6 +215,8 @@ internal fun NativePlayerScreen(
     var sheet by remember { mutableStateOf<String?>(null) }
     var fill by rememberSaveable { mutableStateOf(settings.resizeModeZoom) }
     var hudFeedback by remember { mutableStateOf<HudFeedback?>(null) }
+    var hudVisible by remember { mutableStateOf(false) }
+    var levelGestureActive by remember { mutableStateOf(false) }
     var hudTimerJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -244,10 +251,12 @@ internal fun NativePlayerScreen(
 
     fun showHud(icon: ImageVector, text: String, progress: Float? = null) {
         hudFeedback = HudFeedback(icon, text, progress)
+        hudVisible = true
         hudTimerJob?.cancel()
         hudTimerJob = coroutineScope.launch {
-            delay(1200)
-            hudFeedback = null
+            delay(900)
+            while (levelGestureActive) delay(100)
+            hudVisible = false
         }
     }
 
@@ -307,34 +316,36 @@ internal fun NativePlayerScreen(
                     }
                 }
             }
-            .pointerInput(preparing, state.error, state.videoBounds, overlayOpen) {
+            .pointerInput(preparing, state.error, state.videoBounds, overlayOpen, isLandscape) {
                 if (preparing || state.error != null || overlayOpen) return@pointerInput
-                var dragStartedInValidZone = false
-                var isLeft = false
                 val frame = state.videoBounds ?: return@pointerInput
                 val margin = 28.dp.toPx()
-                detectVerticalDragGestures(
-                    onDragStart = { offset ->
-                        dragStartedInValidZone = offset.x > frame.left + margin && offset.x < frame.right - margin &&
-                            offset.y > frame.top + margin && offset.y < frame.bottom - margin
-                        isLeft = offset.x < frame.center.x
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        if (!dragStartedInValidZone || change.isConsumed) return@detectVerticalDragGestures
-                        change.consume()
-                        val delta = -dragAmount / (frame.height * 0.7f).coerceAtLeast(1f)
-                        if (isLeft) {
-                            val level = onBrightnessSwipe(delta)
-                            val icon = if (level > 0.65f) Icons.Default.BrightnessHigh else if (level > 0.35f) Icons.Default.BrightnessMedium else Icons.Default.BrightnessLow
-                            showHud(icon, "Brightness ${(level * 100).toInt()}%", level)
-                        } else {
-                            val level = onVolumeSwipe(delta)
-                            @Suppress("DEPRECATION")
-                            val icon = if (level <= 0.01f) Icons.Default.VolumeMute else if (level < 0.5f) Icons.Default.VolumeDown else Icons.Default.VolumeUp
-                            showHud(icon, "Volume ${(level * 100).toInt()}%", level)
-                        }
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = true)
+                    // Decide from the original DOWN, so an edge swipe cannot drift into a control zone.
+                    if (!playerLevelGestureAllowed(down.position.x, down.position.y, size.width.toFloat(),
+                            frame.left, frame.top, frame.right, frame.bottom, margin, isLandscape)) return@awaitEachGesture
+                    val isLeft = down.position.x < frame.center.x
+                    fun adjust(amount: Float) {
+                        val delta = -amount / (frame.height * .7f).coerceAtLeast(1f)
+                        val level = if (isLeft) onBrightnessSwipe(delta) else onVolumeSwipe(delta)
+                        val icon = if (isLeft) Icons.Default.BrightnessMedium else if (level <= .01f) Icons.Default.VolumeMute else Icons.Default.VolumeUp
+                        showHud(icon, if (isLeft) "Brightness" else "Volume", level)
                     }
-                )
+                    val drag = awaitVerticalTouchSlopOrCancellation(down.id) { change, overSlop ->
+                        change.consume()
+                        levelGestureActive = true
+                        adjust(overSlop)
+                    }
+                    if (drag != null) {
+                        try {
+                            verticalDrag(drag.id) { change ->
+                                adjust(change.position.y - change.previousPosition.y)
+                                change.consume()
+                            }
+                        } finally { levelGestureActive = false }
+                    }
+                }
             }
     ) {
         // Fullscreen tap / double-tap seek layer (35% / 30% / 35% zones)
@@ -661,33 +672,32 @@ internal fun NativePlayerScreen(
 
         // HUD Indicator (Brightness / Volume / Pinch)
         AnimatedVisibility(
-            visible = hudFeedback != null,
-            enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.88f),
-            exit = fadeOut(tween(220)) + scaleOut(tween(220), targetScale = 0.88f),
-            modifier = Modifier.align(Alignment.Center)
+            visible = hudVisible,
+            enter = fadeIn(tween(180)) + scaleIn(tween(220, easing = FastOutSlowInEasing), initialScale = 0.96f),
+            exit = fadeOut(tween(240)) + scaleOut(tween(240), targetScale = 0.98f),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 28.dp else 104.dp)
         ) {
             hudFeedback?.let { item ->
+                val displayedLevel by animateFloatAsState(item.progress ?: 0f,
+                    spring(dampingRatio = 1f, stiffness = 800f), label = "player-level")
                 Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = Color(0xF212151E),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
-                    shadowElevation = 16.dp,
+                    shape = RoundedCornerShape(50), color = Color(0xDC171922),
+                    border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.12f)),
+                    shadowElevation = 4.dp,
                 ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(item.icon, contentDescription = null, tint = AliflixAccentSecondary, modifier = Modifier.size(34.dp))
-                        Text(item.text, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Row(Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(item.icon, item.text, tint = Color.White.copy(alpha = .9f), modifier = Modifier.size(20.dp))
                         if (item.progress != null) {
                             LinearProgressIndicator(
-                                progress = { item.progress },
-                                modifier = Modifier.width(110.dp).height(4.dp).clip(CircleShape),
-                                color = AliflixAccentPrimary,
-                                trackColor = Color.White.copy(alpha = 0.15f),
+                                progress = { displayedLevel },
+                                modifier = Modifier.width(92.dp).height(3.dp).clip(CircleShape),
+                                color = Color.White.copy(alpha = .9f), trackColor = Color.White.copy(alpha = .14f),
                             )
-                        }
+                            Text("${(item.progress * 100).toInt()}%", modifier = Modifier.width(36.dp),
+                                color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
+                        } else Text(item.text, color = Color.White, fontSize = 12.sp)
                     }
                 }
             }
