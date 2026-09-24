@@ -1,8 +1,19 @@
 package com.aliflix.app.player
 
-internal fun playerLevelGestureAllowed(x: Float, y: Float, screenWidth: Float,
-    left: Float, top: Float, right: Float, bottom: Float, margin: Float, landscape: Boolean): Boolean {
-    val edge = if (landscape) 0f else screenWidth * .15f
-    return x > maxOf(left + margin, edge) && x < minOf(right - margin, screenWidth - edge) &&
-        y > top + margin && y < bottom - margin
+internal fun playerLevelGestureAllowed(
+    x: Float,
+    y: Float,
+    screenWidth: Float,
+    screenHeight: Float,
+    margin: Float,
+    leftInset: Float = 0f,
+    topInset: Float = 0f,
+    rightInset: Float = 0f,
+    bottomInset: Float = 0f,
+): Boolean {
+    val left = maxOf(margin, leftInset)
+    val top = maxOf(margin, topInset)
+    val right = minOf(screenWidth - margin, screenWidth - rightInset)
+    val bottom = minOf(screenHeight - margin, screenHeight - bottomInset)
+    return x > left && x < right && y > top && y < bottom
 }

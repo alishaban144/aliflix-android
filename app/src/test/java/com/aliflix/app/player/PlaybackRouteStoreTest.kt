@@ -30,13 +30,27 @@ class PlaybackRouteStoreTest {
         } finally { directory.deleteRecursively() }
     }
 
-    @Test fun portraitEdgesCannotBecomeVolumeOrBrightnessGestures() {
-        fun allowed(x: Float, landscape: Boolean = false) = playerLevelGestureAllowed(x, 250f, 1000f,
-            0f, 0f, 1000f, 500f, 28f, landscape)
-        assertFalse(allowed(0f)); assertFalse(allowed(149f)); assertFalse(allowed(150f))
-        assertTrue(allowed(151f)); assertTrue(allowed(500f)); assertTrue(allowed(849f))
-        assertFalse(allowed(850f)); assertFalse(allowed(999f))
-        assertTrue(allowed(100f, landscape = true))
-        assertFalse(playerLevelGestureAllowed(500f, 20f, 1000f, 0f, 0f, 1000f, 500f, 28f, false))
+    @Test fun playerLevelGestureCoversPortraitAndFullscreenSurfaces() {
+        fun allowed(x: Float, y: Float, width: Float, height: Float) =
+            playerLevelGestureAllowed(x, y, width, height, 28f)
+
+        assertFalse(allowed(28f, 500f, 1000f, 1800f))
+        assertTrue(allowed(29f, 500f, 1000f, 1800f))
+        assertTrue(allowed(500f, 900f, 1000f, 1800f))
+        assertTrue(allowed(971f, 1700f, 1000f, 1800f))
+        assertFalse(allowed(500f, 1772f, 1000f, 1800f))
+
+        assertFalse(allowed(40f, 28f, 1800f, 1000f))
+        assertTrue(allowed(40f, 29f, 1800f, 1000f))
+        assertTrue(allowed(900f, 500f, 1800f, 1000f))
+        assertTrue(allowed(1759f, 971f, 1800f, 1000f))
+        assertFalse(allowed(1772f, 500f, 1800f, 1000f))
+    }
+
+    @Test fun playerLevelGestureRespectsSystemInsets() {
+        assertTrue(playerLevelGestureAllowed(50f, 500f, 1000f, 1800f, 28f, leftInset = 48f))
+        assertFalse(playerLevelGestureAllowed(47f, 500f, 1000f, 1800f, 28f, leftInset = 48f))
+        assertTrue(playerLevelGestureAllowed(500f, 60f, 1000f, 1800f, 28f, topInset = 48f))
+        assertFalse(playerLevelGestureAllowed(500f, 47f, 1000f, 1800f, 28f, topInset = 48f))
     }
 }

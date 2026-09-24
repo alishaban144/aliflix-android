@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "192"
-  RELEASE_VERSION_NAME: "3.1.102"
+  RELEASE_VERSION_CODE: "193"
+  RELEASE_VERSION_NAME: "3.1.103"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
           fi
 
   playback-device-tests:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -187,7 +187,7 @@ jobs:
       always() && needs.changed-paths.result == 'success' &&
       (needs.playback-device-tests.result == 'success' ||
        (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
-        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102') && needs.playback-device-tests.result == 'skipped')) &&
+        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103') && needs.playback-device-tests.result == 'skipped')) &&
 
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
@@ -314,7 +314,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Compact keywords with standard navigation, genre-specific category sections, stricter rating identity and recovery, saved movie and episode playback routes, smoother History dismissal, and refined player gesture controls."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Expanded portrait and fullscreen brightness and volume swipes across the video surface with protected system edges, clearer level feedback, and cleaner volume gesture starts."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -342,7 +342,8 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Compact keywords with standard navigation, genre-specific category sections, stricter rating identity and recovery, saved movie and episode playback routes, smoother History dismissal, and refined player gesture controls. Tests and emulator validation skipped at the user's request. Production signing and APK integrity verified."
+          body: "Expanded portrait and fullscreen brightness and volume swipes across the video surface with protected system edges, clearer level feedback, and cleaner volume gesture starts. Unit tests and lint run; emulator validation skipped at the user's request. Production signing and APK integrity verified."
+
           files: |
             aliflix-mobile.apk
             update-mobile.json

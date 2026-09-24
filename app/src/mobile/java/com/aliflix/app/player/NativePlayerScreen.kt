@@ -65,9 +65,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.VolumeDown
-import androidx.compose.material.icons.filled.VolumeMute
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeMute
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -95,6 +95,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,10 +104,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -130,7 +134,6 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 internal data class NativePlayerUi(
-    val videoBounds: androidx.compose.ui.geometry.Rect? = null,
     val captionDragging: Boolean = false,
     val title: String = "Aliflix",
     val detail: String = "",
@@ -203,6 +206,7 @@ internal fun NativePlayerScreen(
     onReceiver: () -> Unit = {},
     onBrightnessSwipe: (Float) -> Float = { 0.5f },
     onVolumeSwipe: (Float) -> Float = { 0.5f },
+    onVolumeGestureStarted: () -> Unit = {},
     onControlsVisibilityChanged: (Boolean) -> Unit = {},
     onOverlayVisibilityChanged: (Boolean) -> Unit = {},
 ) {
@@ -222,6 +226,21 @@ internal fun NativePlayerScreen(
     val snackbar = remember { SnackbarHostState() }
     val seekFeedback = remember { SeekFeedbackController() }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val density = LocalDensity.current
+    val levelGestureEdge = with(density) { 28.dp.toPx() }
+    val layoutDirection = LocalLayoutDirection.current
+    val safeInsets = WindowInsets.safeDrawing
+    val safeLeftInset = safeInsets.getLeft(density, layoutDirection).toFloat()
+    val safeTopInset = safeInsets.getTop(density).toFloat()
+    val safeRightInset = safeInsets.getRight(density, layoutDirection).toFloat()
+    val safeBottomInset = safeInsets.getBottom(density).toFloat()
+    val startVolumeGesture = rememberUpdatedState(onVolumeGestureStarted)
+    val hudTopPadding = when {
+        controls && isLandscape -> 84.dp
+        controls -> 104.dp
+        isLandscape -> 28.dp
+        else -> 72.dp
+    }
 
     LaunchedEffect(seekFeedback.state?.token) {
         if (seekFeedback.state != null) { delay(650); seekFeedback.dismiss() }
@@ -316,24 +335,41 @@ internal fun NativePlayerScreen(
                     }
                 }
             }
-            .pointerInput(preparing, state.error, state.videoBounds, overlayOpen, isLandscape) {
+            .pointerInput(preparing, state.error, overlayOpen, levelGestureEdge, safeLeftInset, safeTopInset, safeRightInset, safeBottomInset) {
                 if (preparing || state.error != null || overlayOpen) return@pointerInput
-                val frame = state.videoBounds ?: return@pointerInput
-                val margin = 28.dp.toPx()
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = true)
-                    // Decide from the original DOWN, so an edge swipe cannot drift into a control zone.
-                    if (!playerLevelGestureAllowed(down.position.x, down.position.y, size.width.toFloat(),
-                            frame.left, frame.top, frame.right, frame.bottom, margin, isLandscape)) return@awaitEachGesture
-                    val isLeft = down.position.x < frame.center.x
+                    val down = awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = PointerEventPass.Initial,
+                    )
+                    if (!playerLevelGestureAllowed(
+                            down.position.x,
+                            down.position.y,
+                            size.width.toFloat(),
+                            size.height.toFloat(),
+                            levelGestureEdge,
+                            safeLeftInset,
+                            safeTopInset,
+                            safeRightInset,
+                            safeBottomInset,
+                        )) return@awaitEachGesture
+                    val isLeft = down.position.x < size.width / 2f
                     fun adjust(amount: Float) {
-                        val delta = -amount / (frame.height * .7f).coerceAtLeast(1f)
+                        val delta = -amount / (size.height * .7f).coerceAtLeast(1f)
                         val level = if (isLeft) onBrightnessSwipe(delta) else onVolumeSwipe(delta)
-                        val icon = if (isLeft) Icons.Default.BrightnessMedium else if (level <= .01f) Icons.Default.VolumeMute else Icons.Default.VolumeUp
+                        val icon = when {
+                            isLeft && level <= .25f -> Icons.Default.BrightnessLow
+                            isLeft && level < .75f -> Icons.Default.BrightnessMedium
+                            isLeft -> Icons.Default.BrightnessHigh
+                            level <= .01f -> Icons.AutoMirrored.Filled.VolumeMute
+                            level < .5f -> Icons.AutoMirrored.Filled.VolumeDown
+                            else -> Icons.AutoMirrored.Filled.VolumeUp
+                        }
                         showHud(icon, if (isLeft) "Brightness" else "Volume", level)
                     }
                     val drag = awaitVerticalTouchSlopOrCancellation(down.id) { change, overSlop ->
                         change.consume()
+                        if (!isLeft) startVolumeGesture.value()
                         levelGestureActive = true
                         adjust(overSlop)
                     }
@@ -675,7 +711,7 @@ internal fun NativePlayerScreen(
             visible = hudVisible,
             enter = fadeIn(tween(180)) + scaleIn(tween(220, easing = FastOutSlowInEasing), initialScale = 0.96f),
             exit = fadeOut(tween(240)) + scaleOut(tween(240), targetScale = 0.98f),
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = if (isLandscape) 28.dp else 104.dp)
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = hudTopPadding)
         ) {
             hudFeedback?.let { item ->
                 val displayedLevel by animateFloatAsState(item.progress ?: 0f,

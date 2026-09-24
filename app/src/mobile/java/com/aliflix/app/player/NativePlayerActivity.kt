@@ -128,9 +128,6 @@ class NativePlayerActivity : FragmentActivity() {
             resizeMode = if (settingsStore.settings.value.resizeModeZoom) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
             addView(video, FrameLayout.LayoutParams(-1, -1))
             addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                ui = ui.copy(videoBounds = androidx.compose.ui.geometry.Rect(
-                    left.toFloat().coerceAtLeast(0f), top.toFloat().coerceAtLeast(0f),
-                    right.toFloat().coerceAtMost(root.width.toFloat()), bottom.toFloat().coerceAtMost(root.height.toFloat())))
                 updateSubtitlePadding(lastControlsVisible)
             }
         }
@@ -201,6 +198,7 @@ class NativePlayerActivity : FragmentActivity() {
                     onReceiver = ::openReceiverPicker,
                     onBrightnessSwipe = ::adjustBrightness,
                     onVolumeSwipe = ::adjustVolume,
+                    onVolumeGestureStarted = { volumeAccumulator = 0f },
                     onControlsVisibilityChanged = ::updateSubtitlePadding,
                     onOverlayVisibilityChanged = { captionGestureBlocked = it },
                 )
