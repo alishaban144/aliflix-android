@@ -10,13 +10,13 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.*
@@ -28,12 +28,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
-import com.aliflix.app.R
 import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.Media
 import com.aliflix.app.ui.HomeMediaRail
@@ -46,6 +43,7 @@ internal fun CategoryBrowser(
     store: DiscoverCatalogueStore,
     onOpen: (Media) -> Unit,
     onBack: () -> Unit = {},
+    onSearch: (() -> Unit)? = null,
 ) {
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedName by rememberSaveable { mutableStateOf("") }
@@ -69,6 +67,7 @@ internal fun CategoryBrowser(
         CategoryHeader(
             title = if (base == null) "Categories" else selectedName,
             onBack = { if (base == null) onBack() else selected = null },
+            onSearch = onSearch,
         )
         AnimatedContent(
             targetState = base ?: "categories",
@@ -94,7 +93,7 @@ internal fun CategoryBrowser(
                         items(entries.chunked(2), key = { pair -> pair.joinToString("|") { it.first } }) { pair ->
                             Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 pair.forEach { (key, name, _) ->
-                                    Surface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).heightIn(min = 144.dp),
+                                    Surface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).heightIn(min = 76.dp),
                                         shape = RoundedCornerShape(22.dp), color = Color.Transparent,
                                         border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))) {
                                         val tones = listOf(Color(0xFF51437B), Color(0xFF285D67), Color(0xFF704954), Color(0xFF3C5279))
@@ -104,13 +103,6 @@ internal fun CategoryBrowser(
                                                 .padding(14.dp),
                                             verticalArrangement = Arrangement.spacedBy(12.dp),
                                         ) {
-                                            Image(
-                                                painter = painterResource(genreArtwork(key.substringAfterLast(':').toIntOrNull())),
-                                                contentDescription = null,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.size(60.dp).clip(RoundedCornerShape(19.dp))
-                                                    .border(1.dp, Color.White.copy(alpha = .16f), RoundedCornerShape(19.dp)),
-                                            )
                                             Text(name, style = MaterialTheme.typography.titleSmall, fontSize = 14.sp,
                                                 minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         }
@@ -129,39 +121,20 @@ internal fun CategoryBrowser(
 }
 
 @Composable
-private fun CategoryHeader(title: String, onBack: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+private fun CategoryHeader(title: String, onBack: () -> Unit, onSearch: (() -> Unit)?) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         IconButton(onClick = onBack, modifier = Modifier.size(48.dp).clip(CircleShape)
             .background(AliflixGlassIcon).border(1.dp, AliflixBorderStrong, CircleShape)) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to previous screen", tint = AliflixContentPrimary)
         }
-        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (onSearch != null) IconButton(onClick = onSearch, modifier = Modifier.size(48.dp).clip(CircleShape)
+            .background(AliflixGlassIcon).border(1.dp, AliflixBorderStrong, CircleShape)) {
+            Icon(Icons.Outlined.Search, "Search", tint = AliflixContentPrimary, modifier = Modifier.size(22.dp))
+        }
     }
-}
-
-/** Bundled, licensed Pexels photography; provenance is in docs/genre-artwork.md. */
-private fun genreArtwork(id: Int?): Int = when (id) {
-    28 -> R.drawable.genre_action
-    12, 10759 -> R.drawable.genre_adventure
-    16, 10762 -> R.drawable.genre_animation
-    35, 10767 -> R.drawable.genre_comedy
-    80 -> R.drawable.genre_crime
-    99 -> R.drawable.genre_documentary
-    18 -> R.drawable.genre_drama
-    10751 -> R.drawable.genre_family
-    14 -> R.drawable.genre_fantasy
-    36 -> R.drawable.genre_history
-    27, 53 -> R.drawable.genre_horror
-    10402 -> R.drawable.genre_music
-    9648 -> R.drawable.genre_mystery
-    10749, 10766 -> R.drawable.genre_romance
-    878, 10765 -> R.drawable.genre_science_fiction
-    10752, 10768 -> R.drawable.genre_war
-    37 -> R.drawable.genre_western
-    10763 -> R.drawable.genre_news
-    10764 -> R.drawable.genre_reality
-    else -> R.drawable.genre_television
 }
 
 @Composable

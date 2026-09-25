@@ -19,11 +19,14 @@ import com.aliflix.app.ui.theme.*
 /** Two compact rows keep even a large keyword catalogue within one small section. */
 @Composable
 internal fun CompactKeywords(keywords: List<MediaKeyword>, onOpen: (MediaKeyword) -> Unit) {
-    val columns = remember(keywords) { keywords.chunked(if (keywords.size > 4) 2 else 1) }
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(columns, key = { it.first().id }) { column ->
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                column.forEach { keyword ->
+    val rows = remember(keywords) {
+        val rowCount = if (keywords.size > 4) 2 else 1
+        List(rowCount) { row -> keywords.filterIndexed { index, _ -> index % rowCount == row } }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        rows.forEach { row ->
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(row, key = { it.id }) { keyword ->
                     Surface(
                         onClick = { onOpen(keyword) },
                         shape = RoundedCornerShape(12.dp),

@@ -1618,14 +1618,12 @@ private fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     when {
-        state.content != null -> Column(modifier.fillMaxSize().aliflixScreenBackground()) {
+        state.content != null -> Box(modifier.fillMaxSize().aliflixScreenBackground()) {
             val movieListState = rememberLazyListState()
             val tvListState = rememberLazyListState()
-            MobileTopSafeArea()
-            HomeHeader(onSearch)
             AnimatedContent(
                 targetState = selectedFilter,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
                     val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
                     ((fadeIn(tween(320)) + slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { direction * it / 10 }) togetherWith
@@ -1642,6 +1640,10 @@ private fun HomeScreen(
                     listState = filterListState, selectedFilter = visibleFilter, previousFilter = previousFilter,
                     onSelectFilter = onSelectFilter, modifier = Modifier.fillMaxSize(), controlsOutside = true,
                 )
+            }
+            if (selectedFilter != HomeFilter.NEW) Column(Modifier.align(Alignment.TopCenter)) {
+                MobileTopSafeArea(extraPadding = 0.dp)
+                HomeHeader(onSearch)
             }
         }
         state.loading -> HomeSkeleton(modifier = modifier)
@@ -1675,15 +1677,12 @@ internal fun HomeFeed(
 ) {
     if (selectedFilter == HomeFilter.NEW && catalogueStore != null) {
         Column(modifier.fillMaxSize().aliflixScreenBackground()) {
-            if (!controlsOutside) {
-                MobileTopSafeArea()
-                HomeHeader(onSearch)
-                FilterBar(selectedFilter, onSelectFilter, pinned = false)
-            }
+            MobileTopSafeArea(extraPadding = 0.dp)
             com.aliflix.app.ui.discover.CategoryBrowser(
                 catalogueStore,
                 onOpen,
                 onBack = { onSelectFilter(previousFilter) },
+                onSearch = onSearch,
             )
         }
         return
@@ -1853,6 +1852,7 @@ internal fun HomeFeed(
                 selected = selectedFilter,
                 onSelect = onSelectFilter,
                 pinned = filtersPinned,
+                headerVisible = controlsOutside,
             )
         }
 
@@ -2199,6 +2199,7 @@ private fun FilterBar(
     selected: HomeFilter,
     onSelect: (HomeFilter) -> Unit,
     pinned: Boolean,
+    headerVisible: Boolean = false,
 ) {
     LazyRow(
         modifier = Modifier
@@ -2214,6 +2215,7 @@ private fun FilterBar(
             .then(
                 if (pinned) {
                     Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
+                        .padding(top = if (headerVisible) 68.dp else 0.dp)
                 } else {
                     Modifier
                 },
