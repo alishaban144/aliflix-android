@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "193"
-  RELEASE_VERSION_NAME: "3.1.103"
+  RELEASE_VERSION_CODE: "194"
+  RELEASE_VERSION_NAME: "3.1.104"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
           fi
 
   playback-device-tests:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' && github.ref_name != 'release/v3.1.104' && github.ref_name != 'v3.1.104' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -187,7 +187,7 @@ jobs:
       always() && needs.changed-paths.result == 'success' &&
       (needs.playback-device-tests.result == 'success' ||
        (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
-        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103') && needs.playback-device-tests.result == 'skipped')) &&
+        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103' || github.ref_name == 'release/v3.1.104' || github.ref_name == 'v3.1.104') && needs.playback-device-tests.result == 'skipped')) &&
 
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
@@ -280,7 +280,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.97' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.102' ]; then
+          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.97' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.102' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'v3.1.104' ]; then
             ./gradlew testMobileDebugUnitTest
             ./gradlew lintMobileDebug
           fi
@@ -314,7 +314,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Expanded portrait and fullscreen brightness and volume swipes across the video surface with protected system edges, clearer level feedback, and cleaner volume gesture starts."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Play-only history with account ordering, synced subtitle files and player preferences, continuous timeline dragging, full-surface brightness and volume gestures, episode thumbnails and animated controls, translucent history pill, smooth home tabs and redesigned categories with row-end pagination."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -342,7 +342,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Expanded portrait and fullscreen brightness and volume swipes across the video surface with protected system edges, clearer level feedback, and cleaner volume gesture starts. Unit tests and lint run; emulator validation skipped at the user's request. Production signing and APK integrity verified."
+          body: "Play-only history with account ordering, synced subtitle files and player preferences, continuous timeline dragging, full-surface brightness and volume gestures, episode thumbnails and animated controls, translucent history pill, smooth home tabs and redesigned categories with row-end pagination. Tests, lint and emulator validation skipped at the user's request; mobile compilation reviewed. Production signing and APK integrity verified."
 
           files: |
             aliflix-mobile.apk

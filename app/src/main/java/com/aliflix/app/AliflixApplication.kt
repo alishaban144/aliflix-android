@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.StrictMode
 
 class AliflixApplication : Application() {
+    val libraryStore by lazy { com.aliflix.app.data.LibraryStore(this) }
     val playbackProgressStore by lazy { com.aliflix.app.data.PlaybackProgressStore(this) }
     val playerSettingsStore by lazy { com.aliflix.app.player.PlayerSettingsStore(this) }
     override fun onCreate() {

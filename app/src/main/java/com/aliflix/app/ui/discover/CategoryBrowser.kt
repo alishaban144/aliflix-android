@@ -19,6 +19,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -76,9 +79,14 @@ internal fun CategoryBrowser(
                     items(entries.chunked(2), key = { pair -> pair.joinToString("|") { it.first } }) { pair ->
                         Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             pair.forEach { (key, name, _) ->
-                                Surface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).heightIn(min = 64.dp),
-                                    shape = RoundedCornerShape(16.dp), color = AliflixGlassSelected) {
-                                    Text(name, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.titleSmall)
+                                Surface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).height(104.dp),
+                                    shape = RoundedCornerShape(22.dp), color = Color.Transparent,
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))) {
+                                    val tones = listOf(Color(0xFF51437B), Color(0xFF285D67), Color(0xFF704954), Color(0xFF3C5279))
+                                    val tone = tones[(key.hashCode() and Int.MAX_VALUE) % tones.size]
+                                    Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(tone.copy(alpha = .65f), AliflixBackgroundBase)))) {
+                                        Text(name, modifier = Modifier.align(Alignment.BottomStart).padding(18.dp), style = MaterialTheme.typography.titleMedium)
+                                    }
                                 }
                             }
                             if (pair.size == 1) Spacer(Modifier.weight(1f))
@@ -140,13 +148,20 @@ private fun BrowseRail(
     }
     val scope = rememberCoroutineScope()
     if (session.items.isNotEmpty()) Column {
-        HomeMediaRail(ContentRail(title, session.items), onOpen, compact = false)
-        if (session.hasMore) TextButton(
-            enabled = !session.loading,
-            onClick = { scope.launch { store.load(key, "", "All", more = true, excludedTmdbIds = excludedTmdbIds) } },
-        ) {
-            Text(if (session.loading) "Loading" else "Load more")
-        }
+        HomeMediaRail(ContentRail(title, session.items), onOpen, compact = false,
+            trailingContent = if (session.hasMore || session.error != null) ({
+                Surface(
+                    onClick = { scope.launch { store.load(key, "", "All", more = true, excludedTmdbIds = excludedTmdbIds) } },
+                    enabled = !session.loading, shape = RoundedCornerShape(20.dp), color = AliflixGlassIdle,
+                    modifier = Modifier.width(128.dp).height(190.dp),
+                ) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        if (session.loading) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                        else Text(if (session.error != null) "Retry" else "Load more", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }) else null,
+        )
     } else if (session.loading || session.updatedAt == 0L && session.error == null) Row(Modifier.padding(16.dp)) {
         Text(title, Modifier.weight(1f))
         CircularProgressIndicator(Modifier.size(20.dp))

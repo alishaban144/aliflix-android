@@ -81,6 +81,27 @@ class NativePlayerActivity : FragmentActivity() {
     private lateinit var playerRoot: FrameLayout
     private val progress get() = (application as AliflixApplication).playbackProgressStore
     private val settingsStore get() = (application as AliflixApplication).playerSettingsStore
+    private val captionPreferences by lazy { getSharedPreferences("account-caption-files", MODE_PRIVATE) }
+    private val subtitleChoices by lazy { getSharedPreferences("native-subtitle-choice", MODE_PRIVATE) }
+    private val syncedCaptionListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        reconcileSyncedCaptions()
+    }
+
+    private fun reconcileSyncedCaptions() {
+        val current = selection ?: return
+        if (ui.stage != null || !ui.ready || controller == null) return
+        val enabled = subtitleChoices.getBoolean("enabled", intent.getBooleanExtra("autoSubtitles", true))
+        if (!enabled) {
+            if (activeSubtitleCuesJson != null) disableSubtitles()
+            return
+        }
+        val language = subtitleChoices.getString("language", null) ?: intent.getStringExtra("subtitleLanguage") ?: "EN"
+        val raw = captionPreferences.getString(captionKey(current), null) ?: return
+        val saved = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return
+        if (saved.optString("cues") == activeSubtitleCuesJson) return
+        if (restoreCaption(current, language)) subtitleJob?.cancel()
+    }
+
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val displays by lazy { getSystemService(DisplayManager::class.java) }
     private val displayListener = object : DisplayManager.DisplayListener {
@@ -100,6 +121,8 @@ class NativePlayerActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        captionPreferences.registerOnSharedPreferenceChangeListener(syncedCaptionListener)
+        subtitleChoices.registerOnSharedPreferenceChangeListener(syncedCaptionListener)
         if (savedInstanceState == null) PlaybackStartupTiming.begin(intent.getLongExtra("playTapElapsedMs", android.os.SystemClock.elapsedRealtime()))
         onBackPressedDispatcher.addCallback(this) { pauseAndLeavePlayer() }
         requestAccepted = savedInstanceState?.getBoolean("requestAccepted") == true
@@ -136,6 +159,18 @@ class NativePlayerActivity : FragmentActivity() {
         subtitles.setApplyEmbeddedStyles(false)
         subtitles.setApplyEmbeddedFontSizes(false)
         applySubtitleStyle()
+        lifecycleScope.launch {
+            var previousDelay = settingsStore.settings.value.subtitleDelayTenths
+            settingsStore.settings.collect {
+                applySubtitleStyle()
+                updateSubtitlePadding(lastControlsVisible)
+                controller?.setPlaybackSpeed(it.playbackSpeed)
+                if (previousDelay != it.subtitleDelayTenths) {
+                    previousDelay = it.subtitleDelayTenths
+                    activeSubtitleCuesJson?.let { json -> NativePlaybackService.updateSubtitles(nativeSubtitlesVtt(json, it.subtitleDelaySeconds)) }
+                }
+            }
+        }
         root.addView(subtitles, FrameLayout.LayoutParams(-1, -1))
         root.addView(ComposeView(this).apply {
             setContent { AliflixMobileTheme {
@@ -145,6 +180,7 @@ class NativePlayerActivity : FragmentActivity() {
                     player = controller,
                     settings = playerSettings,
                     onBack = ::pauseAndLeavePlayer,
+                    onResumeClicked = { selection?.let { (application as AliflixApplication).libraryStore.markPlayed(it.media) } },
                     onRetry = { exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0; prepareSelection() },
                     onServer = { prepareSelection() },
                     onSelectServer = ::selectServer,
@@ -185,16 +221,8 @@ class NativePlayerActivity : FragmentActivity() {
                         settingsStore.updatePlaybackSpeed(speed)
                         controller?.setPlaybackSpeed(speed)
                     },
-                    onEpisode = { episode ->
-                        selection?.let { current ->
-                            recordCurrentProgress(urgent = true)
-                            selection = current.copy(seasonNumber = episode.seasonNumber, episodeNumber = episode.number, episodeTitle = episode.title)
-                            intent.putExtra("selection", selection!!.nativeJson())
-                            exhaustedSources.clear(); triedServers.clear()
-                            recoveryCount = 0
-                            prepareSelection()
-                        }
-                    },
+                    onEpisode = { selectEpisode(it, recordPlay = true) },
+                    onAutoEpisode = { selectEpisode(it, recordPlay = false) },
                     onReceiver = ::openReceiverPicker,
                     onBrightnessSwipe = ::adjustBrightness,
                     onVolumeSwipe = ::adjustVolume,
@@ -288,13 +316,24 @@ class NativePlayerActivity : FragmentActivity() {
         super.onPause()
     }
 
+    private fun selectEpisode(episode: Episode, recordPlay: Boolean) {
+        val current = selection ?: return
+        if (recordPlay) (application as AliflixApplication).libraryStore.markPlayed(current.media)
+        recordCurrentProgress(urgent = true)
+        selection = current.copy(seasonNumber = episode.seasonNumber, episodeNumber = episode.number, episodeTitle = episode.title)
+        intent.putExtra("selection", selection!!.nativeJson())
+        exhaustedSources.clear(); triedServers.clear()
+        recoveryCount = 0
+        prepareSelection()
+    }
+
     private fun activeSelectionKey() = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it).key }.getOrNull() }
 
     private fun acceptRequest(intent: Intent) {
         selection = intent.getStringExtra("selection")?.let { runCatching { nativeSelection(it) }.getOrNull() }
             ?: NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it) }.getOrNull() }
         updateSelectionUi()
-        if (selection?.media?.type == com.aliflix.app.model.MediaType.TV && selection?.availableEpisodes.isNullOrEmpty()) {
+        if (selection?.media?.type == com.aliflix.app.model.MediaType.TV && selection?.availableEpisodes.orEmpty().let { it.isEmpty() || it.any { episode -> episode.stillPath.isNullOrBlank() } }) {
             val current = checkNotNull(selection)
             episodeQueueJob?.cancel()
             episodeQueueJob = lifecycleScope.launch {
@@ -302,7 +341,7 @@ class NativePlayerActivity : FragmentActivity() {
                     val repository = com.aliflix.app.data.MobileEpisodeRepository(this@NativePlayerActivity,
                         com.aliflix.app.recommendation.RecommendationAiClient(com.aliflix.app.BuildConfig.RECOMMENDATION_AI_BASE_URL))
                     val episodes = repository.episodes(current.media.id, current.seasonNumber ?: 1)
-                    if (selection?.key == current.key) { selection = current.copy(availableEpisodes = episodes); updateSelectionUi() }
+                    if (selection?.key == current.key) { selection = current.copy(availableEpisodes = (current.availableEpisodes.filterNot { old -> episodes.any { it.seasonNumber == old.seasonNumber && it.number == old.number } } + episodes).sortedWith(compareBy({ it.seasonNumber }, { it.number }))); updateSelectionUi() }
                 } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
             }
         }
@@ -378,6 +417,7 @@ class NativePlayerActivity : FragmentActivity() {
                     startNative(saved.copy(positionMs = resume, playing = true, selectionJson = selection!!.nativeJson()))
                     awaitNativeReady(saved.url)
                     ui = ui.copy(stage = null, ready = true, error = null)
+                        reconcileSyncedCaptions()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
                     controller?.pause()
@@ -438,8 +478,9 @@ class NativePlayerActivity : FragmentActivity() {
                         withTimeout(4_000) { awaitNativeReady(request.url) }
                         intent.putExtra("selection", restored.nativeJson())
                         ui = ui.copy(stage = null, ready = true, error = null)
+                        reconcileSyncedCaptions()
                         controller?.play()
-                        if (auto && !NativePlaybackService.embeddedSubtitlesActive) loadAutomaticSubtitles(restored, language, request.url)
+                        if (auto) loadAutomaticSubtitles(restored, language, request.url)
                         warmNextEpisode(restored, savedRoute.server)
                         return@launch
                     } catch (error: Exception) {
@@ -502,9 +543,10 @@ class NativePlayerActivity : FragmentActivity() {
                             history.edit().putString("$seriesKey:provider", candidate.source.provider.name)
                                 .putString("$seriesKey:server", server).apply()
                         }
-                        if (auto && !NativePlaybackService.embeddedSubtitlesActive) loadAutomaticSubtitles(candidate, language, resolved.url)
+                        if (auto) loadAutomaticSubtitles(candidate, language, resolved.url)
                         intent.putExtra("selection", candidate.nativeJson())
                         ui = ui.copy(stage = null, ready = true, error = null)
+                        reconcileSyncedCaptions()
                         controller?.play()
                         warmNextEpisode(candidate, server)
                         return@launch
@@ -545,8 +587,36 @@ class NativePlayerActivity : FragmentActivity() {
 
     // Only launched after the first frame. Local captions are rendered against the
     // existing player clock; attaching or changing them never rebuilds its source.
+    private fun captionKey(current: PlaybackSelection): String =
+        subtitleContentKey(current)
+
+    private fun saveCaption(current: PlaybackSelection, track: SubtitleTrack, json: String) {
+        val raw = org.json.JSONObject().put("cues", json).put("language", track.languageCode)
+            .put("label", track.languageName).put("id", track.id).toString()
+        getSharedPreferences("account-caption-files", MODE_PRIVATE).edit().putString(captionKey(current), raw).apply()
+    }
+
+    private fun restoreCaption(current: PlaybackSelection, language: String): Boolean = runCatching {
+        val raw = getSharedPreferences("account-caption-files", MODE_PRIVATE).getString(captionKey(current), null) ?: return false
+        val saved = org.json.JSONObject(raw)
+        if (canonicalSubtitleLanguageCode(saved.getString("language")) != canonicalSubtitleLanguageCode(language)) return false
+        val json = saved.getString("cues")
+        val vtt = nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
+        activeSubtitleCuesJson = json
+        activeSubtitleCues = parseTimedTextSubtitleCues(nativeSubtitlesVtt(json, 0.0))
+        NativePlaybackService.updateSubtitles(vtt, saved.getString("language"), saved.getString("label"))
+        val track = SubtitleTrack("account-cache", saved.getString("language"), saved.getString("label"),
+            "Saved selection", "", false, "vtt", null, "")
+        ui = ui.copy(subtitleLoading = false, subtitleError = null, activeSubtitleTrack = track,
+            subtitleTracks = (listOf(track) + ui.subtitleTracks.filterNot { it.id == track.id }))
+        updateSubtitleCues()
+        true
+    }.getOrDefault(false)
+
     private fun loadAutomaticSubtitles(current: PlaybackSelection, language: String, streamUrl: String) {
         subtitleJob?.cancel()
+        if (restoreCaption(current, language)) return
+        if (NativePlaybackService.embeddedSubtitlesActive) return
         subtitleJob = lifecycleScope.launch {
             ui = ui.copy(subtitleLoading = true)
             try {
@@ -564,6 +634,7 @@ class NativePlayerActivity : FragmentActivity() {
                         activeSubtitleCues = cues
                         val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
                         activeSubtitleCuesJson = json
+                        saveCaption(current, track, json)
                         NativePlaybackService.updateSubtitles(nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds), track.languageCode.lowercase(), track.languageName, automatic = true)
                         ui = ui.copy(activeSubtitleTrack = track, subtitleError = null)
                         updateSubtitleCues()
@@ -650,6 +721,11 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun applySubtitle(track: SubtitleTrack) {
+        if (track.id == "account-cache") {
+            selection?.let { restoreCaption(it, track.languageCode) }
+            getSharedPreferences("native-subtitle-choice", MODE_PRIVATE).edit().putBoolean("enabled", true).putString("language", track.languageCode).apply()
+            return
+        }
         if (track.id == "offline") {
             offlineSubtitleRequest()?.let { saved ->
                 if (saved.subtitlesVtt.isNotBlank()) {
@@ -673,6 +749,7 @@ class NativePlayerActivity : FragmentActivity() {
                         activeSubtitleCues = cues
                 val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
                 activeSubtitleCuesJson = json
+                selection?.let { saveCaption(it, track, json) }
                 val vtt = nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
                 NativePlaybackService.updateSubtitles(vtt, track.languageCode.lowercase(), track.languageName)
                 controller?.sendCustomCommand(
@@ -910,6 +987,8 @@ class NativePlayerActivity : FragmentActivity() {
         super.onStop()
     }
     override fun onDestroy() {
+        captionPreferences.unregisterOnSharedPreferenceChangeListener(syncedCaptionListener)
+        subtitleChoices.unregisterOnSharedPreferenceChangeListener(syncedCaptionListener)
         recordCurrentProgress(urgent = true)
         if (::subtitles.isInitialized) subtitles.removeCallbacks(subtitleLayoutUpdate)
         subtitleRenderJob?.cancel()

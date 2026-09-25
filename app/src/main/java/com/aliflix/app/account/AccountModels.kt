@@ -44,6 +44,9 @@ object AccountCloudDeletionPlan {
         "recent",
         "progress",
         "settings",
+        "playerPreferences",
+        "subtitleChoices",
+        "captionFiles",
     )
 }
 

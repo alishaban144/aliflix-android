@@ -4,7 +4,9 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -63,6 +65,9 @@ internal fun MobilePlayerTimeline(
     onScrubbingChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val seek by rememberUpdatedState(onSeek)
+    val scrubbingChanged by rememberUpdatedState(onScrubbingChanged)
+    val latestDuration by rememberUpdatedState(durationMs.coerceAtLeast(0L))
     var isDragging by remember { mutableStateOf(false) }
     var scrubFraction by remember { mutableFloatStateOf(0f) }
 
@@ -121,7 +126,7 @@ internal fun MobilePlayerTimeline(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(36.dp),
+                .height(48.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             val widthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
@@ -138,55 +143,39 @@ internal fun MobilePlayerTimeline(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(36.dp)
-                    .pointerInput(totalDurationMs) {
-                        detectTapGestures(
-                            onPress = { offset ->
-                                if (totalDurationMs > 0L) {
-                                    val fraction = (offset.x / widthPx).coerceIn(0f, 1f)
-                                    scrubFraction = fraction
-                                    isDragging = true
-                                    onScrubbingChanged(true)
-                                    val targetMs = (fraction * totalDurationMs).toLong()
-                                    onSeek(targetMs)
-                                    val success = tryAwaitRelease()
-                                    if (success) {
-                                        isDragging = false
-                                        onScrubbingChanged(false)
-                                    }
+                    .height(48.dp)
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = true)
+                            val duration = latestDuration
+                            if (duration <= 0L) return@awaitEachGesture
+                            down.consume()
+                            isDragging = true
+                            scrubbingChanged(true)
+                            var lastSeekAt = 0L
+                            fun update(x: Float, force: Boolean = false) {
+                                scrubFraction = (x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                val now = android.os.SystemClock.uptimeMillis()
+                                if (force || now - lastSeekAt >= 80L) {
+                                    seek((scrubFraction * duration).toLong())
+                                    lastSeekAt = now
                                 }
-                            },
-                        )
-                    }
-                    .pointerInput(totalDurationMs) {
-                        detectHorizontalDragGestures(
-                            onDragStart = { offset ->
-                                if (totalDurationMs > 0L) {
-                                    isDragging = true
-                                    onScrubbingChanged(true)
-                                    scrubFraction = (offset.x / widthPx).coerceIn(0f, 1f)
-                                    val targetMs = (scrubFraction * totalDurationMs).toLong()
-                                    onSeek(targetMs)
+                            }
+                            try {
+                                update(down.position.x, true)
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (event.changes.count { it.pressed } > 1) break
+                                    update(change.position.x, !change.pressed)
+                                    change.consume()
+                                    if (!change.pressed) break
                                 }
-                            },
-                            onDragEnd = {
+                            } finally {
                                 isDragging = false
-                                onScrubbingChanged(false)
-                            },
-                            onDragCancel = {
-                                isDragging = false
-                                onScrubbingChanged(false)
-                            },
-                            onHorizontalDrag = { change, _ ->
-                                change.consume()
-                                if (totalDurationMs > 0L) {
-                                    val fraction = (change.position.x / widthPx).coerceIn(0f, 1f)
-                                    scrubFraction = fraction
-                                    val targetMs = (fraction * totalDurationMs).toLong()
-                                    onSeek(targetMs)
-                                }
-                            },
-                        )
+                                scrubbingChanged(false)
+                            }
+                        }
                     },
                 contentAlignment = Alignment.CenterStart,
             ) {

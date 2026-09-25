@@ -77,11 +77,11 @@ internal fun MobilePlayerMoreSheet(
     castActive: Boolean = false,
     onCast: (() -> Unit)? = null,
 ) {
-    if (!visible) return
 
     var rememberedSpeed by remember { mutableFloatStateOf(1.0f) }
     val activeSpeed = currentSpeed ?: rememberedSpeed
 
+    AnimatedVisibility(visible = visible, enter = fadeIn() + slideInVertically { it / 10 }, exit = fadeOut() + slideOutVertically { it / 10 }) {
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -287,6 +287,8 @@ internal fun MobilePlayerMoreSheet(
             }
         }
     }
+}
+
 }
 
 @Composable

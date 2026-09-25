@@ -1609,29 +1609,32 @@ private fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     when {
-        state.content != null -> AnimatedContent(
-            targetState = selectedFilter,
-            transitionSpec = { fadeIn(tween(260)) togetherWith fadeOut(tween(120, delayMillis = 160)) },
-            label = "home-filter-transition",
-        ) { visibleFilter -> HomeFeed(
-            content = state.content,
-            tvNetworks = tvNetworks,
-            editorialPicks = state.editorialPicks,
-            recent = recent,
-            likes = likes,
-            playbackProgress = playbackProgress,
-            catalogueStore = catalogueStore,
-            onRetryTvNetworks = onRetryTvNetworks,
-            onOpen = onOpen,
-            onPlay = onPlay,
-            onSearch = onSearch,
-             listState = listState,
-             selectedFilter = visibleFilter,
-             previousFilter = previousFilter,
-             onSelectFilter = onSelectFilter,
-
-            modifier = modifier,
-        )
+        state.content != null -> Column(modifier.fillMaxSize().aliflixScreenBackground()) {
+            val movieListState = rememberLazyListState()
+            val tvListState = rememberLazyListState()
+            MobileTopSafeArea()
+            HomeHeader(onSearch)
+            FilterBar(selectedFilter, onSelectFilter, pinned = false)
+            AnimatedContent(
+                targetState = selectedFilter,
+                modifier = Modifier.weight(1f),
+                transitionSpec = {
+                    val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                    ((fadeIn(tween(320)) + slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { direction * it / 10 }) togetherWith
+                        (fadeOut(tween(240)) + slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { -direction * it / 10 }))
+                        .using(androidx.compose.animation.SizeTransform(clip = false))
+                },
+                label = "home-filter-transition",
+            ) { visibleFilter ->
+                val filterListState = when (visibleFilter) { HomeFilter.MOVIES -> movieListState; HomeFilter.TV -> tvListState; else -> listState }
+                HomeFeed(
+                    content = state.content, tvNetworks = tvNetworks, editorialPicks = state.editorialPicks,
+                    recent = recent, likes = likes, playbackProgress = playbackProgress, catalogueStore = catalogueStore,
+                    onRetryTvNetworks = onRetryTvNetworks, onOpen = onOpen, onPlay = onPlay, onSearch = onSearch,
+                    listState = filterListState, selectedFilter = visibleFilter, previousFilter = previousFilter,
+                    onSelectFilter = onSelectFilter, modifier = Modifier.fillMaxSize(), controlsOutside = true,
+                )
+            }
         }
         state.loading -> HomeSkeleton(modifier = modifier)
         else -> ConfigurationError(
@@ -1660,12 +1663,15 @@ internal fun HomeFeed(
     previousFilter: HomeFilter = HomeFilter.FOR_YOU,
     onSelectFilter: (HomeFilter) -> Unit,
     modifier: Modifier,
+    controlsOutside: Boolean = false,
 ) {
     if (selectedFilter == HomeFilter.NEW && catalogueStore != null) {
         Column(modifier.fillMaxSize().aliflixScreenBackground()) {
-            MobileTopSafeArea()
-            HomeHeader(onSearch)
-            FilterBar(selectedFilter, onSelectFilter, pinned = false)
+            if (!controlsOutside) {
+                MobileTopSafeArea()
+                HomeHeader(onSearch)
+                FilterBar(selectedFilter, onSelectFilter, pinned = false)
+            }
             com.aliflix.app.ui.discover.CategoryBrowser(
                 catalogueStore,
                 onOpen,
@@ -1781,12 +1787,10 @@ internal fun HomeFeed(
         }
     }
 
-    val feedEntrance = remember { androidx.compose.animation.core.Animatable(1f) }
-    LaunchedEffect(selectedFilter) { feedEntrance.snapTo(0f); feedEntrance.animateTo(1f, tween(280, easing = FastOutSlowInEasing)) }
     LazyColumn(
         state = listState,
         modifier = modifier
-            .fillMaxSize().graphicsLayer { alpha = 1f; translationY = (1f - feedEntrance.value) * 24.dp.toPx() }
+            .fillMaxSize()
             .aliflixScreenBackground(),
         contentPadding = PaddingValues(bottom = 40.dp),
     ) {
@@ -1827,7 +1831,7 @@ internal fun HomeFeed(
                     )
                 }
 
-                HomeHeader(
+                if (!controlsOutside) HomeHeader(
                     onSearch = onSearch,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -1836,7 +1840,7 @@ internal fun HomeFeed(
             }
         }
 
-        stickyHeader {
+        if (!controlsOutside) stickyHeader {
             FilterBar(
                 selected = selectedFilter,
                 onSelect = onSelectFilter,
@@ -2211,26 +2215,17 @@ private fun FilterBar(
     ) {
         items(HomeFilter.entries) { filter ->
             val active = filter == selected
+            val chipColor by androidx.compose.animation.animateColorAsState(
+                if (active) com.aliflix.app.ui.theme.AliflixGlassSelected else AliflixGlassIdle, tween(260), label = "filter-color")
+            val borderColor by androidx.compose.animation.animateColorAsState(
+                if (active) MaterialTheme.colorScheme.primary.copy(alpha = .76f) else MaterialTheme.colorScheme.outline.copy(alpha = .46f),
+                tween(260), label = "filter-border")
             Box(
                 modifier = Modifier
                     .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(
-                        if (active) {
-                            com.aliflix.app.ui.theme.AliflixGlassSelected
-                        } else {
-                            com.aliflix.app.ui.theme.AliflixGlassIdle
-                        },
-                    )
-                    .border(
-                        1.dp,
-                        if (active) {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.76f)
-                        } else {
-                            MaterialTheme.colorScheme.outline.copy(alpha = 0.46f)
-                        },
-                        RoundedCornerShape(14.dp),
-                    )
+                    .background(chipColor)
+                    .border(1.dp, borderColor, RoundedCornerShape(14.dp))
                     .selectable(
                         selected = active,
                         onClick = { onSelect(filter) },
@@ -2258,6 +2253,7 @@ internal fun HomeMediaRail(
     onOpen: (Media) -> Unit,
     compact: Boolean,
     onRemove: ((Media) -> Unit)? = null,
+    trailingContent: (@Composable () -> Unit)? = null,
 ) {
     val trending = rail.title.contains("Trending", ignoreCase = true)
     val editorialLandscape = !trending && listOf(
@@ -2310,6 +2306,7 @@ internal fun HomeMediaRail(
                     )
                 }
             }
+            if (trailingContent != null) item(key = "pagination") { trailingContent() }
         }
     }
 }

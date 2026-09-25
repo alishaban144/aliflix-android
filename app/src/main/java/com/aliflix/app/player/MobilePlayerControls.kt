@@ -35,6 +35,9 @@ import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -105,7 +108,13 @@ internal fun MobilePlayerTopBar(
 
 @Composable
 private fun CompactTopButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
-    androidx.compose.material3.IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) .86f else 1f,
+        androidx.compose.animation.core.spring(dampingRatio = .65f, stiffness = 650f), label = "player-action")
+    androidx.compose.material3.IconButton(onClick = onClick, interactionSource = interactions,
+        modifier = Modifier.size(48.dp).graphicsLayer { scaleX = scale; scaleY = scale }) {
         Icon(icon, contentDescription, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(20.dp))
     }
 }

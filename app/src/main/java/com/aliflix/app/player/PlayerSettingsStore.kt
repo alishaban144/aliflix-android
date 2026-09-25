@@ -34,6 +34,11 @@ class PlayerSettingsStore(context: Context) {
     private val _settings = MutableStateFlow(readSettings())
     val settings: StateFlow<PlayerSettings> = _settings.asStateFlow()
 
+    private val preferenceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        _settings.value = readSettings()
+    }
+    init { preferences.registerOnSharedPreferenceChangeListener(preferenceListener) }
+
     fun updateSubtitleFontSize(sizeSp: Float) {
         val clamped = sizeSp.coerceIn(11f, 30f)
         update { it.copy(subtitleFontSizeSp = clamped) }

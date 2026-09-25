@@ -69,6 +69,7 @@ class FirebaseAccountSyncRepository(
 ) : AccountSyncRepository {
     private val repositoryJob = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(repositoryJob + Dispatchers.Main.immediate)
+    private val recentOutbox = context.getSharedPreferences("recent-play-outbox", Context.MODE_PRIVATE)
     private val snapshotStore = AccountLocalSnapshotStore(context)
     private val _state = MutableStateFlow<AccountSyncState>(AccountSyncState.SignedOut)
     override val state: StateFlow<AccountSyncState> = _state.asStateFlow()
@@ -77,6 +78,10 @@ class FirebaseAccountSyncRepository(
     private val confirmedProgress = mutableMapOf<String, PlaybackProgress>()
     private val deletingUid = MutableStateFlow<String?>(null)
     private val pausedDeletionUid = MutableStateFlow<String?>(null)
+
+    private val playerStateSync = FirebasePlayerStateSync(context, accountRepository, scope, deletingUid, firestore) { error ->
+        _state.value = AccountSyncState.Error(syncErrorMessage(error))
+    }
 
     init {
         scope.launch {
@@ -151,6 +156,8 @@ class FirebaseAccountSyncRepository(
                 restoreGuestScope()
             }
             snapshotStore.remove(deletedScope)
+            playerStateSync.forget(uid)
+            recentOutbox.edit().also { editor -> recentOutbox.all.keys.filter { it.startsWith("$uid/") }.forEach { editor.remove(it) } }.apply()
             pausedDeletionUid.value = null
             deletingUid.value = null
             _state.value = AccountSyncState.SignedOut
@@ -182,6 +189,13 @@ class FirebaseAccountSyncRepository(
                 while (true) {
                     kotlinx.coroutines.delay(PROGRESS_CLOUD_INTERVAL_MILLIS)
                     playbackProgressStore.snapshot().forEach { writeProgressIfNewer(uid, it).observeWriteResult(uid) }
+                    recentOutbox.all.filterKeys { it.startsWith("$uid/") }.forEach { (_, raw) ->
+                        runCatching {
+                            val json = org.json.JSONObject(raw as String)
+                            val entry = RecentMediaEntry(Media.fromJson(json.getJSONObject("media")), json.getLong("time"))
+                            writeRecentIfNewer(uid, entry).observeWriteResult(uid)
+                        }
+                    }
                 }
             },
         )
@@ -273,12 +287,7 @@ class FirebaseAccountSyncRepository(
         library.favorites.forEach { media ->
             writes += PendingSet(user.collection(FAVORITES).document(media.key), mediaDocument(media))
         }
-        library.recent.forEach { entry ->
-            writes += PendingSet(
-                user.collection(RECENT).document(entry.media.key),
-                recentDocument(entry, useServerTimestamp = false),
-            )
-        }
+        library.recent.forEach { entry -> writeRecentIfNewer(uid, entry).await() }
         playbackProgress.forEach { progress ->
             writeProgressIfNewer(uid, progress).await()
         }
@@ -329,7 +338,10 @@ class FirebaseAccountSyncRepository(
             user.collection(RECENT).addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                 if (!validRemoteSnapshot(uid, snapshot, error)) return@addSnapshotListener
                 libraryStore.applySyncedSnapshot(
-                    libraryStore.snapshot().copy(recent = snapshot!!.toRecentList()),
+                    libraryStore.snapshot().copy(recent = AccountMergePolicy.mergeRecent(
+                        libraryStore.recentEntries.value.filter { recentOutbox.contains("$uid/${it.media.key}") },
+                        snapshot!!.toRecentList(),
+                    )),
                 )
                 saveActiveLocalSnapshot()
                 _state.value = AccountSyncState.Synced
@@ -408,14 +420,39 @@ class FirebaseAccountSyncRepository(
                     val document = user.collection(FAVORITES).document(mutation.media.key)
                     if (mutation.added) document.set(mediaDocument(mutation.media)) else document.delete()
                 }
-                is LibraryMutation.RecentPlayed -> user.collection(RECENT)
-                    .document(mutation.entry.media.key)
-                    .set(recentDocument(mutation.entry, useServerTimestamp = true))
-                is LibraryMutation.RecentRemoved -> user.collection(RECENT)
-                    .document(mutation.mediaKey)
-                    .delete()
-                LibraryMutation.RecentCleared -> clearRemoteRecent(uid)
+                is LibraryMutation.RecentPlayed -> writeRecentIfNewer(uid, mutation.entry, mutation.metadataOnly)
+                is LibraryMutation.RecentRemoved -> {
+                    recentOutbox.edit().remove("$uid/${mutation.mediaKey}").apply()
+                    user.collection(RECENT).document(mutation.mediaKey).delete()
+                }
+                LibraryMutation.RecentCleared -> {
+                    recentOutbox.edit().also { editor -> recentOutbox.all.keys.filter { it.startsWith("$uid/") }.forEach(editor::remove) }.apply()
+                    clearRemoteRecent(uid)
+                }
             }.observeWriteResult(uid)
+        }
+    }
+
+    private fun writeRecentIfNewer(uid: String, entry: RecentMediaEntry, metadataOnly: Boolean = false): Task<*> {
+        val outboxKey = "$uid/${entry.media.key}"
+        if (!metadataOnly) {
+            val raw = org.json.JSONObject().put("media", entry.media.toJson()).put("time", entry.lastPlayedAtMillis).toString()
+            recentOutbox.edit().putString(outboxKey, raw).apply()
+        }
+        val document = userDocument(uid).collection(RECENT).document(entry.media.key)
+        return firestore.runTransaction { transaction ->
+            val existing = transaction.get(document)
+            val lastPlayed = existing.getLong("lastPlayedAtMillis") ?: existing.getTimestamp("lastPlayedAt")?.toDate()?.time ?: 0L
+            if (metadataOnly) {
+                if (existing.exists()) transaction.set(document, mediaDocument(entry.media), SetOptions.merge())
+            } else if (entry.lastPlayedAtMillis >= lastPlayed) {
+                transaction.set(document, recentDocument(entry, useServerTimestamp = false))
+            }
+        }.addOnSuccessListener {
+            val pending = recentOutbox.getString(outboxKey, null)
+            if (!metadataOnly && pending != null && org.json.JSONObject(pending).optLong("time") == entry.lastPlayedAtMillis) {
+                recentOutbox.edit().remove(outboxKey).apply()
+            }
         }
     }
 
@@ -696,7 +733,7 @@ class FirebaseAccountSyncRepository(
         const val MAX_BATCH_WRITES = 400
         const val INITIAL_SYNC_TIMEOUT_MILLIS = 20_000L
         const val DELETION_TIMEOUT_MILLIS = 60_000L
-        const val PROGRESS_CLOUD_INTERVAL_MILLIS = 45_000L
+        const val PROGRESS_CLOUD_INTERVAL_MILLIS = 5_000L
     }
 }
 
@@ -704,8 +741,8 @@ private fun QuerySnapshot.toMediaList(): List<Media> = documents.mapNotNull(Docu
 
 private fun QuerySnapshot.toRecentList(): List<RecentMediaEntry> = documents.mapNotNull { document ->
     val media = document.toMedia() ?: return@mapNotNull null
-    val timestamp = document.getTimestamp("lastPlayedAt")?.toDate()?.time
-        ?: document.getLong("lastPlayedAtMillis")
+    val timestamp = document.getLong("lastPlayedAtMillis")
+        ?: document.getTimestamp("lastPlayedAt")?.toDate()?.time
         ?: 0L
     RecentMediaEntry(media, timestamp)
 }.sortedByDescending(RecentMediaEntry::lastPlayedAtMillis)

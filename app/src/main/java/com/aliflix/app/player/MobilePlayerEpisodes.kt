@@ -73,7 +73,6 @@ internal fun MobileEpisodesOverlay(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (!visible) return
 
     val seasons = remember(episodes) {
         episodes.map { it.seasonNumber }.distinct().sorted()
@@ -85,6 +84,7 @@ internal fun MobileEpisodesOverlay(
         episodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.number }
     }
 
+    AnimatedVisibility(visible = visible, enter = fadeIn() + (if (isLandscape) slideInHorizontally { it / 10 } else slideInVertically { it / 10 }), exit = fadeOut() + (if (isLandscape) slideOutHorizontally { it / 10 } else slideOutVertically { it / 10 })) {
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -168,6 +168,8 @@ internal fun MobileEpisodesOverlay(
             }
         }
     }
+}
+
 }
 
 @Composable
@@ -296,6 +298,7 @@ private fun EpisodeCard(
                 .background(Color.Black.copy(alpha = 0.45f)),
             contentAlignment = Alignment.Center,
         ) {
+            Text("${episode.number}", color = Color.White.copy(alpha = 0.35f), fontSize = 24.sp)
             if (!episode.stillUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = episode.stillUrl,

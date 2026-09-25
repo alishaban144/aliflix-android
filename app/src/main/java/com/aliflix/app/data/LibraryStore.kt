@@ -18,7 +18,7 @@ import org.json.JSONObject
 sealed interface LibraryMutation {
     data class MyListChanged(val media: Media, val added: Boolean) : LibraryMutation
     data class FavoriteChanged(val media: Media, val added: Boolean) : LibraryMutation
-    data class RecentPlayed(val entry: RecentMediaEntry) : LibraryMutation
+    data class RecentPlayed(val entry: RecentMediaEntry, val metadataOnly: Boolean = false) : LibraryMutation
     data class RecentRemoved(val mediaKey: String) : LibraryMutation
     data object RecentCleared : LibraryMutation
 }
@@ -102,7 +102,7 @@ class LibraryStore(context: Context) {
         if (updatedRecent != _recentEntries.value) {
             applyRecent(updatedRecent)
             updatedRecent.firstOrNull { played -> played.media.key == item.key }
-                ?.let { played -> _mutations.tryEmit(LibraryMutation.RecentPlayed(played)) }
+                ?.let { played -> _mutations.tryEmit(LibraryMutation.RecentPlayed(played, metadataOnly = true)) }
         }
 
         val updatedLikes = _likes.value.map { liked ->

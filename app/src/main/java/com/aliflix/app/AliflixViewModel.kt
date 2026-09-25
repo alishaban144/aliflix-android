@@ -175,7 +175,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         ioDispatcher = recommendationDispatchers.io,
         computationDispatcher = recommendationDispatchers.computation,
     )
-    private val library = LibraryStore(application)
+    private val library = (application as AliflixApplication).libraryStore
     private val playbackProviderRepository = PlaybackProviderRepository(application)
     val playbackProgressStore = (application as AliflixApplication).playbackProgressStore
     private val recommendationStore = RecommendationStore(

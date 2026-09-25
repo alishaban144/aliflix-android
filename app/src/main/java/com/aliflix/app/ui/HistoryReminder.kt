@@ -64,7 +64,7 @@ internal fun HistoryReminder(itemKey: String, inHistory: Boolean, onDelete: () -
                         }
                     },
                 ),
-            shape = RoundedCornerShape(50), color = AliflixSurfaceRaised,
+            shape = RoundedCornerShape(50), color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f),
         ) {
             Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("In your history", color = AliflixContentPrimary, fontSize = 12.sp)

@@ -12,8 +12,8 @@ internal fun playerLevelGestureAllowed(
     bottomInset: Float = 0f,
 ): Boolean {
     val left = maxOf(margin, leftInset)
-    val top = maxOf(margin, topInset)
+    val top = 0f
     val right = minOf(screenWidth - margin, screenWidth - rightInset)
-    val bottom = minOf(screenHeight - margin, screenHeight - bottomInset)
+    val bottom = screenHeight
     return x > left && x < right && y > top && y < bottom
 }

@@ -496,7 +496,7 @@ internal interface DownloadUiDependencies {
                             if (d.state == Download.STATE_COMPLETED) FilledIconButton(modifier = Modifier.size(52.dp), shape = RoundedCornerShape(18.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = AliflixAccentPrimary, contentColor = Color.White), onClick = {
                                 val app = activity.application as AliflixApplication
                                 val position = app.playbackProgressStore.progressFor(saved.selection)?.takeIf { it.resumeEligible }?.positionSeconds ?: 0.0
-                                LibraryStore(activity).markPlayed(saved.selection.media)
+                                (activity.application as com.aliflix.app.AliflixApplication).libraryStore.markPlayed(saved.selection.media)
                                 NativePlaybackLauncher.launch(activity, saved.playback.copy(positionMs = (position * 1000).toLong(), playing = true))
                             }) { Icon(Icons.Rounded.PlayArrow, "Play download", modifier = Modifier.size(30.dp)) }
                             else if (d.state !in setOf(Download.STATE_REMOVING, Download.STATE_RESTARTING)) DownloadButton(

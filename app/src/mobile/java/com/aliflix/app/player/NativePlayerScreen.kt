@@ -168,8 +168,8 @@ private data class HudFeedback(
 /**
  * Phone player using the approved v3.1.75 mobile playback redesign:
  * - Compact top bar (back, complete identity, Episodes / Subtitles / Rotate / More)
- * - Outlined 64dp play/pause with Â±15 second seek controls
- * - 35% / 30% / 35% double-tap seek zones with cumulative Â±15/Â±30/Â±45 HUD
+ * - Outlined 64dp play/pause with +/-15 second seek controls
+ * - 35% / 30% / 35% double-tap seek zones with cumulative +/-15/+/-30/+/-45 HUD
  * - Redesigned purple timeline with scrub bubble
  * - Redesigned Episodes panel and playback settings (More) menu
  * - 3-second auto-hide during playback
@@ -186,6 +186,7 @@ internal fun NativePlayerScreen(
     player: Player?,
     settings: PlayerSettings = PlayerSettings(),
     onBack: () -> Unit = {},
+    onResumeClicked: () -> Unit = {},
     onRetry: () -> Unit = {},
     onServer: () -> Unit = {},
     onSelectServer: (String) -> Unit = {},
@@ -203,6 +204,7 @@ internal fun NativePlayerScreen(
     onSubtitleOpacityChange: (Float) -> Unit = {},
     onSpeedChange: (Float) -> Unit = {},
     onEpisode: (Episode) -> Unit = {},
+    onAutoEpisode: (Episode) -> Unit = {},
     onReceiver: () -> Unit = {},
     onBrightnessSwipe: (Float) -> Float = { 0.5f },
     onVolumeSwipe: (Float) -> Float = { 0.5f },
@@ -227,7 +229,7 @@ internal fun NativePlayerScreen(
     val seekFeedback = remember { SeekFeedbackController() }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val density = LocalDensity.current
-    val levelGestureEdge = with(density) { 28.dp.toPx() }
+    val levelGestureEdge = with(density) { 18.dp.toPx() }
     val layoutDirection = LocalLayoutDirection.current
     val safeInsets = WindowInsets.safeDrawing
     val safeLeftInset = safeInsets.getLeft(density, layoutDirection).toFloat()
@@ -246,15 +248,19 @@ internal fun NativePlayerScreen(
         if (seekFeedback.state != null) { delay(650); seekFeedback.dismiss() }
     }
     val overlayOpen = sheet != null || episodesVisible || moreVisible
+    androidx.activity.compose.BackHandler(enabled = episodesVisible || moreVisible) {
+        episodesVisible = false
+        moreVisible = false
+    }
     LaunchedEffect(overlayOpen) { onOverlayVisibilityChanged(overlayOpen) }
     LaunchedEffect(controls) { onControlsVisibilityChanged(controls) }
     LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it) } }
-    val preparing = state.stage != null || (!state.ready && state.error == null && player?.mediaItemCount != 0)
+    val preparing = state.stage != null || (!state.ready && state.error == null && player?.mediaItemCount != 0 && (player?.duration ?: 0L) <= 0L)
     val playing = player?.isPlaying == true
     val ended = player?.playbackState == Player.STATE_ENDED
     val duration = (player?.duration ?: 0L).coerceAtLeast(0L)
     val position = (player?.currentPosition ?: 0L).coerceIn(0L, duration.coerceAtLeast(1L))
-    val next = state.episodes.dropWhile { it.number != state.episodeNumber }.drop(1).firstOrNull()
+    val next = state.episodes.dropWhile { it.number != state.episodeNumber || it.seasonNumber != state.playbackSelection?.seasonNumber }.drop(1).firstOrNull()
 
     // Next episode countdown
     var countdownCancelled by remember(state.episodeNumber) { mutableStateOf(false) }
@@ -264,7 +270,7 @@ internal fun NativePlayerScreen(
 
     LaunchedEffect(showCountdown, remainingMs) {
         if (showCountdown && remainingMs <= 1200 && next != null) {
-            onEpisode(next)
+            onAutoEpisode(next)
         }
     }
 
@@ -353,6 +359,8 @@ internal fun NativePlayerScreen(
                             safeRightInset,
                             safeBottomInset,
                         )) return@awaitEachGesture
+                    awaitPointerEvent(PointerEventPass.Final)
+                    if (down.isConsumed && isScrubbing) return@awaitEachGesture
                     val isLeft = down.position.x < size.width / 2f
                     fun adjust(amount: Float) {
                         val delta = -amount / (size.height * .7f).coerceAtLeast(1f)
@@ -367,20 +375,28 @@ internal fun NativePlayerScreen(
                         }
                         showHud(icon, if (isLeft) "Brightness" else "Volume", level)
                     }
-                    val drag = awaitVerticalTouchSlopOrCancellation(down.id) { change, overSlop ->
-                        change.consume()
-                        if (!isLeft) startVolumeGesture.value()
-                        levelGestureActive = true
-                        adjust(overSlop)
-                    }
-                    if (drag != null) {
-                        try {
-                            verticalDrag(drag.id) { change ->
-                                adjust(change.position.y - change.previousPosition.y)
-                                change.consume()
-                            }
-                        } finally { levelGestureActive = false }
-                    }
+                    var claimed = false
+                    var total = androidx.compose.ui.geometry.Offset.Zero
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed || event.changes.count { it.pressed } > 1) break
+                            if (change.isConsumed && !claimed) break
+                            val delta = change.position - change.previousPosition
+                            total += delta
+                            if (!claimed) {
+                                if (kotlin.math.abs(total.x) > viewConfiguration.touchSlop && kotlin.math.abs(total.x) >= kotlin.math.abs(total.y)) break
+                                if (kotlin.math.abs(total.y) <= viewConfiguration.touchSlop) continue
+                                claimed = true
+                                if (!isLeft) startVolumeGesture.value()
+                                levelGestureActive = true
+                                adjust(total.y - kotlin.math.sign(total.y) * viewConfiguration.touchSlop)
+                            } else adjust(delta.y)
+                            change.consume()
+                        }
+                    } finally { levelGestureActive = false }
+
                 }
             }
     ) {
@@ -559,7 +575,7 @@ internal fun NativePlayerScreen(
                         onPlayPause = {
                             player?.let { p ->
                                 if (ended) p.seekTo(0)
-                                if (p.playWhenReady && !ended) p.pause() else p.play()
+                                if (p.playWhenReady && !ended) p.pause() else { onResumeClicked(); p.play() }
                             }
                             interaction++
                         },
@@ -572,8 +588,7 @@ internal fun NativePlayerScreen(
                     )
                 }
 
-                if (!preparing && state.ready && state.error == null &&
-                    player?.playbackState in setOf(Player.STATE_READY, Player.STATE_ENDED)) MobilePlayerTimeline(
+                if (!preparing && state.error == null && duration > 0L) MobilePlayerTimeline(
                     currentPositionMs = position,
                     durationMs = duration,
                     bufferedPositionMs = player?.bufferedPosition ?: 0L,
@@ -596,7 +611,7 @@ internal fun NativePlayerScreen(
         }
 
         // IN-PLAYER BUFFERING INDICATOR (pulsing ring loader)
-        if (!preparing && state.error == null && player?.playbackState == Player.STATE_BUFFERING) {
+        if (!preparing && !isScrubbing && state.error == null && player?.playbackState == Player.STATE_BUFFERING) {
             Box(modifier = Modifier.align(Alignment.Center), contentAlignment = Alignment.Center) {
                 val infiniteTransition = rememberInfiniteTransition(label = "pulse")
                 val pulseScale by infiniteTransition.animateFloat(
@@ -661,7 +676,7 @@ internal fun NativePlayerScreen(
                     }
                     Column(Modifier.weight(1f)) {
                         Text("UP NEXT", color = AliflixAccentSecondary, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.sp)
-                        Text("E${next!!.number} Â· ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("E${next!!.number} \u00b7 ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     OpenPlayerButton(
                         onClick = { next?.let { onEpisode(it) } },
@@ -739,7 +754,7 @@ internal fun NativePlayerScreen(
             }
         }
 
-        // Cumulative double-tap / Â±15s seek feedback HUD
+        // Cumulative double-tap / +/-15s seek feedback HUD
 
 
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
@@ -750,7 +765,7 @@ internal fun NativePlayerScreen(
         visible = episodesVisible,
         isLandscape = isLandscape,
         episodes = state.episodes,
-        currentSeason = state.episodes.firstOrNull { it.number == state.episodeNumber }?.seasonNumber,
+        currentSeason = state.playbackSelection?.seasonNumber,
         currentEpisode = state.episodeNumber,
         onSelectEpisode = { episode ->
             episodesVisible = false
@@ -882,7 +897,7 @@ internal fun NativePlayerScreen(
                                         modifier = Modifier.size(38.dp),
                                         colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
                                     ) {
-                                        Text("âˆ’0.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                        Text("\u22120.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                     if (settings.subtitleDelayTenths != 0) {
                                         TextButton(onClick = { onSubtitleDelayChange(0) }) {
