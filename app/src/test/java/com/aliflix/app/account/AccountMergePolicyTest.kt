@@ -119,7 +119,17 @@ class AccountMergePolicyTest {
     @Test
     fun deletionTargetsOnlyTheDocumentedAccountCollections() {
         assertEquals(
-            listOf("profile", "myList", "favorites", "recent", "progress", "settings"),
+            listOf(
+                "profile",
+                "myList",
+                "favorites",
+                "recent",
+                "progress",
+                "settings",
+                "playerPreferences",
+                "subtitleChoices",
+                "captionFiles",
+            ),
             AccountCloudDeletionPlan.collections,
         )
     }

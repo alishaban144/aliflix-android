@@ -28,13 +28,22 @@ enum class PlaybackProviderId(
         displayName = "Miruro",
         defaultBaseUrl = "https://www.miruro.tv/",
         supportsGeneralPlayback = false,
+    ),
+    ANIKURO(
+        displayName = "AniKuro",
+        defaultBaseUrl = "https://anikuro.to/",
+        supportsGeneralPlayback = false,
     );
 
     val usesMoviepire: Boolean
         get() = this == MOVIEPIRE
 
+    /** Anime-only sources resolved by a native catalogue and raced against each other. */
+    val isAnimeNative: Boolean
+        get() = this == MIRURO || this == ANIKURO
+
     fun isAvailableFor(media: Media): Boolean =
-        supportsGeneralPlayback || (this == MIRURO && !com.aliflix.app.BuildConfig.IS_TV && media.isJapaneseAnime)
+        supportsGeneralPlayback || (isAnimeNative && !com.aliflix.app.BuildConfig.IS_TV && media.isJapaneseAnime)
 
     companion object {
         fun fromStoredValue(value: String?): PlaybackProviderId? =
@@ -139,6 +148,7 @@ data class PlaybackSource(
     ): String? = when (provider) {
         // The native adapter maps TMDB identity and episode numbering before requesting a stream.
         PlaybackProviderId.MIRURO -> baseUrl
+        PlaybackProviderId.ANIKURO -> baseUrl
         PlaybackProviderId.RAMOFLIX ->
             RamoflixConfig(baseUrl).buildWatchUrl(media.title)
 
@@ -202,6 +212,7 @@ data class PlaybackPreferences(
             PlaybackProviderId.MOVIEPIRE -> PlaybackSource.moviepire(moviepireBaseUrl)
             PlaybackProviderId.DORABY -> PlaybackSource.doraby(dorabyBaseUrl)
             PlaybackProviderId.MIRURO -> PlaybackSource(PlaybackProviderId.MIRURO)
+            PlaybackProviderId.ANIKURO -> PlaybackSource(PlaybackProviderId.ANIKURO)
         }
     }
 }

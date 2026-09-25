@@ -71,8 +71,7 @@ internal suspend fun subtitleSpeechSample(context: Context, request: NativePlayb
         val http = DefaultHttpDataSource.Factory().setUserAgent(request.userAgent)
             .setDefaultRequestProperties(mapOf("Referer" to request.referer, "Origin" to origin))
         val scoped = ResolvingDataSource.Factory(http) { spec ->
-            if (request.cookie.isNotBlank() && spec.uri.host == android.net.Uri.parse(request.url).host)
-                spec.withRequestHeaders(spec.httpRequestHeaders + ("Cookie" to request.cookie)) else spec
+            request.resolveStreamSpec(spec)
         }
         val player = ExoPlayer.Builder(context, renderer)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, scoped))).build()

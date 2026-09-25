@@ -108,6 +108,7 @@ class PlaybackProviderRepository(private val context: Context) {
     }
 
     fun setAutoDisplaySubtitles(enabled: Boolean) {
+        if (!BuildConfig.IS_TV) context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE).edit { remove("enabled") }
         prefs.edit { putBoolean(KEY_AUTO_DISPLAY_SUBTITLES, enabled) }
         _preferences.value = _preferences.value.copy(autoDisplaySubtitles = enabled)
         recordLocalChange()

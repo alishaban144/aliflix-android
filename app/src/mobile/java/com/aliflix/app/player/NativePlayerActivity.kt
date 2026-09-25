@@ -417,7 +417,7 @@ class NativePlayerActivity : FragmentActivity() {
                     startNative(saved.copy(positionMs = resume, playing = true, selectionJson = selection!!.nativeJson()))
                     awaitNativeReady(saved.url)
                     ui = ui.copy(stage = null, ready = true, error = null)
-                        reconcileSyncedCaptions()
+                    reconcileSyncedCaptions()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
                     controller?.pause()
@@ -461,8 +461,9 @@ class NativePlayerActivity : FragmentActivity() {
                 val history = getSharedPreferences("native-resolver-performance", MODE_PRIVATE)
                 val seriesKey = "series:${current.media.key}"
                 val savedRoute = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { routeStore.load(current) }
-                    ?.takeIf { preferredServer == null && it.selection.source.provider !in exhaustedSources }
-                val savedProvider = savedRoute?.selection?.source?.provider?.name ?: if (current.media.type == com.aliflix.app.model.MediaType.TV) history.getString("$seriesKey:provider", null) else null
+                    ?.takeIf { preferredServer == null && it.selection.source.provider !in exhaustedSources &&
+                        (!current.source.provider.isAnimeNative || it.selection.source.provider == current.source.provider) }
+                val savedProvider = savedRoute?.selection?.source?.provider?.name ?: if (!current.source.provider.isAnimeNative && current.media.type == com.aliflix.app.model.MediaType.TV) history.getString("$seriesKey:provider", null) else null
                 val sources = (listOfNotNull(savedRoute?.selection) + playbackSourceFallbacks(current, preferences)).distinctBy { it.source }.filter { it.source.provider !in exhaustedSources }
                 val orderedSources = sources.sortedBy { if (it.source.provider.name == savedProvider) 0 else 1 }
                 val excludedBySource = mutableMapOf<com.aliflix.app.model.PlaybackProviderId, MutableSet<String>>()
@@ -494,9 +495,11 @@ class NativePlayerActivity : FragmentActivity() {
                     ensureActive()
                     val candidates = orderedSources.filter { it.source.provider !in exhaustedSources }
                     if (candidates.isEmpty()) return@repeat
+                    // Anime-native sources are raced together so whichever one's video starts first wins.
+                    val animeBatch = candidates.filter { it.source.provider.isAnimeNative }
                     val batch = if (preferSaved) listOf(candidates.firstOrNull {
                         if (preferredServer != null) it.source == startingSource else it.source.provider.name == savedProvider
-                    } ?: candidates.first()) else candidates
+                    } ?: candidates.first()) else if (animeBatch.isNotEmpty()) animeBatch else candidates
                     preferSaved = false
                     if (warmingEpisodeKey == current.key && nextEpisodeWarmup?.isActive == true) {
                         kotlinx.coroutines.withTimeoutOrNull(2_000) { nextEpisodeWarmup?.join() }
@@ -511,8 +514,12 @@ class NativePlayerActivity : FragmentActivity() {
                             val excluded = excludedBySource.getOrPut(candidate.source.provider) { mutableSetOf() }
                             val savedServer = if (candidate.source == savedRoute?.selection?.source) savedRoute.server else if (candidate.source.provider.name == savedProvider) history.getString("$seriesKey:server", null) else null
                             try {
-                                val request = withTimeout(16_000) {
-                                    adapter.resolve(candidate, resume, excluded, validateSingle = false,
+                                val request = withTimeout(when (candidate.source.provider) {
+                                    com.aliflix.app.model.PlaybackProviderId.MIRURO -> 45_000
+                                    com.aliflix.app.model.PlaybackProviderId.ANIKURO -> 60_000
+                                    else -> 16_000
+                                }) {
+                                    adapter.resolve(candidate, resume, excluded, validateSingle = candidate.source.provider.isAnimeNative,
                                         preferredServer = (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
                                         onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[candidate.key] = (resolvedServerNames[candidate.key].orEmpty() + names).distinct() }) { server = it }
                                 }
@@ -575,7 +582,7 @@ class NativePlayerActivity : FragmentActivity() {
                 warmingEpisodeKey = candidate.key
                 val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                 try {
-                    val request = withTimeout(16_000) { adapter.resolve(candidate, 0, emptySet(), preferredServer = server) {} }
+                    val request = withTimeout(if (candidate.source.provider.isAnimeNative) 45_000 else 16_000) { adapter.resolve(candidate, 0, emptySet(), preferredServer = server) {} }
                     warmedEpisode = Triple(candidate, server, request)
                     warmedAt = android.os.SystemClock.elapsedRealtime()
                 } catch (error: Exception) { ensureActive(); delay(3_000); continue }

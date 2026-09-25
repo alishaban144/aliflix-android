@@ -114,9 +114,7 @@ class NativePlaybackService : MediaSessionService() {
             .setNotificationId(NOTIFICATION_ID).setChannelId(CHANNEL_ID).build())
         val scopedHttp = ResolvingDataSource.Factory(httpFactory) { spec ->
             val current = request
-            if (current != null && current.cookie.isNotBlank() && spec.uri.host == android.net.Uri.parse(current.url).host) {
-                spec.withRequestHeaders(spec.httpRequestHeaders + ("Cookie" to current.cookie))
-            } else spec
+            current?.resolveStreamSpec(spec) ?: spec
         }
         localPlayer = ExoPlayer.Builder(this)
             .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true))

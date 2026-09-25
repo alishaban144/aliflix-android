@@ -1,6 +1,8 @@
 @file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.aliflix.app.downloads
 
+import com.aliflix.app.player.resolveStreamSpec
+
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
@@ -193,7 +195,6 @@ internal fun downloadHttpFactory(request: NativePlaybackRequest): DataSource.Fac
     val http = DefaultHttpDataSource.Factory().setUserAgent(request.userAgent)
         .setConnectTimeoutMs(10_000).setReadTimeoutMs(15_000).setDefaultRequestProperties(headers)
     return ResolvingDataSource.Factory(http) { spec ->
-        if (request.cookie.isNotBlank() && spec.uri.host == Uri.parse(request.url).host)
-            spec.withRequestHeaders(spec.httpRequestHeaders + ("Cookie" to request.cookie)) else spec
+        request.resolveStreamSpec(spec)
     }
 }

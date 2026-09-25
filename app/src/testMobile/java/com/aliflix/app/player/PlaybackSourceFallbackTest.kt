@@ -32,4 +32,27 @@ class PlaybackSourceFallbackTest {
         val movie = PlaybackSelection(Media(550, MediaType.MOVIE, "Fight Club"), source = PlaybackSource.doraby())
         assertEquals(setOf("movie:550"), playbackSourceFallbacks(movie, PlaybackPreferences()).map(::playbackProgressKey).toSet())
     }
+    @Test fun japaneseAnimeRacesBothAnimeNativeSourcesBeforeGeneralMirrors() {
+        val anime = Media(21, MediaType.TV, "One Piece", genres = listOf("Animation"), originalLanguage = "ja")
+        assertTrue(PlaybackProviderId.MIRURO.isAvailableFor(anime))
+        assertTrue(PlaybackProviderId.ANIKURO.isAvailableFor(anime))
+        assertFalse(PlaybackProviderId.ANIKURO.isAvailableFor(Media(550, MediaType.MOVIE, "Fight Club", originalLanguage = "en")))
+        val selection = PlaybackSelection(anime, 1, 243, "Episode 243", source = PlaybackSource(PlaybackProviderId.ANIKURO))
+        val choices = playbackSourceFallbacks(selection, PlaybackPreferences())
+        assertEquals(
+            listOf(
+                PlaybackProviderId.ANIKURO,
+                PlaybackProviderId.MIRURO,
+                PlaybackProviderId.RAMOFLIX,
+                PlaybackProviderId.DORABY,
+                PlaybackProviderId.MOVIEPIRE,
+            ),
+            choices.map { it.source.provider },
+        )
+        assertEquals("https://anikuro.to/", choices.first().source.buildEntryUrl(anime))
+        choices.forEach {
+            assertEquals(anime, it.media)
+            assertEquals("tv:21:s1:e243", playbackProgressKey(it))
+        }
+    }
 }

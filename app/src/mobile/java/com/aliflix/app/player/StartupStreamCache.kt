@@ -35,8 +35,7 @@ internal object StartupStreamCache {
             .setConnectTimeoutMs(4_000).setReadTimeoutMs(4_000)
             .setDefaultRequestProperties(mapOf("Referer" to request.referer, "Origin" to origin))
         val scoped = ResolvingDataSource.Factory(http) { spec ->
-            if (request.cookie.isNotBlank() && spec.uri.host == android.net.Uri.parse(request.url).host)
-                spec.withRequestHeaders(spec.httpRequestHeaders + ("Cookie" to request.cookie)) else spec
+            request.resolveStreamSpec(spec)
         }
         val player = ExoPlayer.Builder(context.applicationContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(factory(context, DefaultDataSource.Factory(context, scoped))))

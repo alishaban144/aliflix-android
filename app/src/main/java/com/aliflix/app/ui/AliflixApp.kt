@@ -1447,12 +1447,13 @@ fun AliflixApp(
             }
         }
 
-        urlDialogProvider?.takeIf { it.supportsGeneralPlayback }?.let { provider ->
+        urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
+                PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
+                PlaybackProviderId.ANIKURO -> provider.defaultBaseUrl
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
                 PlaybackProviderId.MOVIEPIRE -> moviepireBaseUrl
                 PlaybackProviderId.DORABY -> dorabyBaseUrl
-                PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
             }
             MobileProviderUrlDialog(
                 providerName = provider.displayName,
@@ -1461,19 +1462,21 @@ fun AliflixApp(
                 defaultUrl = provider.defaultBaseUrl,
                 onSave = { newUrl ->
                     when (provider) {
+                        PlaybackProviderId.MIRURO -> Unit
+                        PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
                         PlaybackProviderId.MOVIEPIRE -> viewModel.updateMoviepireUrl(newUrl)
                         PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(newUrl)
-                        PlaybackProviderId.MIRURO -> Unit
                     }
                     urlDialogProvider = null
                 },
                 onReset = {
                     when (provider) {
+                        PlaybackProviderId.MIRURO -> Unit
+                        PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
                         PlaybackProviderId.MOVIEPIRE -> viewModel.resetMoviepireUrl()
                         PlaybackProviderId.DORABY -> viewModel.resetDorabyUrl()
-                        PlaybackProviderId.MIRURO -> Unit
                     }
                     urlDialogProvider = null
                 },

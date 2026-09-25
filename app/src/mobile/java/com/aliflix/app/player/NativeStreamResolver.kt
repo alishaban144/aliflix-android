@@ -33,6 +33,7 @@ internal class NativeStreamResolver(
     private var web: WebPlayerController? = null
     private var view: FrameLayout? = null
     private var closed = false
+    private var miruro: MiruroNativeCatalog? = null
     private var reportServers: (List<String>) -> Unit = {}
     private val children = mutableListOf<NativeStreamResolver>()
 
@@ -48,6 +49,17 @@ internal class NativeStreamResolver(
     ): NativePlaybackRequest {
         reportServers = onServers
         if (strictPreferredServer) require(!preferredServer.isNullOrBlank()) { "A server is required for pinned preparation." }
+        if (selection.source.provider == PlaybackProviderId.MIRURO) {
+            val adapter = MiruroNativeCatalog(activity, host).also { miruro = it }
+            return try {
+                adapter.resolve(selection, positionMs, excluded, preferredServer, strictPreferredServer, onServers, onServer, validateSingle)
+            } finally { adapter.close(); miruro = null }
+        }
+        if (selection.source.provider == PlaybackProviderId.ANIKURO) {
+            return AniKuroNativeCatalog(activity).resolve(
+                selection, positionMs, excluded, preferredServer, strictPreferredServer, onServers, onServer, validateSingle,
+            )
+        }
         val catalogueProvider = selection.source.provider in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY)
         val embeds = if (catalogueProvider) FmovieNativeCatalog().embeds(selection) else preferredNativeEmbeds(selection)
         if (embeds.isNotEmpty()) onServers(embeds.map { it.first })
@@ -144,6 +156,7 @@ internal class NativeStreamResolver(
     override fun close() {
         if (closed) return
         closed = true
+        miruro?.close(); miruro = null
         children.toList().forEach { it.close() }
         children.clear()
         web?.destroy(); web = null; view?.let { host.removeView(it) }; view = null

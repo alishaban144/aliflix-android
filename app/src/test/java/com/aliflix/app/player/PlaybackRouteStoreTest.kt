@@ -38,9 +38,10 @@ class PlaybackRouteStoreTest {
         assertTrue(allowed(29f, 500f, 1000f, 1800f))
         assertTrue(allowed(500f, 900f, 1000f, 1800f))
         assertTrue(allowed(971f, 1700f, 1000f, 1800f))
-        assertFalse(allowed(500f, 1772f, 1000f, 1800f))
+        // Only the side margins are excluded; the gesture surface spans the full height.
+        assertTrue(allowed(500f, 1772f, 1000f, 1800f))
 
-        assertFalse(allowed(40f, 28f, 1800f, 1000f))
+        assertTrue(allowed(40f, 28f, 1800f, 1000f))
         assertTrue(allowed(40f, 29f, 1800f, 1000f))
         assertTrue(allowed(900f, 500f, 1800f, 1000f))
         assertTrue(allowed(1759f, 971f, 1800f, 1000f))
@@ -50,7 +51,11 @@ class PlaybackRouteStoreTest {
     @Test fun playerLevelGestureRespectsSystemInsets() {
         assertTrue(playerLevelGestureAllowed(50f, 500f, 1000f, 1800f, 28f, leftInset = 48f))
         assertFalse(playerLevelGestureAllowed(47f, 500f, 1000f, 1800f, 28f, leftInset = 48f))
+        assertTrue(playerLevelGestureAllowed(949f, 500f, 1000f, 1800f, 28f, rightInset = 48f))
+        assertFalse(playerLevelGestureAllowed(965f, 500f, 1000f, 1800f, 28f, rightInset = 48f))
+        // Vertical system insets no longer shrink the gesture surface.
         assertTrue(playerLevelGestureAllowed(500f, 60f, 1000f, 1800f, 28f, topInset = 48f))
-        assertFalse(playerLevelGestureAllowed(500f, 47f, 1000f, 1800f, 28f, topInset = 48f))
+        assertTrue(playerLevelGestureAllowed(500f, 47f, 1000f, 1800f, 28f, topInset = 48f))
+        assertTrue(playerLevelGestureAllowed(500f, 1772f, 1000f, 1800f, 28f, bottomInset = 48f))
     }
 }
