@@ -2,7 +2,6 @@ package com.aliflix.app.ui.discover
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -11,11 +10,15 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -24,7 +27,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import com.aliflix.app.R
 import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.Media
 import com.aliflix.app.ui.HomeMediaRail
@@ -56,67 +65,115 @@ internal fun CategoryBrowser(
     BackHandler(enabled = selected == null) { onBack() }
     val base = selected
     LaunchedEffect(base) { if (base != null) store.load(base, "", "All") }
-    AnimatedContent(
-        targetState = base ?: "categories",
-        transitionSpec = {
-            val spec = tween<Float>(280, easing = FastOutSlowInEasing)
-            if (targetState == "categories") {
-                fadeIn(spec) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 8 } togetherWith
-                    fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -it / 10 }
-            } else {
-                fadeIn(spec) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 5 } togetherWith
-                    fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -it / 12 }
-            }
-        },
-        label = "category-browser-transition",
-    ) { visibleBase ->
-        if (visibleBase == "categories") {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-                if (failed) item { TextButton(onClick = { retry++ }) { Text("Retry categories") } }
-                if (categories.isEmpty() && !failed) item { CircularProgressIndicator(Modifier.padding(20.dp).size(24.dp)) }
-                categories.groupBy { it.third }.forEach { (type, entries) ->
-                    item { Text(if (type == "movie") "Movies" else "Series", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp)) }
-                    items(entries.chunked(2), key = { pair -> pair.joinToString("|") { it.first } }) { pair ->
-                        Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            pair.forEach { (key, name, _) ->
-                                Surface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).height(104.dp),
-                                    shape = RoundedCornerShape(22.dp), color = Color.Transparent,
-                                    border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))) {
-                                    val tones = listOf(Color(0xFF51437B), Color(0xFF285D67), Color(0xFF704954), Color(0xFF3C5279))
-                                    val tone = tones[(key.hashCode() and Int.MAX_VALUE) % tones.size]
-                                    Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(tone.copy(alpha = .65f), AliflixBackgroundBase)))) {
-                                        Text(name, modifier = Modifier.align(Alignment.BottomStart).padding(18.dp), style = MaterialTheme.typography.titleMedium)
+    Column(Modifier.fillMaxSize()) {
+        CategoryHeader(
+            title = if (base == null) "Categories" else selectedName,
+            onBack = { if (base == null) onBack() else selected = null },
+        )
+        AnimatedContent(
+            targetState = base ?: "categories",
+            modifier = Modifier.weight(1f),
+            transitionSpec = {
+                val spec = tween<Float>(280, easing = FastOutSlowInEasing)
+                if (targetState == "categories") {
+                    fadeIn(spec) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 8 } togetherWith
+                        fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -it / 10 }
+                } else {
+                    fadeIn(spec) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 5 } togetherWith
+                        fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -it / 12 }
+                }
+            },
+            label = "category-browser-transition",
+        ) { visibleBase ->
+            if (visibleBase == "categories") {
+                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                    if (failed) item { TextButton(onClick = { retry++ }) { Text("Retry categories") } }
+                    if (categories.isEmpty() && !failed) item { CircularProgressIndicator(Modifier.padding(20.dp).size(24.dp)) }
+                    categories.groupBy { it.third }.forEach { (type, entries) ->
+                        item { Text(if (type == "movie") "Movies" else "Series", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp)) }
+                        items(entries.chunked(2), key = { pair -> pair.joinToString("|") { it.first } }) { pair ->
+                            Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                pair.forEach { (key, name, _) ->
+                                    Surface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).heightIn(min = 144.dp),
+                                        shape = RoundedCornerShape(22.dp), color = Color.Transparent,
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))) {
+                                        val tones = listOf(Color(0xFF51437B), Color(0xFF285D67), Color(0xFF704954), Color(0xFF3C5279))
+                                        val tone = tones[(key.hashCode() and Int.MAX_VALUE) % tones.size]
+                                        Column(
+                                            Modifier.background(Brush.linearGradient(listOf(tone.copy(alpha = .45f), AliflixBackgroundBase)))
+                                                .padding(14.dp),
+                                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            Image(
+                                                painter = painterResource(genreArtwork(key.substringAfterLast(':').toIntOrNull())),
+                                                contentDescription = null,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.size(60.dp).clip(RoundedCornerShape(19.dp))
+                                                    .border(1.dp, Color.White.copy(alpha = .16f), RoundedCornerShape(19.dp)),
+                                            )
+                                            Text(name, style = MaterialTheme.typography.titleSmall, fontSize = 14.sp,
+                                                minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        }
                                     }
                                 }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
                             }
-                            if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
                 }
+            } else {
+                CategorySections(store, visibleBase, onOpen)
             }
-        } else {
-            CategorySections(store, visibleBase, selectedName, onOpen, onBack = { selected = null })
         }
     }
+}
+
+@Composable
+private fun CategoryHeader(title: String, onBack: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        IconButton(onClick = onBack, modifier = Modifier.size(48.dp).clip(CircleShape)
+            .background(AliflixGlassIcon).border(1.dp, AliflixBorderStrong, CircleShape)) {
+            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to previous screen", tint = AliflixContentPrimary)
+        }
+        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Bundled, licensed Pexels photography; provenance is in docs/genre-artwork.md. */
+private fun genreArtwork(id: Int?): Int = when (id) {
+    28 -> R.drawable.genre_action
+    12, 10759 -> R.drawable.genre_adventure
+    16, 10762 -> R.drawable.genre_animation
+    35, 10767 -> R.drawable.genre_comedy
+    80 -> R.drawable.genre_crime
+    99 -> R.drawable.genre_documentary
+    18 -> R.drawable.genre_drama
+    10751 -> R.drawable.genre_family
+    14 -> R.drawable.genre_fantasy
+    36 -> R.drawable.genre_history
+    27, 53 -> R.drawable.genre_horror
+    10402 -> R.drawable.genre_music
+    9648 -> R.drawable.genre_mystery
+    10749, 10766 -> R.drawable.genre_romance
+    878, 10765 -> R.drawable.genre_science_fiction
+    10752, 10768 -> R.drawable.genre_war
+    37 -> R.drawable.genre_western
+    10763 -> R.drawable.genre_news
+    10764 -> R.drawable.genre_reality
+    else -> R.drawable.genre_television
 }
 
 @Composable
 private fun CategorySections(
     store: DiscoverCatalogueStore,
     base: String,
-    selectedName: String,
     onOpen: (Media) -> Unit,
-    onBack: () -> Unit,
 ) {
     val root = store.session(base, "", "All")
     val sections = root.sections
     val scope = rememberCoroutineScope()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item {
-            TextButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text("‹  $selectedName")
-            }
-        }
         if (sections.isEmpty()) {
             item {
                 when {

@@ -47,8 +47,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -580,7 +578,7 @@ fun AliflixApp(
     val searchScrollState = rememberLazyGridState()
     val recommendationScrollState = rememberLazyListState()
     var askAliflixActive by remember { mutableStateOf(false) }
-    var libraryFullscreen by remember { mutableStateOf(false) }
+    var libraryCollapseFraction by remember { mutableFloatStateOf(0f) }
     val listScrollState = rememberLazyGridState()
     val favoritesScrollState = rememberLazyGridState()
     val historyScrollState = rememberLazyGridState()
@@ -626,6 +624,11 @@ fun AliflixApp(
     }
 
     fun showRoot(tab: AppTab) {
+        if (tab == AppTab.HOME) {
+            homeFilterName = HomeFilter.FOR_YOU.name
+            previousHomeFilterName = HomeFilter.FOR_YOU.name
+            updateScope.launch { homeScrollState.scrollToItem(0) }
+        }
         destinationStack = listOf(MobileDestination.Root(tab))
         viewModel.closeDetails()
         viewModel.closeGenre()
@@ -980,16 +983,23 @@ fun AliflixApp(
                 containerColor = Color.Transparent,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 bottomBar = {
-                    if (currentDestination is MobileDestination.Root && !askAliflixActive && !(selectedTab == AppTab.MY_SPACE && libraryFullscreen)) {
-                        AliflixBottomBar(
-                            selected = selectedTab,
-                            onSelect = { tab ->
-                                if (tab == AppTab.SEARCH) {
-                                    discoverFocusRequestId += 1
-                                }
-                                showRoot(tab)
-                            },
-                        )
+                    if (currentDestination is MobileDestination.Root && !askAliflixActive) {
+                        Box(Modifier.windowInsetsPadding(WindowInsets.navigationBars)) {
+                        LibraryChrome(
+                            fraction = { if (selectedTab == AppTab.MY_SPACE) libraryCollapseFraction else 0f },
+                            slideUp = false,
+                        ) {
+                            AliflixBottomBar(
+                                selected = selectedTab,
+                                onSelect = { tab ->
+                                    if (tab == AppTab.SEARCH) {
+                                        discoverFocusRequestId += 1
+                                    }
+                                    showRoot(tab)
+                                },
+                            )
+                        }
+                        }
                     }
                 },
             ) { padding ->
@@ -1360,7 +1370,7 @@ fun AliflixApp(
                     )
 
                     AppScreen.MY_SPACE -> MySpaceScreen(
-                        onFullscreenChange = { libraryFullscreen = it },
+                        onCollapseFractionChange = { libraryCollapseFraction = it },
                         myList = myList,
                         likes = likes,
                         recent = recent,
@@ -1479,7 +1489,6 @@ private fun AliflixBottomBar(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         shape = RoundedCornerShape(24.dp),
         color = AliflixSurfaceRaised.copy(alpha = 0.98f),
@@ -1614,7 +1623,6 @@ private fun HomeScreen(
             val tvListState = rememberLazyListState()
             MobileTopSafeArea()
             HomeHeader(onSearch)
-            FilterBar(selectedFilter, onSelectFilter, pinned = false)
             AnimatedContent(
                 targetState = selectedFilter,
                 modifier = Modifier.weight(1f),
@@ -1840,7 +1848,7 @@ internal fun HomeFeed(
             }
         }
 
-        if (!controlsOutside) stickyHeader {
+        stickyHeader {
             FilterBar(
                 selected = selectedFilter,
                 onSelect = onSelectFilter,
@@ -3187,6 +3195,7 @@ private fun MobileUpdatePanel(
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 internal fun MySpaceScreen(
     myList: List<Media>,
@@ -3218,7 +3227,7 @@ internal fun MySpaceScreen(
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
-    onFullscreenChange: (Boolean) -> Unit = {},
+    onCollapseFractionChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val pagerState = rememberPagerState(
@@ -3298,27 +3307,22 @@ internal fun MySpaceScreen(
         )
     }
 
-    var chromeHidden by remember { mutableStateOf(false) }
-    LaunchedEffect(pagerState.currentPage) { chromeHidden = false }
-    LaunchedEffect(chromeHidden) { onFullscreenChange(chromeHidden) }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { onFullscreenChange(false) } }
-    androidx.activity.compose.BackHandler(chromeHidden) { chromeHidden = false }
-    val chromeObserver = remember {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (available.y < -3f) chromeHidden = true
-                if (available.y > 3f) chromeHidden = false
-                return Offset.Zero
-            }
-        }
-    }
+    val chrome = rememberLibraryChrome(pagerState.settledPage, onCollapseFractionChange)
     Column(
-        modifier = modifier.nestedScroll(chromeObserver)
+        modifier = modifier.nestedScroll(chrome.nestedScrollConnection)
             .fillMaxSize()
             .downloadAtmosphere(),
     ) {
-        AnimatedVisibility(visible = !chromeHidden) { Column {
-        MobileTopSafeArea(extraPadding = 18.dp)
+        MobileTopSafeArea(extraPadding = 0.dp)
+        LibraryChrome(
+            fraction = { chrome.state.collapsedFraction },
+            onHeightChanged = { height ->
+                val limit = -height.toFloat()
+                chrome.state.heightOffsetLimit = limit
+                chrome.state.heightOffset = chrome.state.heightOffset.coerceIn(limit, 0f)
+            },
+        ) { Column {
+        Spacer(Modifier.height(18.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3500,7 +3504,6 @@ private fun GenreOrganizedList(
     }
     LazyVerticalGrid(
         state = gridState,
-        flingBehavior = rememberLibraryFlingBehavior(gridState),
         columns = GridCells.Adaptive(132.dp),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 28.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -3608,7 +3611,6 @@ private fun HistoryCollection(
         }
         LazyVerticalGrid(
             state = gridState,
-            flingBehavior = rememberLibraryFlingBehavior(gridState),
             columns = GridCells.Adaptive(132.dp),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -4618,16 +4620,7 @@ internal fun DetailScreen(
                     }
                 }
                 if (item.keywords.isNotEmpty() && onOpenKeyword != null) DetailInfoSection(title = "Keywords", cardPadding = 12.dp) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                        item.keywords.distinctBy { it.id }.forEach { keyword ->
-                            AssistChip(
-                                onClick = { onOpenKeyword(keyword) },
-                                modifier = Modifier.height(32.dp),
-                                label = { Text(keyword.name, fontSize = 11.sp) },
-                                colors = AssistChipDefaults.assistChipColors(containerColor = AliflixGlassIdle),
-                            )
-                        }
-                    }
+                    CompactKeywords(item.keywords.distinctBy { it.id }, onOpenKeyword)
                 }
                 if (state.error != null) {
                     Surface(
