@@ -601,9 +601,11 @@ class NativePlayerActivity : FragmentActivity() {
         val saved = org.json.JSONObject(raw)
         if (canonicalSubtitleLanguageCode(saved.getString("language")) != canonicalSubtitleLanguageCode(language)) return false
         val json = saved.getString("cues")
+        val restoredCues = parseTimedTextSubtitleCues(nativeSubtitlesVtt(json, 0.0))
+        if (!subtitleLanguageIsPlausible(restoredCues, language)) return false
         val vtt = nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
         activeSubtitleCuesJson = json
-        activeSubtitleCues = parseTimedTextSubtitleCues(nativeSubtitlesVtt(json, 0.0))
+        activeSubtitleCues = restoredCues
         NativePlaybackService.updateSubtitles(vtt, saved.getString("language"), saved.getString("label"))
         val track = SubtitleTrack("account-cache", saved.getString("language"), saved.getString("label"),
             "Saved selection", "", false, "vtt", null, "")
@@ -625,7 +627,7 @@ class NativePlayerActivity : FragmentActivity() {
                     val tracks = normalizeMobileSubtitleTracks(repository.search(current, language).getOrThrow())
                     ui = ui.copy(subtitleTracks = tracks)
                     val candidates = mobileSubtitleCandidates(tracks, language, current.seasonNumber, current.episodeNumber, current.media.title)
-                    for (track in candidates.take(3)) {
+                    for (track in candidates.take(if (canonicalSubtitleLanguageCode(language) == "AR") 8 else 3)) {
                         ensureActive()
                         if (selection?.key != current.key || NativePlaybackService.activeStreamUrl != streamUrl || NativePlaybackService.embeddedSubtitlesActive) return@withTimeout
                         val cues = withTimeoutOrNull(5_000) { repository.download(track, current).getOrNull() }.orEmpty()

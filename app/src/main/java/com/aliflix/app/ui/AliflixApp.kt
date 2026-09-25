@@ -1447,11 +1447,12 @@ fun AliflixApp(
             }
         }
 
-        urlDialogProvider?.let { provider ->
+        urlDialogProvider?.takeIf { it.supportsGeneralPlayback }?.let { provider ->
             val currentUrl = when (provider) {
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
                 PlaybackProviderId.MOVIEPIRE -> moviepireBaseUrl
                 PlaybackProviderId.DORABY -> dorabyBaseUrl
+                PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
             }
             MobileProviderUrlDialog(
                 providerName = provider.displayName,
@@ -1463,6 +1464,7 @@ fun AliflixApp(
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
                         PlaybackProviderId.MOVIEPIRE -> viewModel.updateMoviepireUrl(newUrl)
                         PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(newUrl)
+                        PlaybackProviderId.MIRURO -> Unit
                     }
                     urlDialogProvider = null
                 },
@@ -1471,6 +1473,7 @@ fun AliflixApp(
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
                         PlaybackProviderId.MOVIEPIRE -> viewModel.resetMoviepireUrl()
                         PlaybackProviderId.DORABY -> viewModel.resetDorabyUrl()
+                        PlaybackProviderId.MIRURO -> Unit
                     }
                     urlDialogProvider = null
                 },
@@ -1783,7 +1786,7 @@ internal fun HomeFeed(
                 automaticHeroTransition = true
                 try {
                 pagerState.animateScrollToPage(
-                    page = if (com.aliflix.app.BuildConfig.IS_TV) pagerState.currentPage + 1 else (pagerState.currentPage - 1).coerceAtLeast(0),
+                    page = pagerState.currentPage + 1,
                     animationSpec = tween(
                         durationMillis = 1_350,
                         easing = FastOutSlowInEasing,

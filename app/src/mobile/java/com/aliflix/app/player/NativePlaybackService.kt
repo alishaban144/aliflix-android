@@ -155,7 +155,8 @@ class NativePlaybackService : MediaSessionService() {
                 } ?: return
                 embeddedSubtitlesActive = true
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                    .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second)).build()
+                    .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second))
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build()
             }
             override fun onEvents(player: Player, events: Player.Events) {
                 if (releasing) return
@@ -258,7 +259,9 @@ class NativePlaybackService : MediaSessionService() {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setPreferredTextLanguage(next.subtitleLanguage)
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, next.subtitlesVtt.isBlank() && !next.preferEmbeddedSubtitles).build()
+            .setSelectUndeterminedTextLanguage(false)
+            // Enable embedded text only after onTracksChanged finds this exact language.
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, next.subtitlesVtt.isBlank()).build()
         relay = if (next.offlineDownloadId.isBlank()) runCatching { CastStreamRelay(next, lanAddress()) }.getOrNull() else null
         playbackReady = false; playbackFailure = null; hasSelectedAudio = false
         activeRequest = next

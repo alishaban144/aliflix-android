@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "196"
-  RELEASE_VERSION_NAME: "3.1.106"
+  RELEASE_VERSION_CODE: "197"
+  RELEASE_VERSION_NAME: "3.1.107"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
           fi
 
   playback-device-tests:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' && github.ref_name != 'release/v3.1.104' && github.ref_name != 'v3.1.104' && github.ref_name != 'release/v3.1.105' && github.ref_name != 'v3.1.105' && github.ref_name != 'release/v3.1.106' && github.ref_name != 'v3.1.106' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' && github.ref_name != 'release/v3.1.104' && github.ref_name != 'v3.1.104' && github.ref_name != 'release/v3.1.105' && github.ref_name != 'v3.1.105' && github.ref_name != 'release/v3.1.106' && github.ref_name != 'v3.1.106' && github.ref_name != 'release/v3.1.107' && github.ref_name != 'v3.1.107' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -187,7 +187,7 @@ jobs:
       always() && needs.changed-paths.result == 'success' &&
       (needs.playback-device-tests.result == 'success' ||
        (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
-        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103' || github.ref_name == 'release/v3.1.104' || github.ref_name == 'v3.1.104' || github.ref_name == 'release/v3.1.105' || github.ref_name == 'v3.1.105' || github.ref_name == 'release/v3.1.106' || github.ref_name == 'v3.1.106') && needs.playback-device-tests.result == 'skipped')) &&
+        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103' || github.ref_name == 'release/v3.1.104' || github.ref_name == 'v3.1.104' || github.ref_name == 'release/v3.1.105' || github.ref_name == 'v3.1.105' || github.ref_name == 'release/v3.1.106' || github.ref_name == 'v3.1.106' || github.ref_name == 'release/v3.1.107' || github.ref_name == 'v3.1.107') && needs.playback-device-tests.result == 'skipped')) &&
 
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
@@ -280,7 +280,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.97' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.102' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.106' ] && [ "$GITHUB_REF_NAME" != 'v3.1.106' ]; then
+          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.97' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.102' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.106' ] && [ "$GITHUB_REF_NAME" != 'v3.1.106' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.107' ] && [ "$GITHUB_REF_NAME" != 'v3.1.107' ]; then
             ./gradlew testMobileDebugUnitTest
             ./gradlew lintMobileDebug
           fi
@@ -314,7 +314,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Full-bleed home artwork, category back navigation and titles aligned with Search, compact text-only category cards, and evenly spaced keyword rows."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Miruro native playback for Japanese anime with resume, downloads and Cast, forward-moving home hero, and corrected subtitle language handling with refreshed cached captions and Persian/Farsi track matching."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -342,7 +342,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Full-bleed home artwork, category back navigation and titles aligned with Search, compact text-only category cards, and evenly spaced keyword rows. Tests, lint and emulator validation skipped at the user's request; signed mobile release build passed. Device behavior remains unverified. Production signing and APK integrity verified."
+          body: "Miruro native playback for Japanese anime with resume, downloads and Cast, forward-moving home hero, and corrected subtitle language handling with refreshed cached captions and Persian/Farsi track matching. Tests, lint and emulator validation skipped at the user's request; signed mobile release build passed. Device behavior remains unverified. Production signing and APK integrity verified."
 
           files: |
             aliflix-mobile.apk

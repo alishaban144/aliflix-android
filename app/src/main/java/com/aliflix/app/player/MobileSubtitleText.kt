@@ -75,9 +75,22 @@ internal fun subtitleLanguageIsPlausible(cues: List<SubtitleCue>, language: Stri
     if (letters.isEmpty()) return false
     return when (canonicalSubtitleLanguageCode(language)) {
         "EN" -> letters.count { it in 'A'..'Z' || it in 'a'..'z' }.toDouble() / letters.length > 0.85
-        "AR", "FA", "UR" -> letters.count { it.isArabicLetter() }.toDouble() / letters.length > 0.5
+        "AR" -> letters.count { it.isArabicLetter() }.toDouble() / letters.length > 0.5 &&
+            !looksPersianOrUrdu(sample)
+        "FA", "UR" -> letters.count { it.isArabicLetter() }.toDouble() / letters.length > 0.5
         else -> true
     }
+}
+
+private fun looksPersianOrUrdu(text: String): Boolean {
+    // These languages share Arabic script. Require repeated distinctive letters or words,
+    // so an occasional Persian proper name in an Arabic translation remains valid.
+    val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC)
+    val words = normalized.split(Regex("[^\\p{L}]+"))
+    val markers = setOf("است", "هست", "هستم", "نیست", "برای", "این", "آن", "شما", "منو", "میشه", "بود", "ہے", "ہیں", "اور", "کیا")
+    val markerCount = words.count { it in markers }
+    val distinctiveWords = words.count { word -> word.any { it in "پچژگکںےٹڈڑ" } }
+    return markerCount >= 3 || distinctiveWords >= 4
 }
 
 /** Reject explicitly wrong episodes, then rank matching release tokens without guessing offsets. */
@@ -90,6 +103,9 @@ internal fun mobileSubtitleCandidates(
     fun score(track: SubtitleTrack) = (track.releaseName + " " + track.fileName).lowercase()
         .split(Regex("[^a-z0-9]+" )).distinct().count { it in hint }
     return tracks.filter { canonicalSubtitleLanguageCode(it.languageCode) == canonicalSubtitleLanguageCode(language) }
+        .filter { track -> canonicalSubtitleLanguageCode(language) != "AR" ||
+            !Regex("(?i)(?:^|[ ._\\[\\]()-])(?:persian|farsi|fas|per|urdu|fa|ur)(?:$|[ ._\\[\\]()-])")
+                .containsMatchIn("${track.languageName} ${track.fileName} ${track.releaseName}") }
         .filter { track ->
             val identity = episodePattern.find(track.fileName) ?: episodePattern.find(track.releaseName)
             season == null || episode == null || identity == null ||

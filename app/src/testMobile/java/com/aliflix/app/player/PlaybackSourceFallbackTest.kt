@@ -7,13 +7,18 @@ import org.junit.Test
 
 class PlaybackSourceFallbackTest {
     @Test fun everySourceFallsBackToBothOthersWithoutChangingEpisodeIdentity() {
+        val generalProviders = listOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE)
         for (provider in PlaybackProviderId.entries) {
             val preferences = PlaybackPreferences(dorabyBaseUrl = "https://doraby.example", moviepireBaseUrl = "https://moviepire.example")
             val episode = PlaybackSelection(Media(1396, MediaType.TV, "Breaking Bad"), 2, 3, "Bit by a Dead Bee",
                 source = PlaybackSource(provider, "https://selected.example"))
             val choices = playbackSourceFallbacks(episode, preferences)
             assertEquals(episode, choices.first())
-            assertEquals(3, choices.map { it.source.provider }.distinct().size)
+            // The selected source stays first, and every other general mirror is offered exactly once.
+            assertEquals(
+                (listOf(provider) + generalProviders.filter { it != provider }).toSet(),
+                choices.map { it.source.provider }.toSet(),
+            )
             choices.forEach {
                 assertEquals(2, it.seasonNumber); assertEquals(3, it.episodeNumber)
                 assertEquals(episode.media, it.media)

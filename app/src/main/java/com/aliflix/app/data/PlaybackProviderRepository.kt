@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class PlaybackProviderRepository(context: Context) {
+class PlaybackProviderRepository(private val context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences(
         PREFS_NAME,
         Context.MODE_PRIVATE,
@@ -97,6 +97,11 @@ class PlaybackProviderRepository(context: Context) {
     }
 
     fun selectPreferredSubtitleLanguage(language: SubtitleLanguage) {
+        if (!BuildConfig.IS_TV) {
+            context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE).edit {
+                remove("language")
+            }
+        }
         prefs.edit { putString(KEY_PREFERRED_SUBTITLE_LANGUAGE, language.code) }
         _preferences.value = _preferences.value.copy(preferredSubtitleLanguage = language)
         recordLocalChange()
@@ -110,6 +115,9 @@ class PlaybackProviderRepository(context: Context) {
 
     /** Applies cloud/account-scope settings without creating a write-back loop. */
     fun applySyncedPreferences(value: PlaybackPreferences, updatedAtMillis: Long) {
+        if (!BuildConfig.IS_TV && value.preferredSubtitleLanguage != _preferences.value.preferredSubtitleLanguage) {
+            context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE).edit { remove("language") }
+        }
         val provider = value.safeGeneralProvider
         _preferences.value = value.copy(generalProvider = provider)
         _updatedAtMillis.value = updatedAtMillis.coerceAtLeast(0L)

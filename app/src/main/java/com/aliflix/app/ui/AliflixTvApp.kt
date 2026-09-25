@@ -410,11 +410,12 @@ fun AliflixTvApp(
             }
         }
 
-        urlDialogProvider?.let { provider ->
+        urlDialogProvider?.takeIf { it.supportsGeneralPlayback }?.let { provider ->
             val currentUrl = when (provider) {
                 PlaybackProviderId.RAMOFLIX -> playbackPreferences.ramoflixConfig.baseUrl
                 PlaybackProviderId.DORABY -> playbackPreferences.dorabyBaseUrl
                 PlaybackProviderId.MOVIEPIRE -> playbackPreferences.moviepireBaseUrl
+                PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
             }
             TvProviderUrlDialog(
                 providerName = provider.displayName,
@@ -426,6 +427,7 @@ fun AliflixTvApp(
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
                         PlaybackProviderId.DORABY -> viewModel.updateDorabyUrl(newUrl)
                         PlaybackProviderId.MOVIEPIRE -> viewModel.updateMoviepireUrl(newUrl)
+                        PlaybackProviderId.MIRURO -> Unit
                     }
                     urlDialogProvider = null
                 },
@@ -434,6 +436,7 @@ fun AliflixTvApp(
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
                         PlaybackProviderId.DORABY -> viewModel.resetDorabyUrl()
                         PlaybackProviderId.MOVIEPIRE -> viewModel.resetMoviepireUrl()
+                        PlaybackProviderId.MIRURO -> Unit
                     }
                     urlDialogProvider = null
                 },

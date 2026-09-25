@@ -1867,6 +1867,7 @@ class WebPlayerController(
                 }
             }
             PlaybackProviderId.DORABY -> { /* Doraby webpage loads directly */ }
+            PlaybackProviderId.MIRURO -> { /* Miruro resolves natively; no web content to align */ }
         }
     }
 

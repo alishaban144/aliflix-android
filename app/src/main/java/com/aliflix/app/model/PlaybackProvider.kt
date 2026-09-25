@@ -23,13 +23,18 @@ enum class PlaybackProviderId(
         displayName = "Moviepire",
         defaultBaseUrl = "https://moviepire.ru/",
         supportsGeneralPlayback = true,
+    ),
+    MIRURO(
+        displayName = "Miruro",
+        defaultBaseUrl = "https://www.miruro.tv/",
+        supportsGeneralPlayback = false,
     );
 
     val usesMoviepire: Boolean
         get() = this == MOVIEPIRE
 
-    fun isAvailableFor(@Suppress("UNUSED_PARAMETER") media: Media): Boolean =
-        supportsGeneralPlayback
+    fun isAvailableFor(media: Media): Boolean =
+        supportsGeneralPlayback || (this == MIRURO && !com.aliflix.app.BuildConfig.IS_TV && media.isJapaneseAnime)
 
     companion object {
         fun fromStoredValue(value: String?): PlaybackProviderId? =
@@ -132,6 +137,8 @@ data class PlaybackSource(
         seasonNumber: Int? = null,
         episodeNumber: Int? = null,
     ): String? = when (provider) {
+        // The native adapter maps TMDB identity and episode numbering before requesting a stream.
+        PlaybackProviderId.MIRURO -> baseUrl
         PlaybackProviderId.RAMOFLIX ->
             RamoflixConfig(baseUrl).buildWatchUrl(media.title)
 
@@ -189,11 +196,16 @@ data class PlaybackPreferences(
     ): PlaybackSource {
         val provider = requestedProvider
             ?.takeIf { candidate -> candidate.isAvailableFor(media) }
-            ?: safeGeneralProvider
+            ?: if (!com.aliflix.app.BuildConfig.IS_TV && media.isJapaneseAnime) PlaybackProviderId.MIRURO else safeGeneralProvider
         return when (provider) {
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
             PlaybackProviderId.MOVIEPIRE -> PlaybackSource.moviepire(moviepireBaseUrl)
             PlaybackProviderId.DORABY -> PlaybackSource.doraby(dorabyBaseUrl)
+            PlaybackProviderId.MIRURO -> PlaybackSource(PlaybackProviderId.MIRURO)
         }
     }
 }
+
+internal val Media.isJapaneseAnime: Boolean
+    get() = originalLanguage.equals("ja", true) &&
+        (genres + omdbGenres).any { it.equals("Animation", true) || it.equals("Anime", true) }
