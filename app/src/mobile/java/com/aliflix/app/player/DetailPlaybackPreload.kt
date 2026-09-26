@@ -10,6 +10,8 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.data.PlaybackProviderRepository
 import com.aliflix.app.data.playbackProgressKey
@@ -43,11 +45,13 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
     DetailPreloadStore.cancel?.invoke()
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable internal fun DetailPlaybackPreload(media: Media, episode: Episode?, episodes: List<Episode>, enabled: Boolean) {
     val activity = LocalActivity.current as? ComponentActivity ?: return
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val progress = remember(activity) { PlaybackProgressStore(activity) }
-    val preferences = remember(activity) { PlaybackProviderRepository(activity) }.preferences.value
+    val preferences by remember(activity) { PlaybackProviderRepository(activity) }
+        .preferences.collectAsState()
     val selection = remember(media.key, episode?.seasonNumber, episode?.number) {
         PlaybackSelection(media, episode?.seasonNumber, episode?.number, episode?.title, episodes,
             PlaybackSource(PlaybackProviderId.CINEJOY))
@@ -81,7 +85,7 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
                         val adapter = NativeStreamResolver(activity, progress, host)
                         try {
                             var server = candidate.source.provider.displayName
-                            val request = withTimeoutOrNull(10_000) {
+                            val request = withTimeoutOrNull(resolveBudgetMillis(candidate.source.provider)) {
                                 adapter.resolve(candidate, position, emptySet(), validateSingle = false, parallelism = 1) { server = it }
                             } ?: continue
                             adapter.close()

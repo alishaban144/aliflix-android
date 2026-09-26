@@ -89,10 +89,31 @@ internal fun nativeStreamDiscoveryScript(): String = """
       if (window.__aliflixStreamDiscovery) return;
       window.__aliflixStreamDiscovery = true;
       let manifest = null;
+      let reportedUrl = '';
+      const reportStream = (url, mimeType) => {
+        const clean = String(url || '');
+        if (!clean || clean === reportedUrl) return;
+        reportedUrl = clean;
+        const stream = {
+          url: clean,
+          mimeType: mimeType || 'application/x-mpegURL',
+          referer: location.href
+        };
+        // Hand the manifest over the moment it exists. The embedded player often never starts on
+        // its own, and the native player only needs the URL, the referer, and the cookies, so
+        // waiting for playback to begin would time out a stream that is already playable.
+        const bridge = window.AliflixPlaybackProgress;
+        if (bridge && typeof bridge.postMessage === 'function') {
+          try {
+            bridge.postMessage(JSON.stringify({event: 'aliflix-stream', nativeStream: stream}));
+          } catch (_) {}
+        }
+      };
       const remember = (url, text) => {
         if (typeof text !== 'string' || !text.trimStart().startsWith('#EXTM3U')) return;
         const master = text.includes('#EXT-X-STREAM-INF');
         if (!manifest || master || !manifest.master) manifest = {url, master};
+        if (master) reportStream(url, 'application/x-mpegURL');
       };
       const fetchOriginal = window.fetch;
       if (fetchOriginal) window.fetch = function(...args) {
@@ -121,6 +142,24 @@ internal fun nativeStreamDiscoveryScript(): String = """
         const src = video.currentSrc || video.src;
         if (/^https?:\/\//.test(src)) return {url:src, mimeType:/\.m3u8(?:[?#]|$)/i.test(src) ? 'application/x-mpegURL' : 'video/mp4', referer:location.href};
         return manifest ? {url:manifest.url, mimeType:'application/x-mpegURL', referer:location.href} : null;
+      };
+      // Some players set a direct progressive source and never request a manifest of their own.
+      const watchDirectSource = () => {
+        const video = document.querySelector('video');
+        const src = video ? (video.currentSrc || video.src) : '';
+        if (/^https?:\/\//.test(src)) {
+          reportStream(src, /\.m3u8(?:[?#]|$)/i.test(src) ? 'application/x-mpegURL' : 'video/mp4');
+        }
+      };
+      const watchUntil = Date.now() + 60000;
+      const watcher = window.setInterval(() => {
+        if (reportedUrl && manifest) { window.clearInterval(watcher); return; }
+        watchDirectSource();
+        if (Date.now() > watchUntil) window.clearInterval(watcher);
+      }, 400);
+      window.__aliflixNativeStreamUrl = () => {
+        const stream = window.__aliflixNativeStream(document.querySelector('video'));
+        return stream ? String(stream.url || '') : '';
       };
     })();
 """.trimIndent()

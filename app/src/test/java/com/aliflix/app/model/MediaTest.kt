@@ -4,6 +4,7 @@ import com.aliflix.app.data.RamoflixConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaTest {
@@ -125,9 +126,10 @@ class MediaTest {
     }
 
     @Test
-    fun mobilePlaybackProvidersStartWithMoviepire() {
+    fun mobilePlaybackProvidersStartWithCinejoy() {
         assertEquals(
             listOf(
+                PlaybackProviderId.CINEJOY,
                 PlaybackProviderId.MOVIEPIRE,
                 PlaybackProviderId.RAMOFLIX,
                 PlaybackProviderId.DORABY,
@@ -139,13 +141,35 @@ class MediaTest {
     @Test
     fun newInstallDefaultChangesOnlyForMobile() {
         assertEquals(
-            PlaybackProviderId.MOVIEPIRE,
+            PlaybackProviderId.CINEJOY,
             defaultGeneralPlaybackProvider(isTv = false),
         )
         assertEquals(
             PlaybackProviderId.RAMOFLIX,
             defaultGeneralPlaybackProvider(isTv = true),
         )
+    }
+
+    @Test
+    fun cinejoyBuildsExactTmdbMovieAndEpisodeRoutes() {
+        val movie = Media(id = 550, type = MediaType.MOVIE, title = "Fight Club")
+        val tv = Media(id = 1396, type = MediaType.TV, title = "Breaking Bad")
+
+        assertEquals(
+            "https://cinejoy.pk/watch/movie/550",
+            PlaybackSelection(movie, source = PlaybackSource(PlaybackProviderId.CINEJOY)).entryUrl,
+        )
+        assertEquals(
+            "https://cinejoy.pk/watch/tv/1396/2/3",
+            PlaybackSelection(
+                tv,
+                seasonNumber = 2,
+                episodeNumber = 3,
+                source = PlaybackSource(PlaybackProviderId.CINEJOY),
+            ).entryUrl,
+        )
+        // CineJoy is a mobile source; the TV surface must keep an approved default.
+        assertTrue(PlaybackProviderId.CINEJOY.isAvailableFor(movie))
     }
 
     @Test

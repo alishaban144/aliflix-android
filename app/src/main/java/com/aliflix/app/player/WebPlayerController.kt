@@ -91,6 +91,42 @@ class WebPlayerController(
         activeSelection?.let { discoverMoviepireServers(view, it) }
     }
 
+    /**
+     * Safety net for providers that render their player in the main document. The message bridge
+     * is the primary path; this recovers the same manifest directly when the bridge is missing on
+     * this WebView or its payload was dropped, so a playable stream is never thrown away.
+     */
+    internal fun probeNativeStreamUrl() {
+        val view = webView ?: return
+        if (nativeStream != null) return
+        view.evaluateJavascript(
+            """
+            (() => {
+              try {
+                const probe = window.__aliflixNativeStreamUrl;
+                if (typeof probe === 'function') return String(probe() || '');
+                const video = document.querySelector('video');
+                const native = video && window.__aliflixNativeStream;
+                const stream = native ? native(video) : null;
+                return stream && stream.url ? String(stream.url) : '';
+              } catch (_) { return ''; }
+            })();
+            """.trimIndent(),
+        ) { value ->
+            val url = value?.trim('"').orEmpty()
+            if (!isNativeStreamUrl(url)) return@evaluateJavascript
+            // A wrapper document has no meaningful URL of its own, so only accept a probe that
+            // can name the page the manifest was requested from.
+            val referer = view.url?.takeIf { it.startsWith("https://") } ?: return@evaluateJavascript
+            nativeStream = JSONObject().apply {
+                put("url", url)
+                put("mimeType", if (url.contains(".m3u8", ignoreCase = true)) "application/x-mpegURL" else "video/mp4")
+                put("referer", referer)
+            }
+            nativeStreamReceivedAt = SystemClock.elapsedRealtime()
+        }
+    }
+
     private fun preparationScript() = if (nativePreparation) "\n" + nativePreparationScript() else ""
     private var webView: WebView? = null
     private var loadedKey: String? = null
@@ -778,15 +814,23 @@ class WebPlayerController(
         val position = payload.optDouble("positionSeconds", Double.NaN)
         val duration = payload.optDouble("durationSeconds", Double.NaN)
         val documentHidden = payload.optBoolean("documentHidden", false)
+        val stream = payload.optJSONObject("nativeStream")?.takeIf { isNativeStreamUrl(it.optString("url")) }
         if (
             !position.isFinite() || position < 0.0 ||
             !duration.isFinite() || duration < MIN_TRACKABLE_VIDEO_DURATION_SECONDS ||
             duration > MAX_REASONABLE_VIDEO_DURATION_SECONDS ||
             position > duration + 5.0
         ) {
+            // A stream-only report carries no progress because the embedded player never started.
+            // The manifest alone is enough to hand playback to the native player, so keep it and
+            // wait rather than discarding a stream that is already playable.
+            if (stream != null) {
+                nativeStream = stream
+                nativeStreamReceivedAt = SystemClock.elapsedRealtime()
+            }
             return
         }
-        nativeStream = payload.optJSONObject("nativeStream")?.takeIf { isNativeStreamUrl(it.optString("url")) }
+        nativeStream = stream
         nativeStreamReceivedAt = SystemClock.elapsedRealtime()
         if (nativePreparation) return // Resolution must never overwrite the saved native resume point.
         latestDurationSeconds = duration

@@ -13,6 +13,14 @@ import kotlinx.coroutines.ensureActive
 
 internal class NoNativeServersException : Exception()
 
+/**
+ * CineJoy is a client-rendered single-page app: it boots its bundle, asks its own API for the
+ * title, and only then requests the HLS manifest. A budget tuned for a server-rendered page cuts
+ * that chain off mid-flight, so it gets a longer, still bounded window.
+ */
+internal fun resolveBudgetMillis(provider: PlaybackProviderId): Long =
+    if (provider == PlaybackProviderId.CINEJOY) 30_000 else 10_000
+
 internal fun <T> selectNativeServer(servers: List<T>, preferredServer: String?, excluded: Set<String>,
     strictPreferredServer: Boolean = false, label: (T) -> String): T? {
     if (strictPreferredServer) {
@@ -111,7 +119,7 @@ internal class NativeStreamResolver(
         allDirect: List<Pair<String, String>>,
         strictPreferredServer: Boolean = false,
         onServer: (String) -> Unit,
-    ): NativePlaybackRequest = withTimeout(10_000) {
+    ): NativePlaybackRequest = withTimeout(resolveBudgetMillis(selection.source.provider)) {
         val direct = if (strictPreferredServer) {
             allDirect.firstOrNull { it.first == preferredServer && it.first !in excluded }
         } else if (preferredServer != null) {
@@ -119,7 +127,10 @@ internal class NativeStreamResolver(
         } else {
             allDirect.firstOrNull { it.first !in excluded }
         }
-        val web = WebPlayerController(activity, progress, nativePreparation = true, nativeEmbedUrl = direct?.second)
+        // CineJoy renders its own player in the main document, so the route is loaded directly.
+        // Wrapping it in an extra frame only delays discovery and adds an origin hop.
+        val embedUrl = if (selection.source.provider == PlaybackProviderId.CINEJOY) null else direct?.second
+        val web = WebPlayerController(activity, progress, nativePreparation = true, nativeEmbedUrl = embedUrl)
         this@NativeStreamResolver.web = web
         view = web.viewFor(selection)
         host.addView(view, FrameLayout.LayoutParams(-1, -1))
@@ -128,6 +139,7 @@ internal class NativeStreamResolver(
             onServer(direct.first)
             while (true) {
                 web.preparedNativeRequest(0, positionMs)?.let { return@withTimeout it }
+                web.probeNativeStreamUrl()
                 delay(200)
             }
         }

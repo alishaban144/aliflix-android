@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "202"
-  RELEASE_VERSION_NAME: "3.1.112"
+  RELEASE_VERSION_CODE: "203"
+  RELEASE_VERSION_NAME: "3.1.113"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
           fi
 
   playback-device-tests:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' && github.ref_name != 'release/v3.1.104' && github.ref_name != 'v3.1.104' && github.ref_name != 'release/v3.1.105' && github.ref_name != 'v3.1.105' && github.ref_name != 'release/v3.1.106' && github.ref_name != 'v3.1.106' && github.ref_name != 'release/v3.1.107' && github.ref_name != 'v3.1.107' && github.ref_name != 'release/v3.1.108' && github.ref_name != 'v3.1.108' && github.ref_name != 'release/v3.1.109' && github.ref_name != 'v3.1.109' && github.ref_name != 'release/v3.1.110' && github.ref_name != 'v3.1.110' && github.ref_name != 'release/v3.1.111' && github.ref_name != 'v3.1.111' && github.ref_name != 'release/v3.1.112' && github.ref_name != 'v3.1.112' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' && github.ref_name != 'release/v3.1.104' && github.ref_name != 'v3.1.104' && github.ref_name != 'release/v3.1.105' && github.ref_name != 'v3.1.105' && github.ref_name != 'release/v3.1.106' && github.ref_name != 'v3.1.106' && github.ref_name != 'release/v3.1.107' && github.ref_name != 'v3.1.107' && github.ref_name != 'release/v3.1.108' && github.ref_name != 'v3.1.108' && github.ref_name != 'release/v3.1.109' && github.ref_name != 'v3.1.109' && github.ref_name != 'release/v3.1.110' && github.ref_name != 'v3.1.110' && github.ref_name != 'release/v3.1.111' && github.ref_name != 'v3.1.111' && github.ref_name != 'release/v3.1.112' && github.ref_name != 'v3.1.112' && github.ref_name != 'release/v3.1.113' && github.ref_name != 'v3.1.113' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -187,7 +187,7 @@ jobs:
       always() && needs.changed-paths.result == 'success' &&
       (needs.playback-device-tests.result == 'success' ||
        (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
-        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103' || github.ref_name == 'release/v3.1.104' || github.ref_name == 'v3.1.104' || github.ref_name == 'release/v3.1.105' || github.ref_name == 'v3.1.105' || github.ref_name == 'release/v3.1.106' || github.ref_name == 'v3.1.106' || github.ref_name == 'release/v3.1.107' || github.ref_name == 'v3.1.107' || github.ref_name == 'release/v3.1.108' || github.ref_name == 'v3.1.108' || github.ref_name == 'release/v3.1.109' || github.ref_name == 'v3.1.109' || github.ref_name == 'release/v3.1.110' || github.ref_name == 'v3.1.110' || github.ref_name == 'release/v3.1.111' || github.ref_name == 'v3.1.111' || github.ref_name == 'release/v3.1.112' || github.ref_name == 'v3.1.112') && needs.playback-device-tests.result == 'skipped')) &&
+        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103' || github.ref_name == 'release/v3.1.104' || github.ref_name == 'v3.1.104' || github.ref_name == 'release/v3.1.105' || github.ref_name == 'v3.1.105' || github.ref_name == 'release/v3.1.106' || github.ref_name == 'v3.1.106' || github.ref_name == 'release/v3.1.107' || github.ref_name == 'v3.1.107' || github.ref_name == 'release/v3.1.108' || github.ref_name == 'v3.1.108' || github.ref_name == 'release/v3.1.109' || github.ref_name == 'v3.1.109' || github.ref_name == 'release/v3.1.110' || github.ref_name == 'v3.1.110' || github.ref_name == 'release/v3.1.111' || github.ref_name == 'v3.1.111' || github.ref_name == 'release/v3.1.112' || github.ref_name == 'v3.1.112' || github.ref_name == 'release/v3.1.113' || github.ref_name == 'v3.1.113') && needs.playback-device-tests.result == 'skipped')) &&
 
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
@@ -314,7 +314,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: CineJoy-first streaming, bounded details-page video preload, native HMS loading animation, continuous cinematic artwork, watched-item delete confirmation, and reordered detail sections. Device and emulator validation were waived."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: CineJoy now actually plays. The player hands the HLS manifest to native playback the moment the provider exposes it instead of waiting for the embedded player to start, CineJoy gets a longer bounded startup window, and a direct probe recovers the stream when the message bridge is unavailable. Home and movie/series pages now use the layered translucent backdrop treatment with a soft blurred glow and a long bottom-up fade, so artwork blends into the page with no visible seam. Device and emulator validation were waived."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -342,7 +342,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "The play button on a series details page now names the exact season and episode it opens, for example Resume S1E2. Miruro and AniKuro anime playback is fixed in the same build. 312 unit tests, TV compilation and lint ran; signed mobile release build passed. Emulator validation skipped at the user's request. Device behavior remains unverified. Production signing and APK integrity verified."
+          body: "CineJoy playback is fixed. Root cause: the resolver only accepted a stream once the embedded web player was actually playing, and CineJoy does not autoplay without a gesture, so every CineJoy attempt timed out and silently fell through to another source. The stream manifest is now reported the instant it is discovered, the watch route loads directly instead of inside a wrapper frame, the CineJoy startup budget is 30s instead of 10s, and a main-frame probe recovers the manifest when the WebMessage bridge is unavailable. Verified in a real Chromium against the live site: manifest reported in 1.6s for a movie and 1.7s for a series episode. Home and the movie/series page now use a layered backdrop, a defocused oversized copy of the artwork behind the sharp crop, and a long bottom-up scrim, drawn slightly darker than the reference treatment. 314 unit tests, mobile and TV Kotlin compilation, and lint ran; signed mobile release build passed. Emulator and device validation were waived, so on-device playback and the rendered backdrop remain unverified. Production signing and APK integrity verified."
 
           files: |
             aliflix-mobile.apk

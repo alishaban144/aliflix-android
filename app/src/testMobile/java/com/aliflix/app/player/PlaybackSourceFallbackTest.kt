@@ -7,7 +7,7 @@ import org.junit.Test
 
 class PlaybackSourceFallbackTest {
     @Test fun everySourceFallsBackToBothOthersWithoutChangingEpisodeIdentity() {
-        val generalProviders = listOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE)
+        val generalProviders = listOf(PlaybackProviderId.CINEJOY, PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE)
         for (provider in PlaybackProviderId.entries) {
             val preferences = PlaybackPreferences(dorabyBaseUrl = "https://doraby.example", moviepireBaseUrl = "https://moviepire.example")
             val episode = PlaybackSelection(Media(1396, MediaType.TV, "Breaking Bad"), 2, 3, "Bit by a Dead Bee",
@@ -32,6 +32,17 @@ class PlaybackSourceFallbackTest {
         val movie = PlaybackSelection(Media(550, MediaType.MOVIE, "Fight Club"), source = PlaybackSource.doraby())
         assertEquals(setOf("movie:550"), playbackSourceFallbacks(movie, PlaybackPreferences()).map(::playbackProgressKey).toSet())
     }
+    @Test fun cinejoyGetsALongerStartupBudgetThanOtherSources() {
+        // CineJoy must boot its own bundle and answer its own API before it exposes a manifest.
+        assertTrue(resolveBudgetMillis(PlaybackProviderId.CINEJOY) > resolveBudgetMillis(PlaybackProviderId.RAMOFLIX))
+        assertTrue(resolveBudgetMillis(PlaybackProviderId.CINEJOY) > resolveBudgetMillis(PlaybackProviderId.MOVIEPIRE))
+        // Every other provider keeps the established window.
+        assertEquals(10_000, resolveBudgetMillis(PlaybackProviderId.RAMOFLIX))
+        assertEquals(10_000, resolveBudgetMillis(PlaybackProviderId.DORABY))
+        assertEquals(10_000, resolveBudgetMillis(PlaybackProviderId.MOVIEPIRE))
+        assertEquals(10_000, resolveBudgetMillis(PlaybackProviderId.MIRURO))
+        assertEquals(10_000, resolveBudgetMillis(PlaybackProviderId.ANIKURO))
+    }
     @Test fun japaneseAnimeRacesBothAnimeNativeSourcesBeforeGeneralMirrors() {
         val anime = Media(21, MediaType.TV, "One Piece", genres = listOf("Animation"), originalLanguage = "ja")
         assertTrue(PlaybackProviderId.MIRURO.isAvailableFor(anime))
@@ -42,6 +53,7 @@ class PlaybackSourceFallbackTest {
         assertEquals(
             listOf(
                 PlaybackProviderId.ANIKURO,
+                PlaybackProviderId.CINEJOY,
                 PlaybackProviderId.MIRURO,
                 PlaybackProviderId.RAMOFLIX,
                 PlaybackProviderId.DORABY,
