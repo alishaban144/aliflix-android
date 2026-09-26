@@ -69,6 +69,9 @@ internal class MiruroNativeCatalog(
         onServers(candidates.map { it.label })
         val ordered = candidates.filter { it.label !in excluded && (!strict || it.label == preferred || preferred?.startsWith(it.label + " / ") == true) }
             .sortedBy { if (it.label == preferred || preferred?.startsWith(it.label + " / ") == true) 0 else 1 }
+        // A resolved stream is never discarded just because the quick health check did not pass.
+        // The player, its own readiness gate and the surrounding retry loop decide the outcome.
+        var unverified: NativePlaybackRequest? = null
         for (candidate in ordered) {
             currentCoroutineContext().ensureActive()
             onServer(candidate.label)
@@ -103,6 +106,7 @@ internal class MiruroNativeCatalog(
                     } catch (error: Exception) {
                         currentCoroutineContext().ensureActive()
                         if (strict && preferred == label) throw error
+                        unverified = resolved
                     }
                 }
             } catch (error: Exception) {
@@ -110,7 +114,7 @@ internal class MiruroNativeCatalog(
                 if (strict) throw error
             }
         }
-        throw NoNativeServersException()
+        return unverified ?: throw NoNativeServersException()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
