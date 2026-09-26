@@ -32,9 +32,24 @@ class PhonePlayerPolishTest {
         var played: Media? = null
         compose.mainClock.autoAdvance = false
         compose.setContent { AliflixMobileTheme {
-            HomeFeed(HomeContent(first, listOf(ContentRail("Featured", listOf(first, second)))), TvNetworksUiState(),
-                emptyList(), emptyList(), emptyList(), emptyMap(), {}, {}, { played = it }, {},
-                rememberLazyListState(), HomeFilter.FOR_YOU, {}, Modifier)
+            // Named arguments keep this call honest: the parameter list has grown before and a
+            // positional call silently drifted out of alignment with it.
+            HomeFeed(
+                content = HomeContent(first, listOf(ContentRail("Featured", listOf(first, second)))),
+                tvNetworks = TvNetworksUiState(),
+                editorialPicks = emptyList(),
+                recent = emptyList(),
+                likes = emptyList(),
+                playbackProgress = emptyMap(),
+                onRetryTvNetworks = {},
+                onOpen = {},
+                onPlay = { played = it },
+                onSearch = {},
+                listState = rememberLazyListState(),
+                selectedFilter = HomeFilter.FOR_YOU,
+                onSelectFilter = {},
+                modifier = Modifier,
+            )
         } }
         compose.mainClock.advanceTimeBy(100)
         val bounds = compose.onRoot().fetchSemanticsNode().boundsInRoot

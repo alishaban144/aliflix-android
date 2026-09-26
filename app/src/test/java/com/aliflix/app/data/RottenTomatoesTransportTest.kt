@@ -48,7 +48,10 @@ class RottenTomatoesTransportTest {
     }
 
     @Test fun `same title from a different known year is an identity mismatch`() = runBlocking {
-        val html = validPage("The Godfather", "https://www.rottentomatoes.com/m/the_godfather", """<script type="application/ld+json">{"dateCreated":"1982"}</script>""")
+        // The different year is expressed the way Rotten Tomatoes states a release year, in the
+        // title. The page-creation date is no longer treated as one because it tracks the most
+        // recent release event rather than the original release.
+        val html = validPage("The Godfather (1982)", "https://www.rottentomatoes.com/m/the_godfather_1982", "")
         val result = clientReturning(200, html).loadFetchResult(movie)
         assertTrue(result is RottenTomatoesFetchResult.Unavailable)
     }
@@ -62,8 +65,8 @@ class RottenTomatoesTransportTest {
     @Test fun `iso dateCreated and string ratingValue are verified`() = runBlocking {
         val obsession = Media(2, MediaType.MOVIE, "Obsession", year = "2026")
         val html = validPage(
-            "Obsession (2025)",
-            "https://www.rottentomatoes.com/m/obsession_2025",
+            "Obsession (2026)",
+            "https://www.rottentomatoes.com/m/obsession_2026",
             """<script type="application/ld+json">{"dateCreated":"2026-05-15","aggregateRating":{"ratingValue":"94","ratingCount":319}}</script>""",
         )
         val result = clientReturning(200, html).loadFetchResult(obsession) as RottenTomatoesFetchResult.Verified

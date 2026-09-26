@@ -1816,11 +1816,19 @@ internal fun HomeFeed(
             val page = pagerState.currentPage
             val offset = pagerState.currentPageOffsetFraction
             val current = heroCandidates[page % heroCandidates.size]
-            CinematicBackdrop(current.backdropUrl ?: current.posterUrl, Modifier.matchParentSize())
+            val heroHeight = homeHeroHeight(LocalDensity.current.fontScale)
+            CinematicBackdrop(
+                artwork = current.backdropUrl ?: current.posterUrl,
+                modifier = Modifier.matchParentSize(),
+                posterHeight = heroHeight,
+            )
             if (offset != 0f) {
                 val next = heroCandidates[Math.floorMod(page + if (offset > 0) 1 else -1, heroCandidates.size)]
-                CinematicBackdrop(next.backdropUrl ?: next.posterUrl,
-                    Modifier.matchParentSize().graphicsLayer { alpha = offset.absoluteValue })
+                CinematicBackdrop(
+                    artwork = next.backdropUrl ?: next.posterUrl,
+                    modifier = Modifier.matchParentSize().graphicsLayer { alpha = offset.absoluteValue },
+                    posterHeight = heroHeight,
+                )
             }
         }
     LazyColumn(
@@ -2010,6 +2018,13 @@ private fun HomeHeader(
     }
 }
 
+/**
+ * The height of the home hero, which is also where the poster ends and the darker content scrim
+ * starts. Both the banner and the backdrop read it so the two never drift apart.
+ */
+internal fun homeHeroHeight(fontScale: Float): androidx.compose.ui.unit.Dp =
+    556.dp + ((fontScale - 1f).coerceAtLeast(0f) * 170f).coerceAtMost(320f).dp
+
 @Composable
 private fun HeroBanner(
     item: Media,
@@ -2022,14 +2037,12 @@ private fun HeroBanner(
 ) {
     val cinematic = !com.aliflix.app.BuildConfig.IS_TV
     val fontScale = LocalDensity.current.fontScale
-    val accessibilityExpansion = (
-        (fontScale - 1f).coerceAtLeast(0f) * 170f
-    ).coerceAtMost(320f).dp
+    val heroHeight = homeHeroHeight(fontScale)
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(556.dp + accessibilityExpansion)
+            .height(heroHeight)
             .then(if (cinematic) Modifier.clipToBounds() else Modifier),
     ) {
         if (!cinematic) {
@@ -2392,16 +2405,8 @@ private fun HomePosterCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0.58f to Color.Transparent,
-                                1f to AliflixBlack.copy(alpha = 0.78f),
-                            ),
-                        ),
-                )
+                // No scrim is drawn over the poster itself so the artwork keeps its original colours.
+                // The badges below each carry their own opaque backing and stay readable.
                 val cardRating = item.imdbRating ?: item.rating.takeIf { it > 0.0 }
                 if (cardRating != null && cardRating > 0.0) {
                     Box(
@@ -4348,7 +4353,11 @@ internal fun DetailScreen(
     var overviewCanExpand by remember(item.key) { mutableStateOf(false) }
     val visibleCast = if (castExpanded) item.cast else item.cast.take(8)
     Box(Modifier.fillMaxSize().background(AliflixBackgroundBase)) {
-        CinematicBackdrop(item.backdropUrl ?: item.posterUrl, Modifier.matchParentSize())
+        CinematicBackdrop(
+            artwork = item.backdropUrl ?: item.posterUrl,
+            modifier = Modifier.matchParentSize(),
+            posterHeight = detailHeroHeight,
+        )
     LazyColumn(
         state = detailListState,
         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
@@ -4381,6 +4390,21 @@ internal fun DetailScreen(
                         tint = AliflixContentPrimary,
                     )
                 }
+                // Backing for the hero copy only. It sits under the text rather than over the whole
+                // artwork, so the poster keeps its original colours while the title stays readable.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(232.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                0.5f to AliflixBackgroundBase.copy(alpha = 0.42f),
+                                1f to AliflixBackgroundBase.copy(alpha = 0.88f),
+                            ),
+                        ),
+                )
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
