@@ -45,6 +45,7 @@ internal class NativeStreamResolver(
         onServers: (List<String>) -> Unit = {},
         strictPreferredServer: Boolean = false,
         validateSingle: Boolean = true,
+        parallelism: Int = 2,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
         reportServers = onServers
@@ -61,7 +62,11 @@ internal class NativeStreamResolver(
             )
         }
         val catalogueProvider = selection.source.provider in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY)
-        val embeds = if (catalogueProvider) FmovieNativeCatalog().embeds(selection) else preferredNativeEmbeds(selection)
+        val embeds = when {
+            selection.source.provider == PlaybackProviderId.CINEJOY -> listOf("CineJoy" to checkNotNull(selection.entryUrl))
+            catalogueProvider -> FmovieNativeCatalog().embeds(selection)
+            else -> preferredNativeEmbeds(selection)
+        }
         if (embeds.isNotEmpty()) onServers(embeds.map { it.first })
         val history = activity.getSharedPreferences("native-resolver-performance", android.content.Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
@@ -72,7 +77,7 @@ internal class NativeStreamResolver(
         if (strictPreferredServer && (catalogueProvider || embeds.any { it.first == preferredServer })) {
             selectNativeServer(embeds, preferredServer, excluded, true) { it.first }
         }
-        if (catalogueProvider && candidates.isEmpty()) throw NoNativeServersException()
+        if ((catalogueProvider || selection.source.provider == PlaybackProviderId.CINEJOY) && candidates.isEmpty()) throw NoNativeServersException()
         if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, strictPreferredServer, onServer).also { close(); if (validateSingle) StartupStreamCache.awaitPlayable(activity, it) }
         val winner = try { firstSuccessful(candidates.map { (name, _) -> suspend {
             val child = NativeStreamResolver(activity, progress, host)
@@ -91,7 +96,7 @@ internal class NativeStreamResolver(
                 throw error
             }
             finally { child.close(); children.remove(child) }
-        } }, parallelism = 2) } catch (error: Exception) {
+        } }, parallelism = parallelism) } catch (error: Exception) {
             currentCoroutineContext().ensureActive()
             // Preferred embeds may all be unavailable while the catalogue has another server.
             if (catalogueProvider) throw error

@@ -9,6 +9,11 @@ enum class PlaybackProviderId(
     val supportsGeneralPlayback: Boolean,
     val isBeta: Boolean = false,
 ) {
+    CINEJOY(
+        displayName = "CineJoy",
+        defaultBaseUrl = "https://cinejoy.pk/",
+        supportsGeneralPlayback = true,
+    ),
     RAMOFLIX(
         displayName = "Ramoflix",
         defaultBaseUrl = RamoflixConfig.DEFAULT_URL,
@@ -43,7 +48,7 @@ enum class PlaybackProviderId(
         get() = this == MIRURO || this == ANIKURO
 
     fun isAvailableFor(media: Media): Boolean =
-        supportsGeneralPlayback || (isAnimeNative && !com.aliflix.app.BuildConfig.IS_TV && media.isJapaneseAnime)
+        (supportsGeneralPlayback && (this != CINEJOY || !com.aliflix.app.BuildConfig.IS_TV)) || (isAnimeNative && !com.aliflix.app.BuildConfig.IS_TV && media.isJapaneseAnime)
 
     companion object {
         fun fromStoredValue(value: String?): PlaybackProviderId? =
@@ -72,13 +77,14 @@ enum class PlaybackProviderId(
 }
 
 internal fun defaultGeneralPlaybackProvider(isTv: Boolean): PlaybackProviderId =
-    if (isTv) PlaybackProviderId.RAMOFLIX else PlaybackProviderId.MOVIEPIRE
+    if (isTv) PlaybackProviderId.RAMOFLIX else PlaybackProviderId.CINEJOY
 
 internal fun mobileGeneralPlaybackProviders(): List<PlaybackProviderId> = buildList {
+    add(PlaybackProviderId.CINEJOY)
     add(PlaybackProviderId.MOVIEPIRE)
     addAll(
         PlaybackProviderId.entries.filter { provider ->
-            provider.supportsGeneralPlayback && !provider.usesMoviepire
+            provider.supportsGeneralPlayback && !provider.usesMoviepire && provider != PlaybackProviderId.CINEJOY
         },
     )
 }
@@ -146,6 +152,9 @@ data class PlaybackSource(
         seasonNumber: Int? = null,
         episodeNumber: Int? = null,
     ): String? = when (provider) {
+        PlaybackProviderId.CINEJOY -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
+            "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
+        } else "/watch/movie/${media.id}"
         // The native adapter maps TMDB identity and episode numbering before requesting a stream.
         PlaybackProviderId.MIRURO -> baseUrl
         PlaybackProviderId.ANIKURO -> baseUrl
@@ -197,7 +206,7 @@ data class PlaybackPreferences(
     val autoDisplaySubtitles: Boolean = false,
 ) {
     val safeGeneralProvider: PlaybackProviderId
-        get() = generalProvider.takeIf(PlaybackProviderId::supportsGeneralPlayback)
+        get() = generalProvider.takeIf { it.supportsGeneralPlayback && (!com.aliflix.app.BuildConfig.IS_TV || it != PlaybackProviderId.CINEJOY) }
             ?: PlaybackProviderId.RAMOFLIX
 
     fun sourceFor(
@@ -206,8 +215,9 @@ data class PlaybackPreferences(
     ): PlaybackSource {
         val provider = requestedProvider
             ?.takeIf { candidate -> candidate.isAvailableFor(media) }
-            ?: if (!com.aliflix.app.BuildConfig.IS_TV && media.isJapaneseAnime) PlaybackProviderId.MIRURO else safeGeneralProvider
+            ?: safeGeneralProvider
         return when (provider) {
+            PlaybackProviderId.CINEJOY -> PlaybackSource(PlaybackProviderId.CINEJOY)
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)
             PlaybackProviderId.MOVIEPIRE -> PlaybackSource.moviepire(moviepireBaseUrl)
             PlaybackProviderId.DORABY -> PlaybackSource.doraby(dorabyBaseUrl)

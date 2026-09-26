@@ -143,6 +143,13 @@ class PlaybackProviderRepository(private val context: Context) {
     }
 
     private fun loadPreferences(): PlaybackPreferences {
+        if (!BuildConfig.IS_TV && !prefs.getBoolean("cinejoy_default_v1", false)) {
+            prefs.edit {
+                putBoolean("cinejoy_default_v1", true)
+                putString(KEY_GENERAL_PROVIDER_ID, PlaybackProviderId.CINEJOY.name)
+                putLong(KEY_UPDATED_AT_MILLIS, System.currentTimeMillis())
+            }
+        }
         val savedRamoflixUrl = prefs.getString(KEY_CUSTOM_RAMOFLIX_URL, null)
         val normalizedRamoflixUrl =
             savedRamoflixUrl?.let(RamoflixConfig::normalizeBaseUrl)

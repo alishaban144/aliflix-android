@@ -91,7 +91,7 @@ internal fun MobileSettingsDialog(
                         var sourceMenu by remember { mutableStateOf(false) }
                         Box {
                             SettingsRow(Icons.Rounded.PlayCircle, "Streaming source", generalProvider.displayName, onClick = { sourceMenu = true }) {
-                                IconButton(onClick = { onEditProviderUrl(generalProvider) }) { Icon(Icons.Rounded.Edit, "Edit URL", Modifier.size(17.dp), tint = AliflixContentSecondary) }
+                                if (generalProvider != PlaybackProviderId.CINEJOY) IconButton(onClick = { onEditProviderUrl(generalProvider) }) { Icon(Icons.Rounded.Edit, "Edit URL", Modifier.size(17.dp), tint = AliflixContentSecondary) }
                                 Icon(Icons.Rounded.ExpandMore, "Choose source", Modifier.size(19.dp), tint = AliflixAccentSecondary)
                             }
                             SettingsMenu(sourceMenu, { sourceMenu = false }, mobileGeneralPlaybackProviders(), { it.displayName }, generalProvider) {

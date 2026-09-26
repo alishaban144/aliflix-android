@@ -1,5 +1,7 @@
 ﻿package com.aliflix.app.player
 
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -77,6 +79,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -123,7 +126,6 @@ import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
 import com.aliflix.app.model.Episode
 import com.aliflix.app.model.PlaybackSelection
-import com.aliflix.app.ui.launch.AnimatedAliflixHeatmapLogo
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentPrimaryContainer
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
@@ -157,7 +159,7 @@ internal data class NativePlayerUi(
 )
 
 private val PlayerInk = Color(0xFF07080C)
-private val PlayerScrimColor = Color.Black.copy(alpha = 0.28f)
+private val PlayerScrimColor = Color.Black.copy(alpha = 0.42f)
 
 private data class HudFeedback(
     val icon: ImageVector,
@@ -416,10 +418,11 @@ internal fun NativePlayerScreen(
         if (!controls) SeekFeedbackHud(seekFeedback.state, { seekFeedback.dismiss() })
 
         // Artwork Background
-        if (preparing || state.error != null || state.external || ended) {
+        AnimatedVisibility(visible = preparing || state.error != null || state.external || ended,
+            enter = fadeIn(tween(180)), exit = fadeOut(tween(320))) {
             Box(Modifier.fillMaxSize().background(PlayerInk)) {
-                AsyncImage(state.artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.28f)
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PlayerInk.copy(alpha = 0.4f), PlayerInk.copy(alpha = 0.96f)))))
+                AsyncImage(state.artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.42f)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PlayerInk.copy(alpha = 0.32f), PlayerInk.copy(alpha = 0.92f)))))
             }
         }
 
@@ -427,30 +430,7 @@ internal fun NativePlayerScreen(
         AnimatedVisibility(visible = preparing, modifier = Modifier.align(Alignment.Center),
             enter = fadeIn(tween(160)) + androidx.compose.animation.scaleIn(tween(180), initialScale = .96f),
             exit = fadeOut(tween(120))) {
-            Column(
-                Modifier.widthIn(max = 520.dp).padding(horizontal = 32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                AnimatedAliflixHeatmapLogo(Modifier.size(56.dp))
-                Text(
-                    state.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (state.detail.isNotBlank()) {
-                    Text(state.detail, color = Color.White.copy(alpha = 0.65f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
-                }
-                LinearProgressIndicator(
-                    Modifier.width(180.dp).height(3.dp).clip(CircleShape),
-                    color = AliflixAccentPrimary,
-                    trackColor = Color.White.copy(alpha = 0.12f)
-                )
-                Text(state.stage ?: "Preparing your video", color = AliflixAccentSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            }
+            HmsLoadingIndicator(Modifier.size(104.dp))
         }
 
         // In-Player Failure / Error Card (Keeping user inside player)
@@ -517,7 +497,7 @@ internal fun NativePlayerScreen(
 
         // Subtle dark scrim when controls are visible
         AnimatedVisibility(
-            visible = controls,
+            visible = controls && !preparing,
             enter = fadeIn(tween(180)) + androidx.compose.animation.scaleIn(tween(220), initialScale = 0.98f),
             exit = fadeOut(tween(200)),
             modifier = Modifier.fillMaxSize(),
@@ -525,9 +505,17 @@ internal fun NativePlayerScreen(
             Box(Modifier.fillMaxSize().background(PlayerScrimColor))
         }
 
+        if (preparing) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .padding(20.dp).size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = .07f))) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
+            }
+        }
+
         // Redesigned controls overlay (compact top bar, outlined center controls, purple timeline)
         AnimatedVisibility(
-            visible = controls,
+            visible = controls && !preparing,
             enter = fadeIn(tween(180)) + androidx.compose.animation.scaleIn(tween(220), initialScale = 0.98f),
             exit = fadeOut(tween(200)),
             modifier = Modifier.fillMaxSize(),

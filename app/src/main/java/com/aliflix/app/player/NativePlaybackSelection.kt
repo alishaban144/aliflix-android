@@ -32,12 +32,14 @@ internal fun launchNativeSelection(activity: Activity, selection: PlaybackSelect
     activity.startActivity(Intent().setClassName(activity, "com.aliflix.app.player.NativePlayerActivity")
         .putExtra("selection", selection.nativeJson()).putExtra("subtitleLanguage", language)
         .putExtra("playTapElapsedMs", android.os.SystemClock.elapsedRealtime())
-        .putExtra("autoSubtitles", autoSubtitles), nativePhoneLaunchOptions())
+        .putExtra("autoSubtitles", autoSubtitles), nativePhoneLaunchOptions(activity))
 }
 
 // Service/notification launches otherwise inherit the last focused (possibly TV) display.
-internal fun nativePhoneLaunchOptions(): android.os.Bundle = ActivityOptions.makeBasic()
-    .setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
+internal fun nativePhoneLaunchOptions(context: android.content.Context? = null): android.os.Bundle =
+    (if (context != null && !com.aliflix.app.BuildConfig.IS_TV)
+        ActivityOptions.makeCustomAnimation(context, com.aliflix.app.R.anim.playback_enter, com.aliflix.app.R.anim.playback_exit)
+    else ActivityOptions.makeBasic()).setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
 
 /** Provider labels can include decorations, e.g. 'Vid • HD'. Avoid matching unrelated Videasy. */
 internal fun nativeServerRank(label: String): Int = listOf("Vid", "Mist", "Mistify", "Flix", "Peach")

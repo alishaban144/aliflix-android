@@ -870,6 +870,7 @@ fun AliflixApp(
                 requestedProvider = requestedProvider,
             ),
         )
+        com.aliflix.app.player.claimDetailPreload(checkNotNull(playerSelection))
         com.aliflix.app.player.launchNativeSelection(
             activity, checkNotNull(playerSelection),
             playbackPreferences.preferredSubtitleLanguage.code,
@@ -1123,6 +1124,12 @@ fun AliflixApp(
                             var trailers by remember(activityShelves) {
                                 mutableStateOf(activityShelves.read("trailers"))
                             }
+                            var deletingWatched by remember { mutableStateOf<Media?>(null) }
+                            deletingWatched?.let { media ->
+                                DeleteWatchedDialog(media,
+                                    onDismiss = { deletingWatched = null },
+                                    onDelete = { viewModel.removeWatched(media); deletingWatched = null })
+                            }
                             val watched = playbackProgress.values.filter {
                                 it.completed || it.progressFraction >= com.aliflix.app.data.PLAYBACK_WATCHED_FRACTION
                             }
@@ -1141,7 +1148,7 @@ fun AliflixApp(
                                             trailers = activityShelves.read("trailers")
                                         }
                                         "Recently watched" -> { media: Media ->
-                                            viewModel.removeWatched(media)
+                                            deletingWatched = media
                                         }
                                         else -> null
                                     }
@@ -1246,6 +1253,7 @@ fun AliflixApp(
                         } == true
                         DetailScreen(
                             state = targetDetail,
+                            preloadEnabled = targetDestination.saveKey == mobileDestinationSaveKey(destinationStack),
                             inMyList = targetInMyList,
                             liked = targetLiked,
                             playbackProgress = playbackProgress,
@@ -1449,6 +1457,7 @@ fun AliflixApp(
 
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
+                PlaybackProviderId.CINEJOY -> provider.defaultBaseUrl
                 PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
                 PlaybackProviderId.ANIKURO -> provider.defaultBaseUrl
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
@@ -1462,6 +1471,7 @@ fun AliflixApp(
                 defaultUrl = provider.defaultBaseUrl,
                 onSave = { newUrl ->
                     when (provider) {
+                        PlaybackProviderId.CINEJOY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
@@ -1472,6 +1482,7 @@ fun AliflixApp(
                 },
                 onReset = {
                     when (provider) {
+                        PlaybackProviderId.CINEJOY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
@@ -1800,11 +1811,23 @@ internal fun HomeFeed(
         }
     }
 
+    Box(modifier.fillMaxSize().background(AliflixBackgroundBase)) {
+        if (!com.aliflix.app.BuildConfig.IS_TV) {
+            val page = pagerState.currentPage
+            val offset = pagerState.currentPageOffsetFraction
+            val current = heroCandidates[page % heroCandidates.size]
+            CinematicBackdrop(current.backdropUrl ?: current.posterUrl, Modifier.matchParentSize())
+            if (offset != 0f) {
+                val next = heroCandidates[Math.floorMod(page + if (offset > 0) 1 else -1, heroCandidates.size)]
+                CinematicBackdrop(next.backdropUrl ?: next.posterUrl,
+                    Modifier.matchParentSize().graphicsLayer { alpha = offset.absoluteValue })
+            }
+        }
     LazyColumn(
         state = listState,
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
-            .aliflixScreenBackground(),
+            .then(if (com.aliflix.app.BuildConfig.IS_TV) Modifier.aliflixScreenBackground() else Modifier),
         contentPadding = PaddingValues(bottom = 40.dp),
     ) {
         item {
@@ -1899,6 +1922,7 @@ internal fun HomeFeed(
                 HomeMediaRail(rail = rail, onOpen = onOpen, compact = false)
             }
         }
+    }
     }
 }
 
@@ -1996,10 +2020,6 @@ private fun HeroBanner(
     motionOffset: Float = 0f,
     activeShot: Boolean = false,
 ) {
-    val shot = remember(item.key) { androidx.compose.animation.core.Animatable(0f) }
-    LaunchedEffect(activeShot) {
-        if (activeShot) { shot.snapTo(0f); shot.animateTo(1f, tween(9000, easing = LinearEasing)) }
-    }
     val cinematic = !com.aliflix.app.BuildConfig.IS_TV
     val fontScale = LocalDensity.current.fontScale
     val accessibilityExpansion = (
@@ -2012,6 +2032,7 @@ private fun HeroBanner(
             .height(556.dp + accessibilityExpansion)
             .then(if (cinematic) Modifier.clipToBounds() else Modifier),
     ) {
+        if (!cinematic) {
         ArtworkPlaceholder(title = item.title)
         AsyncImage(
             model = item.backdropUrl ?: item.posterUrl,
@@ -2019,13 +2040,6 @@ private fun HeroBanner(
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer {
-                    if (cinematic) {
-                        scaleX = 1.04f + shot.value * 0.035f
-                        scaleY = scaleX
-                        translationX = motionOffset * size.width * 0.065f
-                    }
-                }
                 .drawWithContent {
                     drawContent()
                     drawRect(
@@ -2045,13 +2059,6 @@ private fun HeroBanner(
                 },
         )
 
-        if (cinematic) Canvas(Modifier.fillMaxSize()) {
-            val passage = motionOffset.absoluteValue.coerceIn(0f, 1f)
-            drawRect(Brush.radialGradient(
-                colors = listOf(AliflixAccentPrimary.copy(alpha = 0.10f + passage * 0.12f), Color.Transparent),
-                center = androidx.compose.ui.geometry.Offset(size.width * (0.12f + shot.value * 0.76f), size.height * 0.32f),
-                radius = size.width * 0.85f
-            ))
         }
         Column(
             modifier = Modifier
@@ -4303,6 +4310,7 @@ internal fun DetailScreen(
     onScrollPositionChanged: (Int, Int) -> Unit = { _, _ -> },
     inHistory: Boolean = false,
     onDeleteHistory: (Media) -> Unit = {},
+    preloadEnabled: Boolean = false,
     onOpenKeyword: ((com.aliflix.app.model.MediaKeyword) -> Unit)? = null,
 ) {
     val item = state.item ?: return
@@ -4318,6 +4326,9 @@ internal fun DetailScreen(
             title = progress.episodeTitle.orEmpty().ifBlank { "Episode ${progress.episodeNumber ?: 1}" },
         )
     } ?: state.episodes.firstOrNull()
+    com.aliflix.app.player.DetailPlaybackPreload(
+        item, mainEpisode, state.episodes, enabled = preloadEnabled,
+    )
     val configuration = LocalConfiguration.current
     val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else (configuration.screenHeightDp * 0.53f).coerceIn(300f, 460f).dp
     val detailListState = rememberLazyListState(
@@ -4336,11 +4347,12 @@ internal fun DetailScreen(
     val overview = item.overview.ifBlank { "No overview is available yet." }
     var overviewCanExpand by remember(item.key) { mutableStateOf(false) }
     val visibleCast = if (castExpanded) item.cast else item.cast.take(8)
+    Box(Modifier.fillMaxSize().background(AliflixBackgroundBase)) {
+        CinematicBackdrop(item.backdropUrl ?: item.posterUrl, Modifier.matchParentSize())
     LazyColumn(
         state = detailListState,
         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
-            .fillMaxSize()
-            .aliflixScreenBackground(),
+            .fillMaxSize(),
         contentPadding = PaddingValues(bottom = 40.dp),
     ) {
         item(key = "hero") {
@@ -4349,31 +4361,6 @@ internal fun DetailScreen(
                     .fillMaxWidth()
                     .height(detailHeroHeight),
             ) {
-                ArtworkPlaceholder(title = item.title)
-                AsyncImage(
-                    model = item.backdropUrl ?: item.posterUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .drawWithContent {
-                            drawContent()
-                            drawRect(
-                                Brush.verticalGradient(
-                                    0f to AliflixScrimStrong.copy(alpha = 0.50f),
-                                    0.38f to Color.Transparent,
-                                    0.72f to AliflixBlack.copy(alpha = 0.40f),
-                                    1f to AliflixBackgroundBase,
-                                ),
-                            )
-                            drawRect(
-                                Brush.horizontalGradient(
-                                    0f to AliflixBackgroundImmersive.copy(alpha = 0.58f),
-                                    0.76f to Color.Transparent,
-                                ),
-                            )
-                        },
-                )
                 HistoryReminder(
                     itemKey = item.key, inHistory = inHistory, onDelete = { onDeleteHistory(item) },
                     modifier = Modifier.padding(start = 76.dp, top = 16.dp, end = 16.dp),
@@ -4508,6 +4495,56 @@ internal fun DetailScreen(
                         }
                     }
                 }
+                if (item.genres.isNotEmpty()) {
+                    DetailInfoSection(title = "Genres") {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            item.genres.distinct().forEach { genre ->
+                                Row(
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .clip(CircleShape)
+                                        .background(AliflixSurface)
+                                        .border(1.dp, AliflixBorderStrong, CircleShape)
+                                        .clickable { onOpenGenre(genre, item.type) }
+                                        .padding(start = 14.dp, end = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = genre,
+                                        color = AliflixContentPrimary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Rounded.ChevronRight,
+                                        contentDescription = null,
+                                        tint = AliflixAccentSecondary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                if (item.creators.isNotEmpty()) {
+                    DetailInfoSection(title = "Creators") {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(end = 4.dp),
+                        ) {
+                            items(item.creators.distinctBy { it.tmdbId }, key = { creator -> creator.tmdbId }) { creator ->
+                                DetailCreatorCard(
+                                    creator = creator,
+                                    onClick = { onOpenCreator(creator) },
+                                )
+                            }
+                        }
+                    }
+                }
+                if (!com.aliflix.app.BuildConfig.IS_TV) InlineTrailerSection(item)
                 if (item.originalLanguage.isNotBlank() || item.cast.isNotEmpty()) {
                     DetailInfoSection(title = "Details") {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -4567,56 +4604,6 @@ internal fun DetailScreen(
                         }
                     }
                 }
-                if (item.creators.isNotEmpty()) {
-                    DetailInfoSection(title = "Creators") {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            contentPadding = PaddingValues(end = 4.dp),
-                        ) {
-                            items(item.creators.distinctBy { it.tmdbId }, key = { creator -> creator.tmdbId }) { creator ->
-                                DetailCreatorCard(
-                                    creator = creator,
-                                    onClick = { onOpenCreator(creator) },
-                                )
-                            }
-                        }
-                    }
-                }
-                if (item.genres.isNotEmpty()) {
-                    DetailInfoSection(title = "Genres") {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            item.genres.distinct().forEach { genre ->
-                                Row(
-                                    modifier = Modifier
-                                        .heightIn(min = 48.dp)
-                                        .clip(CircleShape)
-                                        .background(AliflixSurface)
-                                        .border(1.dp, AliflixBorderStrong, CircleShape)
-                                        .clickable { onOpenGenre(genre, item.type) }
-                                        .padding(start = 14.dp, end = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        text = genre,
-                                        color = AliflixContentPrimary,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Rounded.ChevronRight,
-                                        contentDescription = null,
-                                        tint = AliflixAccentSecondary,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                if (!com.aliflix.app.BuildConfig.IS_TV) InlineTrailerSection(item)
                 if (item.reviews.isNotEmpty()) {
                     DetailInfoSection(
                         title = "Reviews",
@@ -4770,6 +4757,7 @@ internal fun DetailScreen(
                 }
             }
         }
+    }
     }
 }
 

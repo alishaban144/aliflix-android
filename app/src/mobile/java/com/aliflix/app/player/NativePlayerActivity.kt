@@ -460,6 +460,7 @@ class NativePlayerActivity : FragmentActivity() {
                 val preferences = com.aliflix.app.data.PlaybackProviderRepository(this@NativePlayerActivity).preferences.value
                 val history = getSharedPreferences("native-resolver-performance", MODE_PRIVATE)
                 val seriesKey = "series:${current.media.key}"
+                var detailWarm = if (preferredServer == null) DetailPreloadStore.take(current, resume) else null
                 val savedRoute = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { routeStore.load(current) }
                     ?.takeIf { preferredServer == null && it.selection.source.provider !in exhaustedSources &&
                         (!current.source.provider.isAnimeNative || it.selection.source.provider == current.source.provider) }
@@ -469,7 +470,7 @@ class NativePlayerActivity : FragmentActivity() {
                 val excludedBySource = mutableMapOf<com.aliflix.app.model.PlaybackProviderId, MutableSet<String>>()
                 excludedBySource[current.source.provider] = triedServers.toMutableSet()
                 var preferSaved = preferredServer != null || savedProvider != null
-                if (savedRoute?.request != null && triedServers.isEmpty()) {
+                if (detailWarm == null && savedRoute?.request != null && triedServers.isEmpty()) {
                     val restored = savedRoute.selection
                     val request = savedRoute.request.copy(positionMs = resume, playing = true,
                         selectionJson = restored.nativeJson(), preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase())
@@ -499,13 +500,14 @@ class NativePlayerActivity : FragmentActivity() {
                     val animeBatch = candidates.filter { it.source.provider.isAnimeNative }
                     val batch = if (preferSaved) listOf(candidates.firstOrNull {
                         if (preferredServer != null) it.source == startingSource else it.source.provider.name == savedProvider
-                    } ?: candidates.first()) else if (animeBatch.isNotEmpty()) animeBatch else candidates
+                    } ?: candidates.first()) else if (candidates.first().source.provider == com.aliflix.app.model.PlaybackProviderId.CINEJOY) listOf(candidates.first()) else if (animeBatch.isNotEmpty()) animeBatch else candidates
                     preferSaved = false
                     if (warmingEpisodeKey == current.key && nextEpisodeWarmup?.isActive == true) {
                         kotlinx.coroutines.withTimeoutOrNull(2_000) { nextEpisodeWarmup?.join() }
                         if (nextEpisodeWarmup?.isActive == true) nextEpisodeWarmup?.cancel()
                     }
-                    val warmed = warmedEpisode?.takeIf { it.first.key == current.key && preferredServer == null && android.os.SystemClock.elapsedRealtime() - warmedAt < 120_000 }?.let { it.copy(third = it.third.copy(positionMs = resume)) }
+                    val warmed = detailWarm ?: warmedEpisode?.takeIf { it.first.key == current.key && preferredServer == null && android.os.SystemClock.elapsedRealtime() - warmedAt < 120_000 }?.let { it.copy(third = it.third.copy(positionMs = resume)) }
+                    detailWarm = null
                     warmedEpisode = null
                     val winner = try {
                         warmed ?: firstSuccessful(batch.map { candidate -> suspend {
@@ -527,7 +529,7 @@ class NativePlayerActivity : FragmentActivity() {
                             } catch (error: Exception) {
                                 ensureActive()
                                 if (server.isNotBlank()) excluded.add(server)
-                                if (error is NoNativeServersException) exhaustedSources.add(candidate.source.provider)
+                                if (error is NoNativeServersException || candidate.source.provider == com.aliflix.app.model.PlaybackProviderId.CINEJOY) exhaustedSources.add(candidate.source.provider)
                                 throw error
                             } finally { adapter.close() }
                         } }, parallelism = 2)

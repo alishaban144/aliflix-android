@@ -1120,7 +1120,7 @@ class WebPlayerController(
                     }
                     view?.alpha = 1f
                     _loading.value = false
-                    if (!isMobileMoviepireSelection()) {
+                    if (!nativePreparation && !isMobileMoviepireSelection()) {
                         Toast.makeText(
                             activity,
                             "External navigation blocked",
@@ -1192,7 +1192,7 @@ class WebPlayerController(
                     isUserGesture: Boolean,
                     resultMsg: android.os.Message?,
                 ): Boolean {
-                    if (!isMobileMoviepireSelection()) {
+                    if (!nativePreparation && !isMobileMoviepireSelection()) {
                         Toast.makeText(
                             activity,
                             "Pop-up blocked",
@@ -1203,7 +1203,7 @@ class WebPlayerController(
                 }
 
                 override fun onPermissionRequest(request: PermissionRequest?) {
-                    if (isMobileMoviepireSelection()) {
+                    if (nativePreparation || isMobileMoviepireSelection()) {
                         request?.deny()
                     } else {
                         super.onPermissionRequest(request)
@@ -1214,7 +1214,7 @@ class WebPlayerController(
                     origin: String?,
                     callback: GeolocationPermissions.Callback?,
                 ) {
-                    if (isMobileMoviepireSelection()) {
+                    if (nativePreparation || isMobileMoviepireSelection()) {
                         callback?.invoke(origin, false, false)
                     } else {
                         super.onGeolocationPermissionsShowPrompt(origin, callback)
@@ -1226,7 +1226,7 @@ class WebPlayerController(
                     filePathCallback: ValueCallback<Array<Uri>>?,
                     fileChooserParams: FileChooserParams?,
                 ): Boolean {
-                    if (!isMobileMoviepireSelection()) return false
+                    if (!nativePreparation && !isMobileMoviepireSelection()) return false
                     filePathCallback?.onReceiveValue(null)
                     return true
                 }
@@ -1237,7 +1237,7 @@ class WebPlayerController(
                     message: String?,
                     result: JsResult?,
                 ): Boolean {
-                    if (!isMobileMoviepireSelection()) {
+                    if (!nativePreparation && !isMobileMoviepireSelection()) {
                         return super.onJsAlert(view, url, message, result)
                     }
                     result?.cancel()
@@ -1250,7 +1250,7 @@ class WebPlayerController(
                     message: String?,
                     result: JsResult?,
                 ): Boolean {
-                    if (!isMobileMoviepireSelection()) {
+                    if (!nativePreparation && !isMobileMoviepireSelection()) {
                         return super.onJsConfirm(view, url, message, result)
                     }
                     result?.cancel()
@@ -1264,7 +1264,7 @@ class WebPlayerController(
                     defaultValue: String?,
                     result: JsPromptResult?,
                 ): Boolean {
-                    if (!isMobileMoviepireSelection()) {
+                    if (!nativePreparation && !isMobileMoviepireSelection()) {
                         return super.onJsPrompt(view, url, message, defaultValue, result)
                     }
                     result?.cancel()
@@ -1859,6 +1859,7 @@ class WebPlayerController(
     ) {
         if (nativePreparation && nativeEmbedUrl != null) return
         when (selection.source.provider) {
+            PlaybackProviderId.CINEJOY -> Unit // Exact TMDB movie/episode route, native HLS discovery.
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.MOVIEPIRE -> {
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)
