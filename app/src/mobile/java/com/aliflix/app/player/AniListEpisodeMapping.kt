@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Connection
 import org.jsoup.Jsoup
+import java.io.ByteArrayInputStream
 import java.text.Normalizer
 import java.util.zip.GZIPInputStream
 
@@ -17,8 +18,7 @@ import java.util.zip.GZIPInputStream
 internal object AniListEpisodeMapping {
     suspend fun map(context: Context, selection: PlaybackSelection): Pair<Int, Int> = withContext(Dispatchers.IO) {
         val mappings = synchronized(AniListEpisodeMapping::class.java) {
-            cachedMappings ?: GZIPInputStream(context.assets.open(ASSET)).bufferedReader().use { JSONObject(it.readText()) }
-                .also { cachedMappings = it }
+            cachedMappings ?: decodeMappings(readAsset(context)).also { cachedMappings = it }
         }
         val movie = selection.media.type == MediaType.MOVIE
         val key = if (movie) "tmdb_movie:${selection.media.id}" else "tmdb_show:${selection.media.id}:s${selection.seasonNumber ?: 1}"
@@ -81,7 +81,20 @@ internal object AniListEpisodeMapping {
     private fun normalizedTitle(value: String) = Normalizer.normalize(value, Normalizer.Form.NFKC).lowercase()
         .replace(Regex("[^\\p{L}\\p{N}]"), "")
 
-    private const val ASSET = "anime-tmdb-anilist.json.gz"
+    /** Asset packaging may keep the compressed name, or strip ".gz" and store the payload directly. */
+    private fun readAsset(context: Context): ByteArray =
+        ASSET_NAMES.firstNotNullOfOrNull { name -> runCatching { context.assets.open(name).use { it.readBytes() } }.getOrNull() }
+            ?: throw NoNativeServersException()
+
+    private fun decodeMappings(raw: ByteArray): JSONObject =
+        JSONObject(String(inflateAssetPayload(raw), Charsets.UTF_8))
+
     private const val ANILIST_SEARCH_URL = "https://graphql.anilist.co"
+    private val ASSET_NAMES = listOf("anime-tmdb-anilist.json", "anime-tmdb-anilist.json.gz")
     @Volatile private var cachedMappings: JSONObject? = null
 }
+
+/** GZIP payloads are inflated; already-expanded payloads are returned untouched. */
+internal fun inflateAssetPayload(raw: ByteArray): ByteArray =
+    if (raw.size > 1 && raw[0] == 0x1F.toByte() && raw[1] == 0x8B.toByte())
+        GZIPInputStream(ByteArrayInputStream(raw)).use { it.readBytes() } else raw
