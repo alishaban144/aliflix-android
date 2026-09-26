@@ -4267,6 +4267,19 @@ internal fun shouldShowOverviewExpansion(
         hasVisualOverflow
     }
 
+/** The series play button names the exact season and episode it opens, so the label never
+ * disagrees with the episode the button actually starts. Movies carry no episode to name. */
+internal fun detailCtaText(
+    item: Media,
+    mainEpisode: Episode?,
+    isPartiallyWatched: Boolean,
+): String {
+    val action = if (isPartiallyWatched) "Resume" else "Play"
+    if (item.type != MediaType.TV) return action
+    val episode = mainEpisode ?: return action
+    return "$action S${episode.seasonNumber}E${episode.number}"
+}
+
 @Composable
 internal fun DetailScreen(
     state: DetailUiState,
@@ -5187,11 +5200,7 @@ private fun DetailCinematicActionPanel(
     val progressRatio = latestProgress?.progressFraction?.toFloat() ?: 0f
     val isPartiallyWatched = latestProgress?.resumeEligible == true
 
-    val ctaText = if (item.type == MediaType.TV && mainEpisode != null) {
-        if (isPartiallyWatched) "Resume" else "Play"
-    } else {
-        if (isPartiallyWatched) "Resume" else "Play"
-    }
+    val ctaText = detailCtaText(item, mainEpisode, isPartiallyWatched)
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
