@@ -25,5 +25,43 @@ class HomeHeroHeightTest {
         assertEquals(556.dp(), homeHeroHeight(0.8f))
     }
 
+    /**
+     * The poster band is what separates the artwork from the dark content ramp, so the two rules
+     * below are what keep the poster in its original colours: nothing may be drawn over the band,
+     * and the ramp may never begin above the band's lower edge.
+     */
+    @Test fun `the band is as tall as the hero and starts at the top of the plane`() {
+        val band = posterBand(planeHeight = 900.dp(), posterTopInset = 0.dp(), posterHeight = 556.dp())
+        assertEquals(0.dp(), band.top)
+        assertEquals(556.dp(), band.bottom)
+        assertEquals(556.dp(), band.height)
+    }
+
+    @Test fun `a status bar inset moves the whole band down and leaves the ramp below it`() {
+        val band = posterBand(planeHeight = 900.dp(), posterTopInset = 48.dp(), posterHeight = 420.dp())
+        assertEquals(48.dp(), band.top)
+        assertEquals(468.dp(), band.bottom)
+        assertEquals(900.dp() - 468.dp(), 900.dp() - band.bottom)
+    }
+
+    @Test fun `a hero taller than the plane is cut off at the plane and never inverts`() {
+        val band = posterBand(planeHeight = 500.dp(), posterTopInset = 0.dp(), posterHeight = 556.dp())
+        assertEquals(0.dp(), band.top)
+        assertEquals(500.dp(), band.bottom)
+        assertTrue(band.bottom >= band.top)
+    }
+
+    @Test fun `an inset past the plane collapses to an empty band rather than drawing outside it`() {
+        val band = posterBand(planeHeight = 300.dp(), posterTopInset = 400.dp(), posterHeight = 200.dp())
+        assertEquals(300.dp(), band.top)
+        assertEquals(300.dp(), band.bottom)
+        assertEquals(0.dp(), band.height)
+    }
+
+    @Test fun `an unbounded or empty plane yields an empty band`() {
+        assertEquals(0.dp(), posterBand(0.dp(), 0.dp(), 556.dp()).height)
+        assertEquals(0.dp(), posterBand(androidx.compose.ui.unit.Dp.Infinity, 0.dp(), 556.dp()).height)
+    }
+
     private fun Int.dp() = androidx.compose.ui.unit.Dp(this.toFloat())
 }

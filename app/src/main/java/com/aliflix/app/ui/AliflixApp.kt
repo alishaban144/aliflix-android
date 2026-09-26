@@ -60,6 +60,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -1817,6 +1818,9 @@ internal fun HomeFeed(
             val offset = pagerState.currentPageOffsetFraction
             val current = heroCandidates[page % heroCandidates.size]
             val heroHeight = homeHeroHeight(LocalDensity.current.fontScale)
+            // The home hero is the first item in a list that starts at the very top of the screen:
+            // the header is overlaid on it rather than padding it. So the band starts at zero here,
+            // and the shared hero height keeps the poster and the ramp meeting on the same line.
             CinematicBackdrop(
                 artwork = current.backdropUrl ?: current.posterUrl,
                 modifier = Modifier.matchParentSize(),
@@ -2721,15 +2725,8 @@ private fun MediaPoster(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.42f)),
-                        ),
-                    ),
-            )
+            // No wash over the poster itself, so the artwork keeps its original colours. Every badge
+            // below carries its own opaque backing and stays readable without one.
             if (!showLibraryMetadata) Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -4336,6 +4333,10 @@ internal fun DetailScreen(
     )
     val configuration = LocalConfiguration.current
     val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else (configuration.screenHeightDp * 0.53f).coerceIn(300f, 460f).dp
+    // The hero item below is pushed down by the same inset, so the backdrop band has to start at
+    // the same place for the poster and the ramp to meet exactly at the poster's lower edge.
+    val detailHeroTopInset = WindowInsets.statusBarsIgnoringVisibility.asPaddingValues()
+        .calculateTopPadding()
     val detailListState = rememberLazyListState(
         initialFirstVisibleItemIndex = initialFirstVisibleItemIndex,
         initialFirstVisibleItemScrollOffset = initialFirstVisibleItemScrollOffset,
@@ -4356,6 +4357,10 @@ internal fun DetailScreen(
         CinematicBackdrop(
             artwork = item.backdropUrl ?: item.posterUrl,
             modifier = Modifier.matchParentSize(),
+            // The hero sits below the status bar, so the band has to start there too. Measuring it
+            // from the top of the screen instead left the ramp starting above the poster, which put
+            // a dark band across the artwork and cut the poster off from the page.
+            posterTopInset = detailHeroTopInset,
             posterHeight = detailHeroHeight,
         )
     LazyColumn(

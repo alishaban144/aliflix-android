@@ -4,13 +4,15 @@ import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -21,57 +23,101 @@ import coil.compose.AsyncImage
 import com.aliflix.app.ui.theme.AliflixBackgroundBase
 
 /**
+ * The slice of the backdrop plane that the poster occupies, measured from the top of that plane.
+ *
+ * @param top where the band starts.
+ * @param bottom the poster's lower edge. The dark content ramp starts here, never above it.
+ */
+internal data class PosterBand(val top: Dp, val bottom: Dp) {
+    val height: Dp get() = bottom - top
+}
+
+/**
+ * Resolves where the poster sits inside a plane [planeHeight] tall.
+ *
+ * Both edges are clamped to the plane so a caller passing a hero measured inside an inset, or a
+ * hero taller than the plane, still yields a band that is inside the plane and never inverted.
+ * This is what keeps the artwork from being cropped to the whole screen, and what keeps the
+ * content ramp from starting above the poster.
+ */
+internal fun posterBand(planeHeight: Dp, posterTopInset: Dp, posterHeight: Dp): PosterBand {
+    if (planeHeight <= 0.dp || planeHeight == Dp.Infinity) return PosterBand(0.dp, 0.dp)
+    val top = posterTopInset.coerceIn(0.dp, planeHeight)
+    val bottom = (top + posterHeight).coerceIn(top, planeHeight)
+    return PosterBand(top = top, bottom = bottom)
+}
+
+/**
  * A single continuous artwork plane behind hero, actions, and the page below.
  *
- * The artwork is drawn in its original colours: nothing is tinted, dimmed or vignetted over the
- * poster itself. The defocused copy behind it only softens the plane, and the darker treatment is
- * confined to the content that sits below the poster, where it is needed for white copy to read.
- * That keeps the scrim start aligned with the bottom of the artwork instead of washing over it.
+ * The poster is framed by its own band rather than by the whole screen. A 16:9 backdrop cropped to
+ * a full-height phone is reduced to a narrow vertical slice, which is what made the poster look
+ * broken; cropping it to the hero instead keeps the composition the artwork was framed for.
  *
- * @param posterHeight how much of the plane the poster occupies. The scrim begins below it.
+ * Nothing is drawn over the band itself, so the poster keeps its original colours. The dark
+ * translucent ramp begins at the band's lower edge and covers only the content below it, which is
+ * the only place white copy has to be read against the artwork. The defocused copy behind softens
+ * the plane and shows through that ramp as a glow rather than as a second, competing picture.
+ *
+ * @param posterTopInset where the band starts, measured from the top of the plane. A screen whose
+ *   hero is pushed down by the status bar passes that inset so the band still lines up with the
+ *   hero it belongs to.
+ * @param posterHeight how tall the band is, which is also where the content ramp begins.
  */
 @Composable
 internal fun CinematicBackdrop(
     artwork: String?,
     modifier: Modifier = Modifier,
+    posterTopInset: Dp = 0.dp,
     posterHeight: Dp = 0.dp,
 ) {
     Box(modifier.background(AliflixBackgroundBase)) {
         if (artwork.isNullOrBlank()) return@Box
-        AmbientArtworkLayer(artwork, Modifier.matchParentSize())
         BoxWithConstraints(Modifier.matchParentSize()) {
             val planeHeight = maxHeight
-            val contentTop = if (planeHeight > 0.dp) {
-                (posterHeight.coerceIn(0.dp, planeHeight) / planeHeight).coerceIn(0f, 1f)
-            } else {
-                1f
+            val band = posterBand(planeHeight, posterTopInset, posterHeight)
+
+            AmbientArtworkLayer(artwork, Modifier.matchParentSize())
+
+            if (band.height > 0.dp) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(y = band.top)
+                        .fillMaxWidth()
+                        .height(band.height)
+                        .clipToBounds(),
+                ) {
+                    AsyncImage(
+                        model = artwork,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
             }
-            AsyncImage(
-                artwork,
-                null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .matchParentSize()
-                    .drawWithContent {
-                        drawContent()
-                        if (contentTop >= 1f) return@drawWithContent
-                        val top = size.height * contentTop
-                        // A long, evenly spaced ramp dissolves the artwork into the page background
-                        // instead of ending on a visible line.
-                        drawRect(
-                            brush = Brush.verticalGradient(
+
+            val rampHeight = planeHeight - band.bottom
+            if (rampHeight > 0.dp) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(y = band.bottom)
+                        .fillMaxWidth()
+                        .height(rampHeight)
+                        .background(
+                            // Starts clear so the poster above keeps its colours, and runs long
+                            // enough that the content below fades into the page instead of ending
+                            // on a visible line.
+                            Brush.verticalGradient(
                                 0f to Color.Transparent,
-                                0.45f to AliflixBackgroundBase.copy(alpha = 0.55f),
-                                0.75f to AliflixBackgroundBase.copy(alpha = 0.88f),
+                                0.34f to AliflixBackgroundBase.copy(alpha = 0.58f),
+                                0.68f to AliflixBackgroundBase.copy(alpha = 0.88f),
                                 1f to AliflixBackgroundBase,
-                                startY = top,
-                                endY = size.height,
                             ),
-                            topLeft = Offset(0f, top),
-                            size = Size(size.width, size.height - top),
-                        )
-                    },
-            )
+                        ),
+                )
+            }
         }
     }
 }
