@@ -1818,9 +1818,8 @@ internal fun HomeFeed(
             val offset = pagerState.currentPageOffsetFraction
             val current = heroCandidates[page % heroCandidates.size]
             val heroHeight = homeHeroHeight(LocalDensity.current.fontScale)
-            // The home hero is the first item in a list that starts at the very top of the screen:
-            // the header is overlaid on it rather than padding it. So the band starts at zero here,
-            // and the shared hero height keeps the poster and the ramp meeting on the same line.
+            // Both artwork layers are siblings of the list, so vertical scrolling cannot drag
+            // or stretch the poster. The alpha mask blends it into the fixed ambient plane.
             CinematicBackdrop(
                 artwork = current.backdropUrl ?: current.posterUrl,
                 modifier = Modifier.matchParentSize(),
@@ -2023,8 +2022,7 @@ private fun HomeHeader(
 }
 
 /**
- * The height of the home hero, which is also where the poster ends and the darker content scrim
- * starts. Both the banner and the backdrop read it so the two never drift apart.
+ * Shared frame height for the home hero and its stationary, fading artwork.
  */
 internal fun homeHeroHeight(fontScale: Float): androidx.compose.ui.unit.Dp =
     556.dp + ((fontScale - 1f).coerceAtLeast(0f) * 170f).coerceAtMost(320f).dp
@@ -4333,8 +4331,7 @@ internal fun DetailScreen(
     )
     val configuration = LocalConfiguration.current
     val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else (configuration.screenHeightDp * 0.53f).coerceIn(300f, 460f).dp
-    // The hero item below is pushed down by the same inset, so the backdrop band has to start at
-    // the same place for the poster and the ramp to meet exactly at the poster's lower edge.
+    // Include the list inset in the artwork frame while drawing behind the status bar.
     val detailHeroTopInset = WindowInsets.statusBarsIgnoringVisibility.asPaddingValues()
         .calculateTopPadding()
     val detailListState = rememberLazyListState(
@@ -4357,9 +4354,7 @@ internal fun DetailScreen(
         CinematicBackdrop(
             artwork = item.backdropUrl ?: item.posterUrl,
             modifier = Modifier.matchParentSize(),
-            // The hero sits below the status bar, so the band has to start there too. Measuring it
-            // from the top of the screen instead left the ramp starting above the poster, which put
-            // a dark band across the artwork and cut the poster off from the page.
+            // Keep artwork and its fade outside the scrolling content.
             posterTopInset = detailHeroTopInset,
             posterHeight = detailHeroHeight,
         )
@@ -4395,21 +4390,6 @@ internal fun DetailScreen(
                         tint = AliflixContentPrimary,
                     )
                 }
-                // Backing for the hero copy only. It sits under the text rather than over the whole
-                // artwork, so the poster keeps its original colours while the title stays readable.
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(232.dp)
-                        .background(
-                            Brush.verticalGradient(
-                                0f to Color.Transparent,
-                                0.5f to AliflixBackgroundBase.copy(alpha = 0.42f),
-                                1f to AliflixBackgroundBase.copy(alpha = 0.88f),
-                            ),
-                        ),
-                )
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
