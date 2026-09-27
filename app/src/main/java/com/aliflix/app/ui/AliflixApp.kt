@@ -4292,6 +4292,19 @@ internal fun detailCtaText(
     return "$action S${episode.seasonNumber}E${episode.number}"
 }
 
+/**
+ * The hero item's height on the details screen.
+ *
+ * The hero is the first item in the list and the list no longer carries the status bar padding, so
+ * the inset is absorbed here instead. That lets the poster plane live inside this item and still
+ * start at the top of the screen, behind the status bar, which is where the stationary plane drew
+ * it: the frame reaches the same line as before, and every item below it keeps its position.
+ */
+internal fun detailHeroFrame(
+    heroTopInset: androidx.compose.ui.unit.Dp,
+    heroHeight: androidx.compose.ui.unit.Dp,
+): androidx.compose.ui.unit.Dp = heroTopInset + heroHeight
+
 @Composable
 internal fun DetailScreen(
     state: DetailUiState,
@@ -4336,7 +4349,7 @@ internal fun DetailScreen(
     )
     val configuration = LocalConfiguration.current
     val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else (configuration.screenHeightDp * 0.53f).coerceIn(300f, 460f).dp
-    // Include the list inset in the artwork frame while drawing behind the status bar.
+    // The hero item absorbs this inset, so the poster inside it still starts behind the status bar.
     val detailHeroTopInset = WindowInsets.statusBarsIgnoringVisibility.asPaddingValues()
         .calculateTopPadding()
     val detailListState = rememberLazyListState(
@@ -4355,26 +4368,31 @@ internal fun DetailScreen(
     val overview = item.overview.ifBlank { "No overview is available yet." }
     var overviewCanExpand by remember(item.key) { mutableStateOf(false) }
     val visibleCast = if (castExpanded) item.cast else item.cast.take(8)
+    // The poster is drawn by the hero item below, so it scrolls away with the hero and the sections
+    // underneath it sit on this plain Aliflix background. Only the base colour stays out here.
     Box(Modifier.fillMaxSize().background(AliflixBackgroundBase)) {
-        CinematicBackdrop(
-            artwork = item.backdropUrl ?: item.posterUrl,
-            modifier = Modifier.matchParentSize(),
-            // Keep artwork and its fade outside the scrolling content.
-            posterTopInset = detailHeroTopInset,
-            posterHeight = detailHeroHeight,
-        )
     LazyColumn(
         state = detailListState,
-        modifier = Modifier.windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
-            .fillMaxSize(),
+        modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 40.dp),
     ) {
         item(key = "hero") {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(detailHeroHeight),
+                    .height(detailHeroFrame(detailHeroTopInset, detailHeroHeight)),
             ) {
+                // The plane fills the frame from the top of the screen, exactly where the
+                // stationary plane used to start it, and scrolls away with this item.
+                CinematicPosterPlane(
+                    artwork = item.backdropUrl ?: item.posterUrl,
+                    modifier = Modifier.matchParentSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .padding(top = detailHeroTopInset),
+                ) {
                 HistoryReminder(
                     itemKey = item.key, inHistory = inHistory, onDelete = { onDeleteHistory(item) },
                     modifier = Modifier.padding(start = 76.dp, top = 16.dp, end = 16.dp),
@@ -4441,6 +4459,7 @@ internal fun DetailScreen(
                             .filter(String::isNotBlank)
                             .forEach { label -> DetailMetadataPill(label = label) }
                     }
+                }
                 }
             }
         }

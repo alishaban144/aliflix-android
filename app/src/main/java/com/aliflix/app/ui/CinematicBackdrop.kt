@@ -50,11 +50,15 @@ internal fun posterBand(planeHeight: Dp, posterTopInset: Dp, posterHeight: Dp): 
 }
 
 /**
- * A stationary backdrop shared by Home and mobile movie/series details, outside their lazy lists.
- * The sharp artwork fades into the ambient plane BEFORE its lower edge, like a CSS alpha mask.
- * A gradient starting below the image cannot hide the discontinuity between two different crops.
- * The status-bar inset contributes to the frame height; artwork extends behind the status bar so
- * it has no exposed top edge either. No scroll offsets or gesture modifiers move this plane.
+ * A stationary backdrop for a screen whose artwork must not move: it fills the plane it is given,
+ * which is a sibling of the scrolling content rather than part of it. The sharp artwork fades into
+ * the ambient plane BEFORE its lower edge, like a CSS alpha mask. A gradient starting below the
+ * image cannot hide the discontinuity between two different crops. The status-bar inset contributes
+ * to the frame height; artwork extends behind the status bar so it has no exposed top edge either.
+ * No scroll offsets or gesture modifiers move this plane.
+ *
+ * Home and the movie/series details hero use [CinematicPosterPlane] instead, so their poster can
+ * scroll away with the hero; this remains for a plane that has to stay put under scrolling content.
  */
 @Composable
 internal fun CinematicBackdrop(
@@ -98,7 +102,8 @@ internal fun CinematicPosterPlane(
         if (artwork.isNullOrBlank()) return@Box
         BoxWithConstraints(Modifier.matchParentSize()) {
             // The hero box is the whole plane, so the poster spans it and cannot reach past it.
-            CinematicPlane(artwork, PosterBand(top = 0.dp, bottom = maxHeight))
+            // posterBand still clamps, so an unbounded or collapsed host draws no artwork.
+            CinematicPlane(artwork, posterBand(maxHeight, 0.dp, maxHeight))
         }
     }
 }
