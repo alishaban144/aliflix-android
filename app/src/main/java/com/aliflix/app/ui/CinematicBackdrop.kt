@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
@@ -65,34 +66,73 @@ internal fun CinematicBackdrop(
     Box(modifier.clipToBounds().background(AliflixBackgroundBase)) {
         if (artwork.isNullOrBlank()) return@Box
         BoxWithConstraints(Modifier.matchParentSize()) {
-            val band = posterBand(maxHeight, posterTopInset, posterHeight)
-
-            AmbientArtworkLayer(artwork, Modifier.matchParentSize())
-            // One continuous, fixed tint keeps the ambient plane readable behind the whole page.
-            Box(
-                Modifier.matchParentSize().background(
-                    Brush.verticalGradient(
-                        0f to AliflixBackgroundBase.copy(alpha = 0.32f),
-                        0.60f to AliflixBackgroundBase.copy(alpha = 0.64f),
-                        1f to AliflixBackgroundBase,
-                    ),
-                ),
-            )
-
-            if (band.height > 0.dp) {
-                AsyncImage(
-                    model = artwork,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .height(band.bottom)
-                        .cinematicArtworkFade(),
-                )
-            }
+            CinematicPlane(artwork, posterBand(maxHeight, posterTopInset, posterHeight))
         }
     }
+}
+
+/**
+ * The same three layers as [CinematicBackdrop], but sized by the caller's box instead of a
+ * stationary full-screen plane, so a screen can host the artwork inside its scrolling content.
+ *
+ * Home draws this in the hero item rather than behind the list. The poster then occupies the hero
+ * alone and travels with it, so scrolling down moves the artwork off the top and leaves the plain
+ * Aliflix background underneath, instead of a second, unmoving copy of the same picture sitting
+ * behind the rails. Nothing is drawn past the hero because the plane is bounded and clipped to it.
+ *
+ * @param planeAlpha crossfades two heroes while the pager is between pages; below 1 it is layered.
+ */
+@Composable
+internal fun CinematicPosterPlane(
+    artwork: String?,
+    modifier: Modifier = Modifier,
+    planeAlpha: Float = 1f,
+) {
+    Box(
+        modifier
+            .clipToBounds()
+            .then(
+                if (planeAlpha < 1f) Modifier.graphicsLayer { alpha = planeAlpha } else Modifier,
+            ),
+    ) {
+        if (artwork.isNullOrBlank()) return@Box
+        BoxWithConstraints(Modifier.matchParentSize()) {
+            // The hero box is the whole plane, so the poster spans it and cannot reach past it.
+            CinematicPlane(artwork, PosterBand(top = 0.dp, bottom = maxHeight))
+        }
+    }
+}
+
+/**
+ * The layers of one plane, drawn into the receiving [Box]: the defocused copy, the fixed tint and
+ * the sharp crop. [band] locates the sharp crop, which is anchored to the box's top edge and runs
+ * down to [PosterBand.bottom], so a status bar inset moves only where the artwork ends.
+ */
+@Composable
+private fun BoxScope.CinematicPlane(artwork: String, band: PosterBand) {
+    AmbientArtworkLayer(artwork, Modifier.matchParentSize())
+    // One continuous, fixed tint keeps the ambient plane readable behind the whole page.
+    Box(
+        Modifier.matchParentSize().background(
+            Brush.verticalGradient(
+                0f to AliflixBackgroundBase.copy(alpha = 0.32f),
+                0.60f to AliflixBackgroundBase.copy(alpha = 0.64f),
+                1f to AliflixBackgroundBase,
+            ),
+        ),
+    )
+
+    if (band.height <= 0.dp) return
+    AsyncImage(
+        model = artwork,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .fillMaxWidth()
+            .height(band.bottom)
+            .cinematicArtworkFade(),
+    )
 }
 
 /** Isolate DstIn so the mask removes only the artwork, never the ambient layer or page content. */

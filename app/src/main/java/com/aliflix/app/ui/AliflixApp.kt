@@ -1812,28 +1812,9 @@ internal fun HomeFeed(
         }
     }
 
+    // The poster is drawn by the hero item below, so it scrolls away with the hero and the rails
+    // underneath it sit on this plain Aliflix background. Only the base colour stays out here.
     Box(modifier.fillMaxSize().background(AliflixBackgroundBase)) {
-        if (!com.aliflix.app.BuildConfig.IS_TV) {
-            val page = pagerState.currentPage
-            val offset = pagerState.currentPageOffsetFraction
-            val current = heroCandidates[page % heroCandidates.size]
-            val heroHeight = homeHeroHeight(LocalDensity.current.fontScale)
-            // Both artwork layers are siblings of the list, so vertical scrolling cannot drag
-            // or stretch the poster. The alpha mask blends it into the fixed ambient plane.
-            CinematicBackdrop(
-                artwork = current.backdropUrl ?: current.posterUrl,
-                modifier = Modifier.matchParentSize(),
-                posterHeight = heroHeight,
-            )
-            if (offset != 0f) {
-                val next = heroCandidates[Math.floorMod(page + if (offset > 0) 1 else -1, heroCandidates.size)]
-                CinematicBackdrop(
-                    artwork = next.backdropUrl ?: next.posterUrl,
-                    modifier = Modifier.matchParentSize().graphicsLayer { alpha = offset.absoluteValue },
-                    posterHeight = heroHeight,
-                )
-            }
-        }
     LazyColumn(
         state = listState,
         modifier = Modifier
@@ -1843,6 +1824,30 @@ internal fun HomeFeed(
     ) {
         item {
             Box {
+                if (!com.aliflix.app.BuildConfig.IS_TV) {
+                    val heroPage = pagerState.currentPage
+                    val heroPageOffset = pagerState.currentPageOffsetFraction
+                    val heroFeatured = heroCandidates[heroPage % heroCandidates.size]
+                    // The plane is bounded by the hero box, which scrolls with the list, so the
+                    // poster only ever occupies the hero and the dark background takes over below.
+                    CinematicPosterPlane(
+                        artwork = heroFeatured.backdropUrl ?: heroFeatured.posterUrl,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                    if (heroPageOffset != 0f) {
+                        val neighbour = heroCandidates[
+                            Math.floorMod(
+                                heroPage + if (heroPageOffset > 0) 1 else -1,
+                                heroCandidates.size,
+                            )
+                        ]
+                        CinematicPosterPlane(
+                            artwork = neighbour.backdropUrl ?: neighbour.posterUrl,
+                            modifier = Modifier.matchParentSize(),
+                            planeAlpha = heroPageOffset.absoluteValue,
+                        )
+                    }
+                }
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxWidth(),

@@ -57,5 +57,13 @@ class HomeHeroHeightTest {
         assertEquals(0.dp(), posterBand(androidx.compose.ui.unit.Dp.Infinity, 0.dp(), 556.dp()).height)
     }
 
+    @Test fun `the scrolling home plane is bounded by the hero and never by the screen`() {
+        val hero = homeHeroHeight(1.3f)
+        val band = posterBand(planeHeight = hero, posterTopInset = 0.dp(), posterHeight = hero)
+        assertEquals(0.dp(), band.top)
+        assertEquals(hero, band.bottom)
+        assertEquals(hero, band.height)
+    }
+
     private fun Int.dp() = androidx.compose.ui.unit.Dp(this.toFloat())
 }

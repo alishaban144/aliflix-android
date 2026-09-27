@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "206"
-  RELEASE_VERSION_NAME: "3.1.116"
+  RELEASE_VERSION_CODE: "207"
+  RELEASE_VERSION_NAME: "3.1.117"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
           fi
 
   playback-device-tests:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' && github.ref_name != 'release/v3.1.104' && github.ref_name != 'v3.1.104' && github.ref_name != 'release/v3.1.105' && github.ref_name != 'v3.1.105' && github.ref_name != 'release/v3.1.106' && github.ref_name != 'v3.1.106' && github.ref_name != 'release/v3.1.107' && github.ref_name != 'v3.1.107' && github.ref_name != 'release/v3.1.108' && github.ref_name != 'v3.1.108' && github.ref_name != 'release/v3.1.109' && github.ref_name != 'v3.1.109' && github.ref_name != 'release/v3.1.110' && github.ref_name != 'v3.1.110' && github.ref_name != 'release/v3.1.111' && github.ref_name != 'v3.1.111' && github.ref_name != 'release/v3.1.112' && github.ref_name != 'v3.1.112' && github.ref_name != 'v3.1.113' && github.ref_name != 'release/v3.1.114' && github.ref_name != 'v3.1.114' && github.ref_name != 'release/v3.1.115' && github.ref_name != 'v3.1.115' && github.ref_name != 'release/v3.1.116' && github.ref_name != 'v3.1.116' }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' && github.ref_name != 'release/v3.1.104' && github.ref_name != 'v3.1.104' && github.ref_name != 'release/v3.1.105' && github.ref_name != 'v3.1.105' && github.ref_name != 'release/v3.1.106' && github.ref_name != 'v3.1.106' && github.ref_name != 'release/v3.1.107' && github.ref_name != 'v3.1.107' && github.ref_name != 'release/v3.1.108' && github.ref_name != 'v3.1.108' && github.ref_name != 'release/v3.1.109' && github.ref_name != 'v3.1.109' && github.ref_name != 'release/v3.1.110' && github.ref_name != 'v3.1.110' && github.ref_name != 'release/v3.1.111' && github.ref_name != 'v3.1.111' && github.ref_name != 'release/v3.1.112' && github.ref_name != 'v3.1.112' && github.ref_name != 'v3.1.113' && github.ref_name != 'release/v3.1.114' && github.ref_name != 'v3.1.114' && github.ref_name != 'release/v3.1.115' && github.ref_name != 'v3.1.115' && github.ref_name != 'release/v3.1.116' && github.ref_name != 'v3.1.116' && github.ref_name != 'release/v3.1.117' && github.ref_name != 'v3.1.117' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -187,7 +187,7 @@ jobs:
       always() && needs.changed-paths.result == 'success' &&
       (needs.playback-device-tests.result == 'success' ||
        (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
-        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103' || github.ref_name == 'release/v3.1.104' || github.ref_name == 'v3.1.104' || github.ref_name == 'release/v3.1.105' || github.ref_name == 'v3.1.105' || github.ref_name == 'release/v3.1.106' || github.ref_name == 'v3.1.106' || github.ref_name == 'release/v3.1.107' || github.ref_name == 'v3.1.107' || github.ref_name == 'release/v3.1.108' || github.ref_name == 'v3.1.108' || github.ref_name == 'release/v3.1.109' || github.ref_name == 'v3.1.109' || github.ref_name == 'release/v3.1.110' || github.ref_name == 'v3.1.110' || github.ref_name == 'release/v3.1.111' || github.ref_name == 'v3.1.111' || github.ref_name == 'release/v3.1.112' || github.ref_name == 'v3.1.112' || github.ref_name == 'release/v3.1.113' || github.ref_name == 'v3.1.113' || github.ref_name == 'release/v3.1.114' || github.ref_name == 'v3.1.114' || github.ref_name == 'release/v3.1.115' || github.ref_name == 'v3.1.115' || github.ref_name == 'release/v3.1.116' || github.ref_name == 'v3.1.116') && needs.playback-device-tests.result == 'skipped')) &&
+        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103' || github.ref_name == 'release/v3.1.104' || github.ref_name == 'v3.1.104' || github.ref_name == 'release/v3.1.105' || github.ref_name == 'v3.1.105' || github.ref_name == 'release/v3.1.106' || github.ref_name == 'v3.1.106' || github.ref_name == 'release/v3.1.107' || github.ref_name == 'v3.1.107' || github.ref_name == 'release/v3.1.108' || github.ref_name == 'v3.1.108' || github.ref_name == 'release/v3.1.109' || github.ref_name == 'v3.1.109' || github.ref_name == 'release/v3.1.110' || github.ref_name == 'v3.1.110' || github.ref_name == 'release/v3.1.111' || github.ref_name == 'v3.1.111' || github.ref_name == 'release/v3.1.112' || github.ref_name == 'v3.1.112' || github.ref_name == 'release/v3.1.113' || github.ref_name == 'v3.1.113' || github.ref_name == 'release/v3.1.114' || github.ref_name == 'v3.1.114' || github.ref_name == 'release/v3.1.115' || github.ref_name == 'v3.1.115' || github.ref_name == 'release/v3.1.116' || github.ref_name == 'v3.1.116' || github.ref_name == 'release/v3.1.117' || github.ref_name == 'v3.1.117') && needs.playback-device-tests.result == 'skipped')) &&
 
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
@@ -314,7 +314,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Home and movie/series artwork now fades smoothly into the Aliflix blue-black ambient background before its lower edge. The artwork and gradient stay fixed while page content scrolls. Removed the separate scrolling detail scrim and extended the artwork behind the status bar. TV and playback behavior are unchanged. Emulator validation was omitted at user request; device appearance remains unverified."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: the Home poster now lives inside the scrolling page instead of being fixed behind it. The artwork occupies the hero only, so scrolling down carries the poster off the top and leaves the plain Aliflix dark background underneath, with no second stationary copy of the same picture behind the rails. At rest the hero looks exactly as before, and the movie and series detail artwork is unchanged. TV and playback behavior are unchanged. Emulator validation was omitted at user request; device appearance remains unverified."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -342,7 +342,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Home and movie/series artwork now fades smoothly into the Aliflix blue-black ambient background before its lower edge. The artwork and gradient stay fixed while page content scrolls. Removed the separate scrolling detail scrim and extended the artwork behind the status bar. TV and playback behavior are unchanged. Emulator validation was omitted at user request; device appearance remains unverified. Unit tests, lint, production signing and APK integrity are checked by this release workflow."
+          body: "The Home poster now lives inside the scrolling page instead of being fixed behind it. The artwork occupies the hero only, so scrolling down carries the poster off the top and leaves the plain Aliflix dark background underneath, with no second stationary copy of the same picture behind the rails. At rest the hero looks exactly as before, and the movie and series detail artwork is unchanged. TV and playback behavior are unchanged. Emulator validation was omitted at user request; device appearance remains unverified. Unit tests, lint, production signing and APK integrity are checked by this release workflow."
 
           files: |
             aliflix-mobile.apk
