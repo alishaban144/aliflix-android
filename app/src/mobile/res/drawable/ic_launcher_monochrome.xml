@@ -1,4 +1,3 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Keep the entire canonical mark within adaptive launchers' safe circle. -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
     android:inset="10dp" android:drawable="@drawable/aliflix_logo" />

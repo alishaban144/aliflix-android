@@ -60,6 +60,7 @@ internal fun V3TitleDetails.toStableMobileMedia(fallback: Media): Media {
             )
         }.ifEmpty { fallback.creators },
         cast = cast.map { it.name }.ifEmpty { fallback.cast },
+        castPeople = cast.map { MediaCreator(it.tmdbId, it.name, it.profilePath) }.ifEmpty { fallback.castPeople },
         reviews = reviews.map { review ->
             MediaReview(
                 id = review.id,
@@ -96,6 +97,7 @@ internal fun Media.mergeStableMobileDetailUpdate(update: Media): Media {
         tmdbVoteCount = tmdbVoteCount ?: update.tmdbVoteCount,
         genres = genres.ifEmpty { update.genres },
         cast = cast.ifEmpty { update.cast },
+        castPeople = update.castPeople.ifEmpty { castPeople },
         status = status.ifBlank { update.status },
         originalLanguage = originalLanguage.ifBlank { update.originalLanguage },
         creators = creators.ifEmpty { update.creators },

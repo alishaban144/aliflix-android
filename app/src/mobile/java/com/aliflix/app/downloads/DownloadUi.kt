@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -278,14 +279,23 @@ internal interface DownloadUiDependencies {
 
                 if (media.type == MediaType.TV && initialEpisode == null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        var seasonMenu by remember { mutableStateOf(false) }
-                        Box {
-                            TextButton(onClick = { seasonMenu = true }, enabled = !saving && !listLoading, modifier = Modifier.heightIn(min = 48.dp)) { Text("Season $season ▾") }
-                            DropdownMenu(seasonMenu, { seasonMenu = false }) { seasons.forEach {
-                                DropdownMenuItem(text = { Text(it.title) }, onClick = { chosen = emptySet(); season = it.number; seasonMenu = false })
-                            } }
+                        androidx.compose.foundation.lazy.LazyRow(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            items(seasons.size) { index ->
+                                val tab = seasons[index]
+                                TextButton(
+                                    onClick = { chosen = emptySet(); season = tab.number },
+                                    enabled = !saving && !listLoading,
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = if (season == tab.number) AliflixContentPrimary else AliflixContentSecondary,
+                                        containerColor = if (season == tab.number) AliflixSurfaceRaised else Color.Transparent,
+                                    ),
+                                ) { Text("S${tab.number}", fontWeight = if (season == tab.number) FontWeight.Bold else FontWeight.Normal) }
+                            }
                         }
-                        Spacer(Modifier.weight(1f))
                         TextButton(enabled = !saving && !listLoading && eligible.isNotEmpty(), modifier = Modifier.heightIn(min = 48.dp), onClick = {
                             chosen = if (selectedKeys == eligible) emptySet() else rawSelections.map { it.first }.toSet()
                         }) { Text(if (selectedKeys == eligible && selectedKeys.isNotEmpty()) "Clear" else "Select all") }

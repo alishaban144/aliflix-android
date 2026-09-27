@@ -64,6 +64,7 @@ data class Media(
     val reviews: List<MediaReview> = emptyList(),
     val keywords: List<MediaKeyword> = emptyList(),
     val trailerKey: String? = null,
+    val castPeople: List<MediaCreator> = emptyList(),
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
@@ -161,6 +162,11 @@ data class Media(
         tmdbVoteCount?.let { put("tmdbVoteCount", it) }
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
+        put("castPeople", org.json.JSONArray().apply {
+            castPeople.forEach { person ->
+                put(JSONObject().put("tmdbId", person.tmdbId).put("name", person.name).put("profilePath", person.profilePath))
+            }
+        })
         put("status", status)
         put("originalLanguage", originalLanguage)
         put("creators", org.json.JSONArray().apply {
@@ -238,6 +244,15 @@ data class Media(
                 }.orEmpty(),
                 status = json.optString("status"),
                 originalLanguage = json.optString("originalLanguage"),
+                castPeople = json.optJSONArray("castPeople")?.let { array ->
+                    (0 until array.length()).mapNotNull { index ->
+                        val person = array.optJSONObject(index) ?: return@mapNotNull null
+                        val id = person.optInt("tmdbId")
+                        val name = person.optString("name").trim()
+                        if (id <= 0 || name.isBlank()) return@mapNotNull null
+                        MediaCreator(id, name, person.optString("profilePath").takeIf { it.isNotBlank() && it != "null" })
+                    }
+                }.orEmpty(),
                 creators = json.optJSONArray("creators")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         val creator = array.optJSONObject(index) ?: return@mapNotNull null

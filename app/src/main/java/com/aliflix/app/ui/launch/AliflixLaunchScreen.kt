@@ -418,18 +418,8 @@ fun AliflixHeatmapLogo(
     timeSeconds: Float,
     modifier: Modifier = Modifier,
 ) {
-    val blurPaint = remember {
-        Paint().apply {
-            isAntiAlias = true
-            maskFilter = BlurMaskFilter(4.8f, BlurMaskFilter.Blur.NORMAL)
-        }
-    }
-    val softBandPaint = remember {
-        Paint().apply {
-            isAntiAlias = true
-            maskFilter = BlurMaskFilter(1.1f, BlurMaskFilter.Blur.NORMAL)
-        }
-    }
+    val resources = LocalContext.current.resources
+    val geometry = remember(resources) { AliflixLogoGeometry.load(resources) }
 
     Canvas(modifier = modifier) {
         val unit = minOf(size.width, size.height)
@@ -438,7 +428,11 @@ fun AliflixHeatmapLogo(
         val scaleFactor = unit / AliflixLogoGeometry.VIEWBOX_SIZE
         val center = Offset(left + 50f * scaleFactor, top + 50f * scaleFactor)
 
-        val logoPath = AliflixLogoGeometry.createCombinedLogoPath(unit, left, top)
+        val logoPath = geometry.createCombinedLogoPath(unit, left, top)
+        if (timeSeconds <= 0f) {
+            geometry.draw(this, unit, left, top)
+            return@Canvas
+        }
 
         // Mathematical motion values from reference HTML, offset to the original
         // artwork's illuminated lilac phase without replacing its geometry.

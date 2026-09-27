@@ -20,13 +20,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aliflix.app.ui.launch.AliflixHeatmapLogo
+import com.aliflix.app.ui.common.AliflixLogoMark
 import com.aliflix.app.ui.theme.*
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** A compact, draw-only orbital treatment around the application's ORIGINAL logo geometry. */
+/** A compact orbital treatment around the canonical brand asset. */
 @Composable
 internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
     val reducedMotion = !ValueAnimator.areAnimatorsEnabled()
@@ -41,7 +41,6 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         shape = RoundedCornerShape(22.dp),
         color = AliflixSurfacePrimary,
-        border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .36f)),
     ) {
         Column(
             modifier = Modifier.background(
@@ -84,9 +83,7 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                             )
                         }
                     }
-                    // The original heatmap renderer now starts at its illuminated
-                    // lilac phase; use that same authentic mark as the Discover header.
-                    AliflixHeatmapLogo(timeSeconds = 0f, modifier = Modifier.size(32.dp))
+                    AliflixLogoMark(modifier = Modifier.size(32.dp))
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -96,7 +93,6 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(13.dp),
                         contentPadding = PaddingValues(horizontal = 9.dp),
-                        border = BorderStroke(1.dp, AliflixAccentSecondary.copy(alpha = .35f)),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (index == 0) Color(0xFFE9D9FF) else Color(0xFF423051),
                             contentColor = if (index == 0) Color(0xFF271337) else Color.White,

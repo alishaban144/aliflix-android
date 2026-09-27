@@ -124,8 +124,7 @@ internal fun CategoryBrowser(
 private fun CategoryHeader(title: String, onBack: () -> Unit, onSearch: (() -> Unit)?) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        IconButton(onClick = onBack, modifier = Modifier.size(48.dp).clip(CircleShape)
-            .background(AliflixGlassIcon).border(1.dp, AliflixBorderStrong, CircleShape)) {
+        IconButton(onClick = onBack, modifier = Modifier.size(48.dp).clip(CircleShape)) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to previous screen", tint = AliflixContentPrimary)
         }
         Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge,

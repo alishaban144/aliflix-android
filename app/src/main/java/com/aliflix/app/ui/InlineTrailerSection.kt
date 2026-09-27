@@ -294,7 +294,7 @@ private fun TrailerPlayer(videoId: String, media: Media) {
         }
     }
 
-    DetailInfoSection(title = "Trailer", clipCardContent = false, cardPadding = 8.dp) {
+    DetailInfoSection(title = "Trailer") {
         // Do not clip the Android video surface into a rounded Compose layer.
         Box(Modifier.fillMaxWidth().background(AliflixSurfaceSecondary)) {
             Column {

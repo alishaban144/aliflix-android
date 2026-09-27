@@ -226,7 +226,7 @@ import com.aliflix.app.update.UpdateCheckResult
 import com.aliflix.app.update.UpdateInfo
 import com.aliflix.app.ui.discover.DiscoverScreen
 import com.aliflix.app.ui.home.HomeSkeleton
-import com.aliflix.app.ui.launch.AliflixHeatmapLogo
+import com.aliflix.app.ui.common.AliflixLogoMark
 import com.aliflix.app.ui.launch.AliflixLaunchOverlay
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentPrimaryContainer
@@ -3541,14 +3541,6 @@ private fun GenreOrganizedList(
                         .padding(top = 10.dp, bottom = 1.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .width(4.dp)
-                            .height(22.dp)
-                            .clip(CircleShape)
-                            .background(AliflixRed),
-                    )
-                    Spacer(Modifier.width(10.dp))
                     Text(
                         text = genre,
                         color = Color.White,
@@ -3839,9 +3831,7 @@ private fun PersonCreditsScreen(
                 onClick = onBack,
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(CircleShape)
-                    .background(AliflixSurfaceSecondary)
-                    .border(1.dp, AliflixBorderSubtle, CircleShape),
+                    .clip(CircleShape),
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
@@ -3982,9 +3972,7 @@ private fun GenreExploreScreen(
                 onClick = onBack,
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(CircleShape)
-                    .background(AliflixSurfaceSecondary)
-                    .border(1.dp, AliflixBorderSubtle, CircleShape),
+                    .clip(CircleShape),
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
@@ -4364,10 +4352,8 @@ internal fun DetailScreen(
             }
     }
     var overviewExpanded by rememberSaveable(item.key) { mutableStateOf(false) }
-    var castExpanded by rememberSaveable(item.key) { mutableStateOf(false) }
     val overview = item.overview.ifBlank { "No overview is available yet." }
     var overviewCanExpand by remember(item.key) { mutableStateOf(false) }
-    val visibleCast = if (castExpanded) item.cast else item.cast.take(8)
     // The poster is drawn by the hero item below, so it scrolls away with the hero and the sections
     // underneath it sit on this plain Aliflix background. Only the base colour stays out here.
     Box(Modifier.fillMaxSize().background(AliflixBackgroundBase)) {
@@ -4403,9 +4389,7 @@ internal fun DetailScreen(
                         
                         .padding(16.dp)
                         .size(48.dp)
-                        .clip(CircleShape)
-                        .background(com.aliflix.app.ui.theme.AliflixGlassIcon)
-                        .border(1.dp, AliflixBorderStrong, CircleShape),
+                        .clip(CircleShape),
                 ) {
                     Icon(
                         Icons.AutoMirrored.Rounded.ArrowBack,
@@ -4562,23 +4546,13 @@ internal fun DetailScreen(
                         }
                     }
                 }
-                if (item.creators.isNotEmpty()) {
-                    DetailInfoSection(title = "Creators") {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            contentPadding = PaddingValues(end = 4.dp),
-                        ) {
-                            items(item.creators.distinctBy { it.tmdbId }, key = { creator -> creator.tmdbId }) { creator ->
-                                DetailCreatorCard(
-                                    creator = creator,
-                                    onClick = { onOpenCreator(creator) },
-                                )
-                            }
-                        }
+                if (item.cast.isNotEmpty() || item.castPeople.isNotEmpty() || item.creators.isNotEmpty()) {
+                    DetailInfoSection(title = "Cast") {
+                        DetailCastRow(item = item, onOpenCreator = onOpenCreator)
                     }
                 }
                 if (!com.aliflix.app.BuildConfig.IS_TV) InlineTrailerSection(item)
-                if (item.originalLanguage.isNotBlank() || item.cast.isNotEmpty()) {
+                if (item.originalLanguage.isNotBlank()) {
                     DetailInfoSection(title = "Details") {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             if (item.originalLanguage.isNotBlank()) {
@@ -4602,38 +4576,7 @@ internal fun DetailScreen(
                                     }
                                 }
                             }
-                            if (item.cast.isNotEmpty()) {
-                                DetailFact(label = "Cast") {
-                                    Column(
-                                        modifier = Modifier.animateContentSize(),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                                    ) {
-                                        Text(
-                                            text = visibleCast.joinToString(),
-                                            color = AliflixContentSecondary,
-                                            fontSize = 14.sp,
-                                            lineHeight = 21.sp,
-                                        )
-                                        if (item.cast.size > 8) {
-                                            TextButton(
-                                                onClick = { castExpanded = !castExpanded },
-                                                modifier = Modifier.heightIn(min = 48.dp),
-                                                contentPadding = PaddingValues(horizontal = 0.dp),
-                                            ) {
-                                                Text(
-                                                    text = if (castExpanded) {
-                                                        "Show less"
-                                                    } else {
-                                                        "Show all ${item.cast.size} cast members"
-                                                    },
-                                                    color = AliflixAccentSecondary,
-                                                    fontWeight = FontWeight.Bold,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+
                         }
                     }
                 }
@@ -4660,7 +4603,7 @@ internal fun DetailScreen(
                         DetailReviewsCarousel(reviews = item.reviews)
                     }
                 }
-                if (item.keywords.isNotEmpty() && onOpenKeyword != null) DetailInfoSection(title = "Keywords", cardPadding = 12.dp) {
+                if (item.keywords.isNotEmpty() && onOpenKeyword != null) DetailInfoSection(title = "Keywords") {
                     CompactKeywords(item.keywords.distinctBy { it.id }, onOpenKeyword)
                 }
                 if (state.error != null) {
@@ -4701,31 +4644,18 @@ internal fun DetailScreen(
                     ) {
                         items(state.seasons.distinctBy { it.number }, key = { it.number }) { season ->
                             val selected = season.number == state.selectedSeason
-                            AssistChip(
+                            TextButton(
                                 onClick = { onSelectSeason(season.number) },
-                                label = {
-                                    Text(
-                                        buildString {
-                                            append("Season ")
-                                            append(season.number)
-                                            if (season.episodeCount > 0) {
-                                                append("  \u2022  ")
-                                                append(season.episodeCount)
-                                                append(" episodes")
-                                            }
-                                        },
-                                    )
-                                },
-                                colors = AssistChipDefaults.assistChipColors(
-                                    containerColor = if (selected) AliflixAccentPrimary else AliflixSurfaceRaised,
-                                    labelColor = Color.White,
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.textButtonColors(
+                                    containerColor = if (selected) AliflixSurfaceRaised else Color.Transparent,
+                                    contentColor = if (selected) Color.White else AliflixContentSecondary,
                                 ),
-                                border = AssistChipDefaults.assistChipBorder(
-                                    enabled = true,
-                                    borderColor = if (selected) AliflixAccentPrimary
-                                    else Color.White.copy(alpha = 0.10f),
-                                ),
-                            )
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                            ) {
+                                Text("S${season.number}", fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+                            }
                         }
                     }
                 }
@@ -4834,78 +4764,38 @@ private fun DetailFact(
 }
 
 @Composable
-private fun DetailCreatorCard(
-    creator: MediaCreator,
-    onClick: () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    val cardScale by animateFloatAsState(
-        targetValue = if (pressed) 0.97f else 1f,
-        animationSpec = tween(110),
-        label = "detail-creator-press",
-    )
-    Surface(
-        modifier = Modifier
-            .widthIn(min = 160.dp, max = 210.dp)
-            .heightIn(min = 56.dp)
-            .scale(cardScale)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
-            ),
-        shape = RoundedCornerShape(18.dp),
-        color = AliflixSurface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
-    ) {
-        Row(
-            modifier = Modifier.padding(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(AliflixSurfacePressed),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (creator.profileUrl != null) {
-                    AsyncImage(
-                        model = creator.profileUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Filled.Person,
-                        contentDescription = null,
-                        tint = AliflixContentTertiary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
+private fun DetailCastRow(item: Media, onOpenCreator: (MediaCreator) -> Unit) {
+    val people = remember(item.castPeople, item.cast, item.creators) {
+        val actors = item.castPeople + item.cast.filter { name ->
+            item.castPeople.none { it.name.equals(name, ignoreCase = true) }
+        }.map { name -> item.creators.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: MediaCreator(0, name) }
+        (actors + item.creators).filter { it.name.isNotBlank() }
+            .distinctBy { if (it.tmdbId > 0) "id:${it.tmdbId}" else "name:${it.name.lowercase(Locale.ROOT)}" }
+    }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        items(people, key = { if (it.tmdbId > 0) "id:${it.tmdbId}" else "name:${it.name.lowercase(Locale.ROOT)}" }) { person ->
+            val creator = item.creators.firstOrNull {
+                (person.tmdbId > 0 && it.tmdbId == person.tmdbId) || it.name.equals(person.name, ignoreCase = true)
             }
             Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.width(72.dp).then(
+                    if (creator != null) Modifier.clickable { onOpenCreator(creator) } else Modifier,
+                ),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                Text(
-                    text = creator.name,
-                    color = AliflixContentPrimary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Box(Modifier.size(52.dp).clip(CircleShape).background(AliflixSurfaceRaised), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Person, null, tint = AliflixContentTertiary, modifier = Modifier.size(24.dp))
+                    (person.profileUrl ?: creator?.profileUrl)?.let { portrait ->
+                        AsyncImage(portrait, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    }
+                }
+                Text(person.name, color = AliflixContentPrimary, fontSize = 11.sp, lineHeight = 14.sp,
+                    fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center)
+                if (creator != null) Text("CREATOR", color = AliflixContentSecondary, fontSize = 8.sp,
+                    lineHeight = 10.sp, letterSpacing = .5.sp, fontWeight = FontWeight.Bold)
             }
-            Icon(
-                imageVector = Icons.Rounded.ChevronRight,
-                contentDescription = null,
-                tint = AliflixAccentSecondary,
-                modifier = Modifier.size(19.dp),
-            )
         }
     }
 }
@@ -5141,60 +5031,15 @@ private fun DetailReviewCard(
 internal fun DetailInfoSection(
     title: String,
     badge: (@Composable () -> Unit)? = null,
-    clipCardContent: Boolean = true,
-    cardPadding: androidx.compose.ui.unit.Dp = 18.dp,
     content: @Composable () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.animateContentSize(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height(15.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(AliflixAccentSecondary, AliflixAccentPrimary),
-                        ),
-                    ),
-            )
-            Text(
-                text = title,
-                color = AliflixContentPrimary,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Black,
-            )
+    Column(modifier = Modifier.animateContentSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             badge?.invoke()
         }
-        if (!clipCardContent) {
-            // Decorate around native video without clipping its Android surface.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(AliflixSurfaceSecondary, RoundedCornerShape(24.dp))
-                    .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(24.dp))
-                    .padding(cardPadding),
-            ) {
-                content()
-            }
-        } else Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .animateContentSize(),
-            shape = RoundedCornerShape(24.dp),
-            color = AliflixSurfaceSecondary,
-            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle),
-        ) {
-            Box(modifier = Modifier.padding(cardPadding)) {
-                content()
-            }
-        }
+        // Keep the native trailer surface un-clipped; no nested card or decorative border.
+        Box(Modifier.fillMaxWidth()) { content() }
     }
 }
 
@@ -5227,7 +5072,6 @@ private fun DetailCinematicActionPanel(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         color = AliflixSurfacePrimary.copy(alpha = 0.88f),
-        border = BorderStroke(1.dp, AliflixBorderSubtle),
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -5366,7 +5210,6 @@ private fun DetailRatingsStrip(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(AliflixSurfaceSecondary.copy(alpha = 0.7f))
-            .border(BorderStroke(1.dp, AliflixBorderSubtle), RoundedCornerShape(12.dp))
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -6035,8 +5878,7 @@ private fun ConfigurationError(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        AliflixHeatmapLogo(
-            timeSeconds = 2f,
+        AliflixLogoMark(
             modifier = Modifier
                 .width(84.dp)
                 .height(68.dp),
@@ -6083,8 +5925,7 @@ private fun EmptyMessage(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        AliflixHeatmapLogo(
-            timeSeconds = 2f,
+        AliflixLogoMark(
             modifier = Modifier
                 .width(64.dp)
                 .height(50.dp),

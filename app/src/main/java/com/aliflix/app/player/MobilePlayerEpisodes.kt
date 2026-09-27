@@ -239,7 +239,7 @@ private fun EpisodesContent(
                             .padding(horizontal = 14.dp, vertical = 7.dp),
                     ) {
                         Text(
-                            text = "Season $seasonNum",
+                            text = "S$seasonNum",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
