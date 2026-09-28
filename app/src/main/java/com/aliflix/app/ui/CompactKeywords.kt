@@ -1,11 +1,11 @@
 package com.aliflix.app.ui
 
-import androidx.compose.foundation.BorderStroke
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -23,19 +23,18 @@ internal fun CompactKeywords(keywords: List<MediaKeyword>, onOpen: (MediaKeyword
         val rowCount = if (keywords.size > 4) 2 else 1
         List(rowCount) { row -> keywords.filterIndexed { index, _ -> index % rowCount == row } }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
         rows.forEach { row ->
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
                 items(row, key = { it.id }) { keyword ->
-                    Surface(
+                    AliflixSurface(
                         onClick = { onOpen(keyword) },
-                        shape = RoundedCornerShape(12.dp),
-                        color = AliflixGlassIdle,
-                        border = BorderStroke(1.dp, AliflixBorderSubtle),
+                        shape = AliflixCorners.Small,
+                        level = AliflixSurfaceLevel.Content,
                     ) {
                         Text(
                             keyword.name,
-                            modifier = Modifier.widthIn(max = 220.dp).padding(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.widthIn(max = 220.dp).padding(horizontal = AliflixSpacing.Medium, vertical = 10.dp),
                             fontSize = 12.sp,
                             color = AliflixContentSecondary,
                             maxLines = 1,

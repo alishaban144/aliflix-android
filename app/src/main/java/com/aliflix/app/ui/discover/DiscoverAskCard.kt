@@ -1,12 +1,12 @@
 package com.aliflix.app.ui.discover
 
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import android.animation.ValueAnimator
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material3.*
@@ -37,16 +37,14 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
         animationSpec = infiniteRepeatable(tween(48000, easing = LinearEasing)),
         label = "subtle-orbit",
     )
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(22.dp),
-        color = AliflixSurfacePrimary,
+    AliflixSurface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small),
+        shape = AliflixCorners.Panel,
+        level = AliflixSurfaceLevel.Content,
     ) {
         Column(
-            modifier = Modifier.background(
-                Brush.linearGradient(listOf(Color(0xFF251635), Color(0xFF171625), Color(0xFF2A1C3E)))
-            ).padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().height(84.dp),
@@ -91,11 +89,11 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                     Button(
                         onClick = { onMode(index) },
                         modifier = Modifier.weight(1f).height(48.dp),
-                        shape = RoundedCornerShape(13.dp),
+                        shape = AliflixCorners.Small,
                         contentPadding = PaddingValues(horizontal = 9.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (index == 0) Color(0xFFE9D9FF) else Color(0xFF423051),
-                            contentColor = if (index == 0) Color(0xFF271337) else Color.White,
+                            containerColor = if (index == 0) AliflixAccentSecondary else AliflixSurfaceDefaults.color(),
+                            contentColor = if (index == 0) com.aliflix.app.ui.theme.AliflixContentInverse else Color.White,
                         ),
                     ) {
                         Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)

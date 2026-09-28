@@ -1,19 +1,20 @@
 package com.aliflix.app.ui.discover
 
+import androidx.compose.ui.graphics.Color
+import com.aliflix.app.ui.common.*
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.runtime.Composable
@@ -28,12 +29,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
-import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 
 @Composable
 fun AskAliflixDescribe(
@@ -56,7 +54,7 @@ fun AskAliflixDescribe(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 16.dp, vertical = 18.dp),
+                .padding(horizontal = AliflixSpacing.Content, vertical = 18.dp),
         ) {
             Text(
                 text = "What are you in the mood for?",
@@ -84,7 +82,7 @@ fun AskAliflixDescribe(
                 },
                 trailingIcon = if (text.isNotEmpty()) {
                     {
-                        IconButton(onClick = { onTextChanged("") }) {
+                        AliflixIconButton(onClick = { onTextChanged("") }) {
                             Icon(
                                 imageVector = Icons.Rounded.Close,
                                 contentDescription = "Clear description",
@@ -102,12 +100,12 @@ fun AskAliflixDescribe(
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(focusRequester),
-                shape = RoundedCornerShape(20.dp),
+                shape = AliflixCorners.Panel,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AliflixAccentPrimary,
-                    unfocusedBorderColor = AliflixBorderSubtle,
-                    focusedContainerColor = AliflixSurfaceElevated,
-                    unfocusedContainerColor = AliflixSurfaceElevated.copy(alpha = 0.82f),
+                    focusedBorderColor = AliflixSurfaceDefaults.Focus,
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedContainerColor = AliflixSurfaceDefaults.color(),
+                    unfocusedContainerColor = AliflixSurfaceDefaults.color(),
                     focusedTextColor = AliflixContentPrimary,
                     unfocusedTextColor = AliflixContentPrimary,
                     cursorColor = AliflixAccentSecondary,

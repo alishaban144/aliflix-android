@@ -3,10 +3,14 @@
 
 package com.aliflix.app.ui.discover
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import com.aliflix.app.downloads.downloadAtmosphere
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -15,23 +19,15 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.aliflix.app.ui.common.MobileTopSafeArea
-import com.aliflix.app.ui.common.aliflixScreenBackground
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,8 +39,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -52,52 +46,33 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.rounded.AccountCircle
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -105,17 +80,14 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -127,28 +99,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.aliflix.app.SearchMode
-import com.aliflix.app.SearchPhase
 import com.aliflix.app.SearchUiState
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.ProductionCompanyFilter
-import com.aliflix.app.ui.launch.AnimatedAliflixHeatmapLogo
-import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
-import com.aliflix.app.ui.theme.AliflixBackgroundBase
-import com.aliflix.app.ui.theme.AliflixBorderStrong
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixError
-import com.aliflix.app.ui.theme.AliflixSurfaceElevated
-import com.aliflix.app.ui.theme.AliflixSurfacePrimary
-import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.launch
 
 @Composable
 internal fun DiscoverScreen(
@@ -196,20 +157,19 @@ internal fun DiscoverScreen(
     var recentSearches by remember { mutableStateOf(shelves.read("search")) }
     var confirmClear by remember { mutableStateOf(false) }
     if (confirmClear) androidx.compose.ui.window.Dialog(onDismissRequest = { confirmClear = false }) {
-        Surface(shape = RoundedCornerShape(28.dp), color = AliflixSurfacePrimary,
-            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle)) {
-            Column(Modifier.downloadAtmosphere().padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        AliflixSheet() {
+            Column(Modifier.downloadAtmosphere().padding(AliflixSpacing.Large), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     Icon(Icons.Rounded.History, null, Modifier.size(36.dp), tint = AliflixAccentSecondary)
                     Text("Delete search history?", style = MaterialTheme.typography.titleLarge)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = { confirmClear = false }, modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(14.dp)) { Text("Cancel") }
+                    OutlinedButton(onClick = { confirmClear = false }, modifier = Modifier.weight(1f).height(48.dp), shape = AliflixCorners.Card, border = null) { Text("Cancel") }
                     Button(onClick = {
                         recentSearches = emptyList()
                         shelves.clear("search")
                         confirmClear = false
-                    }, modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(14.dp),
+                    }, modifier = Modifier.weight(1f).height(48.dp), shape = AliflixCorners.Card,
                         colors = ButtonDefaults.buttonColors(containerColor = AliflixError)) {
                         Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Delete")
                     }
@@ -381,14 +341,14 @@ internal fun DiscoverScreen(
                     val catalogueHeader: @Composable () -> Unit = { Column {
                         MobileTopSafeArea(extraPadding = 18.dp)
 
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Tiny), verticalAlignment = Alignment.CenterVertically) {
                             Text("Discover", color = AliflixContentPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         }
 
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                                .padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             OutlinedTextField(
@@ -405,7 +365,7 @@ internal fun DiscoverScreen(
                                     )
                                 },
                                 leadingIcon = {
-                                    IconButton(onClick = {
+                                    AliflixIconButton(onClick = {
                                         keyboard?.hide()
                                         fieldValue = fieldValue.copy(text = fieldValue.text.trim())
                                     }) {
@@ -414,7 +374,7 @@ internal fun DiscoverScreen(
                                 },
                                 trailingIcon = {
                                     if (fieldValue.text.isNotEmpty()) {
-                                        IconButton(
+                                        AliflixIconButton(
                                             onClick = {
                                                 fieldValue = TextFieldValue("")
 
@@ -440,22 +400,22 @@ internal fun DiscoverScreen(
                                     color = AliflixContentPrimary,
                                 ),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = AliflixSurfaceElevated,
-                                    unfocusedContainerColor = AliflixSurfaceSecondary,
-                                    focusedBorderColor = AliflixAccentPrimary,
-                                    unfocusedBorderColor = AliflixBorderSubtle,
+                                    focusedContainerColor = AliflixSurfaceDefaults.color(),
+                                    unfocusedContainerColor = AliflixSurfaceDefaults.color(),
+                                    focusedBorderColor = AliflixSurfaceDefaults.Focus,
+                                    unfocusedBorderColor = Color.Transparent,
                                     cursorColor = AliflixAccentSecondary,
                                     focusedTextColor = AliflixContentPrimary,
                                     unfocusedTextColor = AliflixContentPrimary,
                                 ),
-                                shape = RoundedCornerShape(18.dp),
+                                shape = AliflixCorners.Card,
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(56.dp)
                                     .focusRequester(focusRequester)
                                     .testTag("discover-search-field"),
                             )
-                            IconButton(onClick = {
+                            AliflixIconButton(onClick = {
                                 keyboard?.hide()
                                 val query = fieldValue.text.trim()
                                 fieldValue = fieldValue.copy(text = query)
@@ -463,7 +423,7 @@ internal fun DiscoverScreen(
 
 
 
-                            }, modifier = Modifier.padding(start = 8.dp).size(48.dp).background(if (fieldValue.text.isNotBlank()) AliflixAccentPrimary.copy(alpha = .38f) else com.aliflix.app.ui.theme.AliflixGlassIdle, RoundedCornerShape(12.dp)).border(1.dp, AliflixAccentSecondary.copy(alpha = .22f), RoundedCornerShape(12.dp)).testTag("discover-search-button")) {
+                            }, modifier = Modifier.padding(start = 8.dp).size(48.dp).aliflixSurface(if (fieldValue.text.isNotBlank()) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content, AliflixCorners.Small).testTag("discover-search-button")) {
                                 Icon(if (fieldValue.text.isNotBlank()) Icons.AutoMirrored.Rounded.ArrowForward else Icons.Filled.Search, "Search", tint = AliflixAccentSecondary)
                             }
                         }
@@ -477,12 +437,12 @@ internal fun DiscoverScreen(
                         if (fieldValue.text.isBlank() && recentSearches.isNotEmpty()) {
                             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text("Recent searches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                IconButton(onClick = { confirmClear = true }) { Icon(Icons.Rounded.DeleteOutline, "Delete search history") }
+                                AliflixIconButton(onClick = { confirmClear = true }) { Icon(Icons.Rounded.DeleteOutline, "Delete search history") }
                             }
-                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            LazyRow(contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 items(recentSearches, key = Media::key) { media ->
                                     AsyncImage(media.posterUrl, media.title, contentScale = ContentScale.Fit,
-                                        modifier = Modifier.width(118.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(15.dp)).clickable { onOpen(media) })
+                                        modifier = Modifier.width(118.dp).aspectRatio(2f / 3f).clip(AliflixCorners.Card).clickable { onOpen(media) })
                                 }
                             }
                         }
@@ -511,34 +471,25 @@ private fun CatalogueTypeSelector(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    AliflixSegmentedControl(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(0.dp),
+        horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
     ) {
         listOf("All", "Movies", "Series").forEach { option ->
             val active = option == selected
-            val bgColor by androidx.compose.animation.animateColorAsState(
-                targetValue = if (active) com.aliflix.app.ui.theme.AliflixGlassSelected else com.aliflix.app.ui.theme.AliflixGlassIdle,
-                animationSpec = DiscoverMotion.fast(),
-                label = "catalogueBg"
-            )
-            val borderColor by androidx.compose.animation.animateColorAsState(
-                targetValue = if (active) AliflixAccentPrimary.copy(alpha = 0.72f) else AliflixBorderSubtle,
-                animationSpec = DiscoverMotion.fast(),
-                label = "catalogueBorder"
-            )
             val textColor by androidx.compose.animation.animateColorAsState(
                 targetValue = if (active) AliflixContentPrimary else AliflixContentSecondary,
-                animationSpec = DiscoverMotion.fast(),
+                animationSpec = AliflixMotion.selection(),
                 label = "catalogueText"
             )
             val interactionSource = remember { MutableInteractionSource() }
-            Box(
+            AliflixChip(
+                selected = active,
+                contentPadding = PaddingValues(horizontal = 15.dp),
                 modifier = Modifier
                     .height(48.dp)
-                    .clip(RoundedCornerShape(15.dp))
-                    .background(bgColor)
-                    .border(1.dp, borderColor, RoundedCornerShape(15.dp))
+
                     .aliflixPressScale(interactionSource)
                     .selectable(
                         selected = active,
@@ -547,7 +498,6 @@ private fun CatalogueTypeSelector(
                         indication = androidx.compose.foundation.LocalIndication.current,
                         onClick = { onSelect(option) }
                     )
-                    .padding(horizontal = 15.dp)
                     .testTag("discover-filter-${option.lowercase()}"),
                 contentAlignment = Alignment.Center,
             ) {
@@ -609,8 +559,7 @@ internal fun DiscoverPosterCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
-                .clip(RoundedCornerShape(14.dp))
-                .background(AliflixSurfaceSecondary),
+                .aliflixSurface(shape = AliflixCorners.Card),
         )
         Text(
             text = item.title,
@@ -653,18 +602,18 @@ private fun CatalogueSkeletonGrid(modifier: Modifier = Modifier) {
         }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(112.dp),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Tiny),
+            horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Medium),
             verticalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.weight(1f),
         ) {
             items(count = 9, key = { "catalogue-skeleton:$it" }, contentType = { "skeleton" }) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
                     ShimmerBox(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(2f / 3f)
-                            .clip(RoundedCornerShape(14.dp)),
+                            .clip(AliflixCorners.Card),
                     )
                     ShimmerBox(
                         modifier = Modifier
@@ -701,11 +650,10 @@ internal fun InlineNotice(
     onAction: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    AliflixSurface(
         modifier = modifier.fillMaxWidth(),
-        color = AliflixSurfacePrimary,
-        shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle),
+        shape = AliflixCorners.Card,
+        level = AliflixSurfaceLevel.Content,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),

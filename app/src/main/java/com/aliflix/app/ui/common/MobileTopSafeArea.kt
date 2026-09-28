@@ -3,16 +3,10 @@
 package com.aliflix.app.ui.common
 
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.max
 
 /**
  * Provides the safe top spacing for mobile screens.
@@ -23,11 +17,9 @@ import androidx.compose.ui.unit.max
 @Composable
 fun MobileTopSafeArea(
     modifier: Modifier = Modifier,
-    extraPadding: Dp = 16.dp,
+    extraPadding: Dp = AliflixSpacing.Content,
 ) {
-    val statusBarTop = WindowInsets.statusBarsIgnoringVisibility.asPaddingValues().calculateTopPadding()
-    val cutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
-    val topInset = max(statusBarTop, cutoutTop)
+    val topInset = AliflixInsets.TopPadding
     Spacer(
         modifier = modifier.height(topInset + extraPadding)
     )

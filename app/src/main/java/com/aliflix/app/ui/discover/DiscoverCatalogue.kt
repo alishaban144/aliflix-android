@@ -1,5 +1,7 @@
 package com.aliflix.app.ui.discover
 
+import com.aliflix.app.ui.common.AliflixCorners
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -7,7 +9,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -175,7 +176,7 @@ internal fun DiscoverCatalogueContent(
                             contentDescription = item.title,
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.width(118.dp).aspectRatio(2f / 3f)
-                                .clip(RoundedCornerShape(15.dp))
+                                .clip(AliflixCorners.Card)
                                 .background(AliflixSurfaceSecondary)
                                 .clickable { onOpen(item) },
                         )
@@ -270,7 +271,7 @@ internal fun CatalogueGrid(
             item("header", span = { GridItemSpan(maxLineSpan) }) { header() }
             if ((waiting || session.loading) && session.items.isEmpty() && session.people.isEmpty()) {
                 items(9, key = { "skeleton:$it" }) {
-                    ShimmerBox(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)))
+                    ShimmerBox(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(AliflixCorners.Card))
                 }
             }
             if (session.items.isNotEmpty()) {

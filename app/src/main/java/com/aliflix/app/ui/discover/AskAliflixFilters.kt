@@ -2,6 +2,11 @@
 
 package com.aliflix.app.ui.discover
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
@@ -10,7 +15,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,7 +31,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Business
@@ -37,22 +40,17 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
-import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,11 +73,9 @@ import com.aliflix.app.recommendation.RecommendationSort
 import com.aliflix.app.recommendation.ProductionCompanyFilter
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
-import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 import java.time.Year
 import kotlinx.coroutines.delay
@@ -140,7 +136,7 @@ fun AskAliflixFilters(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
+                .padding(start = AliflixSpacing.Content, end = AliflixSpacing.Medium, top = AliflixSpacing.Small, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -165,7 +161,7 @@ fun AskAliflixFilters(
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = AliflixSpacing.Content),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             item {
@@ -244,19 +240,19 @@ fun AskAliflixFilters(
                                     strokeWidth = 2.dp,
                                     color = AliflixAccentSecondary,
                                 )
-                                companyQuery.isNotBlank() -> IconButton(onClick = { companyQuery = "" }) {
+                                companyQuery.isNotBlank() -> AliflixIconButton(onClick = { companyQuery = "" }) {
                                     Icon(Icons.Rounded.Close, contentDescription = "Clear company search")
                                 }
                             }
                         },
                         enabled = spec.productionCompanies.size < 8,
                         singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = AliflixCorners.Card,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = AliflixAccentPrimary,
-                            unfocusedBorderColor = AliflixBorderSubtle,
-                            focusedContainerColor = AliflixSurfaceSecondary,
-                            unfocusedContainerColor = AliflixSurfaceSecondary,
+                            focusedBorderColor = AliflixSurfaceDefaults.Focus,
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedContainerColor = AliflixSurfaceDefaults.color(),
+                            unfocusedContainerColor = AliflixSurfaceDefaults.color(),
                             focusedTextColor = AliflixContentPrimary,
                             unfocusedTextColor = AliflixContentPrimary,
                         ),
@@ -482,10 +478,9 @@ private fun SelectedCompanyChip(
     company: ProductionCompanyFilter,
     onRemove: () -> Unit,
 ) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = AliflixAccentPrimary.copy(alpha = 0.2f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.55f)),
+    AliflixSurface(
+        shape = AliflixCorners.Small,
+        level = AliflixSurfaceLevel.Selected,
     ) {
         Row(
             modifier = Modifier
@@ -520,17 +515,15 @@ private fun CompanySuggestionRow(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 52.dp)
-            .clip(RoundedCornerShape(13.dp))
-            .background(AliflixSurfaceSecondary.copy(alpha = 0.78f))
-            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(13.dp))
+            .aliflixSurface(shape = AliflixCorners.Small)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = AliflixSpacing.Medium, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
                 .size(32.dp)
-                .clip(RoundedCornerShape(9.dp))
+                .clip(AliflixCorners.Small)
                 .background(AliflixAccentPrimary.copy(alpha = 0.18f)),
             contentAlignment = Alignment.Center,
         ) {
@@ -559,7 +552,7 @@ private fun NumericRangeFields(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
     ) {
         listOf(
             Triple(firstLabel, firstValue, onFirstChanged),
@@ -574,12 +567,12 @@ private fun NumericRangeFields(
                 label = { Text(label, fontSize = 11.sp) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                shape = RoundedCornerShape(13.dp),
+                shape = AliflixCorners.Small,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AliflixAccentPrimary,
-                    unfocusedBorderColor = AliflixBorderSubtle,
-                    focusedContainerColor = AliflixSurfaceSecondary,
-                    unfocusedContainerColor = AliflixSurfaceSecondary,
+                    focusedBorderColor = AliflixSurfaceDefaults.Focus,
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedContainerColor = AliflixSurfaceDefaults.color(),
+                    unfocusedContainerColor = AliflixSurfaceDefaults.color(),
                     focusedTextColor = AliflixContentPrimary,
                     unfocusedTextColor = AliflixContentPrimary,
                 ),
@@ -616,16 +609,12 @@ private fun FilterSection(
         AskAliflixMotion.chipSpec(),
         label = "ask-filter-chevron",
     )
-    Surface(
+    AliflixSurface(
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(AskAliflixMotion.smallContentSpec()),
-        color = AliflixSurfaceElevated.copy(alpha = 0.78f),
-        shape = RoundedCornerShape(18.dp),
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            if (expanded) AliflixAccentPrimary.copy(alpha = 0.36f) else AliflixBorderSubtle,
-        ),
+        shape = AliflixCorners.Card,
+        level = AliflixSurfaceLevel.Content,
     ) {
         Column(modifier = Modifier.padding(13.dp)) {
             Row(
@@ -641,7 +630,7 @@ private fun FilterSection(
                 Box(
                     modifier = Modifier
                         .size(36.dp)
-                        .clip(RoundedCornerShape(11.dp))
+                        .clip(AliflixCorners.Small)
                         .background(
                             Brush.linearGradient(
                                 listOf(AliflixAccentPrimary.copy(alpha = 0.28f), AliflixSurfaceSecondary)

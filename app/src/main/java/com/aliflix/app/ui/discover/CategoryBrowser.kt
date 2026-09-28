@@ -1,5 +1,8 @@
 package com.aliflix.app.ui.discover
 
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -9,12 +12,9 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.Icons
@@ -22,9 +22,6 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,16 +73,16 @@ internal fun CategoryBrowser(
                 val spec = tween<Float>(280, easing = FastOutSlowInEasing)
                 if (targetState == "categories") {
                     fadeIn(spec) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 8 } togetherWith
-                        fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -it / 10 }
+                        fadeOut(tween(140)) + slideOutHorizontally(tween(AliflixMotion.Selection)) { -it / 10 }
                 } else {
                     fadeIn(spec) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 5 } togetherWith
-                        fadeOut(tween(140)) + slideOutHorizontally(tween(180)) { -it / 12 }
+                        fadeOut(tween(140)) + slideOutHorizontally(tween(AliflixMotion.Selection)) { -it / 12 }
                 }
             },
             label = "category-browser-transition",
         ) { visibleBase ->
             if (visibleBase == "categories") {
-                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = AliflixSpacing.Large)) {
                     if (failed) item { TextButton(onClick = { retry++ }) { Text("Retry categories") } }
                     if (categories.isEmpty() && !failed) item { CircularProgressIndicator(Modifier.padding(20.dp).size(24.dp)) }
                     categories.groupBy { it.third }.forEach { (type, entries) ->
@@ -93,15 +90,14 @@ internal fun CategoryBrowser(
                         items(entries.chunked(2), key = { pair -> pair.joinToString("|") { it.first } }) { pair ->
                             Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 pair.forEach { (key, name, _) ->
-                                    Surface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).heightIn(min = 76.dp),
-                                        shape = RoundedCornerShape(22.dp), color = Color.Transparent,
-                                        border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))) {
-                                        val tones = listOf(Color(0xFF51437B), Color(0xFF285D67), Color(0xFF704954), Color(0xFF3C5279))
-                                        val tone = tones[(key.hashCode() and Int.MAX_VALUE) % tones.size]
+                                    AliflixSurface(onClick = { selected = key; selectedName = name }, modifier = Modifier.weight(1f).heightIn(min = 76.dp),
+                                        shape = AliflixCorners.Panel,
+                                        level = AliflixSurfaceLevel.Content,
+                                    ) {
                                         Column(
-                                            Modifier.background(Brush.linearGradient(listOf(tone.copy(alpha = .45f), AliflixBackgroundBase)))
+                                            Modifier
                                                 .padding(14.dp),
-                                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Medium),
                                         ) {
                                             Text(name, style = MaterialTheme.typography.titleSmall, fontSize = 14.sp,
                                                 minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -122,15 +118,15 @@ internal fun CategoryBrowser(
 
 @Composable
 private fun CategoryHeader(title: String, onBack: () -> Unit, onSearch: (() -> Unit)?) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+    Row(Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Content, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        IconButton(onClick = onBack, modifier = Modifier.size(48.dp).clip(CircleShape)) {
+        AliflixIconButton(onClick = onBack, modifier = Modifier.size(48.dp).clip(CircleShape)) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to previous screen", tint = AliflixContentPrimary)
         }
         Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
-        if (onSearch != null) IconButton(onClick = onSearch, modifier = Modifier.size(48.dp).clip(CircleShape)
-            .background(AliflixGlassIcon).border(1.dp, AliflixBorderStrong, CircleShape)) {
+        if (onSearch != null) AliflixIconButton(onClick = onSearch, modifier = Modifier.size(48.dp).clip(CircleShape)
+            .aliflixSurface(AliflixSurfaceLevel.Chrome, CircleShape)) {
             Icon(Icons.Outlined.Search, "Search", tint = AliflixContentPrimary, modifier = Modifier.size(22.dp))
         }
     }
@@ -145,7 +141,7 @@ private fun CategorySections(
     val root = store.session(base, "", "All")
     val sections = root.sections
     val scope = rememberCoroutineScope()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = AliflixSpacing.Large)) {
         if (sections.isEmpty()) {
             item {
                 when {
@@ -179,10 +175,11 @@ private fun BrowseRail(
     if (session.items.isNotEmpty()) Column {
         HomeMediaRail(ContentRail(title, session.items), onOpen, compact = false,
             trailingContent = if (session.hasMore || session.error != null) ({
-                Surface(
+                AliflixSurface(
                     onClick = { scope.launch { store.load(key, "", "All", more = true, excludedTmdbIds = excludedTmdbIds) } },
-                    enabled = !session.loading, shape = RoundedCornerShape(20.dp), color = AliflixGlassIdle,
+                    enabled = !session.loading, shape = AliflixCorners.Panel,
                     modifier = Modifier.width(128.dp).height(190.dp),
+                    level = AliflixSurfaceLevel.Content,
                 ) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         if (session.loading) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)

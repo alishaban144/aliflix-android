@@ -1,5 +1,9 @@
 package com.aliflix.app.ui.discover
 
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.getValue
+import com.aliflix.app.ui.common.*
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -14,7 +18,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -28,7 +31,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
@@ -38,7 +40,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,11 +70,9 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
 import com.aliflix.app.ui.theme.AliflixBackgroundBase
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
-import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 
 @Composable
 fun AskAliflixOrbAnimation(
@@ -259,31 +258,21 @@ fun AskAliflixChip(
         animationSpec = AskAliflixMotion.pressSpec(),
         label = "ask-chip-scale",
     )
-    val background by animateColorAsState(
-        targetValue = if (isSelected) AliflixAccentPrimary.copy(alpha = 0.20f) else AliflixSurfaceSecondary.copy(alpha = 0.82f),
-        animationSpec = AskAliflixMotion.chipSpec(),
-        label = "ask-chip-background",
-    )
-    val border by animateColorAsState(
-        targetValue = if (isSelected) AliflixAccentPrimary else AliflixBorderSubtle,
-        animationSpec = AskAliflixMotion.chipSpec(),
-        label = "ask-chip-border",
-    )
     val foreground by animateColorAsState(
         targetValue = if (isSelected) AliflixContentPrimary else AliflixContentSecondary,
         animationSpec = AskAliflixMotion.chipSpec(),
         label = "ask-chip-foreground",
     )
 
-    Box(
+    AliflixChip(
+        selected = isSelected,
+        contentPadding = PaddingValues(horizontal = 11.dp, vertical = AliflixSpacing.Small),
         modifier = modifier
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
-            .clip(RoundedCornerShape(14.dp))
-            .background(background)
-            .border(1.dp, border, RoundedCornerShape(14.dp))
+
             .heightIn(min = 48.dp)
             .semantics {
                 stateDescription = if (isSelected) "Selected" else "Not selected"
@@ -294,8 +283,7 @@ fun AskAliflixChip(
                 interactionSource = interactionSource,
                 indication = null,
                 onValueChange = { onClick() },
-            )
-            .padding(horizontal = 11.dp, vertical = 8.dp),
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -353,7 +341,7 @@ fun AskAliflixStickyCta(
                 )
             )
             .navigationBarsPadding()
-            .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
+            .padding(start = AliflixSpacing.Content, end = AliflixSpacing.Content, top = 14.dp, bottom = 14.dp),
     ) {
         Button(
             onClick = onClick,
@@ -369,10 +357,10 @@ fun AskAliflixStickyCta(
             colors = ButtonDefaults.buttonColors(
                 containerColor = AliflixAccentPrimary,
                 contentColor = Color.White,
-                disabledContainerColor = AliflixSurfaceElevated,
+                disabledContainerColor = AliflixSurfaceDefaults.color(),
                 disabledContentColor = AliflixContentSecondary.copy(alpha = 0.45f),
             ),
-            shape = RoundedCornerShape(17.dp),
+            shape = AliflixCorners.Card,
         ) {
             if (loading) {
                 CircularProgressIndicator(
@@ -403,8 +391,7 @@ fun AskAliflixPoster(
                         AliflixSurfaceElevated,
                     )
                 )
-            )
-            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(cornerRadius)),
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Text(

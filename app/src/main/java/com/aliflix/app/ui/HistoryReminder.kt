@@ -1,5 +1,8 @@
 package com.aliflix.app.ui
 
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.gestures.Orientation
@@ -39,10 +42,10 @@ internal fun HistoryReminder(itemKey: String, inHistory: Boolean, onDelete: () -
     }
     AnimatedVisibility(
         visible = visible && inHistory,
-        enter = fadeIn(tween(220)) + slideInVertically(tween(300, easing = FastOutSlowInEasing)) { -it / 3 },
-        exit = fadeOut(tween(180)), modifier = modifier,
+        enter = fadeIn(tween(AliflixMotion.Content)) + slideInVertically(tween(AliflixMotion.Navigation, easing = FastOutSlowInEasing)) { -it / 3 },
+        exit = fadeOut(tween(AliflixMotion.Selection)), modifier = modifier,
     ) {
-        Surface(
+        AliflixSurface(
             modifier = Modifier.onSizeChanged { width = it.width.coerceAtLeast(1) }
                 .graphicsLayer {
                     translationX = offset
@@ -64,7 +67,7 @@ internal fun HistoryReminder(itemKey: String, inHistory: Boolean, onDelete: () -
                         }
                     },
                 ),
-            shape = RoundedCornerShape(50), color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f),
+            shape = AliflixCorners.Chrome, level = AliflixSurfaceLevel.Chrome,
         ) {
             Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("In your history", color = AliflixContentPrimary, fontSize = 12.sp)

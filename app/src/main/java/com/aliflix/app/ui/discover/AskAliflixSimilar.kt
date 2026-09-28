@@ -1,8 +1,9 @@
 package com.aliflix.app.ui.discover
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.ui.graphics.Color
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,16 +22,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
@@ -48,9 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
@@ -86,7 +82,7 @@ fun AskAliflixSimilar(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = AliflixSpacing.Content, vertical = 10.dp),
         ) {
             Text(
                 text = if (selectedAnchors.size > 1) "Blend titles" else "Similar to",
@@ -101,7 +97,7 @@ fun AskAliflixSimilar(
 
             if (selectedAnchors.isNotEmpty()) {
                 LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     items(selectedAnchors, key = { it.key }) { anchor ->
@@ -135,7 +131,7 @@ fun AskAliflixSimilar(
                                 strokeWidth = 2.dp,
                                 color = AliflixAccentSecondary,
                             )
-                            query.isNotEmpty() -> IconButton(onClick = { onQueryChanged("") }) {
+                            query.isNotEmpty() -> AliflixIconButton(onClick = { onQueryChanged("") }) {
                                 Icon(Icons.Rounded.Close, contentDescription = "Clear search", tint = AliflixContentTertiary)
                             }
                         }
@@ -144,12 +140,12 @@ fun AskAliflixSimilar(
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(focusRequester),
-                    shape = RoundedCornerShape(17.dp),
+                    shape = AliflixCorners.Card,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AliflixAccentPrimary,
-                        unfocusedBorderColor = AliflixBorderSubtle,
-                        focusedContainerColor = AliflixSurfaceElevated,
-                        unfocusedContainerColor = AliflixSurfaceElevated.copy(alpha = 0.82f),
+                        focusedBorderColor = AliflixSurfaceDefaults.Focus,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedContainerColor = AliflixSurfaceDefaults.color(),
+                        unfocusedContainerColor = AliflixSurfaceDefaults.color(),
                         focusedTextColor = AliflixContentPrimary,
                         unfocusedTextColor = AliflixContentPrimary,
                         cursorColor = AliflixAccentSecondary,
@@ -174,7 +170,7 @@ fun AskAliflixSimilar(
                     )
                     !suggestionsLoading && suggestions.isEmpty() -> SimilarEmptySearch()
                     else -> LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
                         modifier = Modifier.weight(1f),
                     ) {
                         items(suggestions, key = { it.key }) { item ->
@@ -229,11 +225,10 @@ private fun SelectedAnchorChip(
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    AliflixSurface(
         modifier = modifier,
-        color = AliflixSurfaceElevated.copy(alpha = 0.9f),
-        shape = RoundedCornerShape(14.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.4f)),
+        shape = AliflixCorners.Card,
+        level = AliflixSurfaceLevel.Selected,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -263,7 +258,7 @@ private fun SelectedAnchorChip(
                     fontSize = 11.sp,
                 )
             }
-            IconButton(
+            AliflixIconButton(
                 onClick = onRemove,
                 modifier = Modifier.size(48.dp),
             ) {
@@ -287,9 +282,7 @@ private fun SimilarSuggestion(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(15.dp))
-            .background(if (isSelected) AliflixSurfaceElevated.copy(alpha = 0.4f) else AliflixSurfaceElevated.copy(alpha = 0.74f))
-            .border(1.dp, if (isSelected) AliflixAccentPrimary.copy(alpha = 0.3f) else AliflixBorderSubtle, RoundedCornerShape(15.dp))
+            .aliflixSurface(if (isSelected) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content)
             .clickable(enabled = !isSelected, onClick = onClick)
             .padding(9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -354,7 +347,7 @@ private fun SimilarEmptySearch(
         Text(message, color = AliflixContentSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         onRetry?.let {
             Spacer(Modifier.height(9.dp))
-            OutlinedButton(onClick = it, shape = RoundedCornerShape(13.dp)) {
+            OutlinedButton(onClick = it, shape = AliflixCorners.Small, border = null) {
                 Text("Try again")
             }
         }

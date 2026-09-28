@@ -2,8 +2,12 @@
 
 package com.aliflix.app.ui.discover
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -13,7 +17,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -57,16 +60,13 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
@@ -83,20 +83,17 @@ import com.aliflix.app.recommendation.RecommendationMediaKind
 import com.aliflix.app.recommendation.RecommendationSort
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixError
 import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 
 @Composable
@@ -184,7 +181,7 @@ fun AskAliflixResults(
                     .semantics {
                         stateDescription = if (hideMySpaceTitles) "My Space titles hidden" else "My Space titles shown"
                     }
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                    .padding(horizontal = AliflixSpacing.Content, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -296,7 +293,7 @@ private fun ResultsList(
 ) {
     LazyColumn(
         state = listState,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(start = AliflixSpacing.Content, end = AliflixSpacing.Content, top = AliflixSpacing.Tiny, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(11.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -329,17 +326,16 @@ private fun ResultsList(
 
         if (visibleItems.isEmpty() && hiddenCount > 0) {
             item {
-                Surface(
-                    color = AliflixSurfaceElevated.copy(alpha = 0.78f),
-                    shape = RoundedCornerShape(18.dp),
-                    border = BorderStroke(1.dp, AliflixBorderSubtle),
+                AliflixSurface(
+                    shape = AliflixCorners.Card,
                     modifier = Modifier.fillMaxWidth(),
+                    level = AliflixSurfaceLevel.Content,
                 ) {
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(18.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        OutlinedButton(onClick = onShowHidden, shape = RoundedCornerShape(14.dp)) {
+                        OutlinedButton(onClick = onShowHidden, shape = AliflixCorners.Card, border = null) {
                             Text("Show hidden titles")
                         }
                     }
@@ -363,7 +359,7 @@ private fun ResultsList(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(13.dp))
+                        .clip(AliflixCorners.Small)
                         .background(AliflixError.copy(alpha = 0.11f))
                         .padding(11.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -391,9 +387,9 @@ private fun ResultsList(
                         OutlinedButton(
                             onClick = onLoadMore,
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.55f)),
+                            shape = AliflixCorners.Card,
                             contentPadding = PaddingValues(vertical = 14.dp),
+                            border = null,
                         ) {
                             Text(
                                 if (state.loadMoreError == null) "Find more matches" else "Try finding more again",
@@ -413,7 +409,7 @@ private fun ResultsList(
                     fontSize = 11.sp,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 12.dp),
+                        .padding(vertical = AliflixSpacing.Medium),
                     textAlign = TextAlign.Center,
                 )
             }
@@ -437,12 +433,8 @@ private fun ResultCard(
         AskAliflixMotion.pressSpec(),
         label = "ask-result-press",
     )
-    val border by animateColorAsState(
-        if (pressed) AliflixAccentPrimary.copy(alpha = 0.72f) else AliflixBorderSubtle,
-        AskAliflixMotion.pressSpec(),
-        label = "ask-result-border",
-    )
-    Surface(
+
+    AliflixSurface(
         modifier = modifier
             .fillMaxWidth()
             .graphicsLayer {
@@ -455,21 +447,12 @@ private fun ResultCard(
                 role = Role.Button,
                 onClick = onClick,
             ),
-        color = AliflixSurfaceElevated.copy(alpha = 0.94f),
-        shape = RoundedCornerShape(22.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, border),
+        shape = AliflixCorners.Panel,
+        level = AliflixSurfaceLevel.Content,
     ) {
         Row(
             modifier = Modifier
-                .background(
-                    Brush.linearGradient(
-                        listOf(
-                            AliflixAccentPrimary.copy(alpha = 0.09f),
-                            Color.Transparent,
-                            AliflixSurfaceSecondary.copy(alpha = 0.2f),
-                        ),
-                    ),
-                )
+
                 .padding(11.dp),
             verticalAlignment = Alignment.Top,
         ) {
@@ -493,14 +476,13 @@ private fun ResultCard(
                         modifier = Modifier.weight(1f),
                     )
                     Spacer(Modifier.width(4.dp))
-                    IconButton(
+                    AliflixIconButton(
                         onClick = onToggleMyList,
                         modifier = Modifier
                             .size(42.dp)
                             .clip(CircleShape)
                             .background(
-                                if (inMyList) AliflixAccentSecondary.copy(alpha = 0.14f)
-                                else AliflixSurfaceSecondary.copy(alpha = 0.78f),
+                                AliflixSurfaceDefaults.color(if (inMyList) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content),
                             ),
                     ) {
                         Icon(
@@ -536,9 +518,8 @@ private fun ResultCard(
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(AliflixSurfaceSecondary)
-                                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                                    .aliflixSurface(shape = AliflixCorners.Small)
+                                    .padding(horizontal = 7.dp, vertical = AliflixSpacing.Tiny),
                             )
                         }
                     }
@@ -591,16 +572,12 @@ private fun ResultContextBar(
     editContentDescription: String,
     onEdit: () -> Unit,
 ) {
-    Surface(
+    AliflixSurface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        color = AliflixSurfaceElevated.copy(alpha = 0.9f),
-        shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            AliflixAccentPrimary.copy(alpha = 0.45f),
-        ),
+            .padding(horizontal = AliflixSpacing.Content, vertical = 6.dp),
+        shape = AliflixCorners.Card,
+        level = AliflixSurfaceLevel.Content,
     ) {
         Row(
             modifier = Modifier
@@ -644,9 +621,9 @@ private fun ResultContextBar(
 
 @Composable
 private fun ResultCountPill(label: String) {
-    Surface(
-        color = AliflixAccentPrimary.copy(alpha = 0.18f),
-        shape = RoundedCornerShape(12.dp),
+    AliflixSurface(
+        shape = AliflixCorners.Small,
+        level = AliflixSurfaceLevel.Content,
     ) {
         Text(
             text = label,
@@ -696,7 +673,7 @@ private fun AskLoadingState() {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(24.dp))
@@ -717,19 +694,17 @@ private fun LoadingResultCard(alpha: Float) {
         modifier = Modifier
             .fillMaxWidth()
             .height(142.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(AliflixSurfaceElevated.copy(alpha = 0.72f))
-            .border(1.dp, AliflixBorderSubtle.copy(alpha = 0.7f), RoundedCornerShape(18.dp))
+            .aliflixSurface(shape = AliflixCorners.Card)
             .padding(10.dp),
     ) {
-        Box(Modifier.size(width = 62.dp, height = 92.dp).clip(RoundedCornerShape(10.dp)).background(AliflixSurfaceSecondary.copy(alpha = alpha)))
+        Box(Modifier.size(width = 62.dp, height = 92.dp).clip(AliflixCorners.Small).background(AliflixSurfaceSecondary.copy(alpha = alpha)))
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Box(Modifier.fillMaxWidth(0.72f).height(15.dp).clip(RoundedCornerShape(5.dp)).background(AliflixSurfaceSecondary.copy(alpha = alpha)))
             Spacer(Modifier.height(9.dp))
             Box(Modifier.fillMaxWidth(0.44f).height(10.dp).clip(RoundedCornerShape(4.dp)).background(AliflixSurfaceSecondary.copy(alpha = alpha * 0.8f)))
             Spacer(Modifier.height(14.dp))
-            Box(Modifier.fillMaxWidth(0.58f).height(22.dp).clip(RoundedCornerShape(8.dp)).background(AliflixSurfaceSecondary.copy(alpha = alpha * 0.7f)))
+            Box(Modifier.fillMaxWidth(0.58f).height(22.dp).clip(AliflixCorners.Small).background(AliflixSurfaceSecondary.copy(alpha = alpha * 0.7f)))
         }
     }
 }
@@ -755,8 +730,7 @@ private fun AskStateMessage(
             modifier = Modifier
                 .size(64.dp)
                 .clip(CircleShape)
-                .background(AliflixSurfaceElevated)
-                .border(1.dp, AliflixBorderSubtle, CircleShape),
+                .background(AliflixSurfaceElevated),
             contentAlignment = Alignment.Center,
         ) {
             Icon(icon, contentDescription = null, tint = AliflixAccentSecondary, modifier = Modifier.size(27.dp))
@@ -769,12 +743,12 @@ private fun AskStateMessage(
         Button(
             onClick = onPrimary,
             colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
-            shape = RoundedCornerShape(14.dp),
+            shape = AliflixCorners.Card,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(primaryLabel, fontWeight = FontWeight.Bold)
         }
-        OutlinedButton(onClick = onSecondary, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = onSecondary, shape = AliflixCorners.Card, modifier = Modifier.fillMaxWidth(), border = null) {
             Icon(
                 imageVector = if (secondaryLabel == "New search") {
                     Icons.Rounded.AddCircle
@@ -818,7 +792,7 @@ private fun RefineBottomBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = AliflixSpacing.Content, vertical = 10.dp),
     ) {
         refineError?.let { message ->
             Text(
@@ -829,20 +803,15 @@ private fun RefineBottomBar(
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
             )
         }
-        Surface(
+        AliflixSurface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(28.dp),
-            color = AliflixSurfaceElevated.copy(alpha = 0.92f),
-            border = BorderStroke(
-                width = 1.dp,
-                color = if (canSubmit) AliflixAccentSecondary.copy(alpha = 0.45f) else AliflixBorderSubtle,
-            ),
-            shadowElevation = 8.dp,
+            shape = AliflixCorners.Chrome,
+            level = AliflixSurfaceLevel.Content,
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                    .padding(start = AliflixSpacing.Content, end = 6.dp, top = AliflixSpacing.Tiny, bottom = AliflixSpacing.Tiny),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
@@ -926,11 +895,10 @@ private fun AskAliflixSortDropdown(
     val availableSorts = remember { RecommendationSort.entries }
 
     Box(modifier = modifier) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = AliflixSurfaceElevated,
-            border = BorderStroke(1.dp, AliflixBorderSubtle),
-            modifier = Modifier.clip(RoundedCornerShape(20.dp)),
+        AliflixSurface(
+            shape = AliflixCorners.Panel,
+            modifier = Modifier.clip(AliflixCorners.Panel),
+            level = AliflixSurfaceLevel.Content,
         ) {
             Row(
                 modifier = Modifier
@@ -938,7 +906,7 @@ private fun AskAliflixSortDropdown(
                     .clickable(role = Role.Button) { expanded = true }
                     .padding(horizontal = 10.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Tiny),
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Tune,
@@ -965,9 +933,11 @@ private fun AskAliflixSortDropdown(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             modifier = Modifier
-                .background(AliflixSurfaceElevated)
-                .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(12.dp))
-                .clip(RoundedCornerShape(12.dp)),
+                .clip(AliflixCorners.Small),
+        shape = AliflixCorners.Chrome,
+        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
+        tonalElevation = AliflixElevation.None,
+        shadowElevation = AliflixElevation.None,
         ) {
             availableSorts.forEach { sort ->
                 val isSelected = sort == selectedSort

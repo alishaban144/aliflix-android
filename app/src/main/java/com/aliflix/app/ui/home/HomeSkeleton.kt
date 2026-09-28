@@ -1,5 +1,8 @@
 package com.aliflix.app.ui.home
 
+import com.aliflix.app.ui.common.AliflixCorners
+
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -182,7 +185,7 @@ fun HomeSkeleton(
                             modifier = Modifier
                                 .width(104.dp)
                                 .height(146.dp)
-                                .clip(RoundedCornerShape(14.dp))
+                                .clip(AliflixCorners.Card)
                                 .alpha(alpha)
                                 .background(
                                     Brush.linearGradient(

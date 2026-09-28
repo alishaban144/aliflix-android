@@ -1,6 +1,8 @@
 package com.aliflix.app.ui
 
-import androidx.compose.foundation.BorderStroke
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -8,7 +10,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -16,7 +17,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -57,26 +57,28 @@ internal fun MobileSettingsDialog(
         text = { Text("Remove watched titles and reset history-based recommendations. Your saved list stays available.") },
         confirmButton = { TextButton(onClick = { clearConfirmation = false; onClearRecent() }) { Text("Clear history", color = AliflixError) } },
         dismissButton = { TextButton(onClick = { clearConfirmation = false }) { Text("Cancel") } },
-        containerColor = AliflixSurfaceElevated, titleContentColor = AliflixContentPrimary,
+        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated), titleContentColor = AliflixContentPrimary,
         textContentColor = AliflixContentSecondary,
+        shape = AliflixCorners.Chrome,
     )
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize(), color = AliflixBackgroundBase, contentColor = AliflixContentPrimary) {
-            Column(Modifier.safeDrawingPadding().widthIn(max = 580.dp).fillMaxSize().padding(horizontal = 20.dp)) {
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.windowInsetsPadding(AliflixInsets.Safe).widthIn(max = 580.dp).fillMaxSize().padding(horizontal = AliflixSpacing.Panel)) {
+                Row(Modifier.fillMaxWidth().padding(top = AliflixSpacing.Small, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("ALIFLIX", color = AliflixAccentSecondary, fontSize = 10.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
                         Text("Settings", fontSize = 27.sp, fontWeight = FontWeight.Bold)
                     }
-                    IconButton(onClick = onDismiss, modifier = Modifier.background(AliflixSurfaceSecondary, CircleShape)) {
+                    AliflixIconButton(onClick = onDismiss, modifier = Modifier.aliflixSurface(AliflixSurfaceLevel.Content, CircleShape)) {
                         Icon(Icons.Rounded.Close, "Close settings", Modifier.size(20.dp))
                     }
                 }
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("settings-content"), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                    Surface(shape = RoundedCornerShape(18.dp), color = AliflixSurfaceSecondary,
-                        border = BorderStroke(1.dp, AliflixBorderSubtle), modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenAccount)) {
-                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Box(Modifier.size(42.dp).background(AliflixAccentPrimary.copy(alpha = .18f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
+                    AliflixSurface(shape = AliflixCorners.Card, modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenAccount),
+                        level = AliflixSurfaceLevel.Content,
+                    ) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Medium)) {
+                            Box(Modifier.size(42.dp).background(AliflixAccentPrimary.copy(alpha = .18f), AliflixCorners.Small), contentAlignment = Alignment.Center) {
                                 Icon(Icons.Rounded.Person, null, tint = AliflixAccentSecondary)
                             }
                             Column(Modifier.weight(1f)) {
@@ -91,7 +93,7 @@ internal fun MobileSettingsDialog(
                         var sourceMenu by remember { mutableStateOf(false) }
                         Box {
                             SettingsRow(Icons.Rounded.PlayCircle, "Streaming source", generalProvider.displayName, onClick = { sourceMenu = true }) {
-                                if (generalProvider != PlaybackProviderId.CINEJOY) IconButton(onClick = { onEditProviderUrl(generalProvider) }) { Icon(Icons.Rounded.Edit, "Edit URL", Modifier.size(17.dp), tint = AliflixContentSecondary) }
+                                if (generalProvider != PlaybackProviderId.CINEJOY) AliflixIconButton(onClick = { onEditProviderUrl(generalProvider) }) { Icon(Icons.Rounded.Edit, "Edit URL", Modifier.size(17.dp), tint = AliflixContentSecondary) }
                                 Icon(Icons.Rounded.ExpandMore, "Choose source", Modifier.size(19.dp), tint = AliflixAccentSecondary)
                             }
                             SettingsMenu(sourceMenu, { sourceMenu = false }, mobileGeneralPlaybackProviders(), { it.displayName }, generalProvider) {
@@ -100,12 +102,12 @@ internal fun MobileSettingsDialog(
                         }
                         SettingsDivider()
                         SettingsRow(Icons.Rounded.HighQuality, "Preferred quality", if (playerSettings.preferredVideoQuality == PreferredVideoQuality.LOW) "Lowest available on every server" else "Adapts to your connection") {
-                            Row(Modifier.clip(RoundedCornerShape(10.dp)).background(AliflixBackgroundBase).padding(3.dp)) {
+                            AliflixSegmentedControl(contentPadding = PaddingValues(3.dp), horizontalArrangement = Arrangement.Start) {
                                 PreferredVideoQuality.entries.forEach { quality ->
                                     val selected = playerSettings.preferredVideoQuality == quality
                                     Text(quality.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                                         color = if (selected) Color.White else AliflixContentSecondary,
-                                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(if (selected) AliflixAccentPrimary else Color.Transparent)
+                                        modifier = Modifier.aliflixSelection(selected, AliflixCorners.Small)
                                             .selectable(selected, role = Role.RadioButton, onClick = { store.updatePreferredVideoQuality(quality) })
                                             .testTag("settings-quality-${quality.name.lowercase()}").padding(horizontal = 13.dp, vertical = 14.dp))
                                 }
@@ -156,7 +158,7 @@ internal fun MobileSettingsDialog(
                             Icon(Icons.Rounded.ChevronRight, null, tint = AliflixContentTertiary)
                         }
                     }
-                    Text("ALIFLIX  ·  ${BuildConfig.VERSION_NAME}", Modifier.fillMaxWidth().padding(bottom = 20.dp), color = AliflixContentTertiary,
+                    Text("ALIFLIX  ·  ${BuildConfig.VERSION_NAME}", Modifier.fillMaxWidth().padding(bottom = AliflixSpacing.Panel), color = AliflixContentTertiary,
                         fontSize = 10.sp, letterSpacing = 1.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
             }
@@ -167,7 +169,9 @@ internal fun MobileSettingsDialog(
 @Composable private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Text(title, color = AliflixContentTertiary, fontSize = 10.sp, letterSpacing = 1.2.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 3.dp))
-        Surface(shape = RoundedCornerShape(17.dp), color = AliflixSurfaceSecondary, border = BorderStroke(1.dp, AliflixBorderSubtle)) {
+        AliflixSurface(shape = AliflixCorners.Card,
+            level = AliflixSurfaceLevel.Content,
+        ) {
             Column(Modifier.fillMaxWidth(), content = content)
         }
     }
@@ -195,7 +199,12 @@ internal fun MobileSettingsDialog(
     }
 }
 @Composable private fun <T> SettingsMenu(expanded: Boolean, dismiss: () -> Unit, items: List<T>, label: (T) -> String, selected: T, onSelect: (T) -> Unit) {
-    DropdownMenu(expanded, dismiss, modifier = Modifier.heightIn(max = 340.dp).background(AliflixSurfaceElevated)) {
+    DropdownMenu(expanded, dismiss, modifier = Modifier.heightIn(max = 340.dp),
+        shape = AliflixCorners.Chrome,
+        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
+        tonalElevation = AliflixElevation.None,
+        shadowElevation = AliflixElevation.None,
+    ) {
         items.forEach { item -> DropdownMenuItem(text = { Text(label(item), fontSize = 13.sp, color = AliflixContentPrimary) }, onClick = { onSelect(item) },
             trailingIcon = { if (item == selected) Icon(Icons.Rounded.Check, null, Modifier.size(17.dp), tint = AliflixAccentSecondary) }) }
     }
