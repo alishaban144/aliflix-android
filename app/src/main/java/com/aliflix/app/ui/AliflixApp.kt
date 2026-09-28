@@ -4376,7 +4376,7 @@ internal fun DetailScreen(
                 if (!com.aliflix.app.BuildConfig.IS_TV) InlineTrailerSection(item)
                 if (item.originalLanguage.isNotBlank()) {
                     DetailInfoSection(title = "Details") {
-                        Column(Modifier.aliflixSurface(shape = AliflixCorners.Panel), verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Content)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Content)) {
                             if (item.originalLanguage.isNotBlank()) {
                                 DetailFact(label = "Original language") {
                                     Row(

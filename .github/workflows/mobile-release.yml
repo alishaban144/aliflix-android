@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "213"
-  RELEASE_VERSION_NAME: "3.1.123"
+  RELEASE_VERSION_CODE: "214"
+  RELEASE_VERSION_NAME: "3.1.124"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -314,7 +314,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Shared translucent mobile surfaces, borderless artwork cards, floating bottom chrome, consistent controls, shapes and motion across Home, Discover, My Space, Details, Settings, Account and downloads. Based on v3.1.122. Player UI, navigation, content and scrolling behavior preserved. Mobile only; tests and emulator validation skipped as requested."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Removed the background card from the More Info Details section while preserving its text, typography, spacing, content and behavior. Based on v3.1.123. Mobile only."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -342,7 +342,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Shared translucent mobile surfaces, borderless artwork cards, floating bottom chrome, consistent controls, shapes and motion across Home, Discover, My Space, Details, Settings, Account and downloads. Based on v3.1.122. Player UI, navigation, content and scrolling behavior preserved. Mobile only; tests and emulator validation skipped as requested."
+          body: "Removed the background card from the More Info Details section while preserving its text, typography, spacing, content and behavior. Based on v3.1.123. Mobile only."
 
           files: |
             aliflix-mobile.apk
