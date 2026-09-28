@@ -4522,9 +4522,8 @@ internal fun DetailScreen(
                                 Row(
                                     modifier = Modifier
                                         .heightIn(min = 48.dp)
-                                        .clip(CircleShape)
-                                        .background(AliflixSurface.copy(alpha = 0.86f))
-                                        .border(1.dp, AliflixBorderStrong, CircleShape)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(AliflixSurface.copy(alpha = 0.64f))
                                         .clickable { onOpenGenre(genre, item.type) }
                                         .padding(start = 14.dp, end = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -4899,9 +4898,8 @@ private fun DetailReviewCard(
 
     Surface(
         modifier = modifier.animateContentSize(),
-        shape = RoundedCornerShape(20.dp),
-        color = AliflixSurface.copy(alpha = 0.88f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
+        shape = RoundedCornerShape(16.dp),
+        color = AliflixSurface.copy(alpha = 0.68f),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -5077,7 +5075,7 @@ private fun DetailCinematicActionPanel(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        color = AliflixSurfacePrimary.copy(alpha = 0.78f),
+        color = AliflixSurfacePrimary.copy(alpha = 0.62f),
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -5215,7 +5213,7 @@ private fun DetailRatingsStrip(
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(AliflixSurfaceSecondary.copy(alpha = 0.58f))
+            .background(AliflixSurfaceSecondary.copy(alpha = 0.46f))
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -5549,9 +5547,8 @@ private fun EpisodeRow(
             .fillMaxWidth()
             .animateContentSize(tween(220, easing = FastOutSlowInEasing))
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(AliflixSurfaceSecondary.copy(alpha = 0.88f))
-            .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
+            .background(AliflixSurfaceSecondary.copy(alpha = 0.68f))
             .clickable(onClick = onPlay)
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -5592,20 +5589,6 @@ private fun EpisodeRow(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(4.dp),
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(4.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.68f))
-                    .padding(horizontal = 5.dp, vertical = 3.dp),
-            ) {
-                Text(
-                    text = episode.number.toString().padStart(2, '0'),
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Black,
                 )
             }
         }
@@ -5804,7 +5787,7 @@ private fun EpisodeRatingPill(
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(7.dp))
-            .background(accent.copy(alpha = 0.08f))
+            .background(accent.copy(alpha = 0.06f))
             .border(1.dp, accent.copy(alpha = 0.24f), RoundedCornerShape(7.dp))
             .padding(horizontal = 6.dp, vertical = 3.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
