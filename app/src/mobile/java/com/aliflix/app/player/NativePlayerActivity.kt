@@ -184,6 +184,9 @@ class NativePlayerActivity : FragmentActivity() {
                     onRetry = { exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0; prepareSelection() },
                     onServer = { prepareSelection() },
                     onSelectServer = ::selectServer,
+                    onBrowseProvider = ::browseProvider,
+                    onSelectProviderServer = ::selectProviderServer,
+                    onRetryProviderServers = ::retryProviderDiscovery,
                     onStop = ::stopPlayback,
                     onStopCast = {
                         controller?.sendCustomCommand(SessionCommand(NativePlaybackService.ACTION_STOP_CAST, Bundle.EMPTY), Bundle.EMPTY)
@@ -359,6 +362,82 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private val resolvedServerNames = mutableMapOf<String, List<String>>()
+    private val discoveredServers = mutableMapOf<com.aliflix.app.model.PlaybackProviderId, List<MoviepireServerOption>>()
+    private var discoveryJob: Job? = null
+
+    private fun availableProvidersFor(current: PlaybackSelection): List<com.aliflix.app.model.PlaybackProviderId> =
+        (com.aliflix.app.model.mobileGeneralPlaybackProviders().filter { it.isAvailableFor(current.media) } +
+            current.source.provider).distinct()
+
+    /** Level-one drill-in: lists a source's servers without touching the running stream. */
+    private fun browseProvider(provider: com.aliflix.app.model.PlaybackProviderId) {
+        val current = selection ?: return
+        if (provider == current.source.provider) return
+        val cached = discoveredServers[provider].orEmpty()
+        if (cached.isNotEmpty()) {
+            ui = ui.copy(providerDiscovery = ProviderServerDiscovery(provider = provider, servers = cached))
+            return
+        }
+        if (ui.providerDiscovery.provider == provider && ui.providerDiscovery.loading) return
+        ui = ui.copy(providerDiscovery = ProviderServerDiscovery(provider = provider, loading = true))
+        discoveryJob?.cancel()
+        discoveryJob = lifecycleScope.launch {
+            val names = try {
+                withTimeout(15_000) { discoverServerNames(provider, current) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+            if (selection?.key != current.key) return@launch
+            val options = names.map { name -> MoviepireServerOption(key = name, label = name, selected = false) }
+            if (options.isEmpty()) {
+                ui = ui.copy(providerDiscovery = ProviderServerDiscovery(provider = provider, failed = true))
+            } else {
+                discoveredServers[provider] = options
+                ui = ui.copy(providerDiscovery = ProviderServerDiscovery(provider = provider, servers = options))
+            }
+        }
+    }
+
+    private fun retryProviderDiscovery() {
+        ui.providerDiscovery.provider?.let(::browseProvider)
+    }
+
+    private suspend fun discoverServerNames(
+        provider: com.aliflix.app.model.PlaybackProviderId,
+        current: PlaybackSelection,
+    ): List<String> {
+        val preferences = com.aliflix.app.data.PlaybackProviderRepository(this).preferences.value
+        val probe = current.copy(source = preferences.sourceFor(current.media, provider))
+        return when (provider) {
+            com.aliflix.app.model.PlaybackProviderId.CINEJOY -> listOf("CineJoy")
+            com.aliflix.app.model.PlaybackProviderId.MOVIEPIRE -> preferredNativeEmbeds(probe).map { it.first }
+            com.aliflix.app.model.PlaybackProviderId.MIRURO,
+            com.aliflix.app.model.PlaybackProviderId.ANIKURO,
+            -> listOf(provider.displayName)
+            else -> FmovieNativeCatalog().embeds(probe).map { it.first }
+        }
+    }
+
+    /** Level-two pick inside a source that is not playing: move playback onto it. */
+    private fun selectProviderServer(
+        provider: com.aliflix.app.model.PlaybackProviderId,
+        serverName: String,
+    ) {
+        val current = selection ?: return
+        if (provider == current.source.provider) {
+            selectServer(serverName)
+            return
+        }
+        val preferences = com.aliflix.app.data.PlaybackProviderRepository(this).preferences.value
+        exhaustedSources.remove(provider)
+        triedServers.remove(serverName)
+        recordCurrentProgress(urgent = true)
+        selection = current.copy(source = preferences.sourceFor(current.media, provider))
+        ui = ui.copy(server = serverName, message = "Switching to ${provider.displayName} · $serverName…")
+        prepareSelection(preferredServer = serverName)
+    }
 
     private fun updateSelectionUi() {
         if (introKey != selection?.key) {
@@ -378,6 +457,7 @@ class NativePlayerActivity : FragmentActivity() {
                 episodes = it.availableEpisodes,
                 episodeNumber = it.episodeNumber,
                 availableServers = servers,
+                availableProviders = availableProvidersFor(it),
                 playbackSelection = it,
             )
         }
@@ -394,6 +474,10 @@ class NativePlayerActivity : FragmentActivity() {
 
     private fun prepareSelection(positionMs: Long? = null, preferredServer: String? = null) {
         val current = selection ?: return
+        // Server lists are per title and per episode, so never reuse a stale browse result.
+        discoveryJob?.cancel()
+        discoveredServers.clear()
+        ui = ui.copy(providerDiscovery = ProviderServerDiscovery())
         recordCurrentProgress(urgent = true)
         val startingSource = current.source
         val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition?.takeIf { it > 0 }

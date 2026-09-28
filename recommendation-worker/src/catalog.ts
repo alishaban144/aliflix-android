@@ -5,6 +5,7 @@ export interface CatalogPerson {
   tmdbId: number;
   name: string;
   profilePath?: string;
+  role?: string;
 }
 
 export interface CatalogMediaSummary {
@@ -158,8 +159,11 @@ export function summary(
   };
 }
 
+/** Movie crew and TV created_by credits share one shape in the details response. */
+type CreatorCredit = { id: number; name: string; profile_path?: string | null; job?: string | null };
+
 function detailsSummary(details: TmdbDetails, mediaType: MediaType): CatalogTitleDetails {
-  const creators = mediaType === 'tv'
+  const creators: CreatorCredit[] = mediaType === 'tv'
     ? (details.created_by || [])
     : (details.credits?.crew || []).filter(person =>
         person.job === 'Director' || person.job === 'Writer' || person.job === 'Screenplay' || person.job === 'Story',
@@ -211,12 +215,22 @@ function detailsSummary(details: TmdbDetails, mediaType: MediaType): CatalogTitl
       .filter(person => person.id > 0 && present(person.name))
       .filter((person, index, values) => values.findIndex(other => other.id === person.id) === index)
       .slice(0, 12)
-      .map(person => ({ tmdbId: person.id, name: person.name, profilePath: present('profile_path' in person ? person.profile_path : undefined) })),
+      .map(person => ({
+        tmdbId: person.id,
+        name: person.name,
+        profilePath: present(person.profile_path),
+        role: present(person.job),
+      })),
     cast: cast
       .filter(person => person.id > 0 && present(person.name))
       .filter((person, index, values) => values.findIndex(other => other.id === person.id) === index)
       .slice(0, 12)
-      .map(person => ({ tmdbId: person.id, name: person.name })),
+      .map(person => ({
+        tmdbId: person.id,
+        name: person.name,
+        profilePath: present('profile_path' in person ? person.profile_path : undefined),
+        role: present(person.character || person.roles?.[0]?.character),
+      })),
     keywords: details.keywords?.keywords || details.keywords?.results || [],
     trailerKey: (details.videos?.results || [])
       .filter(video => video.official && video.site === 'YouTube' && video.type === 'Trailer' && /^[a-zA-Z0-9_-]{11}$/.test(video.key))

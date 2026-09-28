@@ -4523,7 +4523,7 @@ internal fun DetailScreen(
                                     modifier = Modifier
                                         .heightIn(min = 48.dp)
                                         .clip(CircleShape)
-                                        .background(AliflixSurface)
+                                        .background(AliflixSurface.copy(alpha = 0.90f))
                                         .border(1.dp, AliflixBorderStrong, CircleShape)
                                         .clickable { onOpenGenre(genre, item.type) }
                                         .padding(start = 14.dp, end = 8.dp),
@@ -4769,7 +4769,8 @@ private fun DetailCastRow(item: Media, onOpenCreator: (MediaCreator) -> Unit) {
         val actors = item.castPeople + item.cast.filter { name ->
             item.castPeople.none { it.name.equals(name, ignoreCase = true) }
         }.map { name -> item.creators.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: MediaCreator(0, name) }
-        (actors + item.creators).filter { it.name.isNotBlank() }
+        // Creators lead the row so director/writer credits stay ahead of guest cameos.
+        (item.creators + actors).filter { it.name.isNotBlank() }
             .distinctBy { if (it.tmdbId > 0) "id:${it.tmdbId}" else "name:${it.name.lowercase(Locale.ROOT)}" }
     }
     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -4777,6 +4778,7 @@ private fun DetailCastRow(item: Media, onOpenCreator: (MediaCreator) -> Unit) {
             val creator = item.creators.firstOrNull {
                 (person.tmdbId > 0 && it.tmdbId == person.tmdbId) || it.name.equals(person.name, ignoreCase = true)
             }
+            val roleLabel = (creator?.role ?: person.role)?.takeIf { it.isNotBlank() }
             Column(
                 modifier = Modifier.width(72.dp).then(
                     if (creator != null) Modifier.clickable { onOpenCreator(creator) } else Modifier,
@@ -4793,8 +4795,12 @@ private fun DetailCastRow(item: Media, onOpenCreator: (MediaCreator) -> Unit) {
                 Text(person.name, color = AliflixContentPrimary, fontSize = 11.sp, lineHeight = 14.sp,
                     fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center)
-                if (creator != null) Text("CREATOR", color = AliflixContentSecondary, fontSize = 8.sp,
-                    lineHeight = 10.sp, letterSpacing = .5.sp, fontWeight = FontWeight.Bold)
+                if (creator != null) Text((roleLabel ?: "CREATOR").uppercase(Locale.ROOT), color = AliflixContentSecondary, fontSize = 8.sp,
+                    lineHeight = 10.sp, letterSpacing = .5.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                else if (roleLabel != null) Text(roleLabel, color = AliflixContentSecondary, fontSize = 9.sp,
+                    lineHeight = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center)
             }
         }
     }
@@ -4894,7 +4900,7 @@ private fun DetailReviewCard(
     Surface(
         modifier = modifier.animateContentSize(),
         shape = RoundedCornerShape(20.dp),
-        color = AliflixSurface,
+        color = AliflixSurface.copy(alpha = 0.92f),
         border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
     ) {
         Column(
@@ -5071,7 +5077,7 @@ private fun DetailCinematicActionPanel(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        color = AliflixSurfacePrimary.copy(alpha = 0.88f),
+        color = AliflixSurfacePrimary.copy(alpha = 0.82f),
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -5209,7 +5215,7 @@ private fun DetailRatingsStrip(
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(AliflixSurfaceSecondary.copy(alpha = 0.7f))
+            .background(AliflixSurfaceSecondary.copy(alpha = 0.62f))
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -5544,7 +5550,7 @@ private fun EpisodeRow(
             .animateContentSize(tween(220, easing = FastOutSlowInEasing))
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(AliflixSurfaceSecondary)
+            .background(AliflixSurfaceSecondary.copy(alpha = 0.92f))
             .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(18.dp))
             .clickable(onClick = onPlay)
             .padding(8.dp),
@@ -5798,7 +5804,7 @@ private fun EpisodeRatingPill(
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(7.dp))
-            .background(accent.copy(alpha = 0.11f))
+            .background(accent.copy(alpha = 0.09f))
             .border(1.dp, accent.copy(alpha = 0.24f), RoundedCornerShape(7.dp))
             .padding(horizontal = 6.dp, vertical = 3.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),

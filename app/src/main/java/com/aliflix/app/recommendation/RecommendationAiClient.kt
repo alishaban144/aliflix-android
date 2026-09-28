@@ -283,12 +283,14 @@ data class V3CatalogPerson(
     val tmdbId: Int,
     val name: String,
     val profilePath: String?,
+    val role: String? = null,
 ) {
     companion object {
         fun fromJson(json: JSONObject) = V3CatalogPerson(
             tmdbId = json.getInt("tmdbId"),
             name = json.getString("name"),
             profilePath = json.nullableString("profilePath"),
+            role = json.nullableString("role"),
         )
     }
 }

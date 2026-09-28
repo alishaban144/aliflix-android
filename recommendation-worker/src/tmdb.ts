@@ -43,8 +43,8 @@ export interface TmdbWatchProvider {
 
 export interface TmdbDetails extends TmdbListItem {
   genres?: TmdbGenre[]; runtime?: number | null; episode_run_time?: number[]; keywords?: { keywords?: TmdbKeyword[]; results?: TmdbKeyword[] };
-  credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }>; crew?: Array<{ id: number; name: string; job?: string; profile_path?: string | null }> };
-  aggregate_credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }> };
+  credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null; character?: string | null; roles?: Array<{ character?: string | null }> }>; crew?: Array<{ id: number; name: string; job?: string; profile_path?: string | null }> };
+  aggregate_credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null; character?: string | null; roles?: Array<{ character?: string | null }> }> };
   status?: string; created_by?: Array<{ id: number; name: string; profile_path?: string | null }>;
   imdb_id?: string | null;
   external_ids?: { imdb_id?: string | null; tvdb_id?: number | null };

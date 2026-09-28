@@ -57,10 +57,11 @@ internal fun V3TitleDetails.toStableMobileMedia(fallback: Media): Media {
                 tmdbId = creator.tmdbId,
                 name = creator.name,
                 profilePath = creator.profilePath,
+                role = creator.role,
             )
         }.ifEmpty { fallback.creators },
         cast = cast.map { it.name }.ifEmpty { fallback.cast },
-        castPeople = cast.map { MediaCreator(it.tmdbId, it.name, it.profilePath) }.ifEmpty { fallback.castPeople },
+        castPeople = cast.map { MediaCreator(it.tmdbId, it.name, it.profilePath, it.role) }.ifEmpty { fallback.castPeople },
         reviews = reviews.map { review ->
             MediaReview(
                 id = review.id,

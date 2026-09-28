@@ -24,6 +24,7 @@ data class MediaCreator(
     val tmdbId: Int,
     val name: String,
     val profilePath: String? = null,
+    val role: String? = null,
 ) {
     val profileUrl: String?
         get() = profilePath?.let { path ->
@@ -164,7 +165,7 @@ data class Media(
         put("cast", org.json.JSONArray(cast))
         put("castPeople", org.json.JSONArray().apply {
             castPeople.forEach { person ->
-                put(JSONObject().put("tmdbId", person.tmdbId).put("name", person.name).put("profilePath", person.profilePath))
+                put(JSONObject().put("tmdbId", person.tmdbId).put("name", person.name).put("profilePath", person.profilePath).put("role", person.role))
             }
         })
         put("status", status)
@@ -175,7 +176,8 @@ data class Media(
                     JSONObject()
                         .put("tmdbId", creator.tmdbId)
                         .put("name", creator.name)
-                        .put("profilePath", creator.profilePath),
+                        .put("profilePath", creator.profilePath)
+                        .put("role", creator.role),
                 )
             }
         })
@@ -250,7 +252,12 @@ data class Media(
                         val id = person.optInt("tmdbId")
                         val name = person.optString("name").trim()
                         if (id <= 0 || name.isBlank()) return@mapNotNull null
-                        MediaCreator(id, name, person.optString("profilePath").takeIf { it.isNotBlank() && it != "null" })
+                        MediaCreator(
+                            id,
+                            name,
+                            person.optString("profilePath").takeIf { it.isNotBlank() && it != "null" },
+                            person.optString("role").takeIf { it.isNotBlank() && it != "null" },
+                        )
                     }
                 }.orEmpty(),
                 creators = json.optJSONArray("creators")?.let { array ->
@@ -263,6 +270,8 @@ data class Media(
                             tmdbId = id,
                             name = name,
                             profilePath = creator.optString("profilePath")
+                                .takeIf { it.isNotBlank() && it != "null" },
+                            role = creator.optString("role")
                                 .takeIf { it.isNotBlank() && it != "null" },
                         )
                     }
