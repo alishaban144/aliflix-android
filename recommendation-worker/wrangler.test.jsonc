@@ -1,0 +1,43 @@
+{
+  "name": "aliflix-recommendations",
+  "account_id": "2bd02586ce22e6e64d878d35d25e44c9",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": true }
+  },
+  "placement": {
+    "mode": "smart"
+  },
+
+  "vars": {
+    "AI_GENERATION_MODEL": "cloudflare-gpt-oss-120b",
+    "GEMINI_GENERATION_MODEL": "gemini-3.8-flash",
+    "GEMINI_EMBEDDING_MODEL": "gemini-embedding-001"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "RECOMMENDATION_SESSIONS",
+        "class_name": "RecommendationSession"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RecommendationSession"]
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "RECOMMENDATION_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ]
+}
