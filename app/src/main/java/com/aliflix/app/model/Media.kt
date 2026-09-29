@@ -347,7 +347,7 @@ data class PlaybackSelection(
                 append(episodeNumber ?: 1)
             }
             append(":via:")
-            append(source.provider.name.lowercase())
+            append(source.identity.name.lowercase())
             append("@")
             append(source.cleanDomain.lowercase())
         }

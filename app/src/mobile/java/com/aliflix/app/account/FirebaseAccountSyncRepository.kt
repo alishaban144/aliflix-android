@@ -1,5 +1,7 @@
 package com.aliflix.app.account
 
+import com.aliflix.app.model.PlaybackProviderId
+
 import android.content.Context
 import com.aliflix.app.data.LibraryMutation
 import com.aliflix.app.data.LibraryStore
@@ -12,7 +14,7 @@ import com.aliflix.app.data.isValidPlaybackProgress
 import com.aliflix.app.data.mergePlaybackProgress
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.PlaybackPreferences
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.defaultGeneralPlaybackProvider
 import com.aliflix.app.recommendation.RecommendationAiModel
@@ -591,7 +593,7 @@ class FirebaseAccountSyncRepository(
     private fun currentSettingsSnapshot(): AccountSettingsSnapshot {
         val playback = playbackRepository.preferences.value
         return AccountSettingsSnapshot(
-            generalProvider = playback.safeGeneralProvider.name,
+            generalProvider = playback.effectiveGeneralProvider.name,
             ramoflixUrl = playback.ramoflixConfig.baseUrl,
             moviepireUrl = playback.moviepireBaseUrl,
             dorabyUrl = playback.dorabyBaseUrl,
@@ -610,7 +612,7 @@ class FirebaseAccountSyncRepository(
 
     private fun applySettingsSnapshot(settings: AccountSettingsSnapshot) {
         val playback = PlaybackPreferences(
-            generalProvider = PlaybackProviderId.fromStoredValue(settings.generalProvider)
+            generalProvider = PlaybackProvider.fromStoredValue(settings.generalProvider)
                 ?: defaultGeneralPlaybackProvider(isTv = false),
             ramoflixConfig = RamoflixConfig(
                 RamoflixConfig.normalizeBaseUrl(settings.ramoflixUrl)

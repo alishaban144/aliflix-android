@@ -46,7 +46,7 @@ import androidx.core.app.ServiceCompat
 import androidx.media3.ui.PlayerView
 import com.aliflix.app.AliflixApplication
 import com.aliflix.app.model.Media
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.model.PlaybackSource
 import com.google.android.gms.cast.MediaQueueItem
@@ -270,7 +270,7 @@ class NativePlaybackService : MediaSessionService() {
             PlaybackSelection(Media.fromJson(json.getJSONObject("media")),
                 seasonNumber = json.optInt("season", 1), episodeNumber = json.optInt("episode", 1),
                 episodeTitle = json.optString("episodeTitle").takeIf { it.isNotBlank() },
-                source = PlaybackSource(PlaybackProviderId.valueOf(json.getString("provider")), json.getString("baseUrl")))
+                source = PlaybackSource(PlaybackProvider.valueOf(json.getString("provider")), json.getString("baseUrl")))
         }.getOrNull()
         val headers = mutableMapOf("Referer" to next.referer, "Origin" to java.net.URI(next.referer).let { "${it.scheme}://${it.rawAuthority}" })
         // Cookie forwarding for segmented streams is handled per origin by the relay.

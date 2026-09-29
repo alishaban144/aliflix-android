@@ -471,9 +471,8 @@ private fun CatalogueTypeSelector(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    AliflixSegmentedControl(
+    Row(
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(0.dp),
         horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
     ) {
         listOf("All", "Movies", "Series").forEach { option ->

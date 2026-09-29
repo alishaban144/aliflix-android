@@ -39,7 +39,7 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
     DetailPreloadStore.claimed = DetailPreloadStore.ready?.takeIf {
         playbackProgressKey(it.selection) == playbackProgressKey(selection) &&
             SystemClock.elapsedRealtime() - it.at < 120_000 &&
-            selection.source.provider == PlaybackProviderId.CINEJOY
+            selection.source.identity == PlaybackProviderId.CINEJOY
     }
     DetailPreloadStore.ready = null
     DetailPreloadStore.cancel?.invoke()
@@ -78,26 +78,24 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
                 if (caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true ||
                     offline?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) return@repeatOnLifecycle
                 val position = ((PlaybackProgressStore(activity).progressFor(selection)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
-                // One provider at a time; bounded work leaves bandwidth and CPU for details artwork.
+                // Two providers can prepare concurrently, each with one server at a time.
                 withTimeoutOrNull(30_000) {
-                    for (candidate in playbackSourceFallbacks(selection, preferences).take(3)) {
+                    try {
+                        val ready = firstSuccessful(playbackSourceFallbacks(selection, preferences).take(3).map { candidate -> suspend {
+                            val adapter = NativeStreamResolver(activity, progress, host)
+                            try {
+                                var server = candidate.source.identity.displayName
+                                val request = withTimeout(resolveBudgetMillis(candidate.source.identity)) {
+                                    adapter.resolve(candidate, position, emptySet(), parallelism = 1) { server = it }
+                                }
+                                DetailPreloadStore.Entry(owner, candidate, server, request)
+                            } finally { adapter.close() }
+                        } }, parallelism = 2)
                         ensureActive()
-                        val adapter = NativeStreamResolver(activity, progress, host)
-                        try {
-                            var server = candidate.source.provider.displayName
-                            val request = withTimeoutOrNull(resolveBudgetMillis(candidate.source.provider)) {
-                                adapter.resolve(candidate, position, emptySet(), validateSingle = false, parallelism = 1) { server = it }
-                            } ?: continue
-                            adapter.close()
-                            StartupStreamCache.awaitPlayable(activity, request)
-                            ensureActive()
-                            DetailPreloadStore.ready = DetailPreloadStore.Entry(owner, candidate, server, request)
-                            break
-                        } catch (cancelled: CancellationException) {
-                            currentCoroutineContext().ensureActive()
-                        } catch (_: Exception) {
-                            // A failed speculative load must never affect details or foreground playback.
-                        } finally { adapter.close() }
+                        DetailPreloadStore.ready = ready
+                    } catch (error: Exception) {
+                        // A failed speculative load must never affect details or foreground playback.
+                        currentCoroutineContext().ensureActive()
                     }
                 }
                 awaitCancellation()

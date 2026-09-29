@@ -138,7 +138,7 @@ fun WebPlayerScreen(
     val moviepireServers by controller.moviepireServers.collectAsState()
     val switchingMoviepireServer by controller.switchingMoviepireServer.collectAsState()
     val playing by controller.playing.collectAsState()
-    val nativePhoneMoviepire = selection.source.provider.usesMoviepire && !BuildConfig.IS_TV
+    val nativePhoneMoviepire = selection.source.identity.usesMoviepire && !BuildConfig.IS_TV
     val playerAccent = AliflixAccentPrimary
     val resumableProgress = remember(selection.key) {
         controller.savedProgressFor(selection)?.takeIf { it.resumeEligible }
@@ -1136,7 +1136,7 @@ private fun BoxScope.TvPlayerOverlay(
                                     .padding(horizontal = 8.dp, vertical = 4.dp),
                             ) {
                                 Text(
-                                    text = selection.source.provider.displayName,
+                                    text = selection.source.identity.displayName,
                                     color = AliflixAccentSecondary,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,

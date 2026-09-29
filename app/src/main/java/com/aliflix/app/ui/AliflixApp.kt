@@ -2,6 +2,9 @@
 
 package com.aliflix.app.ui
 
+import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.MobilePlaybackProvider
+
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import com.aliflix.app.ui.common.*
@@ -154,6 +157,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -186,7 +190,7 @@ import com.aliflix.app.model.MediaCreator
 import com.aliflix.app.model.MediaReview
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.RatingSourceState
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.player.WebPlayerController
@@ -523,7 +527,7 @@ fun AliflixApp(
     val updateManager = remember(activity) { AppUpdateManager(activity) }
     val updateScope = rememberCoroutineScope()
     var updateUi by remember { mutableStateOf(MobileUpdateUiState()) }
-    var urlDialogProvider by remember { mutableStateOf<PlaybackProviderId?>(null) }
+    var urlDialogProvider by remember { mutableStateOf<PlaybackProvider?>(null) }
     var detailProviderName by rememberSaveable { mutableStateOf<String?>(null) }
     val sessionPreferences = remember(activity) { activity.getSharedPreferences("mobile-session", android.content.Context.MODE_PRIVATE) }
     var destinationStack by rememberSaveable(
@@ -578,10 +582,10 @@ fun AliflixApp(
     var accountNotice by rememberSaveable { mutableStateOf<String?>(null) }
     var launchCompleted by rememberSaveable { mutableStateOf(false) }
     val isHomeReady = !home.loading && (home.content != null || home.error != null)
-    val requestedDetailProvider = PlaybackProviderId.fromStoredValue(detailProviderName)
+    val requestedDetailProvider = PlaybackProvider.fromStoredValue(detailProviderName)
     val detailProvider = requestedDetailProvider?.takeIf { provider ->
         detail.item?.let(provider::isAvailableFor) == true
-    } ?: playbackPreferences.safeGeneralProvider
+    } ?: playbackPreferences.effectiveGeneralProvider
     LaunchedEffect(detail.item?.key) {
         detailProviderName = null
     }
@@ -832,7 +836,7 @@ fun AliflixApp(
 
     fun playSelection(
         selection: PlaybackSelection,
-        requestedProvider: PlaybackProviderId? = null,
+        requestedProvider: PlaybackProvider? = null,
     ) {
         viewModel.markPlayed(selection.media)
         playerSelection = viewModel.playbackProgressStore.resumeSelection(selection).copy(
@@ -1364,7 +1368,7 @@ fun AliflixApp(
                         historyGridState = historyScrollState,
                         page = libraryPage,
                         onPageChange = { libraryPage = it },
-                        generalProvider = playbackPreferences.safeGeneralProvider,
+                        generalProvider = playbackPreferences.effectiveGeneralProvider,
                         onSelectProvider = viewModel::selectGeneralPlaybackProvider,
                         onEditProviderUrl = { provider ->
                             urlDialogProvider = provider
@@ -1416,7 +1420,7 @@ fun AliflixApp(
                                     episodeNumber = episode.number,
                                     episodeTitle = episode.title,
                                 ),
-                                requestedProvider = selection.source.provider,
+                                requestedProvider = selection.source.identity,
                             )
                         },
                         preferredSubtitleLanguage = playbackPreferences.preferredSubtitleLanguage,
@@ -1428,7 +1432,7 @@ fun AliflixApp(
 
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
-                PlaybackProviderId.CINEJOY -> provider.defaultBaseUrl
+                PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> provider.defaultBaseUrl
                 PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
                 PlaybackProviderId.ANIKURO -> provider.defaultBaseUrl
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
@@ -1442,7 +1446,7 @@ fun AliflixApp(
                 defaultUrl = provider.defaultBaseUrl,
                 onSave = { newUrl ->
                     when (provider) {
-                        PlaybackProviderId.CINEJOY -> Unit
+                        PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
@@ -1453,7 +1457,7 @@ fun AliflixApp(
                 },
                 onReset = {
                     when (provider) {
-                        PlaybackProviderId.CINEJOY -> Unit
+                        PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
@@ -3097,9 +3101,9 @@ internal fun MySpaceScreen(
     historyGridState: LazyGridState,
     page: Int,
     onPageChange: (Int) -> Unit,
-    generalProvider: PlaybackProviderId,
-    onSelectProvider: (PlaybackProviderId) -> Unit,
-    onEditProviderUrl: (PlaybackProviderId) -> Unit,
+    generalProvider: PlaybackProvider,
+    onSelectProvider: (PlaybackProvider) -> Unit,
+    onEditProviderUrl: (PlaybackProvider) -> Unit,
     aiRecommendationsEnabled: Boolean,
     onSetAiRecommendationsEnabled: (Boolean) -> Unit,
     recommendationAiModel: RecommendationAiModel,
@@ -4125,8 +4129,8 @@ internal fun DetailScreen(
     onToggleMyList: (Media) -> Unit,
     onToggleLike: (Media) -> Unit,
     onOpen: (Media) -> Unit,
-    selectedProvider: PlaybackProviderId = PlaybackProviderId.MOVIEPIRE,
-    onSelectProvider: (PlaybackProviderId) -> Unit = {},
+    selectedProvider: PlaybackProvider = PlaybackProviderId.MOVIEPIRE,
+    onSelectProvider: (PlaybackProvider) -> Unit = {},
     onOpenGenre: (String, MediaType) -> Unit = { _, _ -> },
     onOpenCreator: (MediaCreator) -> Unit = {},
     initialFirstVisibleItemIndex: Int = 0,
@@ -5330,128 +5334,129 @@ private fun EpisodeRow(
     current: Boolean,
     onPlay: () -> Unit,
 ) {
-    var expanded by rememberSaveable(episode.seasonNumber, episode.number) { mutableStateOf(false) }
-    var expandable by remember { mutableStateOf(false) }
-    val ratings = episodeRatingsPresentation(episode)
-    Row(
-        modifier = Modifier
+    var expanded by rememberSaveable(media.key, episode.seasonNumber, episode.number) { mutableStateOf(false) }
+    val chevronRotation by animateFloatAsState(
+        if (expanded) 180f else 0f, tween(200), label = "episodeDisclosure",
+    )
+    Column(
+        Modifier
             .fillMaxWidth()
-            .animateContentSize(tween(AliflixMotion.Content, easing = FastOutSlowInEasing))
-            .padding(horizontal = AliflixSpacing.Medium, vertical = 6.dp)
+            .padding(horizontal = AliflixSpacing.Medium, vertical = 5.dp)
             .aliflixSurface(
                 level = if (current) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content,
                 alpha = AliflixAlpha.Episodes,
-            )
-            .clickable(onClick = onPlay)
-            .padding(AliflixSpacing.Small),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
+            ),
     ) {
-        Box(
-            modifier = Modifier
-                .width(112.dp)
-                .height(72.dp)
-                .aliflixSurface(shape = AliflixCorners.Small),
-            ) {
-            ArtworkPlaceholder(title = episode.title)
-            AsyncImage(
-                model = episode.stillUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .background(AliflixContentPrimary.copy(alpha = 0.94f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.PlayArrow,
-                    contentDescription = "Play episode ${episode.number}: ${episode.title}",
-                    tint = Color.Black,
-                    modifier = Modifier.size(19.dp),
+        Row(
+            Modifier.fillMaxWidth()
+                .clickable(
+                    role = androidx.compose.ui.semantics.Role.Button,
+                    onClickLabel = if (expanded) "Collapse episode" else "Expand episode",
+                    onClick = { expanded = !expanded },
                 )
-            }
-            if (shouldShowPlaybackProgressRing(progress)) {
-                PlaybackProgressRing(
-                    fraction = progress!!.progressFraction.toFloat(),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(AliflixSpacing.Tiny),
-                )
-            }
-        }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+                .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+                .padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "S${episode.seasonNumber} \u2022 E${episode.number}",
-                    color = AliflixAccentSecondary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 0.35.sp,
+            Box(
+                Modifier.width(116.dp).aspectRatio(16f / 9f)
+                    .aliflixSurface(shape = AliflixCorners.Small)
+                    .clickable(
+                        role = androidx.compose.ui.semantics.Role.Button,
+                        onClickLabel = "Play episode ${episode.number}: ${episode.title}",
+                        onClick = onPlay,
+                    ),
+            ) {
+                ArtworkPlaceholder(title = episode.title)
+                AsyncImage(
+                    model = episode.stillUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
                 )
-                if (episode.runtime.isNotBlank()) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = episode.runtime,
-                        color = AliflixMuted,
-                        fontSize = 10.sp,
+                Box(
+                    Modifier.align(Alignment.Center).size(28.dp).clip(CircleShape)
+                        .background(AliflixContentPrimary.copy(alpha = 0.94f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.PlayArrow, "Play episode ${episode.number}", tint = Color.Black, modifier = Modifier.size(18.dp))
+                }
+                if (shouldShowPlaybackProgressRing(progress)) {
+                    PlaybackProgressRing(
+                        progress!!.progressFraction.toFloat(),
+                        Modifier.align(Alignment.BottomEnd).padding(AliflixSpacing.Tiny),
                     )
                 }
             }
-            Text(
-                text = episode.title,
-                color = AliflixContentPrimary,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 16.sp,
-            )
-            Text(
-                text = episode.overview.ifBlank {
-                    "Episode summary unavailable."
-                },
-                color = Color.White.copy(alpha = 0.66f),
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
-                maxLines = if (expanded) Int.MAX_VALUE else 2,
-                overflow = TextOverflow.Ellipsis,
-                onTextLayout = { if (!expanded) expandable = it.hasVisualOverflow },
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Tiny),
-            ) {
-                EpisodeRatingPill(
-                    source = "IMDb",
-                    value = ratings.imdb,
-                    accent = Color(0xFFF5C518),
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "S${episode.seasonNumber} \u2022 E${episode.number}",
+                    color = AliflixAccentSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.sp,
                 )
-                if (expandable || expanded) {
-                    TextButton(
-                        onClick = { expanded = !expanded },
-                        contentPadding = PaddingValues(horizontal = 2.dp),
-                        modifier = Modifier.heightIn(min = 28.dp),
+                Text(
+                    episode.title,
+                    color = AliflixContentPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 19.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (episode.runtime.isNotBlank()) {
+                    Text(episode.runtime, color = AliflixMuted, fontSize = 12.sp)
+                }
+            }
+            Icon(
+                Icons.Rounded.ExpandMore,
+                contentDescription = null,
+                tint = if (expanded) AliflixAccentSecondary else AliflixMuted,
+                modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = chevronRotation },
+            )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = androidx.compose.animation.expandVertically(tween(300, easing = FastOutSlowInEasing)) + fadeIn(tween(220)),
+            exit = androidx.compose.animation.shrinkVertically(tween(300, easing = FastOutSlowInEasing)) + fadeOut(tween(160)),
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (episode.overview.isNotBlank()) {
+                    Text(
+                        episode.overview,
+                        color = AliflixContentSecondary,
+                        fontSize = 13.sp,
+                        lineHeight = 21.sp,
+                    )
+                }
+                val ratings = episodeRatingsPresentation(episode)
+                EpisodeRatingPill(source = "IMDb", value = ratings.imdb, accent = Color(0xFFF5C518))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = onPlay,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        shape = CircleShape,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AliflixContentPrimary, contentColor = AliflixBackgroundBase),
                     ) {
-                        Text(
-                            if (expanded) "Show less" else "Show more",
-                            fontSize = 10.sp,
-                            color = AliflixAccentSecondary,
-                        )
+                        Icon(Icons.Rounded.PlayArrow, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Play", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
+                    com.aliflix.app.downloads.DownloadButton(media, episode)
                 }
             }
         }
-        com.aliflix.app.downloads.DownloadButton(media, episode, compact = true)
     }
 }
-
 internal fun shouldShowPlaybackProgressRing(progress: PlaybackProgress?): Boolean =
     progress != null && (progress.positionSeconds > 0.0 || progress.completed)
 

@@ -45,7 +45,7 @@ class DorabyNativeCatalogTest {
         val restored = nativeSelection(selected.nativeJson())
         assertEquals(selected.key, restored.key)
         assertEquals(selected.availableEpisodes, restored.availableEpisodes)
-        assertEquals(PlaybackProviderId.DORABY, restored.source.provider)
+        assertEquals(PlaybackProviderId.DORABY, restored.source.identity)
         assertEquals(2, restored.seasonNumber)
         assertEquals(3, restored.episodeNumber)
     }

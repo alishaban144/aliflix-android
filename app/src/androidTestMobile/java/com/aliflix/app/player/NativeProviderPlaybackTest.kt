@@ -75,7 +75,7 @@ class NativeProviderPlaybackTest {
                             if (forceFallback && checkedStream == null) scenario.onActivity {
                                 assertTrue("Fallback must reapply saved position before playback", it.playbackController!!.currentPosition >= 270000)
                                 val actual = nativeSelection(requireNotNull(NativePlaybackService.activeRequest).selectionJson)
-                                assertNotEquals("Unavailable source must fall back automatically", selection.source.provider, actual.source.provider)
+                                assertNotEquals("Unavailable source must fall back automatically", selection.source.identity, actual.source.identity)
                                 assertEquals(com.aliflix.app.data.playbackProgressKey(selection), com.aliflix.app.data.playbackProgressKey(actual))
                             }
                             checkedStream = stream; stableSince = android.os.SystemClock.elapsedRealtime()

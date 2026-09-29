@@ -76,7 +76,7 @@ class NativeDownloadBatchLiveTest {
             assertTrue("Episodes failed preparation: $errors", errors.isEmpty())
             assertEquals(3, prepared.size)
             assertEquals("Every episode must resolve on the same provider",
-                1, prepared.values.map { it.selection.source.provider }.distinct().size)
+                1, prepared.values.map { it.selection.source.identity }.distinct().size)
             assertEquals("Every episode must resolve on the same server",
                 1, prepared.values.map { it.server }.distinct().size)
             assertTrue("The shared server must be identified", prepared.values.first().server.isNotBlank())
@@ -84,7 +84,7 @@ class NativeDownloadBatchLiveTest {
                 3, prepared.values.map { it.playback.url }.distinct().size)
             assertTrue("Batch preparation must stay within one discovery plus pinned retries",
                 batchElapsed < 240_000)
-            evidence.append("provider=${prepared.values.first().selection.source.provider}\n")
+            evidence.append("provider=${prepared.values.first().selection.source.identity}\n")
             evidence.append("server=${prepared.values.first().server}\n")
             val store = OfflineDownloads.get(context)
             val requests = prepared.values.map { item ->

@@ -1,5 +1,8 @@
 package com.aliflix.app.player
 
+import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.MobilePlaybackProvider
+
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
@@ -47,7 +50,7 @@ import com.aliflix.app.BuildConfig
 import com.aliflix.app.data.PlaybackProgress
 import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -266,7 +269,7 @@ class WebPlayerController(
         label: String,
     ) {
         if (
-            BuildConfig.IS_TV || !selection.source.provider.usesMoviepire ||
+            BuildConfig.IS_TV || !selection.source.identity.usesMoviepire ||
             activeSelection?.let(::subtitleContentKey) != subtitleContentKey(selection)
         ) return
 
@@ -348,7 +351,7 @@ class WebPlayerController(
     fun selectMoviepireServer(option: MoviepireServerOption) {
         val selection = activeSelection ?: return
         val view = webView ?: return
-        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
+        if (BuildConfig.IS_TV || !selection.source.identity.usesMoviepire) return
         if (_moviepireServers.value.none { it.key == option.key }) return
         if (option.selected || _moviepireServers.value.any { it.key == option.key && it.selected }) {
             return
@@ -478,7 +481,7 @@ class WebPlayerController(
             selectionJson = JSONObject().apply {
                 put("media", selection.media.toJson()); put("season", selection.seasonNumber)
                 put("episode", selection.episodeNumber); put("episodeTitle", selection.episodeTitle)
-                put("provider", selection.source.provider.name); put("baseUrl", selection.source.baseUrl)
+                put("provider", selection.source.identity.name); put("baseUrl", selection.source.baseUrl)
             }.toString(),
         )
         runCatching { NativePlaybackLauncher.launch(activity, request) }.onSuccess {
@@ -492,7 +495,7 @@ class WebPlayerController(
     fun requestMoviepireFullscreen(): Boolean {
         val selection = activeSelection ?: return false
         val view = webView ?: return false
-        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return false
+        if (BuildConfig.IS_TV || !selection.source.identity.usesMoviepire) return false
         if (nativeFullscreenRequested) {
             exitNativeFullscreenMode()
             view.requestLayout()
@@ -706,7 +709,7 @@ class WebPlayerController(
             }
             return
         }
-        if (!selection.source.provider.usesMoviepire) {
+        if (!selection.source.identity.usesMoviepire) {
             val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
             if (moviepireDocumentStartScriptHandler != null && moviepireProtectedSourceHost == sourceHost && !moviepireProtectedNativeMode) return
             view.setDownloadListener(null)
@@ -729,7 +732,7 @@ class WebPlayerController(
         }
 
         val sourceHost = selection.source.cleanDomain.lowercase().removePrefix("www.")
-        val nativeMode = !BuildConfig.IS_TV && selection.source.provider.usesMoviepire
+        val nativeMode = !BuildConfig.IS_TV && selection.source.identity.usesMoviepire
         if (
             moviepireDocumentStartScriptHandler != null &&
             moviepireProtectedSourceHost == sourceHost &&
@@ -1031,12 +1034,12 @@ class WebPlayerController(
                     activePlayerReplyProxy = null
                     view?.alpha = 1f
                     val selection = activeSelection
-                    if (!BuildConfig.IS_TV && selection?.source?.provider?.usesMoviepire == true) {
+                    if (!BuildConfig.IS_TV && selection?.source?.identity?.usesMoviepire == true) {
                         _moviepireServers.value = emptyList()
                     }
                     if (
                         view != null &&
-                        selection?.source?.provider?.usesMoviepire == true &&
+                        selection?.source?.identity?.usesMoviepire == true &&
                         !BuildConfig.IS_TV
                     ) {
                         // Document-start injection is the primary path. These short retries are a
@@ -1072,7 +1075,7 @@ class WebPlayerController(
                         }
                         if (
                             selection != null &&
-                            nativeEmbedUrl == null && selection.source.provider == PlaybackProviderId.RAMOFLIX &&
+                            nativeEmbedUrl == null && selection.source.identity == PlaybackProviderId.RAMOFLIX &&
                             isRamoflixSearchUrl(url, selection)
                         ) {
                             resolveRamoflixTitle(view, selection, attempt = 0)
@@ -1099,7 +1102,7 @@ class WebPlayerController(
                         if (selection != null) {
                             if (
                                 !BuildConfig.IS_TV &&
-                                selection.source.provider.usesMoviepire
+                                selection.source.identity.usesMoviepire
                             ) {
                                 installMobileMoviepireAdShield(view, selection)
                             }
@@ -1119,7 +1122,7 @@ class WebPlayerController(
                                 },
                                 1_400L,
                             )
-                            if (selection.source.provider != PlaybackProviderId.RAMOFLIX) {
+                            if (selection.source.identity != PlaybackProviderId.RAMOFLIX) {
                                 view.postDelayed(
                                     {
                                         if (isActiveSelection(view, selection)) {
@@ -1337,7 +1340,7 @@ class WebPlayerController(
     ): Boolean {
         val uri = url.toUri()
         val cleanHost = uri.host?.removePrefix("www.")
-        return selection.source.provider == PlaybackProviderId.RAMOFLIX &&
+        return selection.source.identity == PlaybackProviderId.RAMOFLIX &&
             cleanHost == selection.source.cleanDomain &&
             uri.getQueryParameter("s") != null
     }
@@ -1347,11 +1350,11 @@ class WebPlayerController(
 
     private fun isMobileMoviepireSelection(): Boolean =
         !BuildConfig.IS_TV &&
-            activeSelection?.source?.provider?.usesMoviepire == true
+            activeSelection?.source?.identity?.usesMoviepire == true
 
     private fun isMoviepireWrapper(view: WebView): Boolean {
         val selection = activeSelection ?: return false
-        if (!selection.source.provider.usesMoviepire) return false
+        if (!selection.source.identity.usesMoviepire) return false
         val currentHost = runCatching {
             URI(view.url.orEmpty()).host?.removePrefix("www.")
         }.getOrNull()
@@ -1902,8 +1905,9 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ) {
         if (nativePreparation && nativeEmbedUrl != null) return
-        when (selection.source.provider) {
+        when (selection.source.identity) {
             PlaybackProviderId.CINEJOY -> Unit // Exact TMDB movie/episode route, native HLS discovery.
+            MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Exact mobile TMDB routes.
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.MOVIEPIRE -> {
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)
@@ -1990,7 +1994,7 @@ class WebPlayerController(
     ) {
         if (
             BuildConfig.IS_TV ||
-            !selection.source.provider.usesMoviepire ||
+            !selection.source.identity.usesMoviepire ||
             !isActiveSelection(view, selection) ||
             !isMoviepireWrapper(view)
         ) {
@@ -2031,7 +2035,7 @@ class WebPlayerController(
         view: WebView,
         selection: PlaybackSelection,
     ) {
-        if (BuildConfig.IS_TV || !selection.source.provider.usesMoviepire) return
+        if (BuildConfig.IS_TV || !selection.source.identity.usesMoviepire) return
         if (!isActiveSelection(view, selection)) return
         view.evaluateJavascript(
             mobileMoviepireAdShieldScript() + if (!BuildConfig.IS_TV) {
@@ -2295,7 +2299,7 @@ internal fun playbackRestoreStillPending(
 
 internal fun shouldResolveMobileMoviepireEpisode(selection: PlaybackSelection): Boolean =
     !BuildConfig.IS_TV &&
-        selection.source.provider.usesMoviepire &&
+        selection.source.identity.usesMoviepire &&
         selection.media.type == MediaType.TV
 
 internal fun mobileMoviepireEpisodeBootstrapUrl(selection: PlaybackSelection): String? =

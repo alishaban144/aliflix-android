@@ -10,7 +10,7 @@ import org.json.JSONObject
 
 internal fun PlaybackSelection.nativeJson(): String = JSONObject().apply {
     put("media", media.toJson()); put("season", seasonNumber); put("episode", episodeNumber)
-    put("episodeTitle", episodeTitle); put("provider", source.provider.name); put("baseUrl", source.baseUrl)
+    put("episodeTitle", episodeTitle); put("provider", source.identity.name); put("baseUrl", source.baseUrl)
     put("episodes", JSONArray().apply { availableEpisodes.forEach { episode ->
         put(JSONObject().put("season", episode.seasonNumber).put("number", episode.number).put("title", episode.title).put("stillPath", episode.stillPath).put("runtime", episode.runtime).put("overview", episode.overview))
     } })
@@ -25,7 +25,7 @@ internal fun nativeSelection(raw: String): PlaybackSelection = JSONObject(raw).l
             Episode(it.getInt("season"), it.getInt("number"), it.getString("title"),
                 overview = it.optString("overview"), stillPath = it.optString("stillPath").takeIf { path -> path.isNotBlank() && path != "null" }, runtime = it.optString("runtime"))
         } },
-        source = PlaybackSource(PlaybackProviderId.valueOf(json.getString("provider")), json.getString("baseUrl")))
+        source = PlaybackSource(PlaybackProvider.valueOf(json.getString("provider")), json.getString("baseUrl")))
 }
 
 internal fun launchNativeSelection(activity: Activity, selection: PlaybackSelection, language: String, autoSubtitles: Boolean) {
@@ -51,9 +51,18 @@ internal fun orderedNativeServers(servers: List<MoviepireServerOption>): List<Mo
 
 /** Same public embeds used by Moviepire, avoiding catalogue/bootstrap round trips. */
 internal fun preferredNativeEmbeds(selection: PlaybackSelection): List<Pair<String, String>> {
-    if (!selection.source.provider.usesMoviepire) return emptyList()
     val route = if (selection.media.type == MediaType.TV) "tv/${selection.media.id}/${selection.seasonNumber ?: 1}/${selection.episodeNumber ?: 1}"
         else "movie/${selection.media.id}"
+    if (selection.source.identity == MobilePlaybackProvider.SEVEN_MOVIES && !com.aliflix.app.BuildConfig.IS_TV) {
+        return listOf(
+            "Direct" to checkNotNull(selection.entryUrl),
+            "Vidbolt" to "https://vidbolt.xyz/$route?autoPlay=true",
+            "Cinezo" to "https://player.cinezo.live/embed/$route?autoplay=true",
+            "Vidstuck" to "https://vidstuck.xyz/embed/$route?autoplay=true&back=false&branding=7Movies",
+            "Bingr" to "https://bingr.one/watch/$route",
+        )
+    }
+    if (!selection.source.identity.usesMoviepire) return emptyList()
     return listOf("Vid" to "https://embed.wplay.me/embed/$route", "Mist" to "https://play.xpass.top/e/$route",
         "Mistify" to "https://vaplayer.ru/embed/$route", "Flix" to "https://vidbolt.xyz/$route",
         "Peach" to "https://peachify.top/embed/$route")

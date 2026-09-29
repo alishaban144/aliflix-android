@@ -30,10 +30,10 @@ internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLay
     val progress = (activity.application as AliflixApplication).playbackProgressStore
     val prefs = PlaybackProviderRepository(activity).preferences.value
     var last: Exception? = null
-    val providers = listOf(selection.source.provider) + mobileGeneralPlaybackProviders().filter { it != selection.source.provider }
+    val providers = listOf(selection.source.identity) + mobileGeneralPlaybackProviders().filter { it != selection.source.identity }
     for (provider in providers) {
         currentCoroutineContext().ensureActive()
-        val candidate = selection.copy(source = if (provider == selection.source.provider) selection.source else prefs.sourceFor(selection.media, provider))
+        val candidate = selection.copy(source = if (provider == selection.source.identity) selection.source else prefs.sourceFor(selection.media, provider))
         try {
             var server = ""
             val request = NativeStreamResolver(activity, progress, host).use {
@@ -67,7 +67,7 @@ internal suspend fun prepareDownloadBatch(activity: ComponentActivity, host: Fra
         },
         inspect = ::inspectDownload,
         sourceIsCurrent = { selection ->
-            selection.source == prefs.sourceFor(selection.media, selection.source.provider) ||
+            selection.source == prefs.sourceFor(selection.media, selection.source.identity) ||
                 selections.any { it.second.source == selection.source }
         },
         onPrepared = onPrepared, onError = onError)

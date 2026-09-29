@@ -1,5 +1,7 @@
 package com.aliflix.app.player
 
+import com.aliflix.app.model.PlaybackProviderId
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -51,7 +53,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
 
 private val SheetBackground = Color(0xFF131620)
@@ -62,14 +64,14 @@ private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
 /** Level one of the streaming picker: a streaming source the user can drill into. */
 internal data class StreamingSourceOption(
-    val provider: PlaybackProviderId,
+    val provider: PlaybackProvider,
     val selected: Boolean = false,
     val detail: String = "",
 )
 
 /** Level two of the streaming picker for a source that is not the one currently playing. */
 internal data class ProviderServerDiscovery(
-    val provider: PlaybackProviderId? = null,
+    val provider: PlaybackProvider? = null,
     val loading: Boolean = false,
     val failed: Boolean = false,
     val servers: List<MoviepireServerOption> = emptyList(),
@@ -101,7 +103,7 @@ internal fun MobilePlayerMoreSheet(
     castActive: Boolean = false,
     onCast: (() -> Unit)? = null,
     providers: List<StreamingSourceOption> = emptyList(),
-    onSelectProvider: (PlaybackProviderId) -> Unit = {},
+    onSelectProvider: (PlaybackProvider) -> Unit = {},
     providerDiscovery: ProviderServerDiscovery = ProviderServerDiscovery(),
     onRetryProviderServers: () -> Unit = {},
     onSelectProviderServer: (MoviepireServerOption) -> Unit = {},
@@ -109,9 +111,9 @@ internal fun MobilePlayerMoreSheet(
 
     var rememberedSpeed by remember { mutableFloatStateOf(1.0f) }
     val activeSpeed = currentSpeed ?: rememberedSpeed
-    var drilledProvider by remember { mutableStateOf<PlaybackProviderId?>(null) }
+    var drilledProvider by remember { mutableStateOf<PlaybackProvider?>(null) }
     val drilled = drilledProvider
-    val activeProvider = selection.source.provider
+    val activeProvider = selection.source.identity
 
     BackHandler(enabled = visible && drilled != null) { drilledProvider = null }
 
@@ -341,7 +343,7 @@ internal fun MobilePlayerMoreSheet(
                         onSelectServer(server)
                         onDismiss()
                     }
-                } else if (selection.source.provider == PlaybackProviderId.RAMOFLIX) {
+                } else if (selection.source.identity == PlaybackProviderId.RAMOFLIX) {
                     Spacer(modifier = Modifier.height(16.dp))
                     MoreOptionRow(
                         icon = Icons.Rounded.Dns,

@@ -39,8 +39,8 @@ import com.aliflix.app.ui.theme.*
 @Composable
 internal fun MobileSettingsDialog(
     accountState: AccountState, onOpenAccount: () -> Unit,
-    generalProvider: PlaybackProviderId, onSelectProvider: (PlaybackProviderId) -> Unit,
-    onEditProviderUrl: (PlaybackProviderId) -> Unit,
+    generalProvider: PlaybackProvider, onSelectProvider: (PlaybackProvider) -> Unit,
+    onEditProviderUrl: (PlaybackProvider) -> Unit,
     aiRecommendationsEnabled: Boolean, onSetAiRecommendationsEnabled: (Boolean) -> Unit,
     recommendationAiModel: RecommendationAiModel, onSetRecommendationAiModel: (RecommendationAiModel) -> Unit,
     preferredSubtitleLanguage: SubtitleLanguage, onSelectPreferredSubtitleLanguage: (SubtitleLanguage) -> Unit,
@@ -93,7 +93,7 @@ internal fun MobileSettingsDialog(
                         var sourceMenu by remember { mutableStateOf(false) }
                         Box {
                             SettingsRow(Icons.Rounded.PlayCircle, "Streaming source", generalProvider.displayName, onClick = { sourceMenu = true }) {
-                                if (generalProvider != PlaybackProviderId.CINEJOY) AliflixIconButton(onClick = { onEditProviderUrl(generalProvider) }) { Icon(Icons.Rounded.Edit, "Edit URL", Modifier.size(17.dp), tint = AliflixContentSecondary) }
+                                if (generalProvider in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE)) AliflixIconButton(onClick = { onEditProviderUrl(generalProvider) }) { Icon(Icons.Rounded.Edit, "Edit URL", Modifier.size(17.dp), tint = AliflixContentSecondary) }
                                 Icon(Icons.Rounded.ExpandMore, "Choose source", Modifier.size(19.dp), tint = AliflixAccentSecondary)
                             }
                             SettingsMenu(sourceMenu, { sourceMenu = false }, mobileGeneralPlaybackProviders(), { it.displayName }, generalProvider) {

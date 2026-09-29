@@ -1,11 +1,13 @@
 package com.aliflix.app.data
 
+import com.aliflix.app.model.PlaybackProviderId
+
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.PlaybackPreferences
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.defaultGeneralPlaybackProvider
 import kotlinx.coroutines.channels.BufferOverflow
@@ -42,7 +44,7 @@ class PlaybackProviderRepository(private val context: Context) {
             KEY_LEGACY_ACTIVE_SOURCE_ID,
         ).any(prefs::contains)
 
-    fun selectGeneralProvider(provider: PlaybackProviderId) {
+    fun selectGeneralProvider(provider: PlaybackProvider) {
         if (!provider.supportsGeneralPlayback) return
         prefs.edit { putString(KEY_GENERAL_PROVIDER_ID, provider.name) }
         _preferences.value = _preferences.value.copy(generalProvider = provider)
@@ -119,7 +121,7 @@ class PlaybackProviderRepository(private val context: Context) {
         if (!BuildConfig.IS_TV && value.preferredSubtitleLanguage != _preferences.value.preferredSubtitleLanguage) {
             context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE).edit { remove("language") }
         }
-        val provider = value.safeGeneralProvider
+        val provider = value.effectiveGeneralProvider
         _preferences.value = value.copy(generalProvider = provider)
         _updatedAtMillis.value = updatedAtMillis.coerceAtLeast(0L)
         prefs.edit {
@@ -173,8 +175,8 @@ class PlaybackProviderRepository(private val context: Context) {
         }
         val storedProvider = prefs.getString(KEY_GENERAL_PROVIDER_ID, null)
             ?: prefs.getString(KEY_LEGACY_ACTIVE_SOURCE_ID, null)
-        val generalProvider = PlaybackProviderId.fromStoredValue(storedProvider)
-            ?.takeIf(PlaybackProviderId::supportsGeneralPlayback)
+        val generalProvider = PlaybackProvider.fromStoredValue(storedProvider)
+            ?.takeIf(PlaybackProvider::supportsGeneralPlayback)
             ?: defaultGeneralPlaybackProvider(isTv = BuildConfig.IS_TV)
         if (storedProvider != null) {
             prefs.edit {

@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.exoplayer.offline.Download
@@ -136,6 +137,7 @@ internal interface DownloadUiDependencies {
         else -> "Download"
     }
     val title = if (episode == null) media.title else "${media.title}, season ${episode.seasonNumber}, episode ${episode.number}"
+    val showLabel = episode != null && !compact
     val estimated = saved != null && saved.percent < 0
     val status = saved?.statusLabel().orEmpty() + if (active && !queued && fraction != null) {
         " · ${if (estimated) "approximately " else ""}${(fraction * 100).toInt()} percent"
@@ -155,16 +157,18 @@ internal interface DownloadUiDependencies {
                     android.widget.Toast.makeText(context, "Connect to the internet and try again", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
-    }, enabled = enabled, modifier = Modifier.size(48.dp).semantics(mergeDescendants = true) {
+    }, enabled = enabled, modifier = (if (showLabel) Modifier.heightIn(min = 48.dp) else Modifier.size(48.dp)).semantics(mergeDescendants = true) {
         contentDescription = "$action, $title"
         stateDescription = status
         role = Role.Button
         if (active) progressBarRangeInfo = if (fraction != null && !queued) ProgressBarRangeInfo(fraction, 0f..1f)
             else ProgressBarRangeInfo.Indeterminate
-    }, shape = if (compact) AliflixCorners.Small else AliflixCorners.Card,
+    }, shape = if (showLabel) androidx.compose.foundation.shape.CircleShape else if (compact) AliflixCorners.Small else AliflixCorners.Card,
         level = AliflixSurfaceLevel.Content,
     ) {
-        Box(contentAlignment = Alignment.Center) {
+        Row(modifier = if (showLabel) Modifier.padding(horizontal = 14.dp, vertical = 6.dp) else Modifier,
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(contentAlignment = Alignment.Center, modifier = if (showLabel && active) Modifier.size(38.dp) else Modifier) {
             if (active) {
                 val ring = Modifier.size(38.dp).clearAndSetSemantics { }
                 if (!queued && fraction != null) CircularProgressIndicator(
@@ -179,8 +183,10 @@ internal interface DownloadUiDependencies {
                 active -> Icons.Rounded.Pause
                 state == Download.STATE_FAILED -> Icons.Rounded.Refresh
                 else -> Icons.Rounded.Download
-            }, null, modifier = Modifier.size(if (compact || active) 20.dp else 24.dp), tint = AliflixAccentSecondary)
+            }, null, modifier = Modifier.size(if (showLabel) 16.dp else if (compact || active) 20.dp else 24.dp), tint = AliflixAccentSecondary)
             }
+        }
+        if (showLabel) Text(action, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = AliflixContentPrimary)
         }
     }
     if (open) DownloadPicker(media, episode, store) { open = false }

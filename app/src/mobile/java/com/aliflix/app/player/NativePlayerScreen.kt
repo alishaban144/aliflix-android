@@ -1,4 +1,4 @@
-﻿package com.aliflix.app.player
+package com.aliflix.app.player
 
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 
@@ -125,7 +125,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
 import com.aliflix.app.model.Episode
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentPrimaryContainer
@@ -145,7 +145,7 @@ internal data class NativePlayerUi(
     val error: String? = null,
     val server: String = "Auto",
     val availableServers: List<String> = emptyList(),
-    val availableProviders: List<PlaybackProviderId> = emptyList(),
+    val availableProviders: List<PlaybackProvider> = emptyList(),
     val providerDiscovery: ProviderServerDiscovery = ProviderServerDiscovery(),
     val ready: Boolean = false,
     val external: Boolean = false,
@@ -195,8 +195,8 @@ internal fun NativePlayerScreen(
     onRetry: () -> Unit = {},
     onServer: () -> Unit = {},
     onSelectServer: (String) -> Unit = {},
-    onBrowseProvider: (PlaybackProviderId) -> Unit = {},
-    onSelectProviderServer: (PlaybackProviderId, String) -> Unit = { _, _ -> },
+    onBrowseProvider: (PlaybackProvider) -> Unit = {},
+    onSelectProviderServer: (PlaybackProvider, String) -> Unit = { _, _ -> },
     onRetryProviderServers: () -> Unit = {},
     onStop: () -> Unit = {},
     onStopCast: () -> Unit = {},
@@ -776,7 +776,7 @@ internal fun NativePlayerScreen(
             (state.availableServers.ifEmpty { listOf(state.server).filter { it.isNotBlank() } })
                 .map { name -> MoviepireServerOption(key = name, label = name, selected = name.equals(state.server, ignoreCase = true)) }
         }
-        val activeProvider = playbackSelection.source.provider
+        val activeProvider = playbackSelection.source.identity
         val providerOptions = remember(state.availableProviders, activeProvider, state.server) {
             state.availableProviders.map { provider ->
                 StreamingSourceOption(

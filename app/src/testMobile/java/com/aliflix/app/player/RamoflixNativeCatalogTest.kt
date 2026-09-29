@@ -38,7 +38,7 @@ class RamoflixNativeCatalogTest {
     @Test fun nativeHandoffPreservesRamoflixEpisodeAndResumeIdentity() {
         val restored = nativeSelection(tv.nativeJson())
         assertEquals(tv.key, restored.key)
-        assertEquals(PlaybackProviderId.RAMOFLIX, restored.source.provider)
+        assertEquals(PlaybackProviderId.RAMOFLIX, restored.source.identity)
         assertEquals(2, restored.seasonNumber)
         assertEquals(3, restored.episodeNumber)
     }

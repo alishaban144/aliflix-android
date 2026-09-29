@@ -22,7 +22,7 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaCreator
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackPreferences
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.Season
 import com.aliflix.app.recommendation.RecommendationMediaKind
@@ -681,7 +681,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     val recommendationAiModel: StateFlow<RecommendationAiModel> =
         recommendationStore.aiModel
 
-    fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
+    fun selectGeneralPlaybackProvider(provider: PlaybackProvider) =
         playbackProviderRepository.selectGeneralProvider(provider)
 
     fun updateRamoflixUrl(newUrl: String) =
