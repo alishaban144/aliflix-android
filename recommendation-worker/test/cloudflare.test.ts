@@ -65,7 +65,7 @@ describe('Cloudflare Workers AI recommendations', () => {
   });
 
   it('applies the same low-token model path to Similar', async () => {
-    const run = vi.fn(async () => ({
+    const run = vi.fn(async (_model: string, _input: any) => ({
       response: { recommendations: recommendations(24, 'Similar') },
     }));
     const results = await recommendSimilarTitlesWithCloudflare(
