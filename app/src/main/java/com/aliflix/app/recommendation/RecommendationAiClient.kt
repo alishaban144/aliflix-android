@@ -201,7 +201,7 @@ data class V3RecommendationFilters(
 data class V3RecommendationRequest(
     val requestId: String,
     val mode: String = "describe",
-    val aiModel: String = RecommendationAiModel.GEMINI_3_8_FLASH.workerValue,
+    val aiModel: String = RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B.workerValue,
     val query: String,
     val mediaType: String,
     val anchor: V3RecommendationAnchor? = null,
@@ -209,7 +209,7 @@ data class V3RecommendationRequest(
     val previousQuery: String? = null,
     val refinementQuery: String? = null,
     val filters: V3RecommendationFilters = V3RecommendationFilters(),
-    val pageSize: Int = 20,
+    val pageSize: Int = 24,
     val cursor: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
