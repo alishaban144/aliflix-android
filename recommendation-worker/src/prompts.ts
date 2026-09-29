@@ -184,4 +184,4 @@ Before answering, silently consider a much broader candidate pool than targetCou
 Assign each title an editorial rating from 0 to 10 for this exact request and order descending by that rating. Rating is request fit, not popularity, TMDB score or fame.
 Use accurate canonical catalogue titles and original release/premiere years. Never invent a title, merge titles, guess a sequel, or use a title you are materially unsure exists.
 Never repeat excludedTitles. When expansionPass is true, search deeper for additional genuine matches without lowering the relevance standard or recycling prior titles.
-Output only the requested JSON fields: title, releaseYear and rating. No prose, reasons, confidence or match details.`;
+Output only the requested JSON fields: title, releaseYear and rating. No reasons, descriptions, confidence or match details.`;
