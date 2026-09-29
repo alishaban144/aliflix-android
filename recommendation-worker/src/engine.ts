@@ -1751,9 +1751,9 @@ export async function processRecommendation(
   dependencies: EngineDependencies = {},
   options: RecommendationExecutionOptions = {},
 ): Promise<RecommendationResult[]> {
-  // Generated modes make one candidate call and one evidence-grounded
-  // verification call. Forty TMDB attempts keep the worst case below the
-  // Cloudflare Free plan's 50 external-subrequest limit.
+  // Generated modes use compact model output plus authoritative TMDB identity
+  // resolution. Forty TMDB attempts cover a 24-title page and a bounded
+  // identity-recovery batch while staying within the Worker subrequest budget.
   const tmdb = dependencies.tmdb || new TmdbClient(env, request.mode === 'filters' ? 38 : 40);
   // The request can select one allow-listed model. Both AI stages use that same
   // provider and never fall back to another model behind the user's back.
@@ -1762,20 +1762,15 @@ export async function processRecommendation(
     ? { ...env, AI_GENERATION_MODEL: requestedAiModel }
     : env;
   if (request.mode !== 'filters') {
-    // Cloudflare gets the grounded path: compact model seeding + TMDB expansion
-    // + bounded evidence verification. This materially improves recall while
-    // keeping provider usage to two small calls. Existing Gemini/Groq behavior
-    // remains unchanged.
-    if (isCloudflareAiModel(selectedAiModel(recommendationEnv))) {
-      const continuationPass = Math.max(0, options.continuationPass || 0);
-      return request.mode === 'similar'
-        ? processSimilarRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass)
-        : processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass);
-    }
+    // Describe and Similar are taste-recommendation tasks, not literal keyword
+    // intersections. Generate a broad editorial slate, then let TMDB verify
+    // every identity. The provider is asked for 24 compact picks so a normal
+    // page needs one model call; a second call is only used when identity
+    // resolution leaves fewer than 20 genuine titles.
     return editorialRecommendations(recommendationEnv, request, tmdb, dependencies);
   }
   const providerFallbackIntent: InterpretedIntent | undefined = undefined;
-  let disableGeminiEmbeddings = isGroqAiModel(selectedAiModel(recommendationEnv));
+  let disableGeminiEmbeddings = isGroqAiModel(selectedAiModel(recommendationEnv)) || isCloudflareAiModel(selectedAiModel(recommendationEnv));
   const interpret = dependencies.interpret || interpretQuery;
   const queryToInterpret = request.previousQuery && request.refinementQuery
     ? `${request.previousQuery} [Refinement adjustment: ${request.refinementQuery}]`

@@ -15,16 +15,13 @@ function recommendations(count: number, prefix = 'Title') {
 }
 
 describe('Cloudflare Workers AI recommendations', () => {
-  it('uses GPT-OSS 120B with compact low-reasoning generation and a 24-title target', async () => {
-    const run = vi.fn(async (_model: string, _input: any) => ({
-      id: 'chatcmpl-test',
-      object: 'chat.completion',
-      choices: [{
-        message: {
-          role: 'assistant',
-          content: JSON.stringify({ recommendations: recommendations(24) }),
-        },
-      }],
+  it('uses GPT-OSS 120B Responses API with compact low reasoning and a strict 24-title target', async () => {
+    const run = vi.fn(async () => ({
+      id: 'resp-test',
+      object: 'response',
+      status: 'completed',
+      output_text: JSON.stringify({ recommendations: recommendations(24) }),
+      output: [],
     }));
     const results = await recommendDescribeTitlesWithCloudflare(
       { AI: { run }, AI_GENERATION_MODEL: 'cloudflare-gpt-oss-120b' } as any,
@@ -37,27 +34,30 @@ describe('Cloudflare Workers AI recommendations', () => {
 
     expect(results).toHaveLength(24);
     expect(run).toHaveBeenCalledTimes(1);
-    const [model, input] = run.mock.calls[0];
+    const [model, input] = run.mock.calls[0] as [string, any];
     expect(model).toBe(CLOUDFLARE_MODEL);
-    expect(input.reasoning_effort).toBe('low');
-    expect(input.max_tokens).toBe(CLOUDFLARE_GENERATION_MAX_TOKENS);
+    expect(input.reasoning.effort).toBe('low');
+    expect(input.max_output_tokens).toBe(CLOUDFLARE_GENERATION_MAX_TOKENS);
     expect(input.temperature).toBeLessThanOrEqual(.5);
-    expect(input.response_format.type).toBe('json_schema');
-    expect(input.response_format.json_schema.properties.recommendations.minItems).toBe(20);
-    expect(input.response_format.json_schema.properties.recommendations.maxItems).toBe(24);
-    expect(input.messages[0].content).toContain('tone, atmosphere, pacing');
-    expect(input.messages[0].content).toContain('Never repeat excludedTitles');
-    expect(input.messages[1].content).toContain('"targetCount":24');
+    expect(input.text.verbosity).toBe('low');
+    expect(input.text.format.type).toBe('json_schema');
+    expect(input.text.format.strict).toBe(true);
+    expect(input.text.format.schema.properties.recommendations.minItems).toBe(20);
+    expect(input.text.format.schema.properties.recommendations.maxItems).toBe(24);
+    expect(input.instructions).toContain('tone, atmosphere, pacing');
+    expect(input.instructions).toContain('Never repeat excludedTitles');
+    expect(input.input).toContain('"targetCount":24');
+    expect(input.stream).toBe(false);
   });
 
   it('filters repeated exclusions locally so Find More cannot recycle prior titles', async () => {
     const run = vi.fn(async () => ({
-      response: {
+      output_text: JSON.stringify({
         recommendations: [
           { title: 'Arrival', releaseYear: 2016, rating: 9.8 },
           ...recommendations(23, 'Fresh'),
         ],
-      },
+      }),
     }));
     const results = await recommendDescribeTitlesWithCloudflare(
       { AI: { run } } as any,
@@ -71,9 +71,9 @@ describe('Cloudflare Workers AI recommendations', () => {
     expect(results).toHaveLength(23);
   });
 
-  it('applies the same bounded generation path to Similar', async () => {
-    const run = vi.fn(async (_model: string, _input: any) => ({
-      response: { recommendations: recommendations(24, 'Similar') },
+  it('applies the same bounded Responses API generation path to Similar', async () => {
+    const run = vi.fn(async () => ({
+      output_text: JSON.stringify({ recommendations: recommendations(24, 'Similar') }),
     }));
     const results = await recommendSimilarTitlesWithCloudflare(
       { AI: { run } } as any,
@@ -95,8 +95,8 @@ describe('Cloudflare Workers AI recommendations', () => {
     expect(results).toHaveLength(24);
     expect(run).toHaveBeenCalledTimes(1);
     const input = run.mock.calls[0][1] as any;
-    expect(input.reasoning_effort).toBe('low');
-    expect(input.messages[1].content).toContain('less action-focused');
+    expect(input.reasoning.effort).toBe('low');
+    expect(input.input).toContain('less action-focused');
   });
 
   it('fails clearly if the Workers AI binding is absent', async () => {

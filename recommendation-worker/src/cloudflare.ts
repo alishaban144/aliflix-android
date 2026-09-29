@@ -25,7 +25,7 @@ import {
 import { ZodError } from 'zod';
 
 export const CLOUDFLARE_MODEL = '@cf/openai/gpt-oss-120b';
-export const CLOUDFLARE_GENERATION_MAX_TOKENS = 1_536;
+export const CLOUDFLARE_GENERATION_MAX_TOKENS = 3_072;
 export const CLOUDFLARE_VERIFICATION_MAX_TOKENS = 2_048;
 const CLOUDFLARE_INTENT_MAX_TOKENS = 1_536;
 
@@ -160,20 +160,26 @@ async function cloudflareStructuredContent<T>(
   }
   const startedAt = Date.now();
   try {
+    // GPT-OSS on the Workers binding is a Responses API model. Use its native
+    // structured-output contract so the 20-24 item requirement is enforced by
+    // the provider instead of being merely prompt text.
     const output = await env.AI.run(CLOUDFLARE_MODEL, {
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: JSON.stringify(input) },
-      ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: standardJsonSchema(schema),
-      },
-      reasoning_effort: reasoningEffort,
-      max_tokens: maxTokens,
+      instructions: systemInstruction,
+      input: JSON.stringify(input),
+      reasoning: { effort: reasoningEffort },
+      max_output_tokens: maxTokens,
       temperature,
       top_p: 0.9,
-      seed: 314159,
+      text: {
+        verbosity: 'low',
+        format: {
+          type: 'json_schema',
+          name: `aliflix_${operation.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}`,
+          schema: standardJsonSchema(schema) as Record<string, unknown>,
+          strict: true,
+        },
+      },
+      stream: false,
     });
     console.log(JSON.stringify({
       event: 'cloudflare_ai_request_completed',

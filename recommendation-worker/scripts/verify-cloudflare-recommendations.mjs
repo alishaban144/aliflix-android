@@ -67,11 +67,12 @@ const firstPages = {};
 for (const mediaType of ['movie', 'tv']) {
   const requestId = crypto.randomUUID();
   const payload = await recommend(mediaType, requestId);
-  assert(payload.results.length >= 20, `${mediaType}: expected at least 20 results, got ${payload.results.length}`);
+  console.log(`${mediaType}: raw result set (${payload.results.length}): ${payload.results.map(item => item.title).join(' | ')}`);
+  assert(payload.results.length >= 20, `${mediaType}: expected at least 20 results, got ${payload.results.length}; titles: ${payload.results.map(item => item.title).join(' | ')}`);
   assert.equal(new Set(payload.results.map(item => item.tmdbId)).size, payload.results.length, `${mediaType}: duplicate TMDB identities`);
   const resultTitles = new Set(payload.results.map(item => canonical(item.title)));
   const overlap = gold[mediaType].filter(title => resultTitles.has(canonical(title)));
-  assert(overlap.length >= 11, `${mediaType}: only ${overlap.length}/20 gold-standard matches: ${overlap.join(', ')}`);
+  assert(overlap.length >= 11, `${mediaType}: only ${overlap.length}/20 gold-standard matches: ${overlap.join(', ')}; returned: ${payload.results.map(item => item.title).join(' | ')}`);
   assert(payload.nextCursor, `${mediaType}: missing continuation cursor`);
   firstPages[mediaType] = { requestId, payload };
   console.log(`${mediaType}: ${payload.results.length} results; ${overlap.length}/20 reference matches: ${overlap.join(', ')}`);
