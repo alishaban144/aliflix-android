@@ -127,7 +127,7 @@ export async function expandGeneratedContinuation(
       total: completed.count,
       exhausted: completed.exhausted,
     }));
-    if (completed.exhausted || availableAfterExpansion >= target) break;
+    if (completed.exhausted || availableAfterExpansion >= Math.min(20, target)) break;
   }
 }
 
