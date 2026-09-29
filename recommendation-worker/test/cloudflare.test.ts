@@ -52,7 +52,7 @@ describe('Cloudflare Workers AI recommendations', () => {
   });
 
   it('filters repeated exclusions locally so Find More cannot recycle prior titles', async () => {
-    const run = vi.fn(async () => ({
+    const run = vi.fn(async (_model: string, _input: any) => ({
       response: {
         recommendations: [
           { title: 'Arrival', releaseYear: 2016, rating: 9.8 },
