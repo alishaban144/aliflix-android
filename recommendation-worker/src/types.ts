@@ -1,9 +1,10 @@
 export type MediaType = 'movie' | 'tv';
 export type RequestMode = 'describe' | 'similar' | 'filters';
 export type RecommendationSort = 'most_popular' | 'highest_rated' | 'most_voted' | 'newest_first' | 'oldest_first' | 'runtime_short_to_long';
+export type CloudflareAiModel = 'cloudflare-gpt-oss-120b';
 export type GeminiAiModel = 'gemini-3.8-flash';
 export type GroqAiModel = 'groq-gpt-oss-120b';
-export type RecommendationAiModel = GeminiAiModel | GroqAiModel;
+export type RecommendationAiModel = CloudflareAiModel | GeminiAiModel | GroqAiModel;
 
 export interface RecommendationFilters {
   minimumYear?: number;
@@ -209,7 +210,12 @@ export interface SecretBindings {
   CURSOR_SIGNING_SECRET: string;
 }
 
-export type RecommendationEnv = Omit<Env, 'GEMINI_GENERATION_MODEL' | 'AI_GENERATION_MODEL'> & {
+export interface WorkersAiBinding {
+  run(model: string, input: Record<string, unknown>): Promise<unknown>;
+}
+
+export type RecommendationEnv = Omit<Env, 'GEMINI_GENERATION_MODEL' | 'AI_GENERATION_MODEL' | 'AI'> & {
+  AI?: WorkersAiBinding;
   GEMINI_GENERATION_MODEL?: GeminiAiModel;
   AI_GENERATION_MODEL?: RecommendationAiModel;
 } & SecretBindings;
