@@ -7,6 +7,7 @@ export const RecommendationAiModelSchema = z.preprocess(
   // Groq request runs on GPT-OSS 120B instead of failing or switching provider.
   value => value === 'groq-qwen-3.8-27b' ? 'groq-gpt-oss-120b' : value,
   z.enum([
+    'cloudflare-gpt-oss-120b',
     'gemini-3.8-flash',
     'groq-gpt-oss-120b',
   ]),
@@ -157,12 +158,12 @@ export const GeminiDescribeResponseSchema = z.object({
     rating: z.number().min(0).max(10),
     confidence: z.number().default(1),
     reason: z.string().default(''),
-  })).min(1).max(20),
+  })).min(1).max(24),
 });
 
 export const GeminiDescribeJsonSchema = {
   type: 'OBJECT', properties: {
-    recommendations: { type: 'ARRAY', minItems: 20, maxItems: 20, items: {
+    recommendations: { type: 'ARRAY', minItems: 1, maxItems: 24, items: {
       type: 'OBJECT', properties: {
         title: { type: 'STRING' }, releaseYear: { type: 'INTEGER' }, rating: { type: 'NUMBER' },
       }, required: ['title', 'releaseYear', 'rating'],
