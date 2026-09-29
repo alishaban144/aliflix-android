@@ -15,7 +15,7 @@ function recommendations(count: number, prefix = 'Title') {
 }
 
 describe('Cloudflare Workers AI recommendations', () => {
-  it('uses GPT-OSS 120B with low reasoning, structured output and a 24-title target', async () => {
+  it('uses GPT-OSS 120B with bounded medium generation reasoning and a 24-title target', async () => {
     const run = vi.fn(async (_model: string, _input: any) => ({
       id: 'chatcmpl-test',
       object: 'chat.completion',
@@ -39,7 +39,7 @@ describe('Cloudflare Workers AI recommendations', () => {
     expect(run).toHaveBeenCalledTimes(1);
     const [model, input] = run.mock.calls[0];
     expect(model).toBe(CLOUDFLARE_MODEL);
-    expect(input.reasoning_effort).toBe('low');
+    expect(input.reasoning_effort).toBe('medium');
     expect(input.max_tokens).toBe(CLOUDFLARE_GENERATION_MAX_TOKENS);
     expect(input.temperature).toBeLessThanOrEqual(.5);
     expect(input.response_format.type).toBe('json_schema');
@@ -71,7 +71,7 @@ describe('Cloudflare Workers AI recommendations', () => {
     expect(results).toHaveLength(23);
   });
 
-  it('applies the same low-token model path to Similar', async () => {
+  it('applies the same bounded generation path to Similar', async () => {
     const run = vi.fn(async (_model: string, _input: any) => ({
       response: { recommendations: recommendations(24, 'Similar') },
     }));
@@ -95,7 +95,7 @@ describe('Cloudflare Workers AI recommendations', () => {
     expect(results).toHaveLength(24);
     expect(run).toHaveBeenCalledTimes(1);
     const input = run.mock.calls[0][1] as any;
-    expect(input.reasoning_effort).toBe('low');
+    expect(input.reasoning_effort).toBe('medium');
     expect(input.messages[1].content).toContain('less action-focused');
   });
 
