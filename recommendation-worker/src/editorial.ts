@@ -20,14 +20,19 @@ export async function editorialRecommendations(env: RecommendationEnv, request: 
   anchors.forEach(a => { if (a.mediaType === request.mediaType) excluded.add(a.tmdbId); });
   const excludedTitles = [...request.filters.excludedTitles, ...anchors.map(a => a.title)];
   const results: RecommendationResult[] = [];
-  // A second editorial batch replaces unresolved identities, never verifies or rejects taste.
-  for (let pass = 0; pass < 2 && results.length < 20 && tmdb.callsRemaining > 0; pass++) {
+  const targetCount = Math.min(24, Math.max(1, request.pageSize));
+  // Usually one compact AI batch is enough. A second batch is allowed only
+  // when TMDB cannot resolve enough identities, preserving quality without
+  // routinely doubling model usage.
+  for (let pass = 0; pass < 2 && results.length < targetCount && tmdb.callsRemaining > 0; pass++) {
     const generated = request.mode === 'similar'
-      ? await (dependencies.recommendSimilar || recommendSimilarTitles)(env, anchors, request.mediaType, query, request.filters, excludedTitles, 20)
-      : await (dependencies.recommendDescribe || recommendDescribeTitles)(env, query, request.mediaType, request.filters, excludedTitles, 20);
-    excludedTitles.push(...generated.map(g => g.title));
-    for (let i = 0; i < generated.length && results.length < 20 && tmdb.callsRemaining > 0; i += 4) {
-      const batch = generated.slice(i, i + Math.min(4, tmdb.callsRemaining));
+      ? await (dependencies.recommendSimilar || recommendSimilarTitles)(env, anchors, request.mediaType, query, request.filters, excludedTitles, targetCount)
+      : await (dependencies.recommendDescribe || recommendDescribeTitles)(env, query, request.mediaType, request.filters, excludedTitles, targetCount);
+    const excludedBeforePass = new Set(excludedTitles.map(title => title.trim().toLocaleLowerCase()));
+    const freshGenerated = generated.filter(g => !excludedBeforePass.has(g.title.trim().toLocaleLowerCase()));
+    excludedTitles.push(...freshGenerated.map(g => g.title));
+    for (let i = 0; i < freshGenerated.length && results.length < targetCount && tmdb.callsRemaining > 0; i += 4) {
+      const batch = freshGenerated.slice(i, i + Math.min(4, tmdb.callsRemaining));
       const resolved = await Promise.all(batch.map(async pick => {
         const page = await tmdb.searchTitle!(request.mediaType, pick.title);
         const identity = (value: string) => value.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -43,7 +48,7 @@ export async function editorialRecommendations(env: RecommendationEnv, request: 
           tmdbRating: item.vote_average, tmdbVoteCount: item.vote_count, matchLevel: 'Strong' as const,
           finalScore: pick.rating ?? 0, matchReasons: [], retrievalSources: [] };
       }));
-      for (const item of resolved) if (item && !excluded.has(item.tmdbId) && results.length < 20) {
+      for (const item of resolved) if (item && !excluded.has(item.tmdbId) && results.length < targetCount) {
         excluded.add(item.tmdbId); results.push(item);
       }
     }
