@@ -1942,15 +1942,6 @@ private fun HomeHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        AliflixBlack.copy(alpha = AliflixAlpha.Chrome),
-                        AliflixBlack.copy(alpha = 0.38f),
-                        Color.Transparent,
-                    ),
-                ),
-            )
             .padding(horizontal = AliflixSpacing.Content, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.End,
