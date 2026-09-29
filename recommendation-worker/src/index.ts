@@ -239,6 +239,7 @@ export default {
       return json({
         status: 'ok',
         service: 'aliflix-recommendations',
+        cloudflareAiConfigured: Boolean(env.AI?.run),
         geminiConfigured: Boolean(env.GEMINI_API_KEY),
         groqConfigured: Boolean(env.GROQ_API_KEY),
         tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN),
