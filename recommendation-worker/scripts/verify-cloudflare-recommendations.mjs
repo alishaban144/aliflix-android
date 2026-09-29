@@ -18,6 +18,26 @@ const gold = {
 };
 const canonical = value => value.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
+async function waitForCloudflareDeployment() {
+  for (let attempt = 1; attempt <= 12; attempt++) {
+    try {
+      const response = await fetch(new URL('/health', origin), {
+        headers: { Accept: 'application/json', 'User-Agent': 'Aliflix-Cloudflare-Release-Validation' },
+        signal: AbortSignal.timeout(15000),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok && payload.cloudflareAiConfigured === true) {
+        console.log(`Cloudflare deployment ready after ${attempt} health check(s)`);
+        return;
+      }
+    } catch {}
+    if (attempt < 12) await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+  throw new Error('Cloudflare deployment did not expose the Workers AI binding within 60 seconds');
+}
+
+await waitForCloudflareDeployment();
+
 async function recommend(mediaType, requestId, cursor) {
   const response = await fetch(new URL('/v3/recommendations', origin), {
     method: 'POST',
