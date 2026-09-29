@@ -658,17 +658,17 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             "RATE_LIMITED", "RESOURCE_EXHAUSTED", "GROQ_RATE_LIMITED" -> "Ask Aliflix is busy right now. Please wait a moment and try again."
             // Configuration and authentication failures are permanent for this
             // deploy; never present them as a temporary outage to retry.
-            "GROQ_NOT_CONFIGURED", "GEMINI_NOT_CONFIGURED" ->
-                "This recommendation model is not configured on the service yet. Choose the other model in Settings."
+            "CLOUDFLARE_AI_NOT_CONFIGURED", "GROQ_NOT_CONFIGURED", "GEMINI_NOT_CONFIGURED" ->
+                "This recommendation model is not configured on the service yet. Choose another model in Settings."
             "GROQ_AUTH_FAILED", "GEMINI_AUTH_FAILED" ->
                 "The recommendation service credentials were rejected. This is not a temporary outage."
             "GROQ_QUOTA_EXCEEDED" ->
                 "The recommendation model has reached its capacity limit. Try the other model or try again later."
-            "GROQ_UNAVAILABLE", "GEMINI_UNAVAILABLE", "AI_UNAVAILABLE" ->
+            "CLOUDFLARE_AI_UNAVAILABLE", "GROQ_UNAVAILABLE", "GEMINI_UNAVAILABLE", "AI_UNAVAILABLE" ->
                 if (clientError.retryable) {
                     "The selected recommendation model is temporarily unavailable. Please try again."
                 } else {
-                    "The selected recommendation model rejected this request. Choose the other model in Settings."
+                    "The selected recommendation model rejected this request. Choose another model in Settings."
                 }
             else -> fallback
         }
