@@ -20,7 +20,7 @@ object AskAliflixRequestMapper {
     fun map(
         request: AskAliflixRequest,
         requestId: String = UUID.randomUUID().toString(),
-        aiModel: RecommendationAiModel = RecommendationAiModel.GEMINI_3_8_FLASH,
+        aiModel: RecommendationAiModel = RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B,
     ): MappedAskAliflixRequest {
         val outputType = when (request) {
             is AskAliflixRequest.Describe -> request.mediaType
@@ -83,7 +83,7 @@ object AskAliflixRequestMapper {
             filters = spec.toWorkerFilters().let { if (request is AskAliflixRequest.Filters) it else it.copy(sortBy = null) },
             // Generated modes return a substantial verified batch. Each signed
             // continuation asks the Worker to find and verify new matches.
-            pageSize = if (request is AskAliflixRequest.Filters) 24 else 20,
+            pageSize = 24,
         ))
     }
 
