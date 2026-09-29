@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  CLOUDFLARE_EXPANSION_MAX_TOKENS,
   CLOUDFLARE_GENERATION_MAX_TOKENS,
   CLOUDFLARE_MODEL,
   recommendDescribeTitlesWithCloudflare,
@@ -69,6 +70,8 @@ describe('Cloudflare Workers AI recommendations', () => {
     );
     expect(results.map(item => item.title)).not.toContain('Arrival');
     expect(results).toHaveLength(23);
+    const input = run.mock.calls[0][1] as any;
+    expect(input.max_tokens).toBe(CLOUDFLARE_EXPANSION_MAX_TOKENS);
   });
 
   it('applies the same bounded generation path to Similar', async () => {
