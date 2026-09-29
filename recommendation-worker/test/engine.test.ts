@@ -54,7 +54,11 @@ function fakeTmdb(options: { fail?: boolean; authFail?: boolean; empty?: boolean
 }
 
 describe('AI-generated, TMDB-grounded recommendation engine', () => {
-  it('accepts Gemini 3.8 Flash and optional Groq', () => {
+  it('accepts Cloudflare GPT-OSS, Gemini 3.8 Flash and optional Groq', () => {
+    expect(RecommendationRequestSchema.parse({
+      ...request,
+      aiModel: 'cloudflare-gpt-oss-120b',
+    }).aiModel).toBe('cloudflare-gpt-oss-120b');
     expect(RecommendationRequestSchema.parse({
       ...request,
       geminiModel: 'gemini-3.8-flash',
