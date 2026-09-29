@@ -13,13 +13,13 @@ import org.junit.Test
 
 class AskAliflixWiringIntegrationTest {
     @Test
-    fun gemini38IsTheDefaultForFreshSettingsAndUnspecifiedRequests() {
+    fun cloudflareGptOssIsTheDefaultForFreshSettingsAndUnspecifiedRequests() {
         assertEquals(
-            RecommendationAiModel.GEMINI_3_8_FLASH,
+            RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B,
             RecommendationAiModel.fromWorkerValue(null),
         )
         assertEquals(
-            RecommendationAiModel.GEMINI_3_8_FLASH,
+            RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B,
             RecommendationAiModel.fromWorkerValue("unknown-model"),
         )
 
@@ -33,8 +33,10 @@ class AskAliflixWiringIntegrationTest {
             mediaType = "movie",
         )
 
-        assertEquals(RecommendationAiModel.GEMINI_3_8_FLASH.workerValue, mapped.aiModel)
-        assertEquals(RecommendationAiModel.GEMINI_3_8_FLASH.workerValue, direct.aiModel)
+        assertEquals(RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B.workerValue, mapped.aiModel)
+        assertEquals(RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B.workerValue, direct.aiModel)
+        assertEquals(24, mapped.pageSize)
+        assertEquals(24, direct.pageSize)
     }
 
     @Test
@@ -47,6 +49,19 @@ class AskAliflixWiringIntegrationTest {
             RecommendationAiModel.GEMINI_3_8_FLASH,
             RecommendationAiModel.fromWorkerValue("gemini-3.8-flash"),
         )
+    }
+
+    @Test
+    fun cloudflareSelectionIsSerializedExplicitly() {
+        val json = AskAliflixRequestMapper.map(
+            request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
+            requestId = "00000000-0000-4000-8000-000000000019",
+            aiModel = RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B,
+        ).workerRequest.toJson()
+
+        assertEquals("cloudflare-gpt-oss-120b", json.getString("aiModel"))
+        assertEquals("cloudflare-gpt-oss-120b", json.getString("geminiModel"))
+        assertEquals(24, json.getInt("pageSize"))
     }
 
     @Test
@@ -71,7 +86,7 @@ class AskAliflixWiringIntegrationTest {
 
         assertEquals("groq-gpt-oss-120b", json.getString("aiModel"))
         assertEquals("groq-gpt-oss-120b", json.getString("geminiModel"))
-        assertEquals(20, json.getInt("pageSize"))
+        assertEquals(24, json.getInt("pageSize"))
     }
 
     @Test
