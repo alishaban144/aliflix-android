@@ -8,6 +8,7 @@ describe('Cloudflare Worker', () => {
     TMDB_API_KEY: 'test-key',
     SUBDL_API_KEY: 'subdl-test-key',
     CURSOR_SIGNING_SECRET: 'cursor-secret',
+    AI: { run: vi.fn() },
     RECOMMENDATION_RATE_LIMITER: { limit: async () => ({ success: true }) },
   };
   const ctx: any = {
@@ -24,6 +25,7 @@ describe('Cloudflare Worker', () => {
     expect(body).toEqual({
       status: 'ok',
       service: 'aliflix-recommendations',
+      cloudflareAiConfigured: true,
       geminiConfigured: true,
       groqConfigured: true,
       tmdbConfigured: true,
