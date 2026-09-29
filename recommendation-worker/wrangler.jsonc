@@ -13,7 +13,11 @@
   "placement": {
     "mode": "smart"
   },
+  "ai": {
+    "binding": "AI"
+  },
   "vars": {
+    "AI_GENERATION_MODEL": "cloudflare-gpt-oss-120b",
     "GEMINI_GENERATION_MODEL": "gemini-3.8-flash",
     "GEMINI_EMBEDDING_MODEL": "gemini-embedding-001"
   },
