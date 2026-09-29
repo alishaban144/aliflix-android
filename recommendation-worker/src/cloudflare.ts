@@ -168,7 +168,11 @@ async function cloudflareStructuredContent<T>(
       ],
       response_format: {
         type: 'json_schema',
-        json_schema: standardJsonSchema(schema),
+        json_schema: {
+          name: `aliflix_${operation.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}`,
+          strict: true,
+          schema: standardJsonSchema(schema) as Record<string, unknown>,
+        },
       },
       reasoning_effort: reasoningEffort,
       max_tokens: maxTokens,

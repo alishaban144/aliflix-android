@@ -44,8 +44,10 @@ describe('Cloudflare Workers AI recommendations', () => {
     expect(input.max_tokens).toBe(CLOUDFLARE_GENERATION_MAX_TOKENS);
     expect(input.temperature).toBeLessThanOrEqual(.5);
     expect(input.response_format.type).toBe('json_schema');
-    expect(input.response_format.json_schema.properties.recommendations.minItems).toBe(20);
-    expect(input.response_format.json_schema.properties.recommendations.maxItems).toBe(24);
+    expect(input.response_format.json_schema.strict).toBe(true);
+    expect(input.response_format.json_schema.name).toContain('describe_candidate_generation');
+    expect(input.response_format.json_schema.schema.properties.recommendations.minItems).toBe(20);
+    expect(input.response_format.json_schema.schema.properties.recommendations.maxItems).toBe(24);
     expect(input.messages[0].content).toContain('tone, atmosphere, pacing');
     expect(input.messages[0].content).toContain('Never repeat excludedTitles');
     expect(input.messages[1].content).toContain('"targetCount":24');
