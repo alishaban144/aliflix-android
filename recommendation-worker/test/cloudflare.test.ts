@@ -16,7 +16,7 @@ function recommendations(count: number, prefix = 'Title') {
 
 describe('Cloudflare Workers AI recommendations', () => {
   it('uses GPT-OSS 120B Responses API with compact low reasoning and a strict 24-title target', async () => {
-    const run = vi.fn(async () => ({
+    const run = vi.fn(async (_model: string, _input: any) => ({
       id: 'resp-test',
       object: 'response',
       status: 'completed',
@@ -34,7 +34,7 @@ describe('Cloudflare Workers AI recommendations', () => {
 
     expect(results).toHaveLength(24);
     expect(run).toHaveBeenCalledTimes(1);
-    const [model, input] = run.mock.calls[0] as [string, any];
+    const [model, input] = run.mock.calls[0];
     expect(model).toBe(CLOUDFLARE_MODEL);
     expect(input.reasoning.effort).toBe('low');
     expect(input.max_output_tokens).toBe(CLOUDFLARE_GENERATION_MAX_TOKENS);
@@ -51,7 +51,7 @@ describe('Cloudflare Workers AI recommendations', () => {
   });
 
   it('filters repeated exclusions locally so Find More cannot recycle prior titles', async () => {
-    const run = vi.fn(async () => ({
+    const run = vi.fn(async (_model: string, _input: any) => ({
       output_text: JSON.stringify({
         recommendations: [
           { title: 'Arrival', releaseYear: 2016, rating: 9.8 },
@@ -72,7 +72,7 @@ describe('Cloudflare Workers AI recommendations', () => {
   });
 
   it('applies the same bounded Responses API generation path to Similar', async () => {
-    const run = vi.fn(async () => ({
+    const run = vi.fn(async (_model: string, _input: any) => ({
       output_text: JSON.stringify({ recommendations: recommendations(24, 'Similar') }),
     }));
     const results = await recommendSimilarTitlesWithCloudflare(
