@@ -157,17 +157,18 @@ jobs:
               <<<"$UPLOAD_OUTPUT"
           )"
           test -n "$CANDIDATE_ID"
-          for i in 1 2 3 4 5; do
-            sleep 3
+          # Newly uploaded Worker versions can take tens of seconds to propagate.
+          for i in $(seq 1 12); do
+            sleep 5
             if npx wrangler versions deploy "${CANDIDATE_ID}@100%" --message "Aliflix ${RELEASE_VERSION_NAME} release" --yes; then
               break
             fi
-            if [ "$i" -eq 5 ]; then
-              echo "Deployment failed after 5 attempts."
+            if [ "$i" -eq 12 ]; then
+              echo "Deployment failed after 12 propagation attempts."
               exit 1
             fi
-            echo "Retrying deployment in 5s (attempt $i/5)..."
-            sleep 2
+            echo "Worker version not visible yet; retrying (attempt $i/12)..."
+            sleep 3
           done
 
       - name: Verify live genre-specific browsing
