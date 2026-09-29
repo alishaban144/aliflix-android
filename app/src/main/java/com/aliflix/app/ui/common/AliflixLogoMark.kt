@@ -1,5 +1,6 @@
 package com.aliflix.app.ui.common
 
+import android.annotation.SuppressLint
 import android.content.res.Resources
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
@@ -44,6 +45,8 @@ class AliflixLogoGeometry private constructor(private val layers: List<Pair<Path
         private const val ANDROID = "http://schemas.android.com/apk/res/android"
         @Volatile private var cached: AliflixLogoGeometry? = null
 
+        // aliflix_logo is deliberately a drawable XML vector; getXml is required to read its pathData.
+        @SuppressLint("ResourceType")
         @Synchronized fun load(resources: Resources): AliflixLogoGeometry {
             cached?.let { return it }
             val layers = mutableListOf<Pair<Path, Color>>()
