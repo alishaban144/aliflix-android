@@ -5,6 +5,7 @@ import {
   aiProviderName,
   embedForSearch,
   fallbackIntentFromQuery,
+  isCloudflareAiModel,
   isGroqAiModel,
   isRetryableAiProviderError,
   interpretQuery,
@@ -39,7 +40,7 @@ const MAX_DETAIL_CANDIDATES = 64;
 const MAX_GENERATED_CANDIDATES = 48;
 const MAX_AI_GENERATED_CANDIDATES = 12;
 const MAX_GENERATED_RESULTS = 24;
-const MAX_AI_VERIFICATION_CANDIDATES = 20;
+const MAX_AI_VERIFICATION_CANDIDATES = 24;
 const GENERATED_DETAIL_RESERVE = 6;
 const GENERATED_VERIFICATION_RESERVE = 6;
 const MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD = 8;
@@ -1760,7 +1761,19 @@ export async function processRecommendation(
   const recommendationEnv = requestedAiModel
     ? { ...env, AI_GENERATION_MODEL: requestedAiModel }
     : env;
-  if (request.mode !== 'filters') return editorialRecommendations(recommendationEnv, request, tmdb, dependencies);
+  if (request.mode !== 'filters') {
+    // Cloudflare gets the grounded path: compact model seeding + TMDB expansion
+    // + bounded evidence verification. This materially improves recall while
+    // keeping provider usage to two small calls. Existing Gemini/Groq behavior
+    // remains unchanged.
+    if (isCloudflareAiModel(selectedAiModel(recommendationEnv))) {
+      const continuationPass = Math.max(0, options.continuationPass || 0);
+      return request.mode === 'similar'
+        ? processSimilarRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass)
+        : processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass);
+    }
+    return editorialRecommendations(recommendationEnv, request, tmdb, dependencies);
+  }
   const providerFallbackIntent: InterpretedIntent | undefined = undefined;
   let disableGeminiEmbeddings = isGroqAiModel(selectedAiModel(recommendationEnv));
   const interpret = dependencies.interpret || interpretQuery;
