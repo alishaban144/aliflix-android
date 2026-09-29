@@ -25,7 +25,7 @@ import {
 import { ZodError } from 'zod';
 
 export const CLOUDFLARE_MODEL = '@cf/openai/gpt-oss-120b';
-export const CLOUDFLARE_GENERATION_MAX_TOKENS = 3_072;
+export const CLOUDFLARE_GENERATION_MAX_TOKENS = 1_536;
 export const CLOUDFLARE_VERIFICATION_MAX_TOKENS = 2_048;
 const CLOUDFLARE_INTENT_MAX_TOKENS = 1_536;
 
@@ -270,7 +270,7 @@ export async function recommendDescribeTitlesWithCloudflare(
     'Describe candidate generation',
     CLOUDFLARE_GENERATION_MAX_TOKENS,
     0.25,
-    'medium',
+    'low',
   );
   const parsed = parseSchema(
     'Describe candidate generation',
@@ -306,7 +306,7 @@ export async function recommendSimilarTitlesWithCloudflare(
     'Similar candidate generation',
     CLOUDFLARE_GENERATION_MAX_TOKENS,
     0.25,
-    'medium',
+    'low',
   );
   const parsed = parseSchema(
     'Similar candidate generation',
