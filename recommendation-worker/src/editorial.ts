@@ -24,7 +24,7 @@ export async function editorialRecommendations(env: RecommendationEnv, request: 
   // Usually one compact AI batch is enough. A second batch is allowed only
   // when TMDB cannot resolve enough identities, preserving quality without
   // routinely doubling model usage.
-  for (let pass = 0; pass < 2 && results.length < targetCount && tmdb.callsRemaining > 0; pass++) {
+  for (let pass = 0; pass < 2 && results.length < Math.min(20, targetCount) && tmdb.callsRemaining > 0; pass++) {
     const generated = request.mode === 'similar'
       ? await (dependencies.recommendSimilar || recommendSimilarTitles)(env, anchors, request.mediaType, query, request.filters, excludedTitles, targetCount)
       : await (dependencies.recommendDescribe || recommendDescribeTitles)(env, query, request.mediaType, request.filters, excludedTitles, targetCount);
