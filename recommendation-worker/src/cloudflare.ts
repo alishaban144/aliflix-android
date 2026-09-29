@@ -86,9 +86,18 @@ function cleanJsonText(raw: string): string {
 }
 
 function parseStructuredOutput<T>(operation: string, output: unknown): T {
-  const outer = output as { response?: unknown; result?: unknown } | undefined;
-  const payload = outer?.response ?? outer?.result ?? output;
-  if (payload && typeof payload === 'object') return payload as T;
+  const envelope = output as {
+    response?: unknown;
+    result?: unknown;
+    output_text?: unknown;
+    choices?: Array<{ message?: { content?: unknown } }>;
+  } | undefined;
+  const payload = envelope?.response
+    ?? envelope?.result
+    ?? envelope?.output_text
+    ?? envelope?.choices?.[0]?.message?.content
+    ?? output;
+
   if (typeof payload === 'string' && payload.trim()) {
     try {
       return JSON.parse(cleanJsonText(payload)) as T;
@@ -98,11 +107,22 @@ function parseStructuredOutput<T>(operation: string, output: unknown): T {
         provider: 'cloudflare',
         model: CLOUDFLARE_MODEL,
         operation,
+        outputKeys: output && typeof output === 'object' ? Object.keys(output as Record<string, unknown>).slice(0, 12) : [],
         error: error instanceof Error ? error.message : String(error),
       }));
+      throw new ServiceError('CLOUDFLARE_AI_UNAVAILABLE', 'Cloudflare AI returned malformed structured output.', 502, true);
     }
   }
-  throw new ServiceError('CLOUDFLARE_AI_UNAVAILABLE', 'Cloudflare AI returned invalid structured output.', 502, true);
+  if (payload && typeof payload === 'object') return payload as T;
+
+  console.warn(JSON.stringify({
+    event: 'cloudflare_ai_empty_output',
+    provider: 'cloudflare',
+    model: CLOUDFLARE_MODEL,
+    operation,
+    outputKeys: output && typeof output === 'object' ? Object.keys(output as Record<string, unknown>).slice(0, 12) : [],
+  }));
+  throw new ServiceError('CLOUDFLARE_AI_UNAVAILABLE', 'Cloudflare AI returned no structured output.', 502, true);
 }
 
 function parseSchema<T>(operation: string, parse: () => T): T {
