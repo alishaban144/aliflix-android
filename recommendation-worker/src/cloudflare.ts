@@ -268,7 +268,7 @@ export async function recommendDescribeTitlesWithCloudflare(
     recommendationSchema(boundedTarget),
     'Describe candidate generation',
     CLOUDFLARE_GENERATION_MAX_TOKENS,
-    0.45,
+    0.25,
   );
   const parsed = parseSchema(
     'Describe candidate generation',
@@ -303,7 +303,7 @@ export async function recommendSimilarTitlesWithCloudflare(
     recommendationSchema(boundedTarget),
     'Similar candidate generation',
     CLOUDFLARE_GENERATION_MAX_TOKENS,
-    0.45,
+    0.25,
   );
   const parsed = parseSchema(
     'Similar candidate generation',
