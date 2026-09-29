@@ -175,6 +175,10 @@ jobs:
         working-directory: recommendation-worker
         run: node scripts/verify-browse.mjs
 
+      - name: Verify live Cloudflare recommendation quality
+        working-directory: recommendation-worker
+        run: node scripts/verify-cloudflare-recommendations.mjs
+
   release:
     needs:
       [
