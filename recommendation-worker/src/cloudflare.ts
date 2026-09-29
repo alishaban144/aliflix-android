@@ -148,6 +148,7 @@ async function cloudflareStructuredContent<T>(
   operation: string,
   maxTokens: number,
   temperature: number,
+  reasoningEffort: 'low' | 'medium' = 'low',
 ): Promise<T> {
   if (!env.AI?.run) {
     throw new ServiceError(
@@ -168,7 +169,7 @@ async function cloudflareStructuredContent<T>(
         type: 'json_schema',
         json_schema: standardJsonSchema(schema),
       },
-      reasoning_effort: 'low',
+      reasoning_effort: reasoningEffort,
       max_tokens: maxTokens,
       temperature,
       top_p: 0.9,
@@ -179,7 +180,7 @@ async function cloudflareStructuredContent<T>(
       provider: 'cloudflare',
       model: CLOUDFLARE_MODEL,
       operation,
-      reasoningEffort: 'low',
+      reasoningEffort,
       maxTokens,
       elapsedMs: Date.now() - startedAt,
     }));
@@ -269,6 +270,7 @@ export async function recommendDescribeTitlesWithCloudflare(
     'Describe candidate generation',
     CLOUDFLARE_GENERATION_MAX_TOKENS,
     0.25,
+    'medium',
   );
   const parsed = parseSchema(
     'Describe candidate generation',
@@ -304,6 +306,7 @@ export async function recommendSimilarTitlesWithCloudflare(
     'Similar candidate generation',
     CLOUDFLARE_GENERATION_MAX_TOKENS,
     0.25,
+    'medium',
   );
   const parsed = parseSchema(
     'Similar candidate generation',
