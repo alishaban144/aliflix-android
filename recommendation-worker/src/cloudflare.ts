@@ -160,58 +160,82 @@ async function cloudflareStructuredContent<T>(
     );
   }
   const startedAt = Date.now();
-  try {
-    const output = await env.AI.run(CLOUDFLARE_MODEL, {
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: JSON.stringify(input) },
-      ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: `aliflix_${operation.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}`,
-          strict: true,
-          schema: standardJsonSchema(schema) as Record<string, unknown>,
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const attemptMaxTokens = attempt === 1
+      ? maxTokens
+      : Math.max(maxTokens, CLOUDFLARE_EXPANSION_MAX_TOKENS);
+    const attemptTemperature = attempt === 1 ? temperature : Math.min(temperature, 0.1);
+    try {
+      const output = await env.AI.run(CLOUDFLARE_MODEL, {
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: JSON.stringify(input) },
+        ],
+        // Workers AI's env.AI.run JSON mode expects the raw JSON Schema here.
+        response_format: {
+          type: 'json_schema',
+          json_schema: standardJsonSchema(schema),
         },
-      },
-      reasoning_effort: reasoningEffort,
-      max_tokens: maxTokens,
-      temperature,
-      top_p: 0.9,
-      seed: 314159,
-    });
-    console.log(JSON.stringify({
-      event: 'cloudflare_ai_request_completed',
-      provider: 'cloudflare',
-      model: CLOUDFLARE_MODEL,
-      operation,
-      reasoningEffort,
-      maxTokens,
-      elapsedMs: Date.now() - startedAt,
-    }));
-    return parseStructuredOutput<T>(operation, output);
-  } catch (error) {
-    if (error instanceof ServiceError) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    const retryable = /rate|limit|capacity|busy|tempor|timeout|overload|unavailable|internal/i.test(message);
-    console.warn(JSON.stringify({
-      event: 'cloudflare_ai_request_failed',
-      provider: 'cloudflare',
-      model: CLOUDFLARE_MODEL,
-      operation,
-      retryable,
-      elapsedMs: Date.now() - startedAt,
-      error: message.slice(0, 300),
-    }));
-    throw new ServiceError(
-      'CLOUDFLARE_AI_UNAVAILABLE',
-      retryable
-        ? 'Cloudflare AI is temporarily unavailable. Please try again.'
-        : 'Cloudflare AI could not complete this recommendation request.',
-      retryable ? 503 : 502,
-      retryable,
-    );
+        reasoning_effort: reasoningEffort,
+        max_tokens: attemptMaxTokens,
+        temperature: attemptTemperature,
+        top_p: 0.9,
+        seed: 314159,
+      });
+      console.log(JSON.stringify({
+        event: 'cloudflare_ai_request_completed',
+        provider: 'cloudflare',
+        model: CLOUDFLARE_MODEL,
+        operation,
+        attempt,
+        reasoningEffort,
+        maxTokens: attemptMaxTokens,
+        elapsedMs: Date.now() - startedAt,
+      }));
+      return parseStructuredOutput<T>(operation, output);
+    } catch (error) {
+      lastError = error;
+      if (error instanceof ServiceError) {
+        if (attempt === 1 && error.retryable) {
+          console.warn(JSON.stringify({
+            event: 'cloudflare_ai_structured_retry',
+            provider: 'cloudflare',
+            model: CLOUDFLARE_MODEL,
+            operation,
+            code: error.code,
+            retryMaxTokens: Math.max(maxTokens, CLOUDFLARE_EXPANSION_MAX_TOKENS),
+          }));
+          continue;
+        }
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const retryable = /rate|limit|capacity|busy|tempor|timeout|overload|unavailable|internal/i.test(message);
+      console.warn(JSON.stringify({
+        event: 'cloudflare_ai_request_failed',
+        provider: 'cloudflare',
+        model: CLOUDFLARE_MODEL,
+        operation,
+        attempt,
+        retryable,
+        elapsedMs: Date.now() - startedAt,
+        error: message.slice(0, 300),
+      }));
+      if (attempt === 1 && retryable) continue;
+      throw new ServiceError(
+        'CLOUDFLARE_AI_UNAVAILABLE',
+        retryable
+          ? 'Cloudflare AI is temporarily unavailable. Please try again.'
+          : 'Cloudflare AI could not complete this recommendation request.',
+        retryable ? 503 : 502,
+        retryable,
+      );
+    }
   }
+  throw lastError instanceof Error
+    ? lastError
+    : new ServiceError('CLOUDFLARE_AI_UNAVAILABLE', 'Cloudflare AI could not complete this recommendation request.', 503, true);
 }
 
 function uniqueRecommendations(items: DescribeRecommendation[], excludedTitles: string[]): DescribeRecommendation[] {

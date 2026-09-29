@@ -44,10 +44,8 @@ describe('Cloudflare Workers AI recommendations', () => {
     expect(input.max_tokens).toBe(CLOUDFLARE_GENERATION_MAX_TOKENS);
     expect(input.temperature).toBeLessThanOrEqual(.5);
     expect(input.response_format.type).toBe('json_schema');
-    expect(input.response_format.json_schema.strict).toBe(true);
-    expect(input.response_format.json_schema.name).toContain('describe_candidate_generation');
-    expect(input.response_format.json_schema.schema.properties.recommendations.minItems).toBe(20);
-    expect(input.response_format.json_schema.schema.properties.recommendations.maxItems).toBe(24);
+    expect(input.response_format.json_schema.properties.recommendations.minItems).toBe(20);
+    expect(input.response_format.json_schema.properties.recommendations.maxItems).toBe(24);
     expect(input.messages[0].content).toContain('tone, atmosphere, pacing');
     expect(input.messages[0].content).toContain('Never repeat excludedTitles');
     expect(input.messages[1].content).toContain('"targetCount":24');
@@ -102,6 +100,27 @@ describe('Cloudflare Workers AI recommendations', () => {
     const input = run.mock.calls[0][1] as any;
     expect(input.reasoning_effort).toBe('low');
     expect(input.messages[1].content).toContain('less action-focused');
+  });
+
+  it('retries one malformed structured response with a larger deterministic envelope', async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ response: '{"recommendations":[' })
+      .mockResolvedValueOnce({ response: { recommendations: recommendations(24, 'Recovered') } });
+
+    const results = await recommendDescribeTitlesWithCloudflare(
+      { AI: { run } } as any,
+      'atmospheric science fiction',
+      'movie',
+      {},
+      [],
+      24,
+    );
+
+    expect(results).toHaveLength(24);
+    expect(run).toHaveBeenCalledTimes(2);
+    const retryInput = run.mock.calls[1][1] as any;
+    expect(retryInput.max_tokens).toBe(CLOUDFLARE_EXPANSION_MAX_TOKENS);
+    expect(retryInput.temperature).toBeLessThanOrEqual(0.1);
   });
 
   it('fails clearly if the Workers AI binding is absent', async () => {
