@@ -17,7 +17,14 @@ function recommendations(count: number, prefix = 'Title') {
 describe('Cloudflare Workers AI recommendations', () => {
   it('uses GPT-OSS 120B with low reasoning, structured output and a 24-title target', async () => {
     const run = vi.fn(async (_model: string, _input: any) => ({
-      response: { recommendations: recommendations(24) },
+      id: 'chatcmpl-test',
+      object: 'chat.completion',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: JSON.stringify({ recommendations: recommendations(24) }),
+        },
+      }],
     }));
     const results = await recommendDescribeTitlesWithCloudflare(
       { AI: { run }, AI_GENERATION_MODEL: 'cloudflare-gpt-oss-120b' } as any,
