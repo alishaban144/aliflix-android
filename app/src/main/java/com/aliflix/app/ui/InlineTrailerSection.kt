@@ -1,6 +1,7 @@
 package com.aliflix.app.ui
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -107,15 +108,50 @@ private fun TrailerPlayer(videoId: String, media: Media) {
                 }
 
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    if (!request.isForMainFrame) return false
                     val host = request.url.host?.lowercase()
                     val path = request.url.path.orEmpty()
-                    return !(host in setOf("www.youtube.com", "www.youtube-nocookie.com", "m.youtube.com") &&
-                        path.startsWith("/embed/"))
+                    return !(host in setOf(
+                        context.packageName.lowercase(),
+                        "www.youtube.com",
+                        "www.youtube-nocookie.com",
+                        "m.youtube.com",
+                        "consent.youtube.com",
+                        "consent.google.com",
+                        "accounts.google.com",
+                    ) && (host == context.packageName.lowercase() || path.startsWith("/embed/") || host?.startsWith("consent.") == true))
                 }
             }
-            val embedUrl =
-                "https://www.youtube-nocookie.com/embed/$videoId?autoplay=1&playsinline=1&controls=1&fs=0&rel=0"
-            loadUrl(embedUrl, mapOf("Referer" to "https://www.youtube.com/"))
+
+            val appOrigin = "https://${context.packageName}"
+            val encodedOrigin = Uri.encode(appOrigin)
+            val html = """
+                <!doctype html>
+                <html>
+                <head>
+                    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+                    <meta name="referrer" content="strict-origin-when-cross-origin">
+                    <style>
+                        html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}
+                        iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
+                    </style>
+                </head>
+                <body>
+                    <iframe
+                        src="https://www.youtube.com/embed/$videoId?autoplay=1&amp;playsinline=1&amp;controls=1&amp;fs=0&amp;rel=0&amp;enablejsapi=1&amp;origin=$encodedOrigin&amp;widget_referrer=$encodedOrigin"
+                        referrerpolicy="strict-origin-when-cross-origin"
+                        allow="autoplay; encrypted-media; picture-in-picture"
+                    ></iframe>
+                </body>
+                </html>
+            """.trimIndent()
+            loadDataWithBaseURL(
+                "$appOrigin/",
+                html,
+                "text/html",
+                "UTF-8",
+                null,
+            )
             webView = this
         }
     }
