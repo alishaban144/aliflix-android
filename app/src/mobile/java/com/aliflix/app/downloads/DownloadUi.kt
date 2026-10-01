@@ -166,8 +166,15 @@ internal interface DownloadUiDependencies {
     }, shape = if (showLabel) androidx.compose.foundation.shape.CircleShape else if (compact) AliflixCorners.Small else AliflixCorners.Card,
         level = AliflixSurfaceLevel.Content,
     ) {
-        Row(modifier = if (showLabel) Modifier.padding(horizontal = 14.dp, vertical = 6.dp) else Modifier,
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = if (showLabel) {
+                Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+            } else {
+                Modifier.fillMaxSize()
+            },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (showLabel) Arrangement.spacedBy(6.dp) else Arrangement.Center,
+        ) {
         Box(contentAlignment = Alignment.Center, modifier = if (showLabel && active) Modifier.size(38.dp) else Modifier) {
             if (active) {
                 val ring = Modifier.size(38.dp).clearAndSetSemantics { }
@@ -183,7 +190,8 @@ internal interface DownloadUiDependencies {
                 active -> Icons.Rounded.Pause
                 state == Download.STATE_FAILED -> Icons.Rounded.Refresh
                 else -> Icons.Rounded.Download
-            }, null, modifier = Modifier.size(if (showLabel) 16.dp else if (compact || active) 20.dp else 24.dp), tint = AliflixAccentSecondary)
+            }, null, modifier = Modifier.size(if (showLabel) 16.dp else if (compact || active) 20.dp else 24.dp),
+                tint = if (state == Download.STATE_COMPLETED) AliflixAccentSecondary else AliflixContentSecondary)
             }
         }
         if (showLabel) Text(action, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = AliflixContentPrimary)
