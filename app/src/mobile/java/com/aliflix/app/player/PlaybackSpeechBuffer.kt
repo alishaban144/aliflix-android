@@ -17,20 +17,20 @@ internal interface PlaybackSpeechDetector : AutoCloseable {
 }
 
 private class WebRtcPlaybackSpeechDetector : PlaybackSpeechDetector {
-    private val vad = VadWebRTC(SampleRate.SAMPLE_RATE_8K, FrameSize.FRAME_SIZE_160, Mode.VERY_AGGRESSIVE)
+    private val vad = VadWebRTC(SampleRate.SAMPLE_RATE_8K, FrameSize.FRAME_SIZE_160, Mode.AGGRESSIVE)
     override fun speech(frame: ShortArray) = vad.isSpeech(frame)
     override fun close() = vad.close()
 }
 
-/** Six minutes of 20 ms decisions (~162 KiB) and one 320-byte PCM frame.
+/** Thirty seconds of 20 ms decisions (~13.5 KiB) and one 320-byte PCM frame.
  * Box-filter resampling preserves 8 kHz timing at 44.1/48/96 kHz across codec buffers.
  * WebRTC's six-band GMM replaces the former loudness/zero-crossing heuristic.
  */
 internal class PlaybackSpeechBuffer(
     private val detectorFactory: () -> PlaybackSpeechDetector = { WebRtcPlaybackSpeechDetector() },
 ) : AutoCloseable {
-    private val times = DoubleArray(18000)
-    private val bits = ByteArray(18000)
+    private val times = DoubleArray(1500)
+    private val bits = ByteArray(1500)
     private val frame = ShortArray(160)
     private var detector: PlaybackSpeechDetector? = null
     private var head = 0
@@ -121,31 +121,26 @@ internal class PlaybackSpeechBuffer(
         return if (copied == count) Snapshot(t, b) else Snapshot(t.copyOf(copied), b.copyOf(copied))
     }
 
-    /** Analyse outside the render-thread lock. Two independent 10-second scenes can
-     * start matching in ~20 seconds; longer history and new scenes strengthen it.
+    /** One contiguous exchange ending at the tap position. Never select older scenes,
+     * decode-ahead audio, or bridge a seek. No waiting for additional samples.
      */
-    fun windows(maxMediaSeconds: Double = Double.POSITIVE_INFINITY): List<SpeechWindow> {
-        val data = snapshot(maxMediaSeconds)
-        val rich = mutableListOf<SpeechWindow>()
-        val length = 10 * SPEECH_HZ
-        var i = 0
-        while (i + length <= data.times.size) {
-            val start = data.times[i]
-            var voiced = 0; var transitions = 0; var contiguous = true
-            for (k in 0 until length) {
-                if (abs(data.times[i + k] - start - k.toDouble() / SPEECH_HZ) > .003) { contiguous = false; break }
-                voiced += data.bits[i + k]
-                if (k > 0 && data.bits[i + k] != data.bits[i + k - 1]) transitions++
-            }
-            if (contiguous && voiced.toDouble() / length in .12.. .90 && transitions >= 4) {
-                rich += SpeechWindow(start, DoubleArray(length) { data.bits[i + it].toDouble() })
-                i += length
-            } else i += SPEECH_HZ / 2
-        }
-        // Keep distant anchors for drift, but continually incorporate new evidence.
-        if (rich.size <= 6) return rich
-        return (0..5).map { rich[it * (rich.size - 1) / 5] }
+    fun currentWindow(positionSeconds: Double): SpeechWindow? {
+        if (!positionSeconds.isFinite() || positionSeconds < 0) return null
+        val data = snapshot(positionSeconds)
+        val end = data.times.lastIndex
+        if (end < 0 || positionSeconds - data.times[end] > .25) return null
+        var first = end
+        while (first > 0 && end - first + 1 < 12 * SPEECH_HZ &&
+            abs(data.times[first] - data.times[first - 1] - 1.0 / SPEECH_HZ) < .003) first--
+        if (end - first + 1 < 6 * SPEECH_HZ) return null
+        // A tap during dialogue should use dialogue now, not a stale earlier line.
+        val recentStart = max(first, end - SPEECH_HZ + 1)
+        var voiced = 0
+        for (i in recentStart..end) voiced += data.bits[i]
+        if (voiced < 5) return null
+        return SpeechWindow(data.times[first], DoubleArray(end - first + 1) { data.bits[first + it].toDouble() })
     }
+
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)

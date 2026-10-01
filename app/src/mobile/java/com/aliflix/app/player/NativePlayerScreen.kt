@@ -163,7 +163,6 @@ internal data class NativePlayerUi(
     val audioSyncState: String? = null,
     val audioSyncAvailable: Boolean = false,
     val audioSyncApplied: Boolean = false,
-    val audioSyncSamples: Int = 0,
     val audioSyncMessage: String? = null,
     val message: String? = null,
     val segments: List<IntroSegment> = emptyList(),
@@ -910,7 +909,7 @@ internal fun NativePlayerScreen(
                     "Audio & subtitles" -> {
                         // Subtitle Sync / Delay
                         Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        val syncing = state.audioSyncState == "Collecting" || state.audioSyncState == "Syncing"
+                        val syncing = state.audioSyncState == "Syncing"
                         FilledTonalButton(
                             onClick = onSyncWithAudio,
                             enabled = state.audioSyncAvailable || syncing,
@@ -927,7 +926,7 @@ internal fun NativePlayerScreen(
                         }
                         AnimatedVisibility(state.audioSyncMessage != null, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
                             Text(
-                                text = state.audioSyncMessage.orEmpty() + if (state.audioSyncState == "Collecting" && state.audioSyncSamples in 0..1) " · ${state.audioSyncSamples}/2" else "",
+                                text = state.audioSyncMessage.orEmpty(),
                                 color = Color.White.copy(alpha = .60f), fontSize = 11.sp,
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             )

@@ -487,10 +487,9 @@ class NativePlaybackService : MediaSessionService() {
                 .map { androidx.media3.common.text.Cue.Builder().setText(it.text).build() }.toList()
         }
 
-        internal fun speechWindows(maxMediaSeconds: Double): List<SpeechWindow> = activeService?.speechCapture?.windows(maxMediaSeconds).orEmpty()
+        internal fun currentSpeechWindow(positionSeconds: Double): SpeechWindow? = activeService?.speechCapture?.currentWindow(positionSeconds)
         internal val speechGeneration: Long get() = activeService?.speechCapture?.generation ?: -1L
         internal val speechCaptureUnavailable: Boolean get() = activeService?.speechCapture?.unavailable == true
-        internal fun retrySpeechCapture() { activeService?.speechCapture?.let { if (it.unavailable) it.reset() } }
 
         internal fun selectedAudioFingerprint(): String {
             val service = activeService ?: return ""

@@ -12,91 +12,67 @@ class AudioSubtitleAlignmentTest {
             time += .8 + random.nextDouble() * 3.5
             val start = time
             time += .4 + random.nextDouble() * 2.8
-            SubtitleCue(start, time, "حوار / dialogue")
+            SubtitleCue(start, time, "Dialogue / حوار")
         }
     }
-    private fun windows(cues: List<SubtitleCue>, offset: Double, rate: Double = 1.0) = listOf(130.0, 420.0, 660.0).map { start ->
-        SpeechWindow(start, DoubleArray(1250) { frame ->
-            val subtitleTime = (start + frame / 50.0 - offset) / rate
-            if (cues.any { subtitleTime >= it.startSeconds && subtitleTime < it.endSeconds }) 1.0 else 0.0
+    private fun current(cues: List<SubtitleCue>, offset: Double, rate: Double = 1.0, padding: Boolean = false): SpeechWindow {
+        val random = Random(721)
+        return SpeechWindow(420.0, DoubleArray(600) { frame ->
+            val time = (420.0 + frame / 50.0 - offset) / rate
+            val spoken = cues.any { time >= it.startSeconds + (if (padding) .12 else 0.0) && time < it.endSeconds - (if (padding) .18 else 0.0) }
+            if (spoken && (!padding || random.nextDouble() > .07)) 1.0 else 0.0
         })
     }
     @Test fun fftMatchesDirectConvolution() {
         assertArrayEquals(doubleArrayOf(4.0, 13.0, 22.0, 15.0),
             AudioSubtitleAlignment.convolution(doubleArrayOf(1.0, 2.0, 3.0), doubleArrayOf(4.0, 5.0)), 1e-8)
     }
-    @Test fun positiveAndNegativeOffsetsAreLanguageIndependent() {
+    @Test fun oneCurrentExchangeFindsPositiveAndNegativeOffsetsWithoutOtherScenes() {
         val original = cues()
         for (offset in listOf(-7.2, 0.0, 9.4)) {
-            val match = AudioSubtitleAlignment.match(original, windows(original, offset))!!
-            assertEquals(offset, match.offset, .04)
+            val match = AudioSubtitleAlignment.matchCurrent(original, current(original, offset))
+            assertNotNull("Current exchange should identify offset $offset", match)
+            assertEquals(offset, match!!.offset, .08)
             assertEquals(1.0, match.rate, .00001)
-            assertNotNull(AudioSubtitleAlignment.match(original.map { it.copy(text = "Un autre dialogue") }, windows(original, offset)))
+            assertNotNull(AudioSubtitleAlignment.matchCurrent(original.map { it.copy(text = "Un autre dialogue") }, current(original, offset)))
         }
     }
-    @Test fun detectsSupportedFrameRateDrift() {
+    @Test fun paddedSubtitlesAndVadDropoutsMatchCurrentDialogue() {
         val original = cues()
-        val match = AudioSubtitleAlignment.match(original, windows(original, -3.0, 25.0 / 24.0))!!
-        assertEquals(25.0 / 24.0, match.rate, 1e-8)
-        assertEquals(-3.0, match.offset, .06)
-    }
-    @Test fun twentySecondsOfIndependentDialogueCanMatchWithSubtitlePaddingAndVadDropouts() {
-        val original = cues()
-        val random = Random(721)
-        val samples = listOf(130.0, 140.0).map { start ->
-            SpeechWindow(start, DoubleArray(500) { frame ->
-                val time = start + frame / 50.0 - 6.8
-                val spoken = original.any { time >= it.startSeconds + .12 && time < it.endSeconds - .18 }
-                if (spoken && random.nextDouble() > .07) 1.0 else 0.0
-            })
-        }
-        val match = AudioSubtitleAlignment.match(original, samples)
-        assertNotNull("Padded dialogue with minor VAD dropouts should match without a minute-long collection", match)
-        assertEquals(6.8, match!!.offset, .2)
-        assertEquals(1.0, match.rate, .000001)
-    }
-    @Test fun overlappingSamplesCannotFakeIndependentEvidence() {
-        val original = cues()
-        val samples = windows(original, 4.0)
-        assertNull(AudioSubtitleAlignment.match(original, listOf(samples[0], samples[0])))
-    }
-    @Test fun aWeakIntroCannotPoisonThreeLaterScenesButStrongConflictsAreRejected() {
-        val original = cues()
-        val random = Random(435)
-        val weak = SpeechWindow(75.0, DoubleArray(1250) { if (random.nextDouble() > .6) 1.0 else 0.0 })
-        val samples = listOf(weak) + windows(original, 4.0)
-        val match = AudioSubtitleAlignment.match(original, samples)
+        val match = AudioSubtitleAlignment.matchCurrent(original, current(original, 6.8, padding = true))
         assertNotNull(match)
-        assertEquals(4.0, match!!.offset, .04)
-        // Give the conflicting scene an exact but different timeline shift.
-        val strong = SpeechWindow(75.0, DoubleArray(1250) { frame ->
-            val time = 75.0 + frame / 50.0 - 18.0
-            if (original.any { time >= it.startSeconds && time < it.endSeconds }) 1.0 else 0.0
-        })
-        assertNull(AudioSubtitleAlignment.match(original, listOf(strong) + windows(original, 4.0)))
+        assertEquals(6.8, match!!.offset, .2)
     }
-    @Test fun shortBaselineDriftCannotMasqueradeAsConstantOffset() {
+    @Test fun manualDelayAndExistingVerifiedRateRemainSeparateFromNewOffset() {
         val original = cues()
         val rate = 25.0 / 24.0
-        val samples = listOf(130.0, 165.0).map { start ->
-            SpeechWindow(start, DoubleArray(1250) { frame ->
-                val time = (start + frame / 50.0 + 3) / rate
-                if (original.any { time >= it.startSeconds && time < it.endSeconds }) 1.0 else 0.0
-            })
-        }
-        assertNull(AudioSubtitleAlignment.match(original, samples))
-        assertNull(AudioSubtitleAlignment.match(original, windows(original, 0.0, 1.08)))
+        val match = AudioSubtitleAlignment.matchCurrent(original, current(original, 11.0, rate), rate, manualDelay = 4.0)
+        assertNotNull(match)
+        assertEquals(7.0, match!!.offset, .08)
+        assertEquals(rate, match.rate, 1e-8)
+        assertEquals(original.first().startSeconds * rate + 11, match.apply(original, 4.0).first().startSeconds, .08)
     }
-    @Test fun silenceOneSceneAndConflictingScenesAreRejected() {
+    @Test fun ambiguousRepeatedDialogueContinuousSpeechAndSilenceFailImmediately() {
+        val repeated = List(400) { SubtitleCue(it * 3.0, it * 3.0 + 1.0, "dialogue") }
+        assertNull(AudioSubtitleAlignment.matchCurrent(repeated, current(repeated, 2.0)))
+        assertNull(AudioSubtitleAlignment.matchCurrent(cues(), SpeechWindow(420.0, DoubleArray(600))))
+        assertNull(AudioSubtitleAlignment.matchCurrent(cues(), SpeechWindow(420.0, DoubleArray(600) { 1.0 })))
+    }
+    @Test fun invalidOrTooShortInputCannotProduceACorrection() {
         val original = cues()
-        assertNull(AudioSubtitleAlignment.match(original, windows(original, 4.0).take(1)))
-        assertNull(AudioSubtitleAlignment.match(original, windows(original, 4.0).map { it.copy(speech = DoubleArray(1250)) }))
-        val a = windows(original, 4.0); val b = windows(original, 18.0)
-        assertNull(AudioSubtitleAlignment.match(original, listOf(a[0], b[1], a[2])))
+        assertNull(AudioSubtitleAlignment.matchCurrent(original, SpeechWindow(420.0, DoubleArray(299) { (it % 2).toDouble() })))
+        assertNull(AudioSubtitleAlignment.matchCurrent(original, SpeechWindow(Double.NaN, DoubleArray(600))))
+        assertNull(AudioSubtitleAlignment.matchCurrent(original, SpeechWindow(420.0, DoubleArray(600) { Double.NaN })))
+        assertNull(AudioSubtitleAlignment.matchCurrent(original, current(original, 4.0), rate = 2.0))
     }
-    @Test fun periodicAmbiguousDialogueIsRejected() {
-        val original = List(400) { SubtitleCue(it * 3.0, it * 3.0 + 1.0, "dialogue") }
-        assertNull(AudioSubtitleAlignment.match(original, windows(original, 2.0)))
+    @Test fun fftAnalysisCooperatesWithCancellation() {
+        var checks = 0
+        try {
+            AudioSubtitleAlignment.matchCurrent(cues(), current(cues(), 4.0)) {
+                if (++checks > 225) throw java.util.concurrent.CancellationException("cancelled")
+            }
+            fail("Cancellation must leave analysis without a correction")
+        } catch (_: java.util.concurrent.CancellationException) { }
     }
     @Test fun correctionsAlwaysUseOriginalsAndKeepManualDelaySeparate() {
         val original = listOf(SubtitleCue(10.0, 12.0, "original"))

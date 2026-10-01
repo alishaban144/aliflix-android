@@ -11,91 +11,82 @@ internal data class AudioSubtitleCorrection(val offset: Double, val rate: Double
     }
 }
 
-/** FFsubsync speech-presence cross-correlation adapted for sparse passive playback samples.
- * Native radix-2 FFT; no words, languages, audio requests or audio retained on disk. See MIT notices.
+/** FFsubsync's speech-presence FFT adapted to one contiguous current exchange.
+ * This action estimates an offset only. A previously established rate can be retained,
+ * but a short exchange cannot establish timing drift. See packaged MIT notices.
  */
 internal object AudioSubtitleAlignment {
-    private val rates = doubleArrayOf(1.0, 25.0 / 24, 24.0 / 25, 25.0 / 23.976, 23.976 / 25, 24.0 / 23.976, 23.976 / 24)
-    fun match(cues: List<SubtitleCue>, windows: List<SpeechWindow>): AudioSubtitleCorrection? {
-        if (cues.size < 12 || windows.size < 2) return null
-        val samples = windows.sortedBy { it.start }.take(6)
-        if (samples.sumOf { it.speech.size } < 20 * SPEECH_HZ ||
-            samples.zipWithNext().any { (a, b) -> a.start + a.speech.size.toDouble() / SPEECH_HZ > b.start + .01 }) return null
-        val span = samples.last().start - samples.first().start
-        val observedSpan = span + samples.last().speech.size.toDouble() / SPEECH_HZ
-        val models = rates.toList().mapNotNull { rate ->
-            // Even a short baseline can expose a likely frame-rate mismatch: assess it to
-            // reject a tempting constant offset, but wait for a longer baseline to apply it.
-            if (rate != 1.0 && abs(rate - 1) * observedSpan < .7) return@mapNotNull null
-            val correlations = samples.map { correlations(cues, it, rate) ?: return@mapNotNull null }
-            val combined = DoubleArray(correlations.first().size) { i ->
-                val sum = correlations.sumOf { it[i] }
-                // One poor intro/music sample must not poison later dialogue forever.
-                // A trimmed fit needs at least three independent agreeing scenes.
-                if (correlations.size >= 4) (sum - correlations.minOf { it[i] }) / (correlations.size - 1)
-                else sum / correlations.size
-            }
-            val bestIndex = combined.indices.maxBy { combined[it] }
-            if (bestIndex == 0 || bestIndex == combined.lastIndex) return@mapNotNull null
-            val alternative = combined.indices.filter { abs(it - bestIndex) > SPEECH_HZ }.maxOf { combined[it] }
-            if (combined[bestIndex] - alternative < .06) return@mapNotNull null
-            val rejected = correlations.filter { it[bestIndex] < .40 || it.max() - it[bestIndex] > .07 }
-            if (rejected.isNotEmpty() && (correlations.size < 4 || rejected.size > 1)) return@mapNotNull null
-            // Strong contradictory evidence suggests another cut/episode, not noise.
-            if (rejected.any { it.max() >= .60 && it.max() - it[bestIndex] > .07 }) return@mapNotNull null
-            val offset = (120 * SPEECH_HZ - bestIndex).toDouble() / SPEECH_HZ
-            val score = combined[bestIndex]
-            if (score < .48) null else AudioSubtitleCorrection(offset, rate, score)
-        }.sortedByDescending { it.confidence }
-        val best = models.firstOrNull() ?: return null
-        if (best.rate != 1.0 && (span < 120 || abs(best.rate - 1) * span < 2)) return null
-        if (models.drop(1).any { best.confidence - it.confidence < .035 &&
-                (abs(best.offset - it.offset + samples.first().start * (best.rate - it.rate)) > .5 ||
-                    abs(best.rate - it.rate) * observedSpan > .8) }) return null
-        return best
-    }
-
-    private fun correlations(cues: List<SubtitleCue>, window: SpeechWindow, rate: Double): DoubleArray? {
-        val a = window.speech
-        if (a.size < 500 || a.any { !it.isFinite() || it !in 0.0..1.0 }) return null
+    fun matchCurrent(
+        cues: List<SubtitleCue>,
+        window: SpeechWindow,
+        rate: Double = 1.0,
+        manualDelay: Double = 0.0,
+        checkCancelled: () -> Unit = {},
+    ): AudioSubtitleCorrection? {
+        checkCancelled()
+        if (cues.size < 4 || !window.start.isFinite() || rate !in .95..1.05 || !manualDelay.isFinite()) return null
+        val raw = window.speech
+        if (raw.size !in 6 * SPEECH_HZ..12 * SPEECH_HZ || raw.any { !it.isFinite() || it !in 0.0..1.0 }) return null
+        if (raw.average() !in .12.. .96) return null
+        // Suppress isolated 20 ms VAD dropouts; keep the actual dialogue boundaries.
+        val a = DoubleArray(raw.size) { i ->
+            val left = max(0, i - 3); val right = min(raw.lastIndex, i + 3)
+            var sum = 0.0
+            for (j in left..right) sum += raw[j]
+            sum / (right - left + 1)
+        }
         val sum = a.sum()
-        if (sum / a.size !in .12.. .90) return null
+        val energy = a.sumOf { it * it } - sum * sum / a.size
+        if (energy < 8) return null // Continuous speech/silence cannot identify an offset.
         val radius = 120 * SPEECH_HZ
         val start = window.start - 120
         val b = DoubleArray(a.size + radius * 2)
         cues.forEach { cue ->
-            if (cue.text.isBlank() || cue.text.trim().startsWith("♪")) return@forEach
-            val from = floor((cue.startSeconds * rate - start) * SPEECH_HZ).toInt().coerceIn(0, b.size)
-            val to = ceil((cue.endSeconds * rate - start) * SPEECH_HZ).toInt().coerceIn(0, b.size)
+            checkCancelled()
+            if (!cue.startSeconds.isFinite() || !cue.endSeconds.isFinite() || cue.endSeconds <= cue.startSeconds ||
+                cue.text.isBlank() || cue.text.trim().startsWith("♪")) return@forEach
+            val from = floor((cue.startSeconds * rate + manualDelay - start) * SPEECH_HZ).toInt().coerceIn(0, b.size)
+            val to = ceil((cue.endSeconds * rate + manualDelay - start) * SPEECH_HZ).toInt().coerceIn(0, b.size)
             for (i in from until to) b[i] = 1.0
         }
-        val cross = convolution(a.reversedArray(), b)
+        val cross = convolution(a.reversedArray(), b, checkCancelled)
         val prefix = DoubleArray(b.size + 1)
         b.indices.forEach { prefix[it + 1] = prefix[it] + b[it] }
-        val energy = a.sumOf { it * it } - sum * sum / a.size
-        if (energy < 1) return null
         val scores = DoubleArray(radius * 2 + 1) { shift ->
+            if (shift % 256 == 0) checkCancelled()
             val s = prefix[shift + a.size] - prefix[shift]
             val variance = s - s * s / a.size
-            if (variance < 1) -1.0 else (cross[shift + a.size - 1] - sum * s / a.size) / sqrt(energy * variance)
+            if (variance < 8) -1.0 else (cross[shift + a.size - 1] - sum * s / a.size) / sqrt(energy * variance)
         }
-        return scores
+        val peak = scores.indices.maxBy { scores[it] }
+        val best = scores[peak]
+        if (peak == 0 || peak == scores.lastIndex || best < .48) return null
+        // Compare all plausible subtitle positions, not just the currently visible
+        // (possibly wrong) line. A nearest-line bias would silently choose bad offsets.
+        val rival = scores.indices.filter { abs(it - peak) > SPEECH_HZ }.maxOf { scores[it] }
+        if (best - rival < .08) return null
+        var left = peak; var right = peak
+        while (left > 0 && scores[left - 1] >= best - .02) left--
+        while (right < scores.lastIndex && scores[right + 1] >= best - .02) right++
+        if (right - left > .8 * SPEECH_HZ) return null
+        val offset = (radius - peak).toDouble() / SPEECH_HZ
+        return AudioSubtitleCorrection(offset, rate, best.coerceAtMost(1.0))
     }
 
-    internal fun convolution(a: DoubleArray, b: DoubleArray): DoubleArray {
+    internal fun convolution(a: DoubleArray, b: DoubleArray, checkCancelled: () -> Unit = {}): DoubleArray {
         var n = 1
         while (n < a.size + b.size - 1) n *= 2
         val ar = a.copyOf(n); val ai = DoubleArray(n)
         val br = b.copyOf(n); val bi = DoubleArray(n)
-        fft(ar, ai, false); fft(br, bi, false)
+        fft(ar, ai, false, checkCancelled); fft(br, bi, false, checkCancelled)
         for (i in 0 until n) {
             val real = ar[i] * br[i] - ai[i] * bi[i]
             ai[i] = ar[i] * bi[i] + ai[i] * br[i]; ar[i] = real
         }
-        fft(ar, ai, true)
+        fft(ar, ai, true, checkCancelled)
         return ar.copyOf(a.size + b.size - 1)
     }
-    private fun fft(real: DoubleArray, imag: DoubleArray, inverse: Boolean) {
+    private fun fft(real: DoubleArray, imag: DoubleArray, inverse: Boolean, checkCancelled: () -> Unit) {
         val n = real.size
         var j = 0
         for (i in 1 until n) {
@@ -109,6 +100,7 @@ internal object AudioSubtitleAlignment {
         }
         var length = 2
         while (length <= n) {
+            checkCancelled()
             val angle = (if (inverse) 2 else -2) * PI / length
             val wr = cos(angle); val wi = sin(angle)
             for (base in 0 until n step length) {

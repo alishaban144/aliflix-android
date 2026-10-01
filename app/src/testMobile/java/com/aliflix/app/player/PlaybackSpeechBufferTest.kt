@@ -29,19 +29,20 @@ class PlaybackSpeechBufferTest {
         buffer.flip()
         capture.pcm(buffer, format, 30_000_000, 20_000_000)
         assertEquals(0, buffer.position())
-        val first = capture.windows()
-        assertTrue(first.size >= 2)
-        assertTrue(first.first().start >= 10.0)
-        assertTrue(first.first().start < 12.0)
+        val first = capture.currentWindow(79.9)!!
+        assertTrue(first.start >= 67.8)
+        assertTrue(first.start < 68.0)
+        assertEquals(600, first.speech.size)
         capture.pcm(buffer, format, 30_000_000, 20_000_000)
-        assertEquals(first.map { it.start }, capture.windows().map { it.start })
+        assertEquals(first.start, capture.currentWindow(79.9)!!.start, 1e-8)
+        assertArrayEquals(first.speech, capture.currentWindow(79.9)!!.speech, 0.0)
         val generation = capture.generation
         capture.reset()
-        assertTrue(capture.windows().isEmpty())
+        assertNull(capture.currentWindow(79.9))
         assertTrue(capture.generation > generation)
     }
 
-    @Test fun realCodecSized44100HzBuffersRemainContiguousAndCollectTwoScenesInTwentySeconds() {
+    @Test fun realCodecSized44100HzBuffersProvideOneCurrentExchangeWithoutFutureAudio() {
         val capture = capture()
         val rate = 44100
         val format = Format.Builder().setSampleMimeType("audio/raw").setSampleRate(rate)
@@ -61,32 +62,33 @@ class PlaybackSpeechBufferTest {
             assertEquals(0, buffer.position())
             first += length
         }
-        assertEquals(1, capture.windows(19.9).size)
-        assertEquals(2, capture.windows(20.1).size)
+        assertNull(capture.currentWindow(5.9))
+        val recent = capture.currentWindow(7.9)!!
+        assertTrue(recent.start + recent.speech.size / 50.0 <= 7.9)
+        assertTrue(recent.speech.size in 300..600)
+        assertNotNull(capture.currentWindow(20.1))
         assertFalse(capture.unavailable)
     }
 
-    @Test fun freshScenesReplaceRejectedEvidenceAndSeeksNeverFabricateSilence() {
+    @Test fun onlyCurrentDialogueIsReturnedAndSeeksNeverJoinEarlierScenes() {
         val capture = capture()
         val format = Format.Builder().setSampleMimeType("audio/raw").setSampleRate(8000)
             .setChannelCount(1).setPcmEncoding(C.ENCODING_PCM_16BIT).build()
         fun feed(start: Int, duration: Int) {
             val data = ByteBuffer.allocate(duration * 8000 * 2).order(ByteOrder.LITTLE_ENDIAN)
-            repeat(duration * 8000) { i ->
-                data.putShort(if (i / 8000.0 % 4.3 < 1.8) 1000 else 0)
-            }
+            repeat(duration * 8000) { i -> data.putShort(if (i / 8000.0 % 4.3 < 1.8) 1000 else 0) }
             data.flip(); capture.pcm(data, format, start * 1_000_000L, 0)
         }
         feed(0, 65)
-        val first = capture.windows().map { it.start }
-        feed(65, 20)
-        val newer = capture.windows().map { it.start }
-        assertEquals(6, newer.size)
-        assertTrue(newer.last() > first.last())
+        val first = capture.currentWindow(64.9)!!
+        assertTrue(first.start > 52)
+        assertNull(capture.currentWindow(30.0)) // Old scenes have left the bounded buffer.
         feed(1000, 11)
-        assertTrue(capture.windows().all { it.start < 85 || it.start >= 1000 })
+        assertNull(capture.currentWindow(1005.0)) // A gap must not borrow an earlier scene.
+        assertTrue(capture.currentWindow(1010.9)!!.start >= 1000)
+        assertNull(capture.currentWindow(1012.0)) // No stale/future speech.
         capture.reset()
-        assertTrue(capture.windows().isEmpty())
+        assertNull(capture.currentWindow(1010.9))
     }
 
     @Test fun captureErrorsCannotConsumePlaybackAudioOrEscapeIntoTheRenderer() {
@@ -135,11 +137,11 @@ class PlaybackSpeechBufferTest {
         repeat(22 * 8000) { i -> data.putShort(if (i / 8000.0 % 4.3 < 1.8) 1000 else 0) }
         data.flip()
         assertFalse(sink.handleBuffer(data, 0, 1))
-        val starts = capture.windows().map { it.start }
-        assertEquals(2, starts.size)
+        val current = capture.currentWindow(21.9)!!
         assertTrue(sink.handleBuffer(data, 0, 1))
-        assertEquals(starts, capture.windows().map { it.start })
+        assertEquals(current.start, capture.currentWindow(21.9)!!.start, 1e-8)
+        assertArrayEquals(current.speech, capture.currentWindow(21.9)!!.speech, 0.0)
         sink.flush()
-        assertTrue(capture.windows().isEmpty())
+        assertNull(capture.currentWindow(21.9))
     }
 }
