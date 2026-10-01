@@ -3362,17 +3362,17 @@ private fun GenreOrganizedList(
         GroupedGenreList(items, onOpen, gridState, emptyTitle, emptyMessage)
         return
     }
-    // Each title belongs to exactly the same main genre as the original shelves.
-    val groups = remember(items) {
-        items.groupBy { it.genres.firstOrNull()?.trim()?.takeIf(String::isNotBlank) ?: "Other discoveries" }
-            .entries.sortedWith(compareByDescending<Map.Entry<String, List<Media>>> { it.value.size }.thenBy { it.key })
-    }
+    // A saved title appears once, under its strongest shared canonical main genre.
+    val groups = remember(items) { groupMyListByMainGenre(items) }
     val tabs = groups.map { it.key }
     var selectedGenre by rememberSaveable { mutableStateOf(tabs.first()) }
     val activeGenre = selectedGenre.takeIf { it in tabs } ?: tabs.first()
+    LaunchedEffect(activeGenre) {
+        if (selectedGenre != activeGenre) selectedGenre = activeGenre
+    }
     val selectedIndex = tabs.indexOf(activeGenre)
     val states = rememberSaveableStateHolder()
-    val firstGenre = rememberSaveable { tabs.first() }
+    val firstGenre = tabs.first()
     Column(Modifier.fillMaxSize()) {
         PrimaryScrollableTabRow(
             selectedTabIndex = selectedIndex,
@@ -3393,7 +3393,7 @@ private fun GenreOrganizedList(
                 val ink by animateColorAsState(if (selected) Color.White else AliflixContentSecondary, AliflixMotion.selection(), label = "genre-ink")
                 Tab(
                     selected = selected,
-                    onClick = { selectedGenre = genre },
+                    onClick = { if (!selected) selectedGenre = genre },
                     modifier = Modifier.height(52.dp).zIndex(1f),
                     selectedContentColor = Color.White,
                     unselectedContentColor = AliflixContentSecondary,
