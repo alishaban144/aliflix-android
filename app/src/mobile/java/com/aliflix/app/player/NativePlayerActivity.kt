@@ -923,7 +923,7 @@ class NativePlayerActivity : FragmentActivity() {
             audioCorrectionKey = if (request != null && json != null && track.isNotBlank() && !NativePlaybackService.embeddedSubtitlesActive)
                 subtitleCorrectionKey(request, selection?.key.orEmpty(), json, track) else null
             audioCorrection = null
-            ui = ui.copy(audioSyncState = null, audioSyncApplied = false)
+            ui = ui.copy(audioSyncState = null, audioSyncApplied = false, audioSyncMessage = null, audioSyncSamples = 0)
             if (hadCorrection && json != null && !NativePlaybackService.embeddedSubtitlesActive)
                 NativePlaybackService.updateSubtitles(nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds))
         }
@@ -934,55 +934,89 @@ class NativePlayerActivity : FragmentActivity() {
             NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds))
             ui = ui.copy(audioSyncApplied = cached != null, audioSyncState = if (cached != null) "Synced" else null)
         }
-        val available = key != null && controller?.deviceInfo?.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE
+        val available = json != null && activeSubtitleCues.size >= 12 && controller != null &&
+            !NativePlaybackService.embeddedSubtitlesActive && controller?.deviceInfo?.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE
         if (ui.audioSyncAvailable != available) ui = ui.copy(audioSyncAvailable = available)
     }
 
     private fun syncWithAudio() {
         if (audioSyncJob?.isActive == true) {
             audioSyncJob?.cancel(); audioSyncJob = null
-            ui = ui.copy(audioSyncState = if (audioCorrection != null) "Synced" else null)
+            ui = ui.copy(audioSyncState = if (audioCorrection != null) "Synced" else null, audioSyncMessage = null)
             return
         }
         refreshAudioCorrection()
-        val key = audioCorrectionKey ?: return
+        if (!ui.audioSyncAvailable) return
+        val key = audioCorrectionKey ?: run {
+            ui = ui.copy(audioSyncState = "Failed", audioSyncMessage = "Audio is preparing. Try again once playback starts.")
+            return
+        }
         val originals = activeSubtitleCues.toList()
-        val generation = NativePlaybackService.speechGeneration
+        val originalRevision = correctionStore.preferences.getString(key, null)
+        NativePlaybackService.retrySpeechCapture()
         audioSyncJob = lifecycleScope.launch {
-            ui = ui.copy(audioSyncState = "Collecting")
+            ui = ui.copy(audioSyncState = "Collecting", audioSyncMessage = "Keep playing to collect dialogue", audioSyncSamples = 0)
             try {
-                val success = withTimeoutOrNull(240_000) {
+                var failureMessage = "No reliable match yet. Keep playing, then retry."
+                val success = withTimeoutOrNull(600_000) {
                     var previousSamples: List<Double> = emptyList()
-                    var targetSamples = 3
+                    var generation = NativePlaybackService.speechGeneration
+                    var playingMillis = 0L
+                    var tick = android.os.SystemClock.elapsedRealtime()
                     while (isActive) {
-                        if (key != audioCorrectionKey || generation != NativePlaybackService.speechGeneration ||
+                        refreshAudioCorrection()
+                        if (key != audioCorrectionKey ||
                             controller?.deviceInfo?.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) return@withTimeoutOrNull false
-                        val windows = withContext(Dispatchers.Default) { NativePlaybackService.speechWindows().take(targetSamples) }
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (controller?.isPlaying == true) playingMillis += (now - tick).coerceAtMost(2_000)
+                        tick = now
+                        if (playingMillis >= 240_000) return@withTimeoutOrNull false
+                        if (NativePlaybackService.speechCaptureUnavailable) {
+                            failureMessage = "Audio analysis unavailable. Retry or use Time Offset."
+                            return@withTimeoutOrNull false
+                        }
+                        if (generation != NativePlaybackService.speechGeneration) {
+                            generation = NativePlaybackService.speechGeneration
+                            previousSamples = emptyList() // Natural seek/flush: collect again, never permanently disable.
+                        }
+                        val position = (controller?.currentPosition ?: 0L) / 1000.0
+                        val windows = withContext(Dispatchers.Default) { NativePlaybackService.speechWindows(position) }
+                        if (generation != NativePlaybackService.speechGeneration) continue
                         val starts = windows.map { it.start }
+                        ui = ui.copy(audioSyncSamples = windows.size,
+                            audioSyncMessage = if (controller?.isPlaying != true) "Resume playback to collect dialogue"
+                                else if (windows.size < 2) "Keep playing to collect dialogue"
+                                else "Listening for a clearer match")
                         if (windows.size >= 2 && starts != previousSamples) {
                             previousSamples = starts
-                            ui = ui.copy(audioSyncState = "Syncing")
+                            ui = ui.copy(audioSyncState = "Syncing", audioSyncMessage = "Matching subtitle timing")
                             val match = withContext(Dispatchers.Default) { AudioSubtitleAlignment.match(originals, windows) }
                             ensureActive()
                             refreshAudioCorrection()
-                            if (key != audioCorrectionKey || generation != NativePlaybackService.speechGeneration) return@withTimeoutOrNull false
+                            if (key != audioCorrectionKey) return@withTimeoutOrNull false
+                            if (generation != NativePlaybackService.speechGeneration) continue
+                            // A remote correction or Reset that arrived during analysis wins.
+                            if (correctionStore.preferences.getString(key, null) != originalRevision)
+                                return@withTimeoutOrNull audioCorrection != null
                             if (match != null) {
                                 correctionStore.put(key, match)
                                 refreshAudioCorrection()
                                 updateSubtitleCues()
                                 return@withTimeoutOrNull true
                             }
-                            if (windows.size >= 6) return@withTimeoutOrNull false
-                            if (windows.size >= targetSamples) targetSamples++
                             ui = ui.copy(audioSyncState = "Collecting")
                         }
-                        delay(5_000)
+                        delay(1_000)
                     }
                     false
                 } == true
-                ui = ui.copy(audioSyncState = if (success) "Synced" else "Failed")
+                ui = ui.copy(audioSyncState = if (success) "Synced" else "Failed",
+                    audioSyncMessage = if (success) null else failureMessage)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { ui = ui.copy(audioSyncState = "Failed") }
+            catch (_: Exception) { ui = ui.copy(audioSyncState = "Failed", audioSyncMessage = "Couldn't match the timing. Tap to retry.") }
+            finally {
+                if (audioSyncJob === coroutineContext[Job]) audioSyncJob = null
+            }
         }
     }
 
@@ -990,7 +1024,7 @@ class NativePlayerActivity : FragmentActivity() {
         audioSyncJob?.cancel(); audioSyncJob = null
         audioCorrectionKey?.let { correctionStore.put(it, null) }
         audioCorrection = null
-        ui = ui.copy(audioSyncState = null, audioSyncApplied = false)
+        ui = ui.copy(audioSyncState = null, audioSyncApplied = false, audioSyncMessage = null, audioSyncSamples = 0)
         updateSubtitleDelay(0)
     }
 
@@ -1182,7 +1216,7 @@ class NativePlayerActivity : FragmentActivity() {
     }
     override fun onStop() {
         audioSyncJob?.cancel(); audioSyncJob = null
-        ui = ui.copy(audioSyncState = if (audioCorrection != null) "Synced" else null)
+        ui = ui.copy(audioSyncState = if (audioCorrection != null) "Synced" else null, audioSyncMessage = null)
         recordCurrentProgress(urgent = true)
         subtitleRenderJob?.cancel()
         displays.unregisterDisplayListener(displayListener)

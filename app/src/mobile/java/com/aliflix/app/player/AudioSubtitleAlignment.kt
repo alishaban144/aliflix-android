@@ -18,22 +18,31 @@ internal object AudioSubtitleAlignment {
     private val rates = doubleArrayOf(1.0, 25.0 / 24, 24.0 / 25, 25.0 / 23.976, 23.976 / 25, 24.0 / 23.976, 23.976 / 24)
     fun match(cues: List<SubtitleCue>, windows: List<SpeechWindow>): AudioSubtitleCorrection? {
         if (cues.size < 12 || windows.size < 2) return null
-        val samples = windows.take(6)
+        val samples = windows.sortedBy { it.start }.take(6)
+        if (samples.sumOf { it.speech.size } < 20 * SPEECH_HZ ||
+            samples.zipWithNext().any { (a, b) -> a.start + a.speech.size.toDouble() / SPEECH_HZ > b.start + .01 }) return null
         val span = samples.last().start - samples.first().start
+        val observedSpan = span + samples.last().speech.size.toDouble() / SPEECH_HZ
         val models = rates.toList().mapNotNull { rate ->
             // Even a short baseline can expose a likely frame-rate mismatch: assess it to
             // reject a tempting constant offset, but wait for a longer baseline to apply it.
-            if (rate != 1.0 && abs(rate - 1) * (span + 25) < 2) return@mapNotNull null
+            if (rate != 1.0 && abs(rate - 1) * observedSpan < .7) return@mapNotNull null
             val correlations = samples.map { correlations(cues, it, rate) ?: return@mapNotNull null }
-            val combined = DoubleArray(correlations.first().size) { i -> correlations.sumOf { it[i] } / correlations.size }
+            val combined = DoubleArray(correlations.first().size) { i ->
+                val sum = correlations.sumOf { it[i] }
+                // One poor intro/music sample must not poison later dialogue forever.
+                // A trimmed fit needs at least three independent agreeing scenes.
+                if (correlations.size >= 4) (sum - correlations.minOf { it[i] }) / (correlations.size - 1)
+                else sum / correlations.size
+            }
             val bestIndex = combined.indices.maxBy { combined[it] }
             if (bestIndex == 0 || bestIndex == combined.lastIndex) return@mapNotNull null
             val alternative = combined.indices.filter { abs(it - bestIndex) > SPEECH_HZ }.maxOf { combined[it] }
             if (combined[bestIndex] - alternative < .06) return@mapNotNull null
-            // Every independent scene must support the same offset, even if one scene has
-            // multiple peaks. Additional scenes can resolve ambiguity in the initial samples.
-            if (correlations.any { it[bestIndex] < .40 }) return@mapNotNull null
-            if (correlations.any { it.max() - it[bestIndex] > .07 }) return@mapNotNull null
+            val rejected = correlations.filter { it[bestIndex] < .40 || it.max() - it[bestIndex] > .07 }
+            if (rejected.isNotEmpty() && (correlations.size < 4 || rejected.size > 1)) return@mapNotNull null
+            // Strong contradictory evidence suggests another cut/episode, not noise.
+            if (rejected.any { it.max() >= .60 && it.max() - it[bestIndex] > .07 }) return@mapNotNull null
             val offset = (120 * SPEECH_HZ - bestIndex).toDouble() / SPEECH_HZ
             val score = combined[bestIndex]
             if (score < .48) null else AudioSubtitleCorrection(offset, rate, score)
@@ -41,15 +50,16 @@ internal object AudioSubtitleAlignment {
         val best = models.firstOrNull() ?: return null
         if (best.rate != 1.0 && (span < 120 || abs(best.rate - 1) * span < 2)) return null
         if (models.drop(1).any { best.confidence - it.confidence < .035 &&
-                (abs(best.offset - it.offset) > .5 || abs(best.rate - it.rate) * max(span, 600.0) > .8) }) return null
+                (abs(best.offset - it.offset + samples.first().start * (best.rate - it.rate)) > .5 ||
+                    abs(best.rate - it.rate) * observedSpan > .8) }) return null
         return best
     }
 
     private fun correlations(cues: List<SubtitleCue>, window: SpeechWindow, rate: Double): DoubleArray? {
         val a = window.speech
-        if (a.size < 1000 || a.any { !it.isFinite() || it !in 0.0..1.0 }) return null
+        if (a.size < 500 || a.any { !it.isFinite() || it !in 0.0..1.0 }) return null
         val sum = a.sum()
-        if (sum / a.size !in .12.. .85) return null
+        if (sum / a.size !in .12.. .90) return null
         val radius = 120 * SPEECH_HZ
         val start = window.start - 120
         val b = DoubleArray(a.size + radius * 2)

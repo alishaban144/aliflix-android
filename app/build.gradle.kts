@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 223
-val mobileVersionName = "3.1.133"
+val mobileVersionCode = 224
+val mobileVersionName = "3.1.134"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
@@ -149,6 +149,7 @@ tasks.matching {
 }
 
 dependencies {
+    add("mobileImplementation", files("libs/webrtc-vad-2.0.10.aar"))
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     val firebaseBom = platform("com.google.firebase:firebase-bom:34.18.0")
     implementation(composeBom)

@@ -9,7 +9,7 @@ import java.security.MessageDigest
  */
 internal fun subtitleCorrectionKey(request: NativePlaybackRequest, contentKey: String, cues: String, audioTrack: String): String {
     val digest = MessageDigest.getInstance("SHA-256")
-    listOf("vad-fft-v1", contentKey, request.url, request.mimeType, request.referer, request.cookie,
+    listOf("webrtc-fft-v2", contentKey, request.url, request.mimeType, request.referer, request.cookie,
         request.streamUrlRules, request.offlineDownloadId, audioTrack, cues).forEach {
         val bytes = it.toByteArray(Charsets.UTF_8)
         digest.update(java.nio.ByteBuffer.allocate(4).putInt(bytes.size).array()); digest.update(bytes)

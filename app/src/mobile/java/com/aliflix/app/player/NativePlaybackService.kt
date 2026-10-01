@@ -487,8 +487,10 @@ class NativePlaybackService : MediaSessionService() {
                 .map { androidx.media3.common.text.Cue.Builder().setText(it.text).build() }.toList()
         }
 
-        internal fun speechWindows(): List<SpeechWindow> = activeService?.speechCapture?.windows().orEmpty()
+        internal fun speechWindows(maxMediaSeconds: Double): List<SpeechWindow> = activeService?.speechCapture?.windows(maxMediaSeconds).orEmpty()
         internal val speechGeneration: Long get() = activeService?.speechCapture?.generation ?: -1L
+        internal val speechCaptureUnavailable: Boolean get() = activeService?.speechCapture?.unavailable == true
+        internal fun retrySpeechCapture() { activeService?.speechCapture?.let { if (it.unavailable) it.reset() } }
 
         internal fun selectedAudioFingerprint(): String {
             val service = activeService ?: return ""
@@ -499,8 +501,9 @@ class NativePlaybackService : MediaSessionService() {
                     "${f.id}|${f.language}|${f.codecs}|${f.sampleRate}|${f.channelCount}"
                 }
             }.joinToString(";")
-            if (selected.isNotBlank() && service.localPlayer.duration > 0)
-                service.lastAudioFingerprint = "$selected|duration:${service.localPlayer.duration}"
+            // HLS duration changes as its timeline loads; it is not an audio-track
+            // identity. Exact source/rendition/content are already in the cache key.
+            if (selected.isNotBlank()) service.lastAudioFingerprint = selected
             return service.lastAudioFingerprint
         }
 

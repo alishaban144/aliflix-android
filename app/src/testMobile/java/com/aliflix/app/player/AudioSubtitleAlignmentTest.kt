@@ -40,6 +40,41 @@ class AudioSubtitleAlignmentTest {
         assertEquals(25.0 / 24.0, match.rate, 1e-8)
         assertEquals(-3.0, match.offset, .06)
     }
+    @Test fun twentySecondsOfIndependentDialogueCanMatchWithSubtitlePaddingAndVadDropouts() {
+        val original = cues()
+        val random = Random(721)
+        val samples = listOf(130.0, 140.0).map { start ->
+            SpeechWindow(start, DoubleArray(500) { frame ->
+                val time = start + frame / 50.0 - 6.8
+                val spoken = original.any { time >= it.startSeconds + .12 && time < it.endSeconds - .18 }
+                if (spoken && random.nextDouble() > .07) 1.0 else 0.0
+            })
+        }
+        val match = AudioSubtitleAlignment.match(original, samples)
+        assertNotNull("Padded dialogue with minor VAD dropouts should match without a minute-long collection", match)
+        assertEquals(6.8, match!!.offset, .2)
+        assertEquals(1.0, match.rate, .000001)
+    }
+    @Test fun overlappingSamplesCannotFakeIndependentEvidence() {
+        val original = cues()
+        val samples = windows(original, 4.0)
+        assertNull(AudioSubtitleAlignment.match(original, listOf(samples[0], samples[0])))
+    }
+    @Test fun aWeakIntroCannotPoisonThreeLaterScenesButStrongConflictsAreRejected() {
+        val original = cues()
+        val random = Random(435)
+        val weak = SpeechWindow(75.0, DoubleArray(1250) { if (random.nextDouble() > .6) 1.0 else 0.0 })
+        val samples = listOf(weak) + windows(original, 4.0)
+        val match = AudioSubtitleAlignment.match(original, samples)
+        assertNotNull(match)
+        assertEquals(4.0, match!!.offset, .04)
+        // Give the conflicting scene an exact but different timeline shift.
+        val strong = SpeechWindow(75.0, DoubleArray(1250) { frame ->
+            val time = 75.0 + frame / 50.0 - 18.0
+            if (original.any { time >= it.startSeconds && time < it.endSeconds }) 1.0 else 0.0
+        })
+        assertNull(AudioSubtitleAlignment.match(original, listOf(strong) + windows(original, 4.0)))
+    }
     @Test fun shortBaselineDriftCannotMasqueradeAsConstantOffset() {
         val original = cues()
         val rate = 25.0 / 24.0
