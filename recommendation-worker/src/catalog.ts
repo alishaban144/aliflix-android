@@ -233,8 +233,14 @@ function detailsSummary(details: TmdbDetails, mediaType: MediaType): CatalogTitl
       })),
     keywords: details.keywords?.keywords || details.keywords?.results || [],
     trailerKey: (details.videos?.results || [])
-      .filter(video => video.official && video.site === 'YouTube' && video.type === 'Trailer' && /^[a-zA-Z0-9_-]{11}$/.test(video.key))
-      .sort((a, b) => Number(b.iso_639_1 === 'en') - Number(a.iso_639_1 === 'en'))[0]?.key,
+      .filter(video => video.site === 'YouTube' && /^[a-zA-Z0-9_-]{11}$/.test(video.key))
+      .sort((a, b) => {
+        const score = (video: any) =>
+          (video.type === 'Trailer' ? 100 : video.type === 'Teaser' ? 70 : 20) +
+          (video.official ? 30 : 0) +
+          (video.iso_639_1 === 'en' ? 10 : 0);
+        return score(b) - score(a);
+      })[0]?.key,
     reviews: (details.reviews?.results || [])
       .filter(review => Boolean(present(review.id) && present(review.content)))
       .slice(0, 10)
