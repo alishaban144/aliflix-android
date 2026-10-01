@@ -17,3 +17,8 @@ launcher resources, manifests, launch renderer and geometry tests. DiscoverScree
 DiscoverAskCard; NativePlayerScreen has no separate brand geometry in v3.1.118. The old blade
 coordinates and their obsolete test were removed. Only the mobile app is released. TV-only banner
 and the legacy main launcher fallback used by TV remain unchanged under the mobile-only scope.
+
+In v3.1.132, animated launch and Ask renderers paint the canonical vector first, then
+composite the moving sweep/pulse/band at reduced alpha. Previously, the opaque
+heatmap base replaced the original #5D49C8 rear, #BEB4FF front and #A99AF6 dot
+as soon as animation started. Geometry, movement and timings remain unchanged.

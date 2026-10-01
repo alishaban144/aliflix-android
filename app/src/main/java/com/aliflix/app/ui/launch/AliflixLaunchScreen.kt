@@ -429,10 +429,10 @@ fun AliflixHeatmapLogo(
         val center = Offset(left + 50f * scaleFactor, top + 50f * scaleFactor)
 
         val logoPath = geometry.createCombinedLogoPath(unit, left, top)
-        if (timeSeconds <= 0f) {
-            geometry.draw(this, unit, left, top)
-            return@Canvas
-        }
+        // Show the canonical three-color vector at every animation frame, not only at t=0.
+        // Moving light effects below are translucent overlays, not replacement fills.
+        geometry.draw(this, unit, left, top)
+        if (timeSeconds <= 0f) return@Canvas
 
         // Mathematical motion values from reference HTML, offset to the original
         // artwork's illuminated lilac phase without replacing its geometry.
@@ -449,7 +449,7 @@ fun AliflixHeatmapLogo(
             end = Offset(left + unit, top),
         )
 
-        // --- LAYER 1: Blurred Outer Glow (opacity 0.62) ---
+        // --- LAYER 1: Subtle moving glow over the canonical three flat colors ---
         clipPath(logoPath) {
             withTransform({
                 translate(left = (sweepX - 4f) * scaleFactor, top = 0f)
@@ -459,7 +459,7 @@ fun AliflixHeatmapLogo(
                     brush = heatBrush,
                     topLeft = Offset(left - 130f * scaleFactor, top - 25f * scaleFactor),
                     size = Size(280f * scaleFactor, 160f * scaleFactor),
-                    alpha = 0.62f,
+                    alpha = 0.12f,
                 )
             }
 
@@ -476,19 +476,12 @@ fun AliflixHeatmapLogo(
                 ),
                 radius = maxOf(1f, glowPulseRadius),
                 center = glowPulseCenter,
-                alpha = 0.62f,
+                alpha = 0.12f,
             )
         }
 
-        // --- LAYER 2: Base Dark Fill + Main Heat Sweep + Main Core Pulse ---
+        // --- LAYER 2: Preserve the original rear/front/dot colors beneath moving light ---
         clipPath(logoPath) {
-            // Dark base fill (#0B0911)
-            drawRect(
-                color = AliflixLaunchTheme.BaseFill,
-                topLeft = Offset(left, top),
-                size = Size(unit, unit),
-            )
-
             // Main diagonal heat sweep
             withTransform({
                 translate(left = sweepX * scaleFactor, top = 0f)
@@ -498,6 +491,7 @@ fun AliflixHeatmapLogo(
                     brush = heatBrush,
                     topLeft = Offset(left - 130f * scaleFactor, top - 25f * scaleFactor),
                     size = Size(280f * scaleFactor, 160f * scaleFactor),
+                    alpha = 0.16f,
                 )
             }
 
@@ -515,6 +509,7 @@ fun AliflixHeatmapLogo(
                 ),
                 radius = maxOf(1f, mainPulseRadius),
                 center = mainPulseCenter,
+                alpha = 0.18f,
             )
         }
 
