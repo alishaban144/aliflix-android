@@ -5406,8 +5406,21 @@ private fun EpisodeRow(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (episode.runtime.isNotBlank()) {
-                    Text(episode.runtime, color = AliflixMuted, fontSize = 12.sp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (episode.runtime.isNotBlank()) {
+                        Text(episode.runtime, color = AliflixMuted, fontSize = 12.sp)
+                    }
+                    episode.imdbRating?.takeIf { it > 0.0 }?.let { rating ->
+                        Text(
+                            text = "IMDb ${String.format(java.util.Locale.US, "%.1f", rating)}",
+                            color = Color(0xFFF5C518),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
             }
             Icon(
