@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "218"
-  RELEASE_VERSION_NAME: "3.1.128"
+  RELEASE_VERSION_CODE: "219"
+  RELEASE_VERSION_NAME: "3.1.129"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -320,7 +320,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Adds 7Movies and Movy to mobile playback, races two streaming sources for fresh playback, removes the Discover filter wrapper, and introduces compact expandable episode rows with summary, Play and Download actions. Preserves thumbnail playback, episode identity, saved routes and download controls. Mobile only; device validation and broad tests were explicitly waived."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Polishes More Info and playback: centers download actions and reserves accent color for completed downloads, shows IMDb beside episode runtime, restores trailer coverage with best-available YouTube trailer/teaser selection and a cleaner inline player, and refines the portrait next-episode overlay and stepped countdown ring. Mobile only."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -348,7 +348,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Adds 7Movies and Movy to mobile playback, races two streaming sources for fresh playback, removes the Discover filter wrapper, and introduces compact expandable episode rows with summary, Play and Download actions. Preserves thumbnail playback, episode identity, saved routes and download controls. Mobile only; device validation and broad tests were explicitly waived."
+          body: "Centers and corrects download-state styling, adds collapsed episode IMDb ratings, restores broader trailer coverage with a cleaner inline trailer surface, and refines the portrait next-episode popup and countdown ring. Mobile only."
 
           files: |
             aliflix-mobile.apk
