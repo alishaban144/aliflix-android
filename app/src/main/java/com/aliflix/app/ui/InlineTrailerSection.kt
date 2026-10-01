@@ -111,15 +111,14 @@ private fun TrailerPlayer(videoId: String, media: Media) {
                     if (!request.isForMainFrame) return false
                     val host = request.url.host?.lowercase()
                     val path = request.url.path.orEmpty()
-                    return !(host in setOf(
-                        context.packageName.lowercase(),
-                        "www.youtube.com",
-                        "www.youtube-nocookie.com",
-                        "m.youtube.com",
-                        "consent.youtube.com",
-                        "consent.google.com",
-                        "accounts.google.com",
-                    ) && (host == context.packageName.lowercase() || path.startsWith("/embed/") || host?.startsWith("consent.") == true))
+                    val allowedMainFrame = when {
+                        host == context.packageName.lowercase() -> true
+                        host in setOf("www.youtube.com", "www.youtube-nocookie.com", "m.youtube.com") &&
+                            path.startsWith("/embed/") -> true
+                        host in setOf("consent.youtube.com", "consent.google.com", "accounts.google.com") -> true
+                        else -> false
+                    }
+                    return !allowedMainFrame
                 }
             }
 
