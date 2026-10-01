@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 220
-val mobileVersionName = "3.1.130"
+val mobileVersionCode = 221
+val mobileVersionName = "3.1.131"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
