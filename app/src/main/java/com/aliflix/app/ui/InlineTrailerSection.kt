@@ -2,18 +2,22 @@ package com.aliflix.app.ui
 
 import android.annotation.SuppressLint
 import android.net.Uri
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.activity.compose.LocalActivity
+import android.widget.FrameLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,16 +57,33 @@ internal fun InlineTrailerSection(media: Media) {
 @Composable
 private fun TrailerPlayer(videoId: String, media: Media) {
     val context = LocalContext.current
-    val activity = LocalActivity.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var started by remember(videoId) { mutableStateOf(false) }
     var loadingError by remember(videoId) { mutableStateOf(false) }
     var webView by remember(videoId) { mutableStateOf<WebView?>(null) }
 
+    fun attachPlayer(container: FrameLayout, player: WebView) {
+        if (player.parent !== container) {
+            (player.parent as? ViewGroup)?.removeView(player)
+            container.removeAllViews()
+            container.addView(
+                player,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        player.visibility = View.VISIBLE
+        player.requestLayout()
+        player.invalidate()
+    }
+
     fun destroyPlayer() {
         webView?.apply {
             stopLoading()
             loadUrl("about:blank")
+            (parent as? ViewGroup)?.removeView(this)
             destroy()
         }
         webView = null
@@ -78,12 +99,25 @@ private fun TrailerPlayer(videoId: String, media: Media) {
         webView?.let { return it }
         return WebView(context).apply {
             setBackgroundColor(android.graphics.Color.BLACK)
+
+            // HTML5/YouTube video must stay on the activity's hardware compositor.
+            // Do not force the WebView into a software or extra offscreen layer.
+            setLayerType(View.LAYER_TYPE_NONE, null)
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
             settings.allowFileAccess = false
             settings.allowContentAccess = false
             settings.setSupportMultipleWindows(false)
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
+
+            webChromeClient = WebChromeClient()
             webViewClient = object : WebViewClient() {
                 private fun fail(view: WebView) {
                     view.post {
@@ -144,6 +178,7 @@ private fun TrailerPlayer(videoId: String, media: Media) {
                 </body>
                 </html>
             """.trimIndent()
+
             loadDataWithBaseURL(
                 "$appOrigin/",
                 html,
@@ -155,11 +190,17 @@ private fun TrailerPlayer(videoId: String, media: Media) {
         }
     }
 
-    DisposableEffect(lifecycleOwner, activity, videoId) {
+    DisposableEffect(lifecycleOwner, videoId) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> webView?.onPause()
-                Lifecycle.Event.ON_RESUME -> webView?.onResume()
+                Lifecycle.Event.ON_RESUME -> webView?.apply {
+                    onResume()
+                    post {
+                        requestLayout()
+                        invalidate()
+                    }
+                }
                 else -> Unit
             }
         }
@@ -175,8 +216,7 @@ private fun TrailerPlayer(videoId: String, media: Media) {
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(18.dp))
-                .background(AliflixSurfaceSecondary),
+                .background(AliflixSurfaceSecondary, RoundedCornerShape(18.dp)),
             contentAlignment = Alignment.Center,
         ) {
             if (!started) {
@@ -186,6 +226,7 @@ private fun TrailerPlayer(videoId: String, media: Media) {
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
+                        .clip(RoundedCornerShape(18.dp))
                         .clickable(onClick = ::startTrailer),
                 )
                 Box(
@@ -204,9 +245,21 @@ private fun TrailerPlayer(videoId: String, media: Media) {
                     )
                 }
             } else {
+                // Intentionally do not clip the native video surface. Clipping/extra
+                // Compose layers can leave HTML5 video black while audio keeps playing.
                 AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { obtainPlayer() },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(1.dp),
+                    factory = { viewContext ->
+                        FrameLayout(viewContext).apply {
+                            setBackgroundColor(android.graphics.Color.BLACK)
+                            attachPlayer(this, obtainPlayer())
+                        }
+                    },
+                    update = { container ->
+                        attachPlayer(container, obtainPlayer())
+                    },
                 )
             }
         }
