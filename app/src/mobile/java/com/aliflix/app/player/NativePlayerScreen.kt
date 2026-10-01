@@ -643,7 +643,14 @@ internal fun NativePlayerScreen(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-                .padding(end = 16.dp, bottom = if (controls) 140.dp else 24.dp)
+                .padding(
+                    end = 16.dp,
+                    bottom = if (isLandscape) {
+                        if (controls) 140.dp else 24.dp
+                    } else {
+                        if (controls) 162.dp else 44.dp
+                    },
+                )
         ) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -659,8 +666,14 @@ internal fun NativePlayerScreen(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         val sec = (remainingMs / 1000).toInt().coerceIn(1, 25)
+                        val steppedTarget = (sec / 25f).coerceIn(0f, 1f)
+                        val ringProgress by animateFloatAsState(
+                            targetValue = steppedTarget,
+                            animationSpec = tween(420, easing = FastOutSlowInEasing),
+                            label = "next-episode-ring",
+                        )
                         CircularProgressIndicator(
-                            progress = { (remainingMs.toFloat() / 25_000f).coerceIn(0f, 1f) },
+                            progress = { ringProgress },
                             color = AliflixAccentPrimary,
                             trackColor = Color.White.copy(alpha = 0.15f),
                             modifier = Modifier.size(36.dp),
