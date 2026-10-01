@@ -677,7 +677,8 @@ private fun AskLoadingState() {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(24.dp))
-        ComposingThinkingOrb(modifier = Modifier.size(148.dp))
+        if (com.aliflix.app.BuildConfig.IS_TV) ComposingThinkingOrb(modifier = Modifier.size(148.dp))
+        else AliflixRippleLoader(modifier = Modifier.size(148.dp))
         Spacer(Modifier.height(13.dp))
         Text("Finding matches", color = AliflixContentPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
         Spacer(Modifier.height(20.dp))
@@ -976,4 +977,3 @@ private fun AskAliflixSortDropdown(
         }
     }
 }
-

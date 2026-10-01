@@ -94,6 +94,7 @@ class FirebaseAccountSyncRepository(
                 .distinctUntilChanged()
                 .collectLatest { (uid, deleting) ->
                     switchLocalScope(uid)
+                    recommendationStore.migrateCloudflareDefaultForScope(uid?.let(AccountMergePolicy::userScope) ?: AccountMergePolicy.GUEST_SCOPE)
                     when {
                         uid == null -> {
                             pausedDeletionUid.value = null

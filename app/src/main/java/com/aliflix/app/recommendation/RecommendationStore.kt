@@ -15,6 +15,7 @@ class RecommendationStore(context: Context) {
         PREFERENCES_NAME,
         Context.MODE_PRIVATE,
     )
+    private val defaultMigrations = context.applicationContext.getSharedPreferences("aliflix_model_default_v133", Context.MODE_PRIVATE)
     private val _enabled = MutableStateFlow(preferences.getBoolean(KEY_ENABLED, true))
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
     private val _aiModel = MutableStateFlow(loadAiModel())
@@ -28,6 +29,17 @@ class RecommendationStore(context: Context) {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val mutations: SharedFlow<Unit> = _mutations
+
+    init {
+        migrateCloudflareDefaultForScope("guest")
+    }
+
+    fun migrateCloudflareDefaultForScope(scope: String) {
+        if (!com.aliflix.app.BuildConfig.IS_TV && !defaultMigrations.getBoolean(scope, false)) {
+            setAiModel(RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B)
+            defaultMigrations.edit { putBoolean(scope, true) }
+        }
+    }
 
     val hasExplicitValues: Boolean
         get() = _updatedAtMillis.value > 0L ||
@@ -82,7 +94,7 @@ class RecommendationStore(context: Context) {
     }
 
     private fun recordLocalChange() {
-        val now = System.currentTimeMillis()
+        val now = maxOf(System.currentTimeMillis(), _updatedAtMillis.value + 1L)
         _updatedAtMillis.value = now
         preferences.edit { putLong(KEY_UPDATED_AT_MILLIS, now) }
         _mutations.tryEmit(Unit)

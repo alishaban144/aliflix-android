@@ -129,6 +129,7 @@ class AccountMergePolicyTest {
                 "playerPreferences",
                 "subtitleChoices",
                 "captionFiles",
+                "subtitleCorrections",
             ),
             AccountCloudDeletionPlan.collections,
         )

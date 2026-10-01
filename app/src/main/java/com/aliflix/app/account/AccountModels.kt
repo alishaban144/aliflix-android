@@ -47,6 +47,7 @@ object AccountCloudDeletionPlan {
         "playerPreferences",
         "subtitleChoices",
         "captionFiles",
+        "subtitleCorrections",
     )
 }
 

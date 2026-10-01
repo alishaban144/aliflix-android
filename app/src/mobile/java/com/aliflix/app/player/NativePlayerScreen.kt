@@ -1,5 +1,9 @@
 package com.aliflix.app.player
 
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.rounded.GraphicEq
+
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 
 import android.content.res.Configuration
@@ -156,6 +160,9 @@ internal data class NativePlayerUi(
     val activeSubtitleTrack: SubtitleTrack? = null,
     val subtitleLoading: Boolean = false,
     val subtitleError: String? = null,
+    val audioSyncState: String? = null,
+    val audioSyncAvailable: Boolean = false,
+    val audioSyncApplied: Boolean = false,
     val message: String? = null,
     val segments: List<IntroSegment> = emptyList(),
     val playbackSelection: PlaybackSelection? = null,
@@ -207,6 +214,8 @@ internal fun NativePlayerScreen(
     onSubtitle: (SubtitleTrack) -> Unit = {},
     onSubtitleDisable: () -> Unit = {},
     onSubtitleDelayChange: (Int) -> Unit = {},
+    onSyncWithAudio: () -> Unit = {},
+    onResetSubtitleSync: () -> Unit = {},
     onSubtitleVerticalOffsetChange: (Int) -> Unit = {},
     onSubtitleFontSizeChange: (Float) -> Unit = {},
     onSubtitleOpacityChange: (Float) -> Unit = {},
@@ -274,7 +283,7 @@ internal fun NativePlayerScreen(
     var countdownCancelled by remember(state.episodeNumber) { mutableStateOf(false) }
     val remainingMs = duration - position
     val isNearEnd = duration > 45_000 && remainingMs in 1..25_000
-    val showCountdown = next != null && isNearEnd && !countdownCancelled && !ended && !preparing && state.error == null
+    val showCountdown = settings.playNextEpisode && next != null && isNearEnd && !countdownCancelled && !ended && !preparing && state.error == null
 
     LaunchedEffect(showCountdown, remainingMs) {
         if (showCountdown && remainingMs <= 1200 && next != null) {
@@ -899,6 +908,21 @@ internal fun NativePlayerScreen(
                     "Audio & subtitles" -> {
                         // Subtitle Sync / Delay
                         Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        val syncing = state.audioSyncState == "Collecting" || state.audioSyncState == "Syncing"
+                        FilledTonalButton(
+                            onClick = onSyncWithAudio,
+                            enabled = state.audioSyncAvailable || syncing,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = AliflixAccentPrimary.copy(alpha = .18f), contentColor = AliflixAccentSecondary),
+                        ) {
+                            if (syncing) com.aliflix.app.ui.common.AliflixSyncBars(Modifier.size(22.dp, 28.dp))
+                            else Icon(Icons.Rounded.GraphicEq, null, Modifier.size(20.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text("Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.weight(1f))
+                            state.audioSyncState?.let { Text(if (syncing) "$it · Cancel" else it, fontSize = 11.sp) }
+                        }
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = Color.White.copy(alpha = 0.05f),
@@ -923,8 +947,8 @@ internal fun NativePlayerScreen(
                                     ) {
                                         Text("\u22120.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
-                                    if (settings.subtitleDelayTenths != 0) {
-                                        TextButton(onClick = { onSubtitleDelayChange(0) }) {
+                                    if (settings.subtitleDelayTenths != 0 || state.audioSyncApplied || syncing) {
+                                        TextButton(onClick = onResetSubtitleSync) {
                                             Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
                                         }
                                     }

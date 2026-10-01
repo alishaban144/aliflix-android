@@ -67,6 +67,8 @@ class NativePlaybackService : MediaSessionService() {
     private var preferredQualityApplied = false
     private var originalItem: MediaItem? = null
     private var externalCaptionCues: List<SubtitleCue> = emptyList()
+    private val speechCapture = PlaybackSpeechBuffer()
+    private var lastAudioFingerprint = ""
     private val subtitleFiles = mutableListOf<java.io.File>()
     private var selection: PlaybackSelection? = null
     private var presentation: Presentation? = null
@@ -117,7 +119,7 @@ class NativePlaybackService : MediaSessionService() {
             current?.resolveStreamSpec(spec) ?: spec
         }
         localPlayer = ExoPlayer.Builder(this)
-            .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+            .setRenderersFactory(SpeechCaptureRenderers(this, speechCapture).setEnableDecoderFallback(true))
             .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 250, 1_000).build())
             .setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory {
                 if (request?.offlineDownloadId?.isNotBlank() == true) DefaultDataSource(this, com.aliflix.app.downloads.OfflineDownloads.get(this).offlineFactory().createDataSource())
@@ -244,6 +246,8 @@ class NativePlaybackService : MediaSessionService() {
     }
 
     private fun load(next: NativePlaybackRequest) {
+        speechCapture.reset()
+        lastAudioFingerprint = ""
         saveProgress(true)
         player.stop(); player.clearMediaItems()
         relay?.close(); relay = null
@@ -481,6 +485,23 @@ class NativePlaybackService : MediaSessionService() {
             val seconds = service.player.currentPosition / 1000.0
             return service.externalCaptionCues.asSequence().filter { seconds >= it.startSeconds && seconds < it.endSeconds }
                 .map { androidx.media3.common.text.Cue.Builder().setText(it.text).build() }.toList()
+        }
+
+        internal fun speechWindows(): List<SpeechWindow> = activeService?.speechCapture?.windows().orEmpty()
+        internal val speechGeneration: Long get() = activeService?.speechCapture?.generation ?: -1L
+
+        internal fun selectedAudioFingerprint(): String {
+            val service = activeService ?: return ""
+            val selected = service.localPlayer.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { group ->
+                (0 until group.length).filter { group.isTrackSelected(it) }.map { index ->
+                    val f = group.getTrackFormat(index)
+                    "${f.id}|${f.language}|${f.codecs}|${f.sampleRate}|${f.channelCount}"
+                }
+            }.joinToString(";")
+            if (selected.isNotBlank() && service.localPlayer.duration > 0)
+                service.lastAudioFingerprint = "$selected|duration:${service.localPlayer.duration}"
+            return service.lastAudioFingerprint
         }
 
         internal fun updateSubtitles(vtt: String, language: String = "", label: String = "", automatic: Boolean = false) {

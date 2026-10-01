@@ -89,6 +89,17 @@ internal fun MobileSettingsDialog(
                             Icon(Icons.Rounded.ChevronRight, null, tint = AliflixContentTertiary, modifier = Modifier.size(18.dp))
                         }
                     }
+                    SettingsGroup("APP UPDATES") {
+                        SettingsRow(Icons.Rounded.SystemUpdate, "App updates", updateUi.message.ifBlank { "Aliflix ${BuildConfig.VERSION_NAME}" }) {
+                            if (updateUi.busy) CircularProgressIndicator(Modifier.size(22.dp), color = AliflixAccentSecondary, strokeWidth = 2.dp)
+                            else TextButton(onClick = when {
+                                updateUi.downloadedApk != null -> onInstallUpdate
+                                updateUi.available != null -> onDownloadUpdate
+                                else -> onCheckForUpdates
+                            }) { Text(when { updateUi.downloadedApk != null -> "Install"; updateUi.available != null -> "Download"; else -> "Check" }, color = AliflixAccentSecondary) }
+                        }
+                        updateUi.progress?.let { progress -> LinearProgressIndicator(progress = { progress.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth(), color = AliflixAccentPrimary) }
+                    }
                     SettingsGroup("PLAYBACK") {
                         var sourceMenu by remember { mutableStateOf(false) }
                         Box {
@@ -113,6 +124,8 @@ internal fun MobileSettingsDialog(
                                 }
                             }
                         }
+                        SettingsDivider()
+                        SettingsToggle(Icons.Rounded.SkipNext, "Play Next Episode", "Automatically start the next episode", playerSettings.playNextEpisode, "settings-next-episode-switch", store::updatePlayNextEpisode)
                     }
                     com.aliflix.app.downloads.DownloadSettings()
                     SettingsGroup("SUBTITLES") {
@@ -144,16 +157,7 @@ internal fun MobileSettingsDialog(
                         }
                     }
                     SettingsGroup("APP & STORAGE") {
-                        SettingsRow(Icons.Rounded.SystemUpdate, "App updates", updateUi.message.ifBlank { "Aliflix ${BuildConfig.VERSION_NAME}" }) {
-                            if (updateUi.busy) CircularProgressIndicator(Modifier.size(22.dp), color = AliflixAccentSecondary, strokeWidth = 2.dp)
-                            else TextButton(onClick = when {
-                                updateUi.downloadedApk != null -> onInstallUpdate
-                                updateUi.available != null -> onDownloadUpdate
-                                else -> onCheckForUpdates
-                            }) { Text(when { updateUi.downloadedApk != null -> "Install"; updateUi.available != null -> "Download"; else -> "Check" }, color = AliflixAccentSecondary) }
-                        }
-                        updateUi.progress?.let { progress -> LinearProgressIndicator(progress = { progress.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth(), color = AliflixAccentPrimary) }
-                        SettingsDivider()
+
                         SettingsRow(Icons.Rounded.DeleteSweep, "Clear watch history", "Reset watched titles and recommendations", onClick = { clearConfirmation = true }) {
                             Icon(Icons.Rounded.ChevronRight, null, tint = AliflixContentTertiary)
                         }

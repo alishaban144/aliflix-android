@@ -40,6 +40,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -230,6 +233,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     val likes = library.likes
     val accountState = accountServices.accountRepository.state
     val accountSyncState = accountServices.syncRepository.state
+    private val _pickedForYou = MutableStateFlow<List<Media>>(emptyList())
+    val pickedForYou: StateFlow<List<Media>> = _pickedForYou.asStateFlow()
 
     private val _askUiState = MutableStateFlow<com.aliflix.app.ui.discover.AskAliflixUiState>(com.aliflix.app.ui.discover.AskAliflixUiState.Editing)
     val askUiState: StateFlow<com.aliflix.app.ui.discover.AskAliflixUiState> = _askUiState.asStateFlow()
@@ -706,6 +711,41 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun resetDorabyUrl() = playbackProviderRepository.resetDorabyUrl()
 
     init {
+        if (!BuildConfig.IS_TV) {
+            // Starts before the launch overlay finishes; Firebase already owns startup retry.
+            accountServices.syncRepository.retry()
+            viewModelScope.launch {
+                val detailsCache = object : LinkedHashMap<String, V3TitleDetails>(16, .75f, true) {
+                    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V3TitleDetails>?) = size > 24
+                }
+                var previousUid: String? = null
+                combine(likes, recent, playbackProgressStore.entries, accountState) { liked, history, progress, account ->
+                    val watched = progress.values.sortedByDescending { it.updatedAtMillis }.map { it.media }
+                    val anchors = (liked.take(3) + watched.take(3) + history.take(2) + liked.drop(3))
+                        .distinctBy(Media::key).take(8)
+                    Triple(account.uid, anchors, (liked + watched + history).map(Media::key).toSet())
+                }.distinctUntilChanged().collectLatest { (uid, seeds, excluded) ->
+                    if (uid != previousUid) { detailsCache.clear(); previousUid = uid }
+                    _pickedForYou.value = emptyList()
+                    if (seeds.isEmpty()) return@collectLatest
+                    val enriched = mutableListOf<Media>()
+                    val candidates = mutableListOf<Media>()
+                    // Bounded, cached TMDB detail/recommendation documents; no AI calls.
+                    seeds.take(6).forEach { seed ->
+                        ensureActive()
+                        val details = detailsCache[seed.key] ?: try {
+                            aiClient.getTitleDetails(seed.type.routeName, seed.id).also { detailsCache[seed.key] = it }
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { null }
+                        enriched += details?.toMedia(seed) ?: seed
+                        candidates += details?.recommendations?.map { it.toMedia() }.orEmpty()
+                        _pickedForYou.value = withContext(Dispatchers.Default) {
+                            com.aliflix.app.recommendation.TastePicks.rank(candidates.toList(), enriched.toList(), excluded)
+                        }
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             val cached = homeSnapshotStore.loadSnapshot()
             if (cached != null && _home.value.content == null) {

@@ -56,6 +56,11 @@ class NativePlayerActivity : FragmentActivity() {
     private var preparation: Job? = null
     private var subtitleJob: Job? = null
     private var subtitleSyncDebounceJob: Job? = null
+    private var audioSyncJob: Job? = null
+    private var audioCorrection: AudioSubtitleCorrection? = null
+    private var audioCorrectionKey: String? = null
+    private var correctionIdentity: List<String?>? = null
+    private val correctionStore by lazy { SubtitleCorrectionStore(this) }
     private var subtitleRenderJob: Job? = null
     internal var subtitleTimingEvidence: SubtitleTimingMatch? = null
         private set
@@ -171,7 +176,7 @@ class NativePlayerActivity : FragmentActivity() {
                 controller?.setPlaybackSpeed(it.playbackSpeed)
                 if (previousDelay != it.subtitleDelayTenths) {
                     previousDelay = it.subtitleDelayTenths
-                    activeSubtitleCuesJson?.let { json -> NativePlaybackService.updateSubtitles(nativeSubtitlesVtt(json, it.subtitleDelaySeconds)) }
+                    activeSubtitleCuesJson?.let { json -> NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, it.subtitleDelaySeconds)) }
                 }
             }
         }
@@ -212,6 +217,8 @@ class NativePlayerActivity : FragmentActivity() {
                     onSubtitle = ::applySubtitle,
                     onSubtitleDisable = ::disableSubtitles,
                     onSubtitleDelayChange = ::updateSubtitleDelay,
+                    onSyncWithAudio = ::syncWithAudio,
+                    onResetSubtitleSync = ::resetSubtitleSync,
                     onSubtitleVerticalOffsetChange = { offsetDp ->
                         settingsStore.updateSubtitleVerticalOffsetDp(offsetDp)
                         updateSubtitlePadding(lastControlsVisible)
@@ -704,7 +711,7 @@ class NativePlayerActivity : FragmentActivity() {
         val json = saved.getString("cues")
         val restoredCues = parseTimedTextSubtitleCues(nativeSubtitlesVtt(json, 0.0))
         if (!subtitleLanguageIsPlausible(restoredCues, language)) return false
-        val vtt = nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
+        val vtt = renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
         activeSubtitleCuesJson = json
         activeSubtitleCues = restoredCues
         NativePlaybackService.updateSubtitles(vtt, saved.getString("language"), saved.getString("label"))
@@ -738,7 +745,7 @@ class NativePlayerActivity : FragmentActivity() {
                         val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
                         activeSubtitleCuesJson = json
                         saveCaption(current, track, json)
-                        NativePlaybackService.updateSubtitles(nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds), track.languageCode.lowercase(), track.languageName, automatic = true)
+                        NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds), track.languageCode.lowercase(), track.languageName, automatic = true)
                         ui = ui.copy(activeSubtitleTrack = track, subtitleError = null)
                         updateSubtitleCues()
                         return@withTimeout
@@ -773,7 +780,7 @@ class NativePlayerActivity : FragmentActivity() {
         val playbackRequest = if (request.offlineDownloadId.isNotBlank() && request.subtitlesVtt.isNotBlank()) {
             activeSubtitleCues = parseTimedTextSubtitleCues(request.subtitlesVtt)
             activeSubtitleCuesJson = JSONArray().apply { activeSubtitleCues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
-            request.copy(subtitlesVtt = nativeSubtitlesVtt(activeSubtitleCuesJson, settingsStore.settings.value.subtitleDelaySeconds))
+            request.copy(subtitlesVtt = renderSubtitleVtt(activeSubtitleCuesJson, settingsStore.settings.value.subtitleDelaySeconds))
         } else request
         val name = "native-request-${java.util.UUID.randomUUID()}.json"
         java.io.File(cacheDir, name).writeText(playbackRequest.toJson())
@@ -834,7 +841,7 @@ class NativePlayerActivity : FragmentActivity() {
                 if (saved.subtitlesVtt.isNotBlank()) {
                     activeSubtitleCues = parseTimedTextSubtitleCues(saved.subtitlesVtt)
                     activeSubtitleCuesJson = JSONArray().apply { activeSubtitleCues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
-                    NativePlaybackService.updateSubtitles(nativeSubtitlesVtt(activeSubtitleCuesJson, settingsStore.settings.value.subtitleDelaySeconds), saved.subtitleLanguage, track.languageName)
+                    NativePlaybackService.updateSubtitles(renderSubtitleVtt(activeSubtitleCuesJson, settingsStore.settings.value.subtitleDelaySeconds), saved.subtitleLanguage, track.languageName)
                 } else {
                     controller?.trackSelectionParameters = controller!!.trackSelectionParameters.buildUpon()
                         .setPreferredTextLanguage(saved.subtitleLanguage).setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false).build()
@@ -853,7 +860,7 @@ class NativePlayerActivity : FragmentActivity() {
                 val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
                 activeSubtitleCuesJson = json
                 selection?.let { saveCaption(it, track, json) }
-                val vtt = nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
+                val vtt = renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
                 NativePlaybackService.updateSubtitles(vtt, track.languageCode.lowercase(), track.languageName)
                 controller?.sendCustomCommand(
                     SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle.EMPTY),
@@ -891,9 +898,100 @@ class NativePlayerActivity : FragmentActivity() {
         subtitleSyncDebounceJob = lifecycleScope.launch {
             delay(300)
             val cuesJson = activeSubtitleCuesJson ?: return@launch
-            val vtt = nativeSubtitlesVtt(cuesJson, tenths / 10.0)
+            val vtt = renderSubtitleVtt(cuesJson, tenths / 10.0)
             NativePlaybackService.updateSubtitles(vtt)
         }
+    }
+
+    private fun renderSubtitleVtt(json: String?, delay: Double): String {
+        val original = nativeSubtitlesVtt(json, 0.0)
+        val correction = audioCorrection ?: return nativeSubtitlesVtt(json, delay)
+        val corrected = correction.apply(parseTimedTextSubtitleCues(original))
+        val payload = JSONArray().apply { corrected.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }
+        return nativeSubtitlesVtt(payload.toString(), delay)
+    }
+
+    private fun refreshAudioCorrection() {
+        val request = NativePlaybackService.activeRequest
+        val json = activeSubtitleCuesJson
+        val track = NativePlaybackService.selectedAudioFingerprint()
+        val identity = listOf(request?.url, request?.streamUrlRules, request?.offlineDownloadId, selection?.key, json, track)
+        if (identity != correctionIdentity) {
+            val hadCorrection = audioCorrection != null
+            audioSyncJob?.cancel(); audioSyncJob = null
+            correctionIdentity = identity
+            audioCorrectionKey = if (request != null && json != null && track.isNotBlank() && !NativePlaybackService.embeddedSubtitlesActive)
+                subtitleCorrectionKey(request, selection?.key.orEmpty(), json, track) else null
+            audioCorrection = null
+            ui = ui.copy(audioSyncState = null, audioSyncApplied = false)
+            if (hadCorrection && json != null && !NativePlaybackService.embeddedSubtitlesActive)
+                NativePlaybackService.updateSubtitles(nativeSubtitlesVtt(json, settingsStore.settings.value.subtitleDelaySeconds))
+        }
+        val key = audioCorrectionKey
+        val cached = key?.let(correctionStore::get)
+        if (cached != audioCorrection) {
+            audioCorrection = cached
+            NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds))
+            ui = ui.copy(audioSyncApplied = cached != null, audioSyncState = if (cached != null) "Synced" else null)
+        }
+        val available = key != null && controller?.deviceInfo?.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE
+        if (ui.audioSyncAvailable != available) ui = ui.copy(audioSyncAvailable = available)
+    }
+
+    private fun syncWithAudio() {
+        if (audioSyncJob?.isActive == true) {
+            audioSyncJob?.cancel(); audioSyncJob = null
+            ui = ui.copy(audioSyncState = if (audioCorrection != null) "Synced" else null)
+            return
+        }
+        refreshAudioCorrection()
+        val key = audioCorrectionKey ?: return
+        val originals = activeSubtitleCues.toList()
+        val generation = NativePlaybackService.speechGeneration
+        audioSyncJob = lifecycleScope.launch {
+            ui = ui.copy(audioSyncState = "Collecting")
+            try {
+                val success = withTimeoutOrNull(240_000) {
+                    var previousSamples: List<Double> = emptyList()
+                    var targetSamples = 3
+                    while (isActive) {
+                        if (key != audioCorrectionKey || generation != NativePlaybackService.speechGeneration ||
+                            controller?.deviceInfo?.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) return@withTimeoutOrNull false
+                        val windows = withContext(Dispatchers.Default) { NativePlaybackService.speechWindows().take(targetSamples) }
+                        val starts = windows.map { it.start }
+                        if (windows.size >= 2 && starts != previousSamples) {
+                            previousSamples = starts
+                            ui = ui.copy(audioSyncState = "Syncing")
+                            val match = withContext(Dispatchers.Default) { AudioSubtitleAlignment.match(originals, windows) }
+                            ensureActive()
+                            refreshAudioCorrection()
+                            if (key != audioCorrectionKey || generation != NativePlaybackService.speechGeneration) return@withTimeoutOrNull false
+                            if (match != null) {
+                                correctionStore.put(key, match)
+                                refreshAudioCorrection()
+                                updateSubtitleCues()
+                                return@withTimeoutOrNull true
+                            }
+                            if (windows.size >= 6) return@withTimeoutOrNull false
+                            if (windows.size >= targetSamples) targetSamples++
+                            ui = ui.copy(audioSyncState = "Collecting")
+                        }
+                        delay(5_000)
+                    }
+                    false
+                } == true
+                ui = ui.copy(audioSyncState = if (success) "Synced" else "Failed")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { ui = ui.copy(audioSyncState = "Failed") }
+        }
+    }
+
+    private fun resetSubtitleSync() {
+        audioSyncJob?.cancel(); audioSyncJob = null
+        audioCorrectionKey?.let { correctionStore.put(it, null) }
+        audioCorrection = null
+        ui = ui.copy(audioSyncState = null, audioSyncApplied = false)
+        updateSubtitleDelay(0)
     }
 
     private var volumeAccumulator = 0f
@@ -1017,6 +1115,7 @@ class NativePlayerActivity : FragmentActivity() {
 
     private fun updateSubtitleCues() {
         if (!::subtitles.isInitialized) return
+        refreshAudioCorrection()
         val current = controller
         val external = !NativePlaybackService.castingSuppressed && (current?.deviceInfo?.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE || displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).isNotEmpty())
         if (external) {
@@ -1082,6 +1181,8 @@ class NativePlayerActivity : FragmentActivity() {
         startService(Intent(this, NativePlaybackService::class.java).setAction(NativePlaybackService.ACTION_STOP)); finish()
     }
     override fun onStop() {
+        audioSyncJob?.cancel(); audioSyncJob = null
+        ui = ui.copy(audioSyncState = if (audioCorrection != null) "Synced" else null)
         recordCurrentProgress(urgent = true)
         subtitleRenderJob?.cancel()
         displays.unregisterDisplayListener(displayListener)
@@ -1090,6 +1191,7 @@ class NativePlayerActivity : FragmentActivity() {
         super.onStop()
     }
     override fun onDestroy() {
+        audioSyncJob?.cancel()
         captionPreferences.unregisterOnSharedPreferenceChangeListener(syncedCaptionListener)
         subtitleChoices.unregisterOnSharedPreferenceChangeListener(syncedCaptionListener)
         recordCurrentProgress(urgent = true)
@@ -1112,4 +1214,3 @@ class NativePlayerActivity : FragmentActivity() {
         it.hide(WindowInsetsCompat.Type.systemBars()); it.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 }
-

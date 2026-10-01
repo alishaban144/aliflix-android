@@ -29,6 +29,7 @@ internal class FirebasePlayerStateSync(
         "playerPreferences" to context.getSharedPreferences("aliflix_player_settings", Context.MODE_PRIVATE),
         "subtitleChoices" to context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE),
         "captionFiles" to context.getSharedPreferences("account-caption-files", Context.MODE_PRIVATE),
+        "subtitleCorrections" to context.getSharedPreferences("subtitle-audio-corrections", Context.MODE_PRIVATE),
     )
     private val scopes = context.getSharedPreferences("player-account-scopes", Context.MODE_PRIVATE)
     private var applying = false
@@ -88,7 +89,10 @@ internal class FirebasePlayerStateSync(
         val listeners = mutableListOf<ListenerRegistration>()
         val callbacks = stores.map { (name, store) ->
             val callback = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-                if (!applying && key != null) changes.trySend(name to key)
+                if (!applying && key != null) {
+                    if (name == "subtitleCorrections") scopes.edit().putBoolean("$uid/$name/$key/pending", true).apply()
+                    changes.trySend(name to key)
+                }
             }
             store.registerOnSharedPreferenceChangeListener(callback)
             store to callback
@@ -101,6 +105,33 @@ internal class FirebasePlayerStateSync(
             val raw = encoded(value)
             val bytes = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(raw.toByteArray(Charsets.UTF_8)) } }.toByteArray()
             val chunks = Base64.encodeToString(bytes, Base64.NO_WRAP).chunked(180_000)
+            if (name == "subtitleCorrections") {
+                val expected = scopes.getLong(timestampKey(name, key), 0L)
+                val revision = maxOf(System.currentTimeMillis(), expected + 1L)
+                val document = user.collection(name).document("$key~0")
+                // Compare-and-set prevents a stale device from overwriting a correction or Reset.
+                val accepted = db.runTransaction { transaction ->
+                    val remote = transaction.get(document)
+                    val version = remote.getLong("version") ?: 0L
+                    if (version != expected) remote.getString("payload") to version else {
+                        transaction.set(document, mapOf("key" to key, "part" to 0, "count" to 1,
+                            "payload" to chunks.single(), "version" to revision))
+                        null to revision
+                    }
+                }.await()
+                if (account.uid != uid) return
+                if (stores.getValue(name).getString(key, null) == value) {
+                    accepted.first?.let { packed ->
+                        val remoteRaw = GZIPInputStream(Base64.decode(packed, Base64.NO_WRAP).inputStream())
+                            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+                        applying = true
+                        try { apply(stores.getValue(name), key, remoteRaw) } finally { applying = false }
+                    }
+                    scopes.edit().putBoolean("$uid/$name/$key/pending", false).apply()
+                }
+                scopes.edit().putLong(timestampKey(name, key), accepted.second).apply()
+                return
+            }
             val timestamp = maxOf(System.currentTimeMillis(), scopes.getLong(timestampKey(name, key), 0L) + 1L)
             scopes.edit().putLong(timestampKey(name, key), timestamp).apply()
             val batch = db.batch()
@@ -123,6 +154,10 @@ internal class FirebasePlayerStateSync(
                         if (key == null) return@group
                         val head = docs.firstOrNull { it.getLong("part") == 0L } ?: return@group
                         val version = head.getLong("version") ?: return@group
+                        if (name == "subtitleCorrections" && scopes.getBoolean("$uid/$name/$key/pending", false)) {
+                            changes.trySend(name to key)
+                            return@group
+                        }
                         if (version <= scopes.getLong(timestampKey(name, key), 0L) && store.contains(key)) return@group
                         val count = head.getLong("count")?.toInt() ?: return@group
                         val parts = docs.filter { it.getLong("version") == version }.sortedBy { it.getLong("part") }
@@ -143,7 +178,14 @@ internal class FirebasePlayerStateSync(
                     }
                 }
             }
-            for ((name, key) in changes) upload(name, key)
+            for ((name, key) in changes) {
+                try { upload(name, key) } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    onError(error)
+                    delay(30_000)
+                    if (account.uid == uid) changes.trySend(name to key)
+                }
+            }
         } finally {
             callbacks.forEach { (store, callback) -> store.unregisterOnSharedPreferenceChangeListener(callback) }
             listeners.forEach { it.remove() }

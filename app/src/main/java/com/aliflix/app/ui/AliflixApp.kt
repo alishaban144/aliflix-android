@@ -2,6 +2,9 @@
 
 package com.aliflix.app.ui
 
+import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.Tab
+
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.MobilePlaybackProvider
 
@@ -501,6 +504,7 @@ fun AliflixApp(
     playerController: WebPlayerController,
 ) {
     val home by viewModel.home.collectAsState()
+    val pickedForYou by viewModel.pickedForYou.collectAsState()
     val tvNetworks by viewModel.tvNetworks.collectAsState()
     val search by viewModel.search.collectAsState()
     val detail by viewModel.detail.collectAsState()
@@ -1282,7 +1286,7 @@ fun AliflixApp(
                     }
 
                     AppScreen.HOME -> HomeScreen(
-                        state = home,
+                        state = if (com.aliflix.app.BuildConfig.IS_TV) home else home.copy(editorialPicks = pickedForYou),
                         tvNetworks = tvNetworks,
                         recent = recent,
                         likes = likes,
@@ -1722,6 +1726,7 @@ internal fun HomeFeed(
             .distinctBy(Media::key)
     }
     val tastePicks = remember(editorialPicks, allTitles) {
+        if (!com.aliflix.app.BuildConfig.IS_TV) return@remember editorialPicks
         val currentYear = java.time.Year.now().value
         editorialPicks
             .ifEmpty {
@@ -3357,65 +3362,43 @@ private fun GenreOrganizedList(
         )
         return
     }
-    val genreGroups = remember(items) {
-        items
-            .groupBy { media ->
-                media.genres.firstOrNull()
-                    ?.trim()
-                    ?.takeIf(String::isNotBlank)
-                    ?: "Other discoveries"
+    val genres = remember(items) { items.flatMap { it.genres }.map(String::trim).filter(String::isNotBlank).distinct().sorted() }
+    var selectedGenre by rememberSaveable { mutableStateOf("All") }
+    val activeGenre = selectedGenre.takeIf { it == "All" || it in genres } ?: "All"
+    val tabs = listOf("All") + genres
+    Column(Modifier.fillMaxSize()) {
+        PrimaryScrollableTabRow(
+            selectedTabIndex = tabs.indexOf(activeGenre),
+            edgePadding = AliflixSpacing.Content,
+            containerColor = Color.Transparent,
+            contentColor = AliflixAccentSecondary,
+            divider = {},
+        ) {
+            tabs.forEach { genre ->
+                Tab(selected = activeGenre == genre, onClick = { selectedGenre = genre },
+                    text = { Text(genre, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) },
+                    selectedContentColor = AliflixAccentSecondary, unselectedContentColor = AliflixContentSecondary)
             }
-            .entries
-            .sortedWith(
-                compareByDescending<Map.Entry<String, List<Media>>> { it.value.size }
-                    .thenBy { it.key },
-            )
-    }
-    LazyVerticalGrid(
-        state = gridState,
-        columns = GridCells.Adaptive(132.dp),
-        contentPadding = PaddingValues(start = AliflixSpacing.Content, end = AliflixSpacing.Content, top = 6.dp, bottom = 28.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Panel),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        genreGroups.forEach { (genre, genreItems) ->
-            item(
-                key = "genre:$genre",
-                span = { GridItemSpan(maxLineSpan) },
+        }
+        AnimatedContent(
+            targetState = activeGenre,
+            modifier = Modifier.weight(1f),
+            transitionSpec = { fadeIn(tween(240)) togetherWith fadeOut(tween(160)) },
+            label = "library-genre-tabs",
+        ) { genre ->
+            val visible = if (genre == "All") items else items.filter { genre in it.genres }
+            val tabGridState = if (genre == "All") gridState else rememberLazyGridState()
+            LazyVerticalGrid(
+                state = tabGridState,
+                columns = GridCells.Adaptive(132.dp),
+                contentPadding = PaddingValues(start = AliflixSpacing.Content, end = AliflixSpacing.Content, top = 12.dp, bottom = 28.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Panel),
+                modifier = Modifier.fillMaxSize(),
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 1.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = genre,
-                        color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = genreItems.size.toString(),
-                        color = AliflixMuted,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.07f))
-                            .padding(horizontal = AliflixSpacing.Small, vertical = AliflixSpacing.Tiny),
-                    )
+                items(visible, key = { "saved:${it.key}" }) { item ->
+                    MediaPoster(item = item, width = 132.dp, showLibraryMetadata = true, onClick = { onOpen(item) })
                 }
-            }
-            items(genreItems, key = { "saved:${it.key}" }) { item ->
-                MediaPoster(
-                    item = item,
-                    width = 132.dp,
-                    showLibraryMetadata = true,
-                    onClick = { onOpen(item) },
-                )
             }
         }
     }

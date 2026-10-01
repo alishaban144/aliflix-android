@@ -16,6 +16,7 @@ data class PlayerSettings(
     val playbackSpeed: Float = 1.0f,
     val resizeModeZoom: Boolean = false,
     val preferredVideoQuality: PreferredVideoQuality = PreferredVideoQuality.AUTO,
+    val playNextEpisode: Boolean = true,
 ) {
     val subtitleDelaySeconds: Double get() = subtitleDelayTenths / 10.0
 
@@ -79,11 +80,17 @@ class PlayerSettingsStore(context: Context) {
         preferences.edit { putString(KEY_VIDEO_QUALITY, quality.name) }
     }
 
+    fun updatePlayNextEpisode(enabled: Boolean) {
+        update { it.copy(playNextEpisode = enabled) }
+        preferences.edit { putBoolean("play_next_episode", enabled) }
+    }
+
     private inline fun update(transform: (PlayerSettings) -> PlayerSettings) {
         _settings.value = transform(_settings.value)
     }
 
     private fun readSettings(): PlayerSettings = PlayerSettings(
+        playNextEpisode = preferences.getBoolean("play_next_episode", true),
         subtitleFontSizeSp = preferences.getFloat(KEY_SUBTITLE_FONT_SIZE, PlayerSettings.DEFAULT_SUBTITLE_FONT_SIZE_SP)
             .coerceIn(11f, 30f),
         subtitleBackgroundOpacity = preferences.getFloat(KEY_SUBTITLE_BG_OPACITY, PlayerSettings.DEFAULT_SUBTITLE_BACKGROUND_OPACITY)
