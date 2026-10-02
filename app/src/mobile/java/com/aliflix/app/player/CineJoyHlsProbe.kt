@@ -13,6 +13,26 @@ internal object CineJoyHlsProbe {
         Regex("(?:^|,)$name=(?:\"([^\"]*)\"|([^,]*))").find(line.substringAfter(':', ""))
             ?.let { match -> match.groupValues[1].ifEmpty { match.groupValues[2] } }
 
+    /** Pin the playlist itself, not the decoded dimensions (CineJoy can mislabel those).
+     * Keep every audio/subtitle rendition so the viewer's track choice survives. */
+    fun pinVideo(body: String, width: Int, height: Int): String {
+        if (width <= 0 || height <= 0) return body
+        val lines = body.lineSequence().toList()
+        if (lines.firstOrNull()?.trim() != "#EXTM3U") return body
+        val variants = lines.indices.filter { lines[it].trim().startsWith("#EXT-X-STREAM-INF:") }
+        val selected = variants.firstOrNull { attribute(lines[it].trim(), "RESOLUTION") == "${width}x$height" }
+            ?: return body
+        val removed = mutableSetOf<Int>()
+        for (index in variants.filter { it != selected }) {
+            removed.add(index)
+            val uri = (index + 1 until lines.size).firstOrNull {
+                lines[it].isNotBlank() && !lines[it].trim().startsWith('#')
+            }
+            if (uri != null) removed.add(uri)
+        }
+        return lines.filterIndexed { index, _ -> index !in removed }.joinToString("\n")
+    }
+
     fun master(url: String, body: String): Master {
         require(body.lineSequence().firstOrNull()?.trim() == "#EXTM3U")
         val lines = body.lineSequence().map(String::trim).toList()

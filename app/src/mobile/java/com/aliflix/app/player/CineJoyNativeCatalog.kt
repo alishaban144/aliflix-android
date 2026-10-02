@@ -7,8 +7,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 
 /**
@@ -125,93 +123,11 @@ internal object CineJoyNativeCatalog {
             }.distinct().toList()
     }
 
-    private fun mediaChunkAvailable(url: String, userAgent: String): Boolean = runCatching {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 4_000
-            readTimeout = 4_000
-            setRequestProperty("Range", "bytes=0-31")
-            setRequestProperty("Accept", "*/*")
-            setRequestProperty("Origin", REFERER.trimEnd('/'))
-            setRequestProperty("Referer", REFERER)
-            setRequestProperty("User-Agent", userAgent)
-            instanceFollowRedirects = true
-        }
-        try {
-            connection.responseCode in 200..299 && connection.inputStream.use { input ->
-                val header = ByteArray(32)
-                val count = input.read(header)
-                // These CineJoy .html URLs actually contain fMP4, not HTML pages.
-                count >= 8 && String(header, 4, 4, Charsets.US_ASCII) in setOf("ftyp", "moof", "styp")
-            }
-        } finally { connection.disconnect() }
-    }.getOrDefault(false)
+    private suspend fun httpGet(url: String, userAgent: String): String =
+        CineJoyHttp.request(url, userAgent).toString(Charsets.UTF_8)
 
-    private fun renditionAvailable(url: String, positionMs: Long, userAgent: String): Boolean {
-        val segment = CineJoyHlsProbe.segment(url, httpGet(url, userAgent), positionMs) ?: return false
-        return (segment.init == null || mediaChunkAvailable(segment.init, userAgent)) &&
-            mediaChunkAvailable(segment.media, userAgent)
-    }
-
-    private fun playableVideo(
-        master: CineJoyHlsProbe.Master, positionMs: Long, preferredAudioLabel: String?,
-        lowQuality: Boolean, userAgent: String,
-    ): CineJoyHlsProbe.Video? {
-        check(master.audio.isNotEmpty() && master.video.isNotEmpty()) {
-            "CineJoy did not provide a multivariant stream with selectable audio"
-        }
-        val audio = master.audio.firstOrNull { it.label == preferredAudioLabel }
-            ?: master.audio.firstOrNull { it.default } ?: master.audio.first()
-        if (!renditionAvailable(audio.url, positionMs, userAgent)) return null
-        return CineJoyHlsProbe.preferredVideos(master.video, lowQuality).firstOrNull {
-            renditionAvailable(it.url, positionMs, userAgent)
-        }
-    }
-
-    private fun httpGet(url: String, userAgent: String): String {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 8_000
-            readTimeout = 8_000
-            setRequestProperty("Accept", "*/*")
-            setRequestProperty("Origin", REFERER.trimEnd('/'))
-            setRequestProperty("Referer", REFERER)
-            setRequestProperty("User-Agent", userAgent)
-            instanceFollowRedirects = true
-        }
-        try {
-            val code = connection.responseCode
-            check(code in 200..299) { "CineJoy catalogue HTTP $code" }
-            return connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private fun httpPostBytes(url: String, body: ByteArray, userAgent: String, json: Boolean): ByteArray {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 10_000
-            readTimeout = 10_000
-            doOutput = true
-            setRequestProperty("Accept", "*/*")
-            setRequestProperty("Origin", REFERER.trimEnd('/'))
-            setRequestProperty("Referer", REFERER)
-            setRequestProperty("User-Agent", userAgent)
-            if (json) setRequestProperty("Content-Type", "application/json")
-            // The catalogue /g endpoint rejects an explicit octet-stream content type;
-            // leave the body raw exactly like the site's own player does.
-            instanceFollowRedirects = true
-        }
-        try {
-            connection.outputStream.use { it.write(body) }
-            val code = connection.responseCode
-            check(code in 200..299) { "CineJoy catalogue HTTP $code" }
-            return connection.inputStream.use { it.readBytes() }
-        } finally {
-            connection.disconnect()
-        }
-    }
+    private suspend fun httpPostBytes(url: String, body: ByteArray, userAgent: String, json: Boolean): ByteArray =
+        CineJoyHttp.request(url, userAgent, body, json)
 
     private fun base64UrlEncode(bytes: ByteArray): String =
         java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
@@ -223,8 +139,13 @@ internal object CineJoyNativeCatalog {
         return java.util.Base64.getUrlDecoder().decode(padded)
     }
 
+    @Volatile private var cachedServers: Pair<Long, List<String>>? = null
+
     suspend fun fetchServers(userAgent: String = USER_AGENT): List<String> = withContext(Dispatchers.IO) {
+        cachedServers?.takeIf { System.nanoTime() - it.first < 300_000_000_000L }?.let { return@withContext it.second }
         val live = runCatching { parseServers(httpGet("$API_BASE/servers", userAgent)) }.getOrDefault(emptyList())
+        currentCoroutineContext().ensureActive()
+        if (live.isNotEmpty()) cachedServers = System.nanoTime() to live
         live.ifEmpty { FALLBACK_SERVERS }
     }
 
@@ -259,7 +180,6 @@ internal object CineJoyNativeCatalog {
         preferredServer: String? = null,
         onServers: (List<String>) -> Unit = {},
         strictPreferredServer: Boolean = false,
-        preferredAudioLabel: String? = null,
         lowQuality: Boolean = false,
         userAgent: String = USER_AGENT,
         onServer: (String) -> Unit,
@@ -272,7 +192,7 @@ internal object CineJoyNativeCatalog {
         // seek reconnect cannot drift onto a server with different audio.
         val live = if (strictPreferredServer) listOfNotNull(preferred)
             else runCatching { fetchServers(userAgent) }.getOrDefault(FALLBACK_SERVERS)
-        val orderedServers = (listOfNotNull(preferred) + live).distinct()
+        val orderedServers = (listOfNotNull(preferred) + live.sortedBy { if (it == "Lisbon") 0 else 1 }).distinct()
         val labels = orderedServers.map(::serverLabel)
         if (labels.isNotEmpty()) withContext(Dispatchers.Main.immediate) { onServers(labels) }
         val candidates = orderedServers.filter { serverLabel(it) !in excluded }
@@ -283,7 +203,7 @@ internal object CineJoyNativeCatalog {
                         .takeIf { it.isNotEmpty() }
                         ?: throw IllegalStateException("Server '$preferredServer' is unavailable for this episode. Retry this episode.")
                 } else if (preferred != null) {
-                    (listOf(preferred) + remaining.filter { it != preferred }).distinct()
+                    remaining.sortedBy { if (it == preferred) 0 else 1 }
                 } else remaining
             }
         if (candidates.isEmpty()) throw NoNativeServersException()
@@ -294,15 +214,10 @@ internal object CineJoyNativeCatalog {
                 val master = playlists.firstOrNull()
                     ?: throw NoNativeServersException()
                 val manifest = CineJoyHlsProbe.master(master, httpGet(master, userAgent))
-                var playablePosition = positionMs
-                var video = playableVideo(manifest, playablePosition, preferredAudioLabel, lowQuality, userAgent)
-                if (video == null && playablePosition > 0) {
-                    // A saved position can point into a broken CDN segment. Stay on the
-                    // same CineJoy server and same audio, then start from the first good chunk.
-                    playablePosition = 0
-                    video = playableVideo(manifest, 0, preferredAudioLabel, lowQuality, userAgent)
-                }
-                check(video != null) { "CineJoy's audio or video chunks are unavailable" }
+                // Do not make a single CDN probe a playback gate. Media3 owns media loading,
+                // retries and audio selection; a transient 502 must not erase resume progress.
+                val video = CineJoyHlsProbe.preferredVideos(manifest.video, lowQuality).firstOrNull()
+                    ?: throw NoNativeServersException()
                 val request = NativePlaybackRequest(
                     url = master,
                     mimeType = "application/x-mpegURL",
@@ -310,15 +225,13 @@ internal object CineJoyNativeCatalog {
                     userAgent = userAgent,
                     cookie = "",
                     title = selection.media.title,
-                    positionMs = playablePosition,
+                    positionMs = positionMs,
                     playing = true,
                     selectionJson = selection.nativeJson(),
                     preferredVideoWidth = video.width,
                     preferredVideoHeight = video.height,
                 )
-                // The master has been checked above. Preparing the same stream in
-                // a second ExoPlayer added a full buffering round trip and could
-                // reject a usable CDN stream before the actual player tried it.
+                // Catalogue-only preparation never loads the website, scripts or popups.
                 server to request
             } }, parallelism = 2)
         } catch (error: Exception) {

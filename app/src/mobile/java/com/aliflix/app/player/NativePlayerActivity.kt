@@ -538,8 +538,8 @@ class NativePlayerActivity : FragmentActivity() {
             controller?.pause()
             preparation = lifecycleScope.launch {
                 try {
-                    startNative(saved.copy(positionMs = resume, playing = true, selectionJson = selection!!.nativeJson()))
-                    awaitNativeReady(saved.url)
+                    val attempt = startNative(saved.copy(positionMs = resume, playing = true, selectionJson = selection!!.nativeJson()))
+                    awaitNativeReady(saved.url, attempt)
                     ui = ui.copy(stage = null, ready = true, error = null)
                     reconcileSyncedCaptions()
                 } catch (cancelled: CancellationException) { throw cancelled }
@@ -604,6 +604,9 @@ class NativePlayerActivity : FragmentActivity() {
                 val orderedSources = sources.sortedBy { if (it.source.identity.name == savedProvider) 0 else 1 }
                 val excludedBySource = mutableMapOf<com.aliflix.app.model.PlaybackProvider, MutableSet<String>>()
                 excludedBySource[current.source.identity] = triedServers.toMutableSet()
+                val cineJoyRetries = mutableMapOf<String, Int>()
+                var cineJoyRetryServer: String? = null
+                var cineJoyLowQuality = false
                 var preferSaved = preferredServer != null || savedProvider != null
                 if (detailWarm == null && savedRoute?.request != null && triedServers.isEmpty()) {
                     val restored = savedRoute.selection
@@ -611,8 +614,8 @@ class NativePlayerActivity : FragmentActivity() {
                         selectionJson = restored.nativeJson(), preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase())
                     try {
                         ui = ui.copy(server = savedRoute.server)
-                        startNative(request)
-                        withTimeout(4_000) { awaitNativeReady(request.url) }
+                        val attempt = startNative(request)
+                        withTimeout(4_000) { awaitNativeReady(request.url, attempt) }
                         intent.putExtra("selection", restored.nativeJson())
                         ui = ui.copy(stage = null, ready = true, error = null)
                         reconcileSyncedCaptions()
@@ -658,23 +661,27 @@ class NativePlayerActivity : FragmentActivity() {
                                     com.aliflix.app.model.MobilePlaybackProvider.MOVY -> 35_000
                                     else -> 16_000
                                 }) {
-                                    adapter.resolve(candidate, resume, excluded, strictPreferredServer = strictPreferredServer && candidate.source == startingSource,
+                                    adapter.resolve(candidate, resume, excluded, strictPreferredServer = (strictPreferredServer && candidate.source == startingSource) || (candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY && cineJoyRetryServer != null),
                                         validateSingle = true,
-                                        preferredServer = (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
+                                        forceLowQuality = candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY && cineJoyLowQuality,
+                                        preferredServer = (if (candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY) cineJoyRetryServer else null) ?: (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
                                         onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[candidate.key] = (resolvedServerNames[candidate.key].orEmpty() + names).distinct() }) { server = it }
                                 }
                                 Triple(candidate, server, request)
                             } catch (error: Exception) {
                                 ensureActive()
                                 if (server.isNotBlank() && !strictPreferredServer) excluded.add(server)
-                                if (error is NoNativeServersException || candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.MOVY) exhaustedSources.add(candidate.source.identity)
+                                if (candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY && cineJoyRetryServer != null) {
+                                    excluded.add(checkNotNull(cineJoyRetryServer))
+                                    cineJoyRetryServer = null
+                                } else if (error is NoNativeServersException || candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.MOVY) {
+                                    exhaustedSources.add(candidate.source.identity)
+                                }
                                 throw error
                             } finally { adapter.close() }
                         } }, parallelism = 2)
                     } catch (error: Exception) { ensureActive(); return@repeat }
                     val (candidate, server, resolved) = winner
-                    val restartedFromBeginning = candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY &&
-                        resume > 0 && resolved.positionMs == 0L
                     selection = candidate.copy(availableEpisodes = selection?.availableEpisodes?.takeUnless { it.isEmpty() } ?: candidate.availableEpisodes)
                     triedServers.clear()
                     triedServers.addAll(excludedBySource[candidate.source.identity].orEmpty())
@@ -683,8 +690,8 @@ class NativePlayerActivity : FragmentActivity() {
                     hideSystemBars()
                     PlaybackStartupTiming.mark("stream_resolved")
                     try {
-                        startNative(resolved.copy(playing = true, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
-                        awaitNativeReady(resolved.url)
+                        val attempt = startNative(resolved.copy(playing = true, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
+                        awaitNativeReady(resolved.url, attempt)
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                             runCatching { routeStore.save(candidate, server, resolved) }
                         }
@@ -695,14 +702,27 @@ class NativePlayerActivity : FragmentActivity() {
                         if (auto) loadAutomaticSubtitles(candidate, language, resolved.url)
                         intent.putExtra("selection", candidate.nativeJson())
                         ui = ui.copy(stage = null, ready = true, error = null,
-                            message = if (restartedFromBeginning) "This CineJoy position is unavailable. Playing from the beginning." else null)
+                            message = null)
                         reconcileSyncedCaptions()
                         controller?.play()
                         warmNextEpisode(candidate, server)
                         return@launch
                     } catch (error: Exception) {
                         ensureActive()
-                        if (!strictPreferredServer) excludedBySource.getOrPut(candidate.source.identity) { mutableSetOf() }.add(server)
+                        android.util.Log.w("AliflixPlayback", "Native preparation failed for $server", error)
+                        val sameServerRetry = candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY &&
+                            cineJoyRetries.getOrDefault(server, 0) == 0
+                        if (sameServerRetry) {
+                            cineJoyRetries[server] = 1
+                            cineJoyRetryServer = server
+                            // A mislabeled high-resolution stream can exceed a phone's decoder.
+                            // Retry a smaller rendition on the same server with the same audio.
+                            val code = (error as? androidx.media3.common.PlaybackException)?.errorCode
+                            cineJoyLowQuality = cineJoyLowQuality || code in 4000..4999
+                        } else {
+                            cineJoyRetryServer = null
+                            if (!strictPreferredServer) excludedBySource.getOrPut(candidate.source.identity) { mutableSetOf() }.add(server)
+                        }
                         controller?.stop()
                     }
                 }
@@ -803,10 +823,10 @@ class NativePlayerActivity : FragmentActivity() {
         }
     }
 
-    private suspend fun awaitNativeReady(url: String) = withTimeout(15_000) {
+    private suspend fun awaitNativeReady(url: String, attempt: String) = withTimeout(30_000) {
         while (true) {
             ensureActive()
-            if (NativePlaybackService.activeStreamUrl == url) {
+            if (nativeAttemptMatches(attempt, NativePlaybackService.activeRequestId, url, NativePlaybackService.activeStreamUrl)) {
                 NativePlaybackService.playbackFailure?.let { throw it }
                 if (controller != null && NativePlaybackService.playbackReady &&
                     (NativePlaybackService.renderedStreamUrl == url || ui.external)) {
@@ -818,7 +838,7 @@ class NativePlayerActivity : FragmentActivity() {
         }
     }
 
-    private fun startNative(request: NativePlaybackRequest) {
+    private fun startNative(request: NativePlaybackRequest): String {
         selection = runCatching { nativeSelection(request.selectionJson) }.getOrNull() ?: selection
         updateSelectionUi()
         if (request.offlineDownloadId.isNotBlank()) ui = ui.copy(server = "", availableServers = emptyList())
@@ -831,6 +851,7 @@ class NativePlayerActivity : FragmentActivity() {
         java.io.File(cacheDir, name).writeText(playbackRequest.toJson())
         val service = Intent(this, NativePlaybackService::class.java).putExtra("requestFile", name)
         if (request.playing) ContextCompat.startForegroundService(this, service) else startService(service)
+        return name
     }
 
     private fun recover() {

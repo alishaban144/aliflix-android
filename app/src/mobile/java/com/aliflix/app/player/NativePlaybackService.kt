@@ -124,7 +124,12 @@ class NativePlaybackService : MediaSessionService() {
             .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 250, 1_000).build())
             .setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory {
                 if (request?.offlineDownloadId?.isNotBlank() == true) DefaultDataSource(this, com.aliflix.app.downloads.OfflineDownloads.get(this).offlineFactory().createDataSource())
-                else StartupStreamCache.factory(this, DefaultDataSource.Factory(this, scopedHttp)).createDataSource()
+                else {
+                    val upstream = StartupStreamCache.factory(this, DefaultDataSource.Factory(this, scopedHttp)).createDataSource()
+                    val current = request
+                    if (current != null && current.referer == CineJoyNativeCatalog.REFERER)
+                        CineJoyManifestDataSource(upstream, current) else upstream
+                }
             }))
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .setHandleAudioBecomingNoisy(true)
@@ -260,9 +265,12 @@ class NativePlaybackService : MediaSessionService() {
                             .setContentTitle(next.title).setContentText("Preparing video").setOnlyAlertOnce(true).build(),
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
                 }
+                activeRequestId = intent.getStringExtra("requestFile")
                 load(next)
             }.onFailure {
                 android.util.Log.e("AliflixPlayback", "Unable to start native playback", it)
+                playbackFailure = androidx.media3.common.PlaybackException("Unable to start native playback", it,
+                    androidx.media3.common.PlaybackException.ERROR_CODE_UNSPECIFIED)
                 player.stop(); player.clearMediaItems(); stopSelf()
             }
         }
@@ -287,11 +295,10 @@ class NativePlaybackService : MediaSessionService() {
             .build()
         player.trackSelectionParameters = preferredQualityParameters(player.trackSelectionParameters,
             (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality)
+        // CineJoy is pinned in the manifest. Its 1920x1080 tag actually decodes to
+        // 2160x1080 for Dark: dimension constraints are not a reliable rendition pin.
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setMinVideoSize(if (next.preferredVideoWidth > 0) next.preferredVideoWidth else 0,
-                if (next.preferredVideoHeight > 0) next.preferredVideoHeight else 0)
-            .setMaxVideoSize(if (next.preferredVideoWidth > 0) next.preferredVideoWidth else Int.MAX_VALUE,
-                if (next.preferredVideoHeight > 0) next.preferredVideoHeight else Int.MAX_VALUE)
+            .setMinVideoSize(0, 0)
             .build()
         externalCaptionCues = if (next.offlineDownloadId.isNotBlank() && !next.offlineAutoSubtitles) emptyList()
             else parseTimedTextSubtitleCues(next.subtitlesVtt)
@@ -585,6 +592,7 @@ class NativePlaybackService : MediaSessionService() {
             private set
         internal var playbackReady = false
             private set
+        internal var activeRequestId: String? = null
         internal var playbackFailure: androidx.media3.common.PlaybackException? = null
             private set
         internal var hasSelectedAudio = false

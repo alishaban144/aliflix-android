@@ -136,4 +136,28 @@ class CineJoyNativeCatalogTest {
         assertEquals("https://lit.example/video/init.html", CineJoyHlsProbe.segment(url, playlist, 6_000)?.init)
         assertNull(CineJoyHlsProbe.segment(url, playlist, 18_000))
     }
+    @Test fun actualDarkMasterPins1080BeforeMedia3CanLoadTheFirst4kPlaylist() {
+        val master = checkNotNull(javaClass.getResource("/cinejoy/dark-s1e1-master.m3u8")).readText()
+        val pinned = CineJoyHlsProbe.pinVideo(master, 1920, 1080)
+        val parsed = CineJoyHlsProbe.master("https://cdn.example/master.m3u8", pinned)
+        assertEquals(1, parsed.video.size)
+        assertTrue(parsed.video.single().url.endsWith("video_1080p.m3u8"))
+        assertEquals(listOf("Track 1", "Track 2", "Track 3", "Track 4"), parsed.audio.map { it.label })
+        assertFalse(pinned.contains("video_4k.h265.m3u8"))
+        assertFalse(pinned.contains("video_720p.m3u8"))
+        assertEquals(pinned, CineJoyHlsProbe.pinVideo(pinned, 1920, 1080))
+        assertEquals(master, CineJoyHlsProbe.pinVideo(master, 0, 0))
+    }
+
+    @Test fun lowQualityPins360AndMediaPlaylistsAreNotRewritten() {
+        val master = checkNotNull(javaClass.getResource("/cinejoy/dark-s1e1-master.m3u8")).readText()
+        val parsed = CineJoyHlsProbe.master("https://cdn.example/master.m3u8",
+            CineJoyHlsProbe.pinVideo(master, 640, 360))
+        assertEquals(360, parsed.video.single().height)
+        assertEquals(4, parsed.audio.size)
+        val media = "#EXTM3U\n#EXT-X-MAP:URI=\"init.html\"\n#EXTINF:6.48533,\naudio_1_1.html\n#EXT-X-ENDLIST"
+        assertEquals(media, CineJoyHlsProbe.pinVideo(media, 1920, 1080))
+        assertEquals(master, CineJoyHlsProbe.pinVideo(master, 999, 999))
+    }
+
 }
