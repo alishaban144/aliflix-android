@@ -147,14 +147,12 @@ class NativePlaybackService : MediaSessionService() {
                 }
                 if (!preferredAudioLabelApplied) {
                     val audioPrefs = getSharedPreferences("native-audio-choice", MODE_PRIVATE)
-                    val savedLanguage = audioPrefs.getString("language", null)
                     val savedLabel = selection?.let {
                         audioPrefs.getString("label:${it.source.identity.name}:${it.key}", null)
                     }
-                    // Language-tagged tracks are pre-selected via setPreferredAudioLanguage.
-                    // Label-only masters (CineJoy "Track 1..4") need an explicit override
-                    // so German stays selected across restarts on every source.
-                    if (savedLanguage.isNullOrBlank() && !savedLabel.isNullOrBlank()) {
+                    // A title's explicit rendition wins over a global language choice
+                    // made on another source. CineJoy's tracks have no language tags.
+                    if (!savedLabel.isNullOrBlank()) {
                         val match = tracks.groups.asSequence().filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { group ->
                             (0 until group.length).asSequence().map { group to it }
                         }.firstOrNull { (group, index) ->

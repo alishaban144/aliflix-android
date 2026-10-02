@@ -222,16 +222,17 @@ internal object CineJoyNativeCatalog {
         preferredServer: String? = null,
         onServers: (List<String>) -> Unit = {},
         strictPreferredServer: Boolean = false,
-        validate: Boolean = true,
         userAgent: String = USER_AGENT,
-        activity: androidx.activity.ComponentActivity? = null,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest = withContext(Dispatchers.IO) {
         if (strictPreferredServer) require(!preferredServer.isNullOrBlank()) { "A server is required for pinned preparation." }
         val preferred = serverFromLabel(preferredServer)
             ?: preferredServer?.takeIf { it in FALLBACK_SERVERS }
             ?: FALLBACK_SERVERS.firstOrNull { it.equals(preferredServer, ignoreCase = true) }
-        val live = runCatching { fetchServers(userAgent) }.getOrDefault(FALLBACK_SERVERS)
+        // Recovery already knows the exact working server. Skip discovery so a
+        // seek reconnect cannot drift onto a server with different audio.
+        val live = if (strictPreferredServer) listOfNotNull(preferred)
+            else runCatching { fetchServers(userAgent) }.getOrDefault(FALLBACK_SERVERS)
         val orderedServers = (listOfNotNull(preferred) + live).distinct()
         val labels = orderedServers.map(::serverLabel)
         if (labels.isNotEmpty()) withContext(Dispatchers.Main.immediate) { onServers(labels) }
@@ -265,10 +266,9 @@ internal object CineJoyNativeCatalog {
                     playing = true,
                     selectionJson = selection.nativeJson(),
                 )
-                if (validate) {
-                    val host = activity
-                    if (host != null) StartupStreamCache.awaitPlayable(host, request)
-                }
+                // The master has been checked above. Preparing the same stream in
+                // a second ExoPlayer added a full buffering round trip and could
+                // reject a usable CDN stream before the actual player tried it.
                 server to request
             } }, parallelism = 2)
         } catch (error: Exception) {

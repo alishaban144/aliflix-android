@@ -190,7 +190,12 @@ class NativePlayerActivity : FragmentActivity() {
                     settings = playerSettings,
                     onBack = ::pauseAndLeavePlayer,
                     onResumeClicked = { selection?.let { (application as AliflixApplication).libraryStore.markPlayed(it.media) } },
-                    onRetry = { exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0; prepareSelection() },
+                    onRetry = {
+                        exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0
+                        val pinned = ui.server.takeIf { selection?.source?.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY &&
+                            CineJoyNativeCatalog.serverFromLabel(it) != null }
+                        prepareSelection(preferredServer = pinned, strictPreferredServer = pinned != null)
+                    },
                     onServer = { prepareSelection() },
                     onSelectServer = ::selectServer,
                     onBrowseProvider = ::browseProvider,
@@ -500,7 +505,8 @@ class NativePlayerActivity : FragmentActivity() {
 
     private val routeStore by lazy { PlaybackRouteStore(java.io.File(noBackupFilesDir, "playback-routes")) }
 
-    private fun prepareSelection(positionMs: Long? = null, preferredServer: String? = null) {
+    private fun prepareSelection(positionMs: Long? = null, preferredServer: String? = null,
+        strictPreferredServer: Boolean = false) {
         val current = selection ?: return
         // Server lists are per title and per episode, so never reuse a stale browse result.
         discoveryJob?.cancel()
@@ -608,7 +614,7 @@ class NativePlayerActivity : FragmentActivity() {
                         // Refresh this exact server before permitting any other provider.
                     }
                 }
-                repeat(4) {
+                repeat(if (strictPreferredServer) 2 else 4) {
                     ensureActive()
                     val candidates = orderedSources.filter { it.source.identity !in exhaustedSources }
                     if (candidates.isEmpty()) return@repeat
@@ -639,15 +645,16 @@ class NativePlayerActivity : FragmentActivity() {
                                     com.aliflix.app.model.MobilePlaybackProvider.MOVY -> 35_000
                                     else -> 16_000
                                 }) {
-                                    adapter.resolve(candidate, resume, excluded, validateSingle = true,
+                                    adapter.resolve(candidate, resume, excluded, strictPreferredServer = strictPreferredServer && candidate.source == startingSource,
+                                        validateSingle = true,
                                         preferredServer = (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
                                         onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[candidate.key] = (resolvedServerNames[candidate.key].orEmpty() + names).distinct() }) { server = it }
                                 }
                                 Triple(candidate, server, request)
                             } catch (error: Exception) {
                                 ensureActive()
-                                if (server.isNotBlank()) excluded.add(server)
-                                if (error is NoNativeServersException || candidate.source.identity in setOf(com.aliflix.app.model.PlaybackProviderId.CINEJOY, com.aliflix.app.model.MobilePlaybackProvider.MOVY)) exhaustedSources.add(candidate.source.identity)
+                                if (server.isNotBlank() && !strictPreferredServer) excluded.add(server)
+                                if (error is NoNativeServersException || candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.MOVY) exhaustedSources.add(candidate.source.identity)
                                 throw error
                             } finally { adapter.close() }
                         } }, parallelism = 2)
@@ -679,11 +686,14 @@ class NativePlayerActivity : FragmentActivity() {
                         return@launch
                     } catch (error: Exception) {
                         ensureActive()
-                        excludedBySource.getOrPut(candidate.source.identity) { mutableSetOf() }.add(server)
+                        if (!strictPreferredServer) excludedBySource.getOrPut(candidate.source.identity) { mutableSetOf() }.add(server)
                         controller?.stop()
                     }
                 }
-                ui = ui.copy(stage = null, error = "We couldn't prepare this title. Check your connection and try again.", subtitleLoading = false)
+                val message = if (current.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY)
+                    "CineJoy couldn't load this video at this position. Retry the same server or choose another one."
+                else "We couldn't prepare this title. Check your connection and try again."
+                ui = ui.copy(stage = null, error = message, subtitleLoading = false)
             } finally { resolver?.close(); resolver = null }
         }
     }
@@ -813,8 +823,10 @@ class NativePlayerActivity : FragmentActivity() {
         }
         if (selection == null || preparation?.isActive == true) return
         stalledSince = 0
-        if (ui.server.isNotBlank()) triedServers.add(ui.server)
-        if (recoveryCount++ < 8) prepareSelection()
+        val cineJoy = selection?.source?.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY
+        val pinnedServer = ui.server.takeIf { cineJoy && CineJoyNativeCatalog.serverFromLabel(it) != null }
+        if (!cineJoy && ui.server.isNotBlank()) triedServers.add(ui.server)
+        if (recoveryCount++ < 8) prepareSelection(preferredServer = pinnedServer, strictPreferredServer = pinnedServer != null)
         else ui = ui.copy(stage = null, error = "Playback was interrupted. Retry to reconnect or choose another server.")
     }
 

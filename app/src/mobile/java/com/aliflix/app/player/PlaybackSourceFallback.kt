@@ -2,9 +2,13 @@ package com.aliflix.app.player
 
 import com.aliflix.app.model.*
 
-/** Preserve the user's selected mirror first, then try each other configured source once. */
+/** CineJoy carries independent audio renditions, so never change provider behind the viewer. */
 internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: PlaybackPreferences): List<PlaybackSelection> =
-    listOf(selection) + listOf(PlaybackProviderId.CINEJOY, PlaybackProviderId.MIRURO, PlaybackProviderId.ANIKURO, PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY)
+    listOf(selection) + (if (selection.source.identity == PlaybackProviderId.CINEJOY) emptyList() else listOf(
+        PlaybackProviderId.CINEJOY, PlaybackProviderId.MIRURO, PlaybackProviderId.ANIKURO,
+        PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE,
+        MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY,
+    ))
         .filter { it.isAvailableFor(selection.media) }
         .filter { it != selection.source.identity }
         .map { selection.copy(source = preferences.sourceFor(selection.media, it)) }

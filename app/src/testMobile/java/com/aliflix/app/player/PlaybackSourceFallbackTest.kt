@@ -10,9 +10,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
 class PlaybackSourceFallbackTest {
-    @Test fun everySourceFallsBackToBothOthersWithoutChangingEpisodeIdentity() {
+    @Test fun otherSourcesFallBackWithoutChangingEpisodeIdentity() {
         val generalProviders = listOf(PlaybackProviderId.CINEJOY, PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY)
-        for (provider in PlaybackProviderId.entries + MobilePlaybackProvider.entries) {
+        for (provider in (PlaybackProviderId.entries + MobilePlaybackProvider.entries).filter { it != PlaybackProviderId.CINEJOY }) {
             val preferences = PlaybackPreferences(dorabyBaseUrl = "https://doraby.example", moviepireBaseUrl = "https://moviepire.example")
             val episode = PlaybackSelection(Media(1396, MediaType.TV, "Breaking Bad"), 2, 3, "Bit by a Dead Bee",
                 source = PlaybackSource(provider, "https://selected.example"))
@@ -74,9 +74,10 @@ class PlaybackSourceFallbackTest {
         }
     }
 
-    @Test fun freshCinejoyPlaybackIncludesConcurrentFallbacks() {
+    @Test fun cinejoySelectionRemainsOnCinejoyEvenWhenOtherProvidersExist() {
         val selection = PlaybackSelection(Media(550, MediaType.MOVIE, "Fight Club"), source = PlaybackSource(PlaybackProviderId.CINEJOY))
         val candidates = playbackSourceFallbacks(selection, PlaybackPreferences())
+        assertEquals(listOf(selection), candidates)
         assertEquals(listOf(candidates.first()), initialPlaybackRace(candidates))
     }
 

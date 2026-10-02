@@ -75,8 +75,7 @@ internal class NativeStreamResolver(
         if (selection.source.identity == PlaybackProviderId.CINEJOY) {
             return CineJoyNativeCatalog.resolve(
                 selection, positionMs, excluded, preferredServer,
-                onServers, strictPreferredServer, validateSingle,
-                activity = activity,
+                onServers, strictPreferredServer,
                 onServer = onServer,
             ).also { close() }
         }

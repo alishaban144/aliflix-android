@@ -481,7 +481,7 @@ internal fun NativePlayerScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedButton(
-                            onClick = onServer,
+                            onClick = { moreVisible = true },
                             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
                             shape = RoundedCornerShape(12.dp)
                         ) {
