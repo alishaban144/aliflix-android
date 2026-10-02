@@ -442,7 +442,8 @@ class NativePlayerActivity : FragmentActivity() {
         val preferences = com.aliflix.app.data.PlaybackProviderRepository(this).preferences.value
         val probe = current.copy(source = preferences.sourceFor(current.media, provider))
         return when (provider) {
-            com.aliflix.app.model.PlaybackProviderId.CINEJOY,
+            com.aliflix.app.model.PlaybackProviderId.CINEJOY ->
+                CineJoyNativeCatalog.fetchServers().map(CineJoyNativeCatalog::serverLabel)
             com.aliflix.app.model.MobilePlaybackProvider.MOVY -> listOf(provider.displayName)
             com.aliflix.app.model.PlaybackProviderId.MOVIEPIRE,
             com.aliflix.app.model.MobilePlaybackProvider.SEVEN_MOVIES -> preferredNativeEmbeds(probe).map { it.first }
@@ -469,7 +470,7 @@ class NativePlayerActivity : FragmentActivity() {
         recordCurrentProgress(urgent = true)
         selection = current.copy(source = preferences.sourceFor(current.media, provider))
         ui = ui.copy(server = serverName, message = "Switching to ${provider.displayName} · $serverName…")
-        prepareSelection(preferredServer = serverName)
+        prepareSelection(preferredServer = serverName, strictPreferredServer = true)
     }
 
     private fun updateSelectionUi() {
@@ -481,7 +482,12 @@ class NativePlayerActivity : FragmentActivity() {
             } }
         }
         selection?.let {
-            val servers = resolvedServerNames[it.key] ?: if (it.source.identity.usesMoviepire) listOf("Vid", "Mist", "Mistify", "Flix", "Peach") else listOf(it.source.identity.displayName)
+            val servers = resolvedServerNames[it.key] ?: when {
+                it.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY ->
+                    CineJoyNativeCatalog.FALLBACK_SERVERS.map(CineJoyNativeCatalog::serverLabel)
+                it.source.identity.usesMoviepire -> listOf("Vid", "Mist", "Mistify", "Flix", "Peach")
+                else -> listOf(it.source.identity.displayName)
+            }
             ui = ui.copy(
                 title = it.media.title,
                 detail = if (it.media.type == com.aliflix.app.model.MediaType.TV)
@@ -500,7 +506,7 @@ class NativePlayerActivity : FragmentActivity() {
         if (serverName.equals(ui.server, ignoreCase = true) && controller?.playbackState == Player.STATE_READY) return
         recordCurrentProgress(urgent = true)
         ui = ui.copy(server = serverName, message = "Switching to $serverName…")
-        prepareSelection(preferredServer = serverName)
+        prepareSelection(preferredServer = serverName, strictPreferredServer = true)
     }
 
     private val routeStore by lazy { PlaybackRouteStore(java.io.File(noBackupFilesDir, "playback-routes")) }
@@ -558,7 +564,12 @@ class NativePlayerActivity : FragmentActivity() {
             exhaustedSources.remove(current.source.identity)
             triedServers.remove(preferredServer)
         }
-        val defaultServers = resolvedServerNames[current.key] ?: if (current.source.identity.usesMoviepire) listOf("Vid", "Mist", "Mistify", "Flix", "Peach") else listOf(current.source.identity.displayName)
+        val defaultServers = resolvedServerNames[current.key] ?: when {
+            current.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY ->
+                CineJoyNativeCatalog.FALLBACK_SERVERS.map(CineJoyNativeCatalog::serverLabel)
+            current.source.identity.usesMoviepire -> listOf("Vid", "Mist", "Mistify", "Flix", "Peach")
+            else -> listOf(current.source.identity.displayName)
+        }
         ui = ui.copy(
             stage = "Preparing your video",
             error = null,
@@ -587,7 +598,9 @@ class NativePlayerActivity : FragmentActivity() {
                         (!current.source.identity.isAnimeNative || it.selection.source.identity == current.source.identity) }
                 val savedProvider = savedRoute?.selection?.source?.identity?.name
                     ?: history.getString("$seriesKey:provider", null)?.takeIf { it == current.source.identity.name }
-                val sources = (listOfNotNull(savedRoute?.selection) + playbackSourceFallbacks(current, preferences)).distinctBy { it.source }.filter { it.source.identity !in exhaustedSources }
+                val sources = (listOfNotNull(savedRoute?.selection) + playbackSourceFallbacks(current, preferences))
+                    .distinctBy { it.source }
+                    .filter { it.source.identity !in exhaustedSources && (!strictPreferredServer || it.source == current.source) }
                 val orderedSources = sources.sortedBy { if (it.source.identity.name == savedProvider) 0 else 1 }
                 val excludedBySource = mutableMapOf<com.aliflix.app.model.PlaybackProvider, MutableSet<String>>()
                 excludedBySource[current.source.identity] = triedServers.toMutableSet()
@@ -660,6 +673,8 @@ class NativePlayerActivity : FragmentActivity() {
                         } }, parallelism = 2)
                     } catch (error: Exception) { ensureActive(); return@repeat }
                     val (candidate, server, resolved) = winner
+                    val restartedFromBeginning = candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY &&
+                        resume > 0 && resolved.positionMs == 0L
                     selection = candidate.copy(availableEpisodes = selection?.availableEpisodes?.takeUnless { it.isEmpty() } ?: candidate.availableEpisodes)
                     triedServers.clear()
                     triedServers.addAll(excludedBySource[candidate.source.identity].orEmpty())
@@ -679,7 +694,8 @@ class NativePlayerActivity : FragmentActivity() {
                         }
                         if (auto) loadAutomaticSubtitles(candidate, language, resolved.url)
                         intent.putExtra("selection", candidate.nativeJson())
-                        ui = ui.copy(stage = null, ready = true, error = null)
+                        ui = ui.copy(stage = null, ready = true, error = null,
+                            message = if (restartedFromBeginning) "This CineJoy position is unavailable. Playing from the beginning." else null)
                         reconcileSyncedCaptions()
                         controller?.play()
                         warmNextEpisode(candidate, server)

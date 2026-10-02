@@ -125,9 +125,46 @@ internal object CineJoyNativeCatalog {
             }.distinct().toList()
     }
 
-    private fun requireAudioMaster(url: String, userAgent: String) {
-        check(audioTracksInMaster(httpGet(url, userAgent)).isNotEmpty()) {
+    private fun mediaChunkAvailable(url: String, userAgent: String): Boolean = runCatching {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 4_000
+            readTimeout = 4_000
+            setRequestProperty("Range", "bytes=0-31")
+            setRequestProperty("Accept", "*/*")
+            setRequestProperty("Origin", REFERER.trimEnd('/'))
+            setRequestProperty("Referer", REFERER)
+            setRequestProperty("User-Agent", userAgent)
+            instanceFollowRedirects = true
+        }
+        try {
+            connection.responseCode in 200..299 && connection.inputStream.use { input ->
+                val header = ByteArray(32)
+                val count = input.read(header)
+                // These CineJoy .html URLs actually contain fMP4, not HTML pages.
+                count >= 8 && String(header, 4, 4, Charsets.US_ASCII) in setOf("ftyp", "moof", "styp")
+            }
+        } finally { connection.disconnect() }
+    }.getOrDefault(false)
+
+    private fun renditionAvailable(url: String, positionMs: Long, userAgent: String): Boolean {
+        val segment = CineJoyHlsProbe.segment(url, httpGet(url, userAgent), positionMs) ?: return false
+        return (segment.init == null || mediaChunkAvailable(segment.init, userAgent)) &&
+            mediaChunkAvailable(segment.media, userAgent)
+    }
+
+    private fun playableVideo(
+        master: CineJoyHlsProbe.Master, positionMs: Long, preferredAudioLabel: String?,
+        lowQuality: Boolean, userAgent: String,
+    ): CineJoyHlsProbe.Video? {
+        check(master.audio.isNotEmpty() && master.video.isNotEmpty()) {
             "CineJoy did not provide a multivariant stream with selectable audio"
+        }
+        val audio = master.audio.firstOrNull { it.label == preferredAudioLabel }
+            ?: master.audio.firstOrNull { it.default } ?: master.audio.first()
+        if (!renditionAvailable(audio.url, positionMs, userAgent)) return null
+        return CineJoyHlsProbe.preferredVideos(master.video, lowQuality).firstOrNull {
+            renditionAvailable(it.url, positionMs, userAgent)
         }
     }
 
@@ -222,6 +259,8 @@ internal object CineJoyNativeCatalog {
         preferredServer: String? = null,
         onServers: (List<String>) -> Unit = {},
         strictPreferredServer: Boolean = false,
+        preferredAudioLabel: String? = null,
+        lowQuality: Boolean = false,
         userAgent: String = USER_AGENT,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest = withContext(Dispatchers.IO) {
@@ -254,7 +293,16 @@ internal object CineJoyNativeCatalog {
                 val playlists = playlistsForServer(selection, server, userAgent)
                 val master = playlists.firstOrNull()
                     ?: throw NoNativeServersException()
-                requireAudioMaster(master, userAgent)
+                val manifest = CineJoyHlsProbe.master(master, httpGet(master, userAgent))
+                var playablePosition = positionMs
+                var video = playableVideo(manifest, playablePosition, preferredAudioLabel, lowQuality, userAgent)
+                if (video == null && playablePosition > 0) {
+                    // A saved position can point into a broken CDN segment. Stay on the
+                    // same CineJoy server and same audio, then start from the first good chunk.
+                    playablePosition = 0
+                    video = playableVideo(manifest, 0, preferredAudioLabel, lowQuality, userAgent)
+                }
+                check(video != null) { "CineJoy's audio or video chunks are unavailable" }
                 val request = NativePlaybackRequest(
                     url = master,
                     mimeType = "application/x-mpegURL",
@@ -262,9 +310,11 @@ internal object CineJoyNativeCatalog {
                     userAgent = userAgent,
                     cookie = "",
                     title = selection.media.title,
-                    positionMs = positionMs,
+                    positionMs = playablePosition,
                     playing = true,
                     selectionJson = selection.nativeJson(),
+                    preferredVideoWidth = video.width,
+                    preferredVideoHeight = video.height,
                 )
                 // The master has been checked above. Preparing the same stream in
                 // a second ExoPlayer added a full buffering round trip and could

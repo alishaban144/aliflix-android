@@ -73,9 +73,13 @@ internal class NativeStreamResolver(
             )
         }
         if (selection.source.identity == PlaybackProviderId.CINEJOY) {
+            val savedAudioLabel = activity.getSharedPreferences("native-audio-choice", android.content.Context.MODE_PRIVATE)
+                .getString("label:${selection.source.identity.name}:${selection.key}", null)
             return CineJoyNativeCatalog.resolve(
                 selection, positionMs, excluded, preferredServer,
                 onServers, strictPreferredServer,
+                preferredAudioLabel = savedAudioLabel,
+                lowQuality = (activity.application as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality == PreferredVideoQuality.LOW,
                 onServer = onServer,
             ).also { close() }
         }

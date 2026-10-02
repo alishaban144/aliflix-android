@@ -21,9 +21,12 @@ internal data class NativePlaybackRequest(
     val offlineDownloadId: String = "",
     val offlineAutoSubtitles: Boolean = true,
     val streamUrlRules: String = "",
+    val preferredVideoWidth: Int = 0,
+    val preferredVideoHeight: Int = 0,
 ) {
     fun toJson(): String = JSONObject().apply {
         put("streamUrlRules", streamUrlRules)
+        put("preferredVideoWidth", preferredVideoWidth); put("preferredVideoHeight", preferredVideoHeight)
         put("offlineDownloadId", offlineDownloadId); put("offlineAutoSubtitles", offlineAutoSubtitles)
         put("url", url); put("mimeType", mimeType); put("referer", referer)
         put("userAgent", userAgent); put("cookie", cookie); put("title", title)
@@ -50,6 +53,8 @@ internal data class NativePlaybackRequest(
                 json.optString("offlineDownloadId"),
                 json.optBoolean("offlineAutoSubtitles", true),
                 json.optString("streamUrlRules"),
+                json.optInt("preferredVideoWidth"),
+                json.optInt("preferredVideoHeight"),
             )
         }
     }

@@ -10,6 +10,13 @@ class NativePlaybackRequestTest {
         assertEquals(input, NativePlaybackRequest.fromJson(input.toJson()))
     }
 
+    @Test fun cineJoyVideoRenditionSurvivesTheServiceHandoff() {
+        val request = NativePlaybackRequest("https://cdn.example/master.m3u8", "application/x-mpegURL",
+            "https://cinejoy.pk/", "UA", "", "Dark", 245_000, true,
+            preferredVideoWidth = 1920, preferredVideoHeight = 1080)
+        assertEquals(request, NativePlaybackRequest.fromJson(request.toJson()))
+    }
+
     @Test fun hlsMasterBeatsVariantsAndCanExposeAllAudioTracks() {
         val variant = JSONObject().put("url", "https://cdn.example/de.m3u8").put("mimeType", "application/x-mpegURL").put("manifestKind", "variant")
         val master = JSONObject().put("url", "https://cdn.example/master.m3u8").put("mimeType", "application/x-mpegURL").put("manifestKind", "master")

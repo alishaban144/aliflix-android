@@ -287,6 +287,12 @@ class NativePlaybackService : MediaSessionService() {
             .build()
         player.trackSelectionParameters = preferredQualityParameters(player.trackSelectionParameters,
             (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality)
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setMinVideoSize(if (next.preferredVideoWidth > 0) next.preferredVideoWidth else 0,
+                if (next.preferredVideoHeight > 0) next.preferredVideoHeight else 0)
+            .setMaxVideoSize(if (next.preferredVideoWidth > 0) next.preferredVideoWidth else Int.MAX_VALUE,
+                if (next.preferredVideoHeight > 0) next.preferredVideoHeight else Int.MAX_VALUE)
+            .build()
         externalCaptionCues = if (next.offlineDownloadId.isNotBlank() && !next.offlineAutoSubtitles) emptyList()
             else parseTimedTextSubtitleCues(next.subtitlesVtt)
         embeddedSubtitlesActive = false

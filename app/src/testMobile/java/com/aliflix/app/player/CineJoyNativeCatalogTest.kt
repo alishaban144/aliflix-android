@@ -93,4 +93,47 @@ class CineJoyNativeCatalogTest {
             CineJoyNativeCatalog.audioTracksInMaster(master))
         assertTrue(CineJoyNativeCatalog.audioTracksInMaster("#EXTM3U\n#EXTINF:6,\nsegment.ts").isEmpty())
     }
+
+    @Test fun lisbonMasterKeepsAllAudioAndPrefersAvc1080OverHevc4k() {
+        val url = "https://lit.example/playlist/master.m3u8"
+        val master = """
+            #EXTM3U
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Track 1",DEFAULT=YES,URI="../audio/one.m3u8"
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Track 2",DEFAULT=NO,URI="../audio/two.m3u8"
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Track 3",DEFAULT=NO,URI="../audio/three.m3u8"
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Track 4",DEFAULT=NO,URI="../audio/four.m3u8"
+            #EXT-X-STREAM-INF:RESOLUTION=3840x2160,CODECS="hvc1.1.2.L150.B0,mp4a.40.2",AUDIO="audio"
+            ../video/4k.m3u8
+            #EXT-X-STREAM-INF:DEFAULT=YES,RESOLUTION=1920x1080,CODECS="avc1.4D4032,mp4a.40.2",AUDIO="audio"
+            ../video/1080.m3u8
+            #EXT-X-STREAM-INF:RESOLUTION=640x360,CODECS="avc1.4D401E,mp4a.40.2",AUDIO="audio"
+            ../video/360.m3u8
+        """.trimIndent()
+        val parsed = CineJoyHlsProbe.master(url, master)
+        assertEquals(listOf("Track 1", "Track 2", "Track 3", "Track 4"), parsed.audio.map { it.label })
+        assertEquals("https://lit.example/audio/one.m3u8", parsed.audio.first().url)
+        assertTrue(parsed.audio.first().default)
+        assertEquals(1080, CineJoyHlsProbe.preferredVideos(parsed.video).first().height)
+        assertEquals(360, CineJoyHlsProbe.preferredVideos(parsed.video, lowQuality = true).first().height)
+    }
+
+    @Test fun mediaProbeChecksTheChunkAtTheSavedPosition() {
+        val url = "https://lit.example/video/1080.m3u8"
+        val playlist = """
+            #EXTM3U
+            #EXT-X-MAP:URI="init.html"
+            #EXTINF:6.000,
+            #EXT-X-BITRATE:813
+            zero.html
+            #EXTINF:6.000,
+            six.html
+            #EXTINF:6.000,
+            twelve.html
+            #EXT-X-ENDLIST
+        """.trimIndent()
+        assertEquals("https://lit.example/video/zero.html", CineJoyHlsProbe.segment(url, playlist, 0)?.media)
+        assertEquals("https://lit.example/video/six.html", CineJoyHlsProbe.segment(url, playlist, 6_000)?.media)
+        assertEquals("https://lit.example/video/init.html", CineJoyHlsProbe.segment(url, playlist, 6_000)?.init)
+        assertNull(CineJoyHlsProbe.segment(url, playlist, 18_000))
+    }
 }
