@@ -76,6 +76,13 @@ class WebPlayerController(
     private var nativeStream: JSONObject? = null
     private var nativeStreamReceivedAt = 0L
 
+    private fun rememberNativeStream(candidate: JSONObject?) {
+        if (candidate != null && shouldReplaceNativeStream(nativeStream, candidate)) {
+            nativeStream = candidate
+            nativeStreamReceivedAt = SystemClock.elapsedRealtime()
+        }
+    }
+
     internal fun preparedNativeRequest(after: Long, positionMs: Long): NativePlaybackRequest? {
         if (nativeStreamReceivedAt < after) return null
         val stream = nativeStream ?: return null
@@ -83,6 +90,7 @@ class WebPlayerController(
         val view = webView ?: return null
         val url = stream.optString("url")
         if (!isNativeStreamUrl(url)) return null
+        if (shouldAwaitHlsMaster(stream, SystemClock.elapsedRealtime() - nativeStreamReceivedAt)) return null
         return NativePlaybackRequest(url, stream.optString("mimeType", "video/mp4"),
             stream.optString("referer"), view.settings.userAgentString,
             CookieManager.getInstance().getCookie(url).orEmpty(),
@@ -121,12 +129,12 @@ class WebPlayerController(
             // A wrapper document has no meaningful URL of its own, so only accept a probe that
             // can name the page the manifest was requested from.
             val referer = view.url?.takeIf { it.startsWith("https://") } ?: return@evaluateJavascript
-            nativeStream = JSONObject().apply {
+            rememberNativeStream(JSONObject().apply {
                 put("url", url)
                 put("mimeType", if (url.contains(".m3u8", ignoreCase = true)) "application/x-mpegURL" else "video/mp4")
                 put("referer", referer)
-            }
-            nativeStreamReceivedAt = SystemClock.elapsedRealtime()
+                put("manifestKind", "direct")
+            })
         }
     }
 
@@ -828,13 +836,11 @@ class WebPlayerController(
             // The manifest alone is enough to hand playback to the native player, so keep it and
             // wait rather than discarding a stream that is already playable.
             if (stream != null) {
-                nativeStream = stream
-                nativeStreamReceivedAt = SystemClock.elapsedRealtime()
+                rememberNativeStream(stream)
             }
             return
         }
-        nativeStream = stream
-        nativeStreamReceivedAt = SystemClock.elapsedRealtime()
+        rememberNativeStream(stream)
         if (nativePreparation) return // Resolution must never overwrite the saved native resume point.
         latestDurationSeconds = duration
         _durationMs.value = (duration * 1000).toLong()

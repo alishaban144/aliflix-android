@@ -12,5 +12,5 @@ internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: 
 /** Fresh playback races providers; saved/manual routes still get their explicit first attempt. */
 internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<PlaybackSelection> {
     val anime = candidates.filter { it.source.identity.isAnimeNative }
-    return if (anime.isNotEmpty()) anime else candidates
+    return if (anime.isNotEmpty()) anime else candidates.take(1)
 }

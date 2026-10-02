@@ -55,6 +55,24 @@ internal data class NativePlaybackRequest(
     }
 }
 
+/** An HLS variant is playable but can omit every alternate audio rendition in its master. */
+internal fun shouldAwaitHlsMaster(stream: JSONObject, ageMs: Long): Boolean =
+    (stream.optString("mimeType").contains("mpegurl", ignoreCase = true) ||
+        stream.optString("url").contains(".m3u8", ignoreCase = true)) &&
+        !stream.optString("manifestKind").equals("master", ignoreCase = true) &&
+        ageMs in 0 until 3_000L
+
+/** Never let later video/progress reports demote an already-discovered master playlist. */
+internal fun shouldReplaceNativeStream(previous: JSONObject?, candidate: JSONObject): Boolean {
+    fun rank(stream: JSONObject): Int = when (stream.optString("manifestKind")) {
+        "master" -> 3
+        "variant" -> 2
+        else -> 1
+    }
+    return previous == null || rank(candidate) > rank(previous) ||
+        (rank(candidate) == rank(previous) && candidate.optString("url") != previous.optString("url"))
+}
+
 internal fun isNativeStreamUrl(raw: String): Boolean = runCatching {
     val uri = URI(raw)
     uri.scheme in setOf("https", "http") && !uri.host.isNullOrBlank() && uri.userInfo == null
@@ -83,80 +101,90 @@ internal fun nativeSubtitlesVtt(raw: String?, delaySeconds: Double): String {
     }
 }
 
-/** Capture HLS master/variant URLs in the same frame as the actual video, including MSE/blob players. */
+/** Observe the provider's own requests. Prefer its HLS multivariant master, retaining AUDIO renditions. */
 internal fun nativeStreamDiscoveryScript(): String = """
     (() => {
       if (window.__aliflixStreamDiscovery) return;
       window.__aliflixStreamDiscovery = true;
-      let manifest = null;
-      let reportedUrl = '';
-      const reportStream = (url, mimeType) => {
+      let master = null, variant = null, reportedUrl = '', reportedRank = 0;
+      const startedAt = Date.now();
+      const isHls = url => /\.m3u8(?:[?#]|$)/i.test(String(url || ''));
+      const reportStream = (url, mimeType, rank) => {
         const clean = String(url || '');
-        if (!clean || clean === reportedUrl) return;
+        if (!/^https?:\/\//i.test(clean) || rank < reportedRank ||
+            (rank === reportedRank && clean === reportedUrl)) return;
+        reportedRank = rank;
         reportedUrl = clean;
         const stream = {
           url: clean,
           mimeType: mimeType || 'application/x-mpegURL',
-          referer: location.href
+          referer: location.href,
+          manifestKind: rank === 3 ? 'master' : rank === 2 ? 'variant' : 'direct'
         };
-        // Hand the manifest over the moment it exists. The embedded player often never starts on
-        // its own, and the native player only needs the URL, the referer, and the cookies, so
-        // waiting for playback to begin would time out a stream that is already playable.
         const bridge = window.AliflixPlaybackProgress;
         if (bridge && typeof bridge.postMessage === 'function') {
-          try {
-            bridge.postMessage(JSON.stringify({event: 'aliflix-stream', nativeStream: stream}));
-          } catch (_) {}
+          try { bridge.postMessage(JSON.stringify({event: 'aliflix-stream', nativeStream: stream})); } catch (_) {}
         }
       };
       const remember = (url, text) => {
-        if (typeof text !== 'string' || !text.trimStart().startsWith('#EXTM3U')) return;
-        const master = text.includes('#EXT-X-STREAM-INF');
-        if (!manifest || master || !manifest.master) manifest = {url, master};
-        if (master) reportStream(url, 'application/x-mpegURL');
+        if (!/^https?:\/\//i.test(String(url || '')) ||
+            typeof text !== 'string' || !text.trimStart().startsWith('#EXTM3U')) return;
+        // A master carries variant streams or EXT-X-MEDIA audio groups. A child media playlist
+        // frequently has only one preselected language; handing it off discards other tracks.
+        const isMaster = /^#EXT-X-STREAM-INF:/m.test(text) ||
+            /^#EXT-X-MEDIA\s*:\s*TYPE=AUDIO/im.test(text);
+        if (isMaster) {
+          master = url;
+          reportStream(url, 'application/x-mpegURL', 3);
+        } else if (!variant) {
+          variant = url;
+        }
       };
-      const fetchOriginal = window.fetch;
-      if (fetchOriginal) window.fetch = function(...args) {
-        return fetchOriginal.apply(this, args).then(response => {
+      const originalFetch = window.fetch;
+      if (originalFetch) window.fetch = function(...args) {
+        return originalFetch.apply(this, args).then(response => {
           const type = response.headers.get('content-type') || '';
-          if (/mpegurl/i.test(type) || /\.m3u8(?:[?#]|$)/i.test(response.url)) {
+          if (/mpegurl/i.test(type) || isHls(response.url)) {
             response.clone().text().then(text => remember(response.url, text)).catch(() => {});
           }
           return response;
         });
       };
-      const open = XMLHttpRequest.prototype.open;
+      const originalOpen = XMLHttpRequest.prototype.open;
       XMLHttpRequest.prototype.open = function(...args) {
         this.addEventListener('load', () => {
           try {
             if (this.responseType === '' || this.responseType === 'text') remember(this.responseURL, this.responseText);
-            else if (this.responseType === 'arraybuffer' && this.response.byteLength < 2097152)
+            else if (this.responseType === 'arraybuffer' && this.response?.byteLength < 2097152)
               remember(this.responseURL, new TextDecoder().decode(this.response));
           } catch (_) {}
-        }, {once:true});
-        return open.apply(this, args);
+        }, {once: true});
+        return originalOpen.apply(this, args);
       };
       window.__aliflixNativeStream = video => {
-        if (video.mediaKeys) return null;
-        if (manifest?.master) return {url:manifest.url, mimeType:'application/x-mpegURL', referer:location.href};
-        const src = video.currentSrc || video.src;
-        if (/^https?:\/\//.test(src)) return {url:src, mimeType:/\.m3u8(?:[?#]|$)/i.test(src) ? 'application/x-mpegURL' : 'video/mp4', referer:location.href};
-        return manifest ? {url:manifest.url, mimeType:'application/x-mpegURL', referer:location.href} : null;
-      };
-      // Some players set a direct progressive source and never request a manifest of their own.
-      const watchDirectSource = () => {
-        const video = document.querySelector('video');
+        if (video?.mediaKeys) return null;
+        if (master) return {url:master, mimeType:'application/x-mpegURL', referer:location.href, manifestKind:'master'};
         const src = video ? (video.currentSrc || video.src) : '';
-        if (/^https?:\/\//.test(src)) {
-          reportStream(src, /\.m3u8(?:[?#]|$)/i.test(src) ? 'application/x-mpegURL' : 'video/mp4');
-        }
+        if (variant) return {url:variant, mimeType:'application/x-mpegURL', referer:location.href, manifestKind:'variant'};
+        if (/^https?:\/\//i.test(src)) return {
+          url:src, mimeType:isHls(src) ? 'application/x-mpegURL' : 'video/mp4',
+          referer:location.href, manifestKind:isHls(src) ? 'variant' : 'direct'
+        };
+        return null;
       };
-      const watchUntil = Date.now() + 60000;
       const watcher = window.setInterval(() => {
-        if (reportedUrl && manifest) { window.clearInterval(watcher); return; }
-        watchDirectSource();
-        if (Date.now() > watchUntil) window.clearInterval(watcher);
-      }, 400);
+        if (master) {
+          reportStream(master, 'application/x-mpegURL', 3);
+          window.clearInterval(watcher);
+          return;
+        }
+        const candidate = window.__aliflixNativeStream(document.querySelector('video'));
+        // A progressive file is complete. For HLS, briefly wait for the master/alternate audio.
+        if (candidate && (candidate.mimeType === 'video/mp4' || Date.now() - startedAt >= 3000)) {
+          reportStream(candidate.url, candidate.mimeType, candidate.manifestKind === 'variant' ? 2 : 1);
+        }
+        if (Date.now() - startedAt > 60000) window.clearInterval(watcher);
+      }, 350);
       window.__aliflixNativeStreamUrl = () => {
         const stream = window.__aliflixNativeStream(document.querySelector('video'));
         return stream ? String(stream.url || '') : '';

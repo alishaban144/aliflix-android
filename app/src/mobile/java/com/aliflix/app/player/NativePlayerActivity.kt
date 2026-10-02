@@ -215,6 +215,10 @@ class NativePlayerActivity : FragmentActivity() {
                     },
                     onSubtitleSearch = { searchSubtitles() },
                     onSubtitle = ::applySubtitle,
+                    onAudioSelected = { language ->
+                        if (!language.isNullOrBlank() && language != "und")
+                            getSharedPreferences("native-audio-choice", MODE_PRIVATE).edit().putString("language", language).apply()
+                    },
                     onSubtitleDisable = ::disableSubtitles,
                     onSubtitleDelayChange = ::updateSubtitleDelay,
                     onSyncWithAudio = ::syncWithAudio,

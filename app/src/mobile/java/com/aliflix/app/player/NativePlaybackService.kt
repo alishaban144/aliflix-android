@@ -253,6 +253,12 @@ class NativePlaybackService : MediaSessionService() {
         relay?.close(); relay = null
         request = next
         preferredQualityApplied = false
+        val preferredAudio = getSharedPreferences("native-audio-choice", MODE_PRIVATE).getString("language", null)
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .setPreferredAudioLanguage(preferredAudio)
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+            .build()
         player.trackSelectionParameters = preferredQualityParameters(player.trackSelectionParameters,
             (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality)
         externalCaptionCues = if (next.offlineDownloadId.isNotBlank() && !next.offlineAutoSubtitles) emptyList()

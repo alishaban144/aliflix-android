@@ -2,11 +2,23 @@ package com.aliflix.app.player
 
 import org.junit.Assert.*
 import org.junit.Test
+import org.json.JSONObject
 
 class NativePlaybackRequestTest {
     @Test fun handoffPreservesStreamCredentialsPositionPauseAndSubtitles() {
         val input = NativePlaybackRequest("https://cdn.example/a.m3u8?token=x%2Fy", "application/x-mpegURL", "https://player.example/watch", "UA", "session=test", "Film", 42001, false, "WEBVTT\n\n", "selection", "de", "German")
         assertEquals(input, NativePlaybackRequest.fromJson(input.toJson()))
+    }
+
+    @Test fun hlsMasterBeatsVariantsAndCanExposeAllAudioTracks() {
+        val variant = JSONObject().put("url", "https://cdn.example/de.m3u8").put("mimeType", "application/x-mpegURL").put("manifestKind", "variant")
+        val master = JSONObject().put("url", "https://cdn.example/master.m3u8").put("mimeType", "application/x-mpegURL").put("manifestKind", "master")
+        assertTrue(shouldAwaitHlsMaster(variant, 1000))
+        assertFalse(shouldAwaitHlsMaster(variant, 3000))
+        assertFalse(shouldAwaitHlsMaster(master, 0))
+        assertTrue(shouldReplaceNativeStream(variant, master))
+        assertFalse(shouldReplaceNativeStream(master, variant))
+        assertTrue(nativeStreamDiscoveryScript().contains("TYPE=AUDIO"))
     }
 
     @Test fun blobsAndNonNetworkSourcesCannotBeHandedToTheTv() {

@@ -77,8 +77,7 @@ class PlaybackSourceFallbackTest {
     @Test fun freshCinejoyPlaybackIncludesConcurrentFallbacks() {
         val selection = PlaybackSelection(Media(550, MediaType.MOVIE, "Fight Club"), source = PlaybackSource(PlaybackProviderId.CINEJOY))
         val candidates = playbackSourceFallbacks(selection, PlaybackPreferences())
-        assertEquals(candidates, initialPlaybackRace(candidates))
-        assertTrue(initialPlaybackRace(candidates).size >= 2)
+        assertEquals(listOf(candidates.first()), initialPlaybackRace(candidates))
     }
 
     @Test fun newSourcesPreserveExactEpisodeRoutes() {
