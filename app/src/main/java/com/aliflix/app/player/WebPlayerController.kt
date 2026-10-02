@@ -129,11 +129,15 @@ class WebPlayerController(
             // A wrapper document has no meaningful URL of its own, so only accept a probe that
             // can name the page the manifest was requested from.
             val referer = view.url?.takeIf { it.startsWith("https://") } ?: return@evaluateJavascript
+            val isHls = url.contains(".m3u8", ignoreCase = true)
             rememberNativeStream(JSONObject().apply {
                 put("url", url)
-                put("mimeType", if (url.contains(".m3u8", ignoreCase = true)) "application/x-mpegURL" else "video/mp4")
+                put("mimeType", if (isHls) "application/x-mpegURL" else "video/mp4")
                 put("referer", referer)
-                put("manifestKind", "direct")
+                // A probed .m3u8 is a variant until the discovery bridge proves it is
+                // a master; marking it direct would bypass the master wait and drop
+                // alternate audio renditions on every source.
+                put("manifestKind", if (isHls) "variant" else "direct")
             })
         }
     }

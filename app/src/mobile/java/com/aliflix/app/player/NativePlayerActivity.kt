@@ -215,9 +215,18 @@ class NativePlayerActivity : FragmentActivity() {
                     },
                     onSubtitleSearch = { searchSubtitles() },
                     onSubtitle = ::applySubtitle,
-                    onAudioSelected = { language ->
-                        if (!language.isNullOrBlank() && language != "und")
-                            getSharedPreferences("native-audio-choice", MODE_PRIVATE).edit().putString("language", language).apply()
+                    onAudioSelected = { language, label ->
+                        val prefs = getSharedPreferences("native-audio-choice", MODE_PRIVATE).edit()
+                        if (!language.isNullOrBlank() && language != "und") {
+                            prefs.putString("language", language)
+                            prefs.remove("label")
+                        } else if (!label.isNullOrBlank()) {
+                            // CineJoy masters tag renditions "Track 1..4" with no language;
+                            // remember the label so German stays selected across restarts.
+                            prefs.remove("language")
+                            prefs.putString("label", label)
+                        }
+                        prefs.apply()
                     },
                     onSubtitleDisable = ::disableSubtitles,
                     onSubtitleDelayChange = ::updateSubtitleDelay,

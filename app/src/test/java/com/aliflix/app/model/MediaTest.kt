@@ -133,6 +133,8 @@ class MediaTest {
                 PlaybackProviderId.MOVIEPIRE,
                 PlaybackProviderId.RAMOFLIX,
                 PlaybackProviderId.DORABY,
+                MobilePlaybackProvider.SEVEN_MOVIES,
+                MobilePlaybackProvider.MOVY,
             ),
             mobileGeneralPlaybackProviders(),
         )

@@ -65,6 +65,7 @@ class NativePlaybackService : MediaSessionService() {
     private var relay: CastStreamRelay? = null
     private var request: NativePlaybackRequest? = null
     private var preferredQualityApplied = false
+    private var preferredAudioLabelApplied = false
     private var originalItem: MediaItem? = null
     private var externalCaptionCues: List<SubtitleCue> = emptyList()
     private val speechCapture = PlaybackSpeechBuffer()
@@ -143,6 +144,28 @@ class NativePlaybackService : MediaSessionService() {
                 if (!preferredQualityApplied && (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality == PreferredVideoQuality.LOW && lowestVideoTrack(tracks) != null) {
                     preferredQualityApplied = true
                     applyLowestVideoTrack(player, tracks)
+                }
+                if (!preferredAudioLabelApplied) {
+                    preferredAudioLabelApplied = true
+                    val audioPrefs = getSharedPreferences("native-audio-choice", MODE_PRIVATE)
+                    val savedLanguage = audioPrefs.getString("language", null)
+                    val savedLabel = audioPrefs.getString("label", null)
+                    // Language-tagged tracks are pre-selected via setPreferredAudioLanguage.
+                    // Label-only masters (CineJoy "Track 1..4") need an explicit override
+                    // so German stays selected across restarts on every source.
+                    if (savedLanguage.isNullOrBlank() && !savedLabel.isNullOrBlank()) {
+                        val match = tracks.groups.asSequence().filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { group ->
+                            (0 until group.length).asSequence().map { group to it }
+                        }.firstOrNull { (group, index) ->
+                            group.isTrackSupported(index) && group.getTrackFormat(index).label == savedLabel
+                        }
+                        if (match != null) {
+                            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second))
+                                .build()
+                        }
+                    }
                 }
                 if (request?.preferEmbeddedSubtitles != true || embeddedSubtitlesActive) return
                 val language = canonicalSubtitleLanguageCode(request?.subtitleLanguage.orEmpty())
@@ -253,6 +276,7 @@ class NativePlaybackService : MediaSessionService() {
         relay?.close(); relay = null
         request = next
         preferredQualityApplied = false
+        preferredAudioLabelApplied = false
         val preferredAudio = getSharedPreferences("native-audio-choice", MODE_PRIVATE).getString("language", null)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)

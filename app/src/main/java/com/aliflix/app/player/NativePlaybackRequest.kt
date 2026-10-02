@@ -55,12 +55,12 @@ internal data class NativePlaybackRequest(
     }
 }
 
-/** An HLS variant is playable but can omit every alternate audio rendition in its master. */
+/** A variant/media playlist is playable but can omit every alternate audio rendition in its master. */
 internal fun shouldAwaitHlsMaster(stream: JSONObject, ageMs: Long): Boolean =
     (stream.optString("mimeType").contains("mpegurl", ignoreCase = true) ||
         stream.optString("url").contains(".m3u8", ignoreCase = true)) &&
         !stream.optString("manifestKind").equals("master", ignoreCase = true) &&
-        ageMs in 0 until 3_000L
+        ageMs in 0 until 8_000L
 
 /** Never let later video/progress reports demote an already-discovered master playlist. */
 internal fun shouldReplaceNativeStream(previous: JSONObject?, candidate: JSONObject): Boolean {
@@ -179,8 +179,10 @@ internal fun nativeStreamDiscoveryScript(): String = """
           return;
         }
         const candidate = window.__aliflixNativeStream(document.querySelector('video'));
-        // A progressive file is complete. For HLS, briefly wait for the master/alternate audio.
-        if (candidate && (candidate.mimeType === 'video/mp4' || Date.now() - startedAt >= 3000)) {
+        // A progressive file is complete. For HLS, wait for the master/alternate audio:
+        // a child media playlist frequently carries a single preselected language, and
+        // handing it off discards every other track (e.g. Dark S1E1 German on CineJoy).
+        if (candidate && (candidate.mimeType === 'video/mp4' || Date.now() - startedAt >= 8000)) {
           reportStream(candidate.url, candidate.mimeType, candidate.manifestKind === 'variant' ? 2 : 1);
         }
         if (Date.now() - startedAt > 60000) window.clearInterval(watcher);

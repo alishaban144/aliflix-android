@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "227"
-  RELEASE_VERSION_NAME: "3.1.137"
+  RELEASE_VERSION_CODE: "228"
+  RELEASE_VERSION_NAME: "3.1.138"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -286,6 +286,10 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
+          # v3.1.138: native CineJoy catalogue across servers with HLS masters and all audio; mobile only.
+          if [ "$GITHUB_REF_NAME" = 'release/v3.1.138' ] || [ "$GITHUB_REF_NAME" = 'v3.1.138' ]; then
+            ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.NativePlaybackRequestTest' --tests 'com.aliflix.app.player.CineJoyNativeCatalogTest' --tests 'com.aliflix.app.player.PlaybackSourceFallbackTest' --tests 'com.aliflix.app.model.MediaTest'
+          else
           # v3.1.137: focused playlist and source-preference checks; mobile only.
           if [ "$GITHUB_REF_NAME" = 'release/v3.1.137' ] || [ "$GITHUB_REF_NAME" = 'v3.1.137' ]; then
             ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.NativePlaybackRequestTest' --tests 'com.aliflix.app.player.PlaybackSourceFallbackTest'
@@ -303,6 +307,7 @@ jobs:
           if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.97' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.102' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.106' ] && [ "$GITHUB_REF_NAME" != 'v3.1.106' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.107' ] && [ "$GITHUB_REF_NAME" != 'v3.1.107' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.112' ] && [ "$GITHUB_REF_NAME" != 'v3.1.112' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.118' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.119' ] && [ "$GITHUB_REF_NAME" != 'v3.1.119' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.120' ] && [ "$GITHUB_REF_NAME" != 'v3.1.120' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.121' ] && [ "$GITHUB_REF_NAME" != 'v3.1.121' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.122' ] && [ "$GITHUB_REF_NAME" != 'v3.1.122' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.123' ] && [ "$GITHUB_REF_NAME" != 'v3.1.123' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.124' ] && [ "$GITHUB_REF_NAME" != 'v3.1.124' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.125' ] && [ "$GITHUB_REF_NAME" != 'v3.1.125' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.126' ] && [ "$GITHUB_REF_NAME" != 'v3.1.126' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.128' ] && [ "$GITHUB_REF_NAME" != 'v3.1.128' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.129' ] && [ "$GITHUB_REF_NAME" != 'v3.1.129' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.130' ] && [ "$GITHUB_REF_NAME" != 'v3.1.130' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.131' ] && [ "$GITHUB_REF_NAME" != 'v3.1.131' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.132' ]; then
             ./gradlew testMobileDebugUnitTest
             ./gradlew lintMobileDebug
+          fi
           fi
           fi
           fi
@@ -336,7 +341,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Preserve HLS master manifests with alternate audio, refresh track selector when tracks appear, remember audio language, prioritize chosen CineJoy source with fallback. Mobile only."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Native CineJoy catalogue across all servers with HLS masters and every audio track including German, longer master wait and label-aware audio memory on every source. Mobile only."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -364,7 +369,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Mobile playback: preserve HLS masters and alternate audio renditions, refresh selectable tracks and remember preferred audio language. Attempt the selected CineJoy source before fallback. TV unchanged."
+          body: "Mobile playback: resolve CineJoy through its native catalogue across every server so Dark S1E1 and every title play with their HLS master and all audio tracks including German. Longer master wait, variant probe fix, and label-aware audio memory apply to all streaming sources. TV unchanged."
 
           files: |
             aliflix-mobile.apk

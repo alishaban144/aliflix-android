@@ -14,11 +14,27 @@ class NativePlaybackRequestTest {
         val variant = JSONObject().put("url", "https://cdn.example/de.m3u8").put("mimeType", "application/x-mpegURL").put("manifestKind", "variant")
         val master = JSONObject().put("url", "https://cdn.example/master.m3u8").put("mimeType", "application/x-mpegURL").put("manifestKind", "master")
         assertTrue(shouldAwaitHlsMaster(variant, 1000))
-        assertFalse(shouldAwaitHlsMaster(variant, 3000))
+        assertTrue(shouldAwaitHlsMaster(variant, 3000))
+        assertTrue(shouldAwaitHlsMaster(variant, 7999))
+        assertFalse(shouldAwaitHlsMaster(variant, 8000))
         assertFalse(shouldAwaitHlsMaster(master, 0))
         assertTrue(shouldReplaceNativeStream(variant, master))
         assertFalse(shouldReplaceNativeStream(master, variant))
         assertTrue(nativeStreamDiscoveryScript().contains("TYPE=AUDIO"))
+    }
+
+    @Test fun audioTrackLabelsKeepEveryRenditionSelectable() {
+        // CineJoy masters tag renditions Track 1..4 with no language; German stays pickable.
+        assertEquals("Track 1", formatAudioTrackLabel(null, "Track 1"))
+        assertEquals("Track 2", formatAudioTrackLabel("", "Track 2"))
+        assertEquals("Original audio", formatAudioTrackLabel(null, null))
+        assertEquals("Original audio", formatAudioTrackLabel("", "  "))
+        // Language-tagged tracks show the language; both together show both.
+        assertEquals("German", formatAudioTrackLabel("de", null))
+        assertEquals("German • Track 2", formatAudioTrackLabel("de", "Track 2"))
+        assertEquals("German", formatAudioTrackLabel("de", "German"))
+        assertEquals("1080p", formatVideoTrackLabel(1080))
+        assertEquals("Original", formatVideoTrackLabel(0))
     }
 
     @Test fun blobsAndNonNetworkSourcesCannotBeHandedToTheTv() {

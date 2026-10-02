@@ -214,7 +214,7 @@ internal fun NativePlayerScreen(
     onRotate: () -> Unit = {},
     onSubtitleSearch: () -> Unit = {},
     onSubtitle: (SubtitleTrack) -> Unit = {},
-    onAudioSelected: (String?) -> Unit = {},
+    onAudioSelected: (String?, String?) -> Unit = { _, _ -> },
     onSubtitleDisable: () -> Unit = {},
     onSubtitleDelayChange: (Int) -> Unit = {},
     onSyncWithAudio: () -> Unit = {},
@@ -913,7 +913,7 @@ internal fun NativePlayerScreen(
                             player?.let { it.trackSelectionParameters = it.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build() }
                             sheet = null
                         }
-                        TrackOptions(player, C.TRACK_TYPE_VIDEO, trackRevision) { sheet = null }
+                        TrackOptions(player, C.TRACK_TYPE_VIDEO, trackRevision) { _, _ -> sheet = null }
                     }
 
                     "Audio & subtitles" -> {
@@ -1033,7 +1033,7 @@ internal fun NativePlayerScreen(
 
                         Spacer(Modifier.height(4.dp))
                         Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision) { onAudioSelected(it) }
+                        TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision) { language, label -> onAudioSelected(language, label) }
 
                         Spacer(Modifier.height(4.dp))
                         Text("SUBTITLES", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
@@ -1044,7 +1044,7 @@ internal fun NativePlayerScreen(
                             player?.let { it.trackSelectionParameters = it.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build() }
                             onSubtitleDisable()
                         }
-                        TrackOptions(player, C.TRACK_TYPE_TEXT, trackRevision) { }
+                        TrackOptions(player, C.TRACK_TYPE_TEXT, trackRevision) { _, _ -> }
 
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("More Subtitles", Modifier.weight(1f), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
@@ -1140,14 +1140,15 @@ private fun SheetOption(
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-private fun TrackOptions(player: Player?, type: Int, revision: Int, onSelect: (String?) -> Unit) {
+private fun TrackOptions(player: Player?, type: Int, revision: Int, onSelect: (String?, String?) -> Unit) {
     val groups = remember(player, type, revision) { player?.currentTracks?.groups.orEmpty().filter { it.type == type } }
     groups.forEach { group ->
         (0 until group.length).filter { group.isTrackSupported(it, true) }.forEach { index ->
             val format = group.getTrackFormat(index)
-            val label = if (type == C.TRACK_TYPE_VIDEO) format.height.takeIf { it > 0 }?.let { "${it}p" } ?: "Original"
+            val label = if (type == C.TRACK_TYPE_VIDEO) formatVideoTrackLabel(format.height)
+            else if (type == C.TRACK_TYPE_AUDIO) formatAudioTrackLabel(format.language, format.label)
             else format.label ?: format.language?.let { Locale.forLanguageTag(it).displayLanguage }
-            ?: if (type == C.TRACK_TYPE_AUDIO) "Original audio" else "Subtitles"
+            ?: "Subtitles"
             SheetOption(label, selected = group.isTrackSelected(index)) {
                 player?.let {
                     it.trackSelectionParameters = it.trackSelectionParameters.buildUpon()
@@ -1155,7 +1156,7 @@ private fun TrackOptions(player: Player?, type: Int, revision: Int, onSelect: (S
                         .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
                         .build()
                 }
-                onSelect(format.language)
+                onSelect(format.language, format.label)
             }
         }
     }
