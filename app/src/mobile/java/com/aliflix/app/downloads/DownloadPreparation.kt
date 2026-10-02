@@ -19,18 +19,35 @@ import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal data class DownloadQuality(val label: String, val height: Int, val bytes: Long, val estimated: Boolean, val keys: List<StreamKey>) {
+internal data class DownloadQuality(val label: String, val height: Int, val bytes: Long, val estimated: Boolean,
+    val keys: List<StreamKey>, val audioGroupId: String? = null) {
     val sizeLabel get() = (if (estimated && bytes > 0) "≈ " else "") + downloadSize(bytes)
 }
+internal data class DownloadAudioTrack(val label: String, val language: String?, val groupId: String, val index: Int)
 internal data class PreparedDownload(val selection: PlaybackSelection, val playback: NativePlaybackRequest,
-    val qualities: List<DownloadQuality>, val hasOriginalSubtitles: Boolean, val server: String = "")
+    val qualities: List<DownloadQuality>, val hasOriginalSubtitles: Boolean, val server: String = "",
+    val audioTracks: List<DownloadAudioTrack> = emptyList()) {
+    fun audioTracksFor(quality: DownloadQuality) = audioTracks.filter { it.groupId == quality.audioGroupId }
+}
+
+internal fun downloadProviderOrder(selection: PlaybackSelection): List<PlaybackProvider> =
+    (listOf(PlaybackProviderId.CINEJOY, selection.source.identity) + mobileGeneralPlaybackProviders())
+        .filter { it.isAvailableFor(selection.media) }.distinct()
+
+internal fun downloadStreamKeys(quality: DownloadQuality, tracks: List<DownloadAudioTrack>, audioIndex: Int?): List<StreamKey> {
+    if (audioIndex == null) return quality.keys
+    val available = tracks.filter { it.groupId == quality.audioGroupId }
+    val chosen = if (audioIndex == -1) available else available.filter { it.index == audioIndex }
+    require(chosen.isNotEmpty()) { "The selected audio track is unavailable for this quality." }
+    return (quality.keys.filterNot { it.groupIndex == 1 } + chosen.map { StreamKey(1, it.index) }).sorted()
+}
 
 internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLayout, selection: PlaybackSelection,
     language: String): PreparedDownload {
     val progress = (activity.application as AliflixApplication).playbackProgressStore
     val prefs = PlaybackProviderRepository(activity).preferences.value
     var last: Exception? = null
-    val providers = listOf(selection.source.identity) + mobileGeneralPlaybackProviders().filter { it != selection.source.identity }
+    val providers = downloadProviderOrder(selection)
     for (provider in providers) {
         currentCoroutineContext().ensureActive()
         val candidate = selection.copy(source = if (provider == selection.source.identity) selection.source else prefs.sourceFor(selection.media, provider))
@@ -225,6 +242,10 @@ internal suspend fun inspectDownload(selection: PlaybackSelection, request: Nati
                 require(it.protectionSchemes == null) { "This video is protected." }
                 it.durationUs / 1_000_000.0
             } ?: 0.0
+            val audioTracks = manifest.audios.withIndex().map { (index, rendition) ->
+                DownloadAudioTrack(formatAudioTrackLabel(rendition.format.language, rendition.format.label),
+                    rendition.format.language, rendition.groupId, index)
+            }
             val qualities = manifest.variants.mapIndexed { index, variant ->
                 require(variant.format.drmInitData == null) { "This video is protected." }
                 val audio = manifest.audios.withIndex().filter { it.value.groupId == variant.audioGroupId }
@@ -238,12 +259,12 @@ internal suspend fun inspectDownload(selection: PlaybackSelection, request: Nati
                 val bytes = if (bitrate > 0 && duration > 0) (bitrate * duration / 8 * 1.03).toLong()
                     else (if (index == 0) firstPlaylist else playlist(variant.url.toString()) as? HlsMediaPlaylist)?.let(::estimateSegments) ?: 0
                 val height = variant.format.height.coerceAtLeast(0)
-                DownloadQuality(if (height > 0) "${height}p" else "Original", height, bytes, true, keys)
+                DownloadQuality(if (height > 0) "${height}p" else "Original", height, bytes, true, keys, variant.audioGroupId)
             }.sortedByDescending { it.height }.distinctBy { it.height }
             val embedded = manifest.muxedCaptionFormats.orEmpty().any {
                 canonicalSubtitleLanguageCode(it.language.orEmpty()) == canonicalSubtitleLanguageCode(language)
             }
-            PreparedDownload(selection, request, qualities, subtitle != null || embedded)
+            PreparedDownload(selection, request, qualities, subtitle != null || embedded, audioTracks = audioTracks)
         }
         is HlsMediaPlaylist -> {
             require(manifest.hasEndTag) { "Live streams cannot be downloaded." }
@@ -256,7 +277,8 @@ internal suspend fun inspectDownload(selection: PlaybackSelection, request: Nati
     }
 }
 
-internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, language: String, autoSubtitles: Boolean): DownloadRequest {
+internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, language: String, autoSubtitles: Boolean,
+    audioIndex: Int? = null): DownloadRequest {
     var vtt = playback.subtitlesVtt
     if (!hasOriginalSubtitles && vtt.isBlank() && language.isNotBlank()) {
         val repo = SubdlSubtitleRepository()
@@ -275,7 +297,8 @@ internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, 
         preferEmbeddedSubtitles = hasOriginalSubtitles && language.isNotBlank(), offlineDownloadId = playbackProgressKey(selection),
         offlineAutoSubtitles = autoSubtitles)
     return DownloadRequest.Builder(playbackProgressKey(selection), Uri.parse(playback.url))
-        .setMimeType(playback.mimeType).setStreamKeys(quality.keys.filter { language.isNotBlank() || it.groupIndex != 2 })
+        .setMimeType(playback.mimeType).setStreamKeys(downloadStreamKeys(quality, audioTracks, audioIndex)
+            .filter { language.isNotBlank() || it.groupIndex != 2 })
         .setData(JSONObject().put("playback", saved.toJson()).put("quality", quality.label)
             .put("estimate", quality.bytes).toString().toByteArray(Charsets.UTF_8)).build()
 }

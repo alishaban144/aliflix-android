@@ -78,4 +78,19 @@ class CineJoyNativeCatalogTest {
         assertTrue(shouldReplaceNativeStream(variant, master))
         assertFalse(shouldReplaceNativeStream(master, variant))
     }
+
+    @Test fun darkAudioMenuComesFromMasterNotVideoOnlyChild() {
+        val master = """
+            #EXTM3U
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Track 1",DEFAULT=YES,URI="audio_1.m3u8"
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Track 2",DEFAULT=NO,URI="audio_2.m3u8"
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Track 3",DEFAULT=NO,URI="audio_3.m3u8"
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Track 4",DEFAULT=NO,URI="audio_4.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,AUDIO="audio"
+            video_1080p.m3u8
+        """.trimIndent()
+        assertEquals(listOf("Track 1", "Track 2", "Track 3", "Track 4"),
+            CineJoyNativeCatalog.audioTracksInMaster(master))
+        assertTrue(CineJoyNativeCatalog.audioTracksInMaster("#EXTM3U\n#EXTINF:6,\nsegment.ts").isEmpty())
+    }
 }

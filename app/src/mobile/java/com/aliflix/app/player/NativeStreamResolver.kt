@@ -73,27 +73,16 @@ internal class NativeStreamResolver(
             )
         }
         if (selection.source.identity == PlaybackProviderId.CINEJOY) {
-            // Dark S1E1 is carried by Lisbon/Solara but 404s/errors on the other
-            // catalogue servers. Race the site's own encrypted catalogue so the
-            // first playable multivariant master wins with every alternate audio
-            // rendition (Track 1-4, including German) intact. The watch-route
-            // WebView below stays as a fallback when the catalogue is unreachable.
-            try {
-                return CineJoyNativeCatalog.resolve(
-                    selection, positionMs, excluded, preferredServer,
-                    onServers, strictPreferredServer, validateSingle,
-                    activity = activity,
-                    onServer = onServer,
-                ).also { close() }
-            } catch (error: Exception) {
-                currentCoroutineContext().ensureActive()
-                if (strictPreferredServer || error is IllegalStateException) throw error
-                // Fall through to the direct watch-route adapter.
-            }
+            return CineJoyNativeCatalog.resolve(
+                selection, positionMs, excluded, preferredServer,
+                onServers, strictPreferredServer, validateSingle,
+                activity = activity,
+                onServer = onServer,
+            ).also { close() }
         }
         val catalogueProvider = selection.source.identity in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY)
         val embeds = when {
-            selection.source.identity in setOf(PlaybackProviderId.CINEJOY, MobilePlaybackProvider.MOVY) ->
+            selection.source.identity == MobilePlaybackProvider.MOVY ->
                 listOf(selection.source.identity.displayName to checkNotNull(selection.entryUrl))
             catalogueProvider -> FmovieNativeCatalog().embeds(selection)
             else -> preferredNativeEmbeds(selection)

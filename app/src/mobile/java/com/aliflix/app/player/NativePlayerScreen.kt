@@ -917,6 +917,9 @@ internal fun NativePlayerScreen(
                     }
 
                     "Audio & subtitles" -> {
+                        Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision) { language, label -> onAudioSelected(language, label) }
+                        Spacer(Modifier.height(4.dp))
                         // Subtitle Sync / Delay
                         Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         val syncing = state.audioSyncState == "Syncing"
@@ -1030,10 +1033,6 @@ internal fun NativePlayerScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                             )
                         }
-
-                        Spacer(Modifier.height(4.dp))
-                        Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision) { language, label -> onAudioSelected(language, label) }
 
                         Spacer(Modifier.height(4.dp))
                         Text("SUBTITLES", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)

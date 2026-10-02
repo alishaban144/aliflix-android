@@ -15,6 +15,8 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 /** Shared bytes, never shared credentials: each candidate retains its own upstream factory. */
@@ -29,7 +31,7 @@ internal object StartupStreamCache {
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
 
-    suspend fun awaitPlayable(context: Context, request: NativePlaybackRequest) = withTimeout(8_000) {
+    suspend fun awaitPlayable(context: Context, request: NativePlaybackRequest) = withContext(Dispatchers.Main.immediate) { withTimeout(12_000) {
         val origin = java.net.URI(request.referer).let { "${it.scheme}://${it.rawAuthority}" }
         val http = DefaultHttpDataSource.Factory().setUserAgent(request.userAgent)
             .setConnectTimeoutMs(4_000).setReadTimeoutMs(4_000)
@@ -51,5 +53,5 @@ internal object StartupStreamCache {
             }
             check(player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }) { "No playable audio" }
         } finally { player.release() }
-    }
+    } }
 }

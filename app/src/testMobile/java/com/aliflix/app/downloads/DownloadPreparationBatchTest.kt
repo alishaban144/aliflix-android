@@ -11,6 +11,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DownloadPreparationBatchTest {
+    @Test fun cineJoyIsTheFirstDownloadSource() {
+        val dark = selection(1)
+        val order = downloadProviderOrder(dark)
+        assertEquals(PlaybackProviderId.CINEJOY, order.first())
+        assertEquals(1, order.count { it == PlaybackProviderId.CINEJOY })
+    }
+
+    @Test fun selectedAudioKeysRetainVideoAndSubtitlesAndCanKeepEveryTrack() {
+        val quality = DownloadQuality("1080p", 1080, 100, true,
+            listOf(StreamKey(0, 1), StreamKey(1, 0), StreamKey(2, 2)), "audio")
+        val tracks = (0..3).map { DownloadAudioTrack("Track ${it + 1}", null, "audio", it) }
+        assertEquals(listOf(StreamKey(0, 1), StreamKey(1, 3), StreamKey(2, 2)),
+            downloadStreamKeys(quality, tracks, 3))
+        assertEquals(listOf(StreamKey(0, 1)) + tracks.map { StreamKey(1, it.index) } + StreamKey(2, 2),
+            downloadStreamKeys(quality, tracks, -1))
+        assertEquals(quality.keys, downloadStreamKeys(quality, tracks, null))
+    }
+
     private val source = PlaybackSource(PlaybackProviderId.MOVIEPIRE, "https://selected.example")
     private fun selection(episode: Int, season: Int = 2, id: Int = 1396) =
         PlaybackSelection(Media(id, MediaType.TV, "Series"), season, episode, "Episode $episode")

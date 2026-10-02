@@ -146,10 +146,11 @@ class NativePlaybackService : MediaSessionService() {
                     applyLowestVideoTrack(player, tracks)
                 }
                 if (!preferredAudioLabelApplied) {
-                    preferredAudioLabelApplied = true
                     val audioPrefs = getSharedPreferences("native-audio-choice", MODE_PRIVATE)
                     val savedLanguage = audioPrefs.getString("language", null)
-                    val savedLabel = audioPrefs.getString("label", null)
+                    val savedLabel = selection?.let {
+                        audioPrefs.getString("label:${it.source.identity.name}:${it.key}", null)
+                    }
                     // Language-tagged tracks are pre-selected via setPreferredAudioLanguage.
                     // Label-only masters (CineJoy "Track 1..4") need an explicit override
                     // so German stays selected across restarts on every source.
@@ -160,11 +161,14 @@ class NativePlaybackService : MediaSessionService() {
                             group.isTrackSupported(index) && group.getTrackFormat(index).label == savedLabel
                         }
                         if (match != null) {
+                            preferredAudioLabelApplied = true
                             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                                 .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
                                 .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second))
                                 .build()
                         }
+                    } else {
+                        preferredAudioLabelApplied = true
                     }
                 }
                 if (request?.preferEmbeddedSubtitles != true || embeddedSubtitlesActive) return

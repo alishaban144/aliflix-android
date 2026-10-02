@@ -229,6 +229,7 @@ internal interface DownloadUiDependencies {
     var chosen by picker::chosen
     val prepared = session.prepared
     val quality = remember(media.key, season) { mutableStateMapOf<String, DownloadQuality>() }
+    val audio = remember(media.key, season) { mutableStateMapOf<String, Int>() }
     var sharedHeight by picker::height
     var language by picker::language
     val errors = session.errors
@@ -255,7 +256,14 @@ internal interface DownloadUiDependencies {
     val selectedKeys = chosenKeys.intersect(eligible)
 
     val preparing = selectedKeys.any { it in session.pending }
-    fun validated(key: String): Boolean = prepared[key]?.let { it.qualities.isNotEmpty() && quality[key] in it.qualities && key !in errors } == true
+    fun validated(key: String): Boolean = prepared[key]?.let { item ->
+        val selectedQuality = quality[key]
+        val selectedAudio = audio[key]
+        item.qualities.isNotEmpty() && selectedQuality in item.qualities && key !in errors &&
+            (selectedAudio == null || selectedQuality != null &&
+                (selectedAudio == -1 && item.audioTracksFor(selectedQuality).isNotEmpty() ||
+                    item.audioTracksFor(selectedQuality).any { track -> track.index == selectedAudio }))
+    } == true
     LaunchedEffect(media.key, season, language, retry, episodes, selectedKeys) {
         if (!activity.hasInternetConnection()) { error = "Connect to the internet and try again"; return@LaunchedEffect }
         session.prepare(store, selections.filter { it.first in selectedKeys }.map { (key, raw) -> key to raw.copy(source = prefs.sourceFor(media)) }, language)
@@ -265,6 +273,10 @@ internal interface DownloadUiDependencies {
             val target = sharedHeight ?: store.preferredHeight
             if (quality[key] !in item.qualities || sharedHeight != null) {
                 quality[key] = item.qualities.firstOrNull { it.height == preferredDownloadHeight(item.qualities.map { q -> q.height }, target) } ?: item.qualities.first()
+            }
+            audio[key]?.let { selectedAudio ->
+                val tracks = quality[key]?.let(item::audioTracksFor).orEmpty()
+                if (tracks.isEmpty() || selectedAudio != -1 && tracks.none { it.index == selectedAudio }) audio.remove(key)
             }
         } }
     }
@@ -412,7 +424,44 @@ internal interface DownloadUiDependencies {
                                             prepared[key]?.qualities.orEmpty().forEach { option ->
                                                 DropdownMenuItem(text = { Text("${option.label} · ${option.sizeLabel}") },
                                                     trailingIcon = { if (selected == option) Icon(Icons.Rounded.Check, null) },
-                                                    onClick = { sharedHeight = null; quality[key] = option; qualityMenu = false })
+                                                    onClick = { sharedHeight = null; quality[key] = option
+                                                        if (audio[key] != -1 && prepared[key]?.audioTracksFor(option)?.none { it.index == audio[key] } == true) audio.remove(key)
+                                                        qualityMenu = false })
+                                            }
+                                        }
+                                    }
+                                    val tracks = prepared[key]?.audioTracksFor(selected).orEmpty()
+                                    if (tracks.size > 1) {
+                                        Box {
+                                            var audioMenu by remember(key) { mutableStateOf(false) }
+                                            val choice = audio[key]
+                                            val name = when (choice) {
+                                                null -> "Default"
+                                                -1 -> "All tracks"
+                                                else -> tracks.firstOrNull { it.index == choice }?.label ?: "Default"
+                                            }
+                                            TextButton(onClick = { audioMenu = true }, enabled = !saving,
+                                                shape = AliflixCorners.Small,
+                                                colors = ButtonDefaults.textButtonColors(containerColor = AliflixAccentPrimary.copy(alpha = .14f))) {
+                                                Text("Audio: $name", color = AliflixAccentSecondary)
+                                                Icon(Icons.Rounded.ExpandMore, "Audio tracks", Modifier.size(18.dp))
+                                            }
+                                            DropdownMenu(audioMenu, { audioMenu = false },
+                                                shape = AliflixCorners.Chrome,
+                                                containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
+                                                tonalElevation = AliflixElevation.None,
+                                                shadowElevation = AliflixElevation.None) {
+                                                DropdownMenuItem(text = { Text("Default") },
+                                                    trailingIcon = { if (choice == null) Icon(Icons.Rounded.Check, null) },
+                                                    onClick = { audio.remove(key); audioMenu = false })
+                                                DropdownMenuItem(text = { Text("All tracks") },
+                                                    trailingIcon = { if (choice == -1) Icon(Icons.Rounded.Check, null) },
+                                                    onClick = { audio[key] = -1; audioMenu = false })
+                                                tracks.forEach { track ->
+                                                    DropdownMenuItem(text = { Text(track.label) },
+                                                        trailingIcon = { if (choice == track.index) Icon(Icons.Rounded.Check, null) },
+                                                        onClick = { audio[key] = track.index; audioMenu = false })
+                                                }
                                             }
                                         }
                                     }
@@ -445,7 +494,7 @@ internal interface DownloadUiDependencies {
                 Button(enabled = ready && !saving, shape = AliflixCorners.Card, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), onClick = {
                     if (!saving && ready) {
                         saving = true; error = null
-                        val selected = selectedKeys.map { prepared.getValue(it) to quality.getValue(it) }
+                        val selected = selectedKeys.map { Triple(prepared.getValue(it), quality.getValue(it), audio[it]) }
                         val requestedLanguage = if (noSubtitles) "" else language
                         if (store.requestNotifications && Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
                             permissions.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -454,8 +503,8 @@ internal interface DownloadUiDependencies {
                                 val blocked = store.blockedIds()
                                 val requests = coroutineScope {
                                     val semaphore = Semaphore(3)
-                                    selected.filter { playbackProgressKey(it.first.selection) !in blocked }.map { (item, selectedQuality) -> async {
-                                        semaphore.withPermit { item.downloadRequest(selectedQuality, requestedLanguage, prefs.autoDisplaySubtitles) }
+                                    selected.filter { playbackProgressKey(it.first.selection) !in blocked }.map { (item, selectedQuality, selectedAudio) -> async {
+                                        semaphore.withPermit { item.downloadRequest(selectedQuality, requestedLanguage, prefs.autoDisplaySubtitles, selectedAudio) }
                                     } }.awaitAll()
                                 }
                                 val latestBlocked = store.blockedIds()

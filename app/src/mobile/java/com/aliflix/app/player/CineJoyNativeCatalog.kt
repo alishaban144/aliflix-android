@@ -111,6 +111,26 @@ internal object CineJoyNativeCatalog {
         }.distinct()
     }
 
+    /** Reject child playlists: they omit the site's alternate audio menu. */
+    fun audioTracksInMaster(manifest: String): List<String> {
+        if (!manifest.lineSequence().firstOrNull()?.trim().orEmpty().startsWith("#EXTM3U") ||
+            !manifest.lineSequence().any { it.startsWith("#EXT-X-STREAM-INF:") }) return emptyList()
+        val audioGroups = manifest.lineSequence().filter { it.startsWith("#EXT-X-STREAM-INF:") }
+            .mapNotNull { Regex("""AUDIO="([^"]+)"""").find(it)?.groupValues?.get(1) }.toSet()
+        return manifest.lineSequence().filter { it.startsWith("#EXT-X-MEDIA:") && it.contains("TYPE=AUDIO") }
+            .mapNotNull { line ->
+                val group = Regex("""GROUP-ID="([^"]+)"""").find(line)?.groupValues?.get(1)
+                val name = Regex("""NAME="([^"]+)"""").find(line)?.groupValues?.get(1)
+                name?.takeIf { group in audioGroups }
+            }.distinct().toList()
+    }
+
+    private fun requireAudioMaster(url: String, userAgent: String) {
+        check(audioTracksInMaster(httpGet(url, userAgent)).isNotEmpty()) {
+            "CineJoy did not provide a multivariant stream with selectable audio"
+        }
+    }
+
     private fun httpGet(url: String, userAgent: String): String {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -214,7 +234,7 @@ internal object CineJoyNativeCatalog {
         val live = runCatching { fetchServers(userAgent) }.getOrDefault(FALLBACK_SERVERS)
         val orderedServers = (listOfNotNull(preferred) + live).distinct()
         val labels = orderedServers.map(::serverLabel)
-        if (labels.isNotEmpty()) onServers(labels)
+        if (labels.isNotEmpty()) withContext(Dispatchers.Main.immediate) { onServers(labels) }
         val candidates = orderedServers.filter { serverLabel(it) !in excluded }
             .let { remaining ->
                 if (strictPreferredServer) {
@@ -233,6 +253,7 @@ internal object CineJoyNativeCatalog {
                 val playlists = playlistsForServer(selection, server, userAgent)
                 val master = playlists.firstOrNull()
                     ?: throw NoNativeServersException()
+                requireAudioMaster(master, userAgent)
                 val request = NativePlaybackRequest(
                     url = master,
                     mimeType = "application/x-mpegURL",
@@ -254,7 +275,7 @@ internal object CineJoyNativeCatalog {
             currentCoroutineContext().ensureActive()
             throw (error as? NoNativeServersException ?: NoNativeServersException())
         }
-        onServer(serverLabel(winner.first))
+        withContext(Dispatchers.Main.immediate) { onServer(serverLabel(winner.first)) }
         winner.second
     }
 }

@@ -217,15 +217,17 @@ class NativePlayerActivity : FragmentActivity() {
                     onSubtitle = ::applySubtitle,
                     onAudioSelected = { language, label ->
                         val prefs = getSharedPreferences("native-audio-choice", MODE_PRIVATE).edit()
+                        val labelKey = selection?.let { "label:${it.source.identity.name}:${it.key}" }
                         if (!language.isNullOrBlank() && language != "und") {
                             prefs.putString("language", language)
-                            prefs.remove("label")
+                            labelKey?.let(prefs::remove)
                         } else if (!label.isNullOrBlank()) {
                             // CineJoy masters tag renditions "Track 1..4" with no language;
-                            // remember the label so German stays selected across restarts.
+                            // remember this title and source's choice across restarts.
                             prefs.remove("language")
-                            prefs.putString("label", label)
+                            labelKey?.let { prefs.putString(it, label) }
                         }
+                        prefs.remove("label")
                         prefs.apply()
                     },
                     onSubtitleDisable = ::disableSubtitles,
@@ -572,9 +574,13 @@ class NativePlayerActivity : FragmentActivity() {
                 val seriesKey = "series:${current.media.key}"
                 var detailWarm = if (preferredServer == null) DetailPreloadStore.take(current, resume) else null
                 val savedRoute = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { routeStore.load(current) }
-                    ?.takeIf { preferredServer == null && it.selection.source.identity !in exhaustedSources &&
+                    ?.takeIf { preferredServer == null &&
+                        current.source.identity != com.aliflix.app.model.PlaybackProviderId.CINEJOY &&
+                        it.selection.source.identity == current.source.identity &&
+                        it.selection.source.identity !in exhaustedSources &&
                         (!current.source.identity.isAnimeNative || it.selection.source.identity == current.source.identity) }
-                val savedProvider = savedRoute?.selection?.source?.identity?.name ?: if (!current.source.identity.isAnimeNative && current.media.type == com.aliflix.app.model.MediaType.TV) history.getString("$seriesKey:provider", null) else null
+                val savedProvider = savedRoute?.selection?.source?.identity?.name
+                    ?: history.getString("$seriesKey:provider", null)?.takeIf { it == current.source.identity.name }
                 val sources = (listOfNotNull(savedRoute?.selection) + playbackSourceFallbacks(current, preferences)).distinctBy { it.source }.filter { it.source.identity !in exhaustedSources }
                 val orderedSources = sources.sortedBy { if (it.source.identity.name == savedProvider) 0 else 1 }
                 val excludedBySource = mutableMapOf<com.aliflix.app.model.PlaybackProvider, MutableSet<String>>()

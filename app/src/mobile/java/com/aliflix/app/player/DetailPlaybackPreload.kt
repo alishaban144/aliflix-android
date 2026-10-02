@@ -13,7 +13,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.aliflix.app.data.PlaybackProgressStore
-import com.aliflix.app.data.PlaybackProviderRepository
 import com.aliflix.app.data.playbackProgressKey
 import com.aliflix.app.model.*
 import kotlinx.coroutines.*
@@ -28,6 +27,7 @@ internal object DetailPreloadStore {
     fun take(selection: PlaybackSelection, positionMs: Long): Triple<PlaybackSelection, String, NativePlaybackRequest>? {
         val entry = claimed.also { claimed = null } ?: return null
         if (playbackProgressKey(entry.selection) != playbackProgressKey(selection) ||
+            entry.selection.source.identity != selection.source.identity ||
             SystemClock.elapsedRealtime() - entry.at > 120_000 ||
             kotlin.math.abs(entry.request.positionMs - positionMs) > 3_000) return null
         val selected = entry.selection.copy(media = selection.media, availableEpisodes = selection.availableEpisodes)
@@ -38,6 +38,7 @@ internal object DetailPreloadStore {
 internal fun claimDetailPreload(selection: PlaybackSelection) {
     DetailPreloadStore.claimed = DetailPreloadStore.ready?.takeIf {
         playbackProgressKey(it.selection) == playbackProgressKey(selection) &&
+            it.selection.source.identity == selection.source.identity &&
             SystemClock.elapsedRealtime() - it.at < 120_000 &&
             selection.source.identity == PlaybackProviderId.CINEJOY
     }
@@ -50,8 +51,6 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
     val activity = LocalActivity.current as? ComponentActivity ?: return
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val progress = remember(activity) { PlaybackProgressStore(activity) }
-    val preferences by remember(activity) { PlaybackProviderRepository(activity) }
-        .preferences.collectAsState()
     val selection = remember(media.key, episode?.seasonNumber, episode?.number) {
         PlaybackSelection(media, episode?.seasonNumber, episode?.number, episode?.title, episodes,
             PlaybackSource(PlaybackProviderId.CINEJOY))
@@ -78,19 +77,18 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
                 if (caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true ||
                     offline?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) return@repeatOnLifecycle
                 val position = ((PlaybackProgressStore(activity).progressFor(selection)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
-                // Two providers can prepare concurrently, each with one server at a time.
+                // Preload only the source the user is choosing. The CineJoy catalogue
+                // races its own servers without switching provider identity.
                 withTimeoutOrNull(30_000) {
                     try {
-                        val ready = firstSuccessful(playbackSourceFallbacks(selection, preferences).take(3).map { candidate -> suspend {
-                            val adapter = NativeStreamResolver(activity, progress, host)
-                            try {
-                                var server = candidate.source.identity.displayName
-                                val request = withTimeout(resolveBudgetMillis(candidate.source.identity)) {
-                                    adapter.resolve(candidate, position, emptySet(), parallelism = 1) { server = it }
-                                }
-                                DetailPreloadStore.Entry(owner, candidate, server, request)
-                            } finally { adapter.close() }
-                        } }, parallelism = 2)
+                        val adapter = NativeStreamResolver(activity, progress, host)
+                        val ready = try {
+                            var server = selection.source.identity.displayName
+                            val request = withTimeout(resolveBudgetMillis(selection.source.identity)) {
+                                adapter.resolve(selection, position, emptySet(), parallelism = 2) { server = it }
+                            }
+                            DetailPreloadStore.Entry(owner, selection, server, request)
+                        } finally { adapter.close() }
                         ensureActive()
                         DetailPreloadStore.ready = ready
                     } catch (error: Exception) {
