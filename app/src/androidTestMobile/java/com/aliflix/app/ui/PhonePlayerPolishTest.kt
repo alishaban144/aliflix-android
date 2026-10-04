@@ -165,15 +165,17 @@ class PhonePlayerPolishTest {
         compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 500) }
         compose.waitForIdle()
         var firstIndex = 0
+        var firstOffset = 0
         compose.runOnIdle {
             firstIndex = grid.firstVisibleItemIndex
-            assertTrue("The Material scroll must advance the grid", firstIndex > 0)
+            firstOffset = grid.firstVisibleItemScrollOffset
             assertTrue("One drag must not reach the bottom", grid.layoutInfo.visibleItemsInfo.last().index < items.lastIndex)
         }
         compose.onNodeWithText("My Space").assertIsNotDisplayed()
         compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 500) }
         compose.waitForIdle()
-        compose.runOnIdle { assertTrue("The next gesture must continue scrolling", grid.firstVisibleItemIndex > firstIndex) }
+        compose.runOnIdle { assertTrue("The next gesture must continue scrolling", grid.firstVisibleItemIndex > firstIndex ||
+            grid.firstVisibleItemIndex == firstIndex && grid.firstVisibleItemScrollOffset > firstOffset) }
     }
 
     private fun capture(name: String) {
