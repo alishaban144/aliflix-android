@@ -33,10 +33,10 @@ import java.util.zip.ZipInputStream
 @LooperMode(LooperMode.Mode.PAUSED)
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class CineJoyPlaybackIntegrationTest {
-    private class Fixture : AutoCloseable {
+    private class Fixture(adaptiveVideo: Boolean = false) : AutoCloseable {
         val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
-        @Volatile var failTrack = ""
-        @Volatile var failuresRemaining = 0
+        @Volatile var failTrack = if (adaptiveVideo) "high/" else ""
+        @Volatile var failuresRemaining = if (adaptiveVideo) 100 else 0
         val saved = mutableListOf<String?>()
         val audio = FakeRenderer(C.TRACK_TYPE_AUDIO)
         val video = FakeRenderer(C.TRACK_TYPE_VIDEO)
@@ -51,7 +51,8 @@ class CineJoyPlaybackIntegrationTest {
         private val master = buildString {
             append("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
             for (i in 1..4) append("#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Track $i\",DEFAULT=${if (i == 1) "YES" else "NO"},AUTOSELECT=YES,URI=\"track$i/audio.m3u8\"\n")
-            append("#EXT-X-STREAM-INF:BANDWIDTH=300000,RESOLUTION=160x90,CODECS=\"avc1.42c00b,mp4a.40.2\",AUDIO=\"audio\"\nvideo.m3u8\n")
+            append("#EXT-X-STREAM-INF:BANDWIDTH=300000,RESOLUTION=160x90,CODECS=\"avc1.42c00b,mp4a.40.2\",AUDIO=\"audio\"\n${if (adaptiveVideo) "high/" else ""}video.m3u8\n")
+            if (adaptiveVideo) append("#EXT-X-STREAM-INF:BANDWIDTH=100000,RESOLUTION=80x45,CODECS=\"avc1.42c00b,mp4a.40.2\",AUDIO=\"audio\"\nlow/video.m3u8\n")
         }.toByteArray()
         private val request = NativePlaybackRequest("https://fixture.test/master.m3u8", "application/x-mpegURL",
             CineJoyNativeCatalog.REFERER, "test", "", "Fixture", 0, true, preferredVideoWidth = 160, preferredVideoHeight = 90)
@@ -72,7 +73,7 @@ class CineJoyPlaybackIntegrationTest {
                 override fun getUri(): Uri? = delegate?.uri
                 override fun close() { delegate?.close(); delegate = null }
                 override fun addTransferListener(listener: TransferListener) {}
-            }, request)
+            }, request, adaptiveVideo = adaptiveVideo)
         }
         val player = ExoPlayer.Builder(RuntimeEnvironment.getApplication(),
             androidx.media3.exoplayer.RenderersFactory { _, _, _, _, _ -> arrayOf(video, audio) })
@@ -85,7 +86,8 @@ class CineJoyPlaybackIntegrationTest {
             player.addListener(recovery)
             player.setMediaItem(MediaItem.fromUri(request.url))
             player.prepare()
-            run(player).untilState(Player.STATE_READY)
+            if (adaptiveVideo) run(player).ignoringNonFatalErrors().untilState(Player.STATE_READY)
+            else run(player).untilState(Player.STATE_READY)
             recovery.tick()
             recovery.tick()
         }
@@ -113,10 +115,10 @@ class CineJoyPlaybackIntegrationTest {
             assertNull(f.player.playerError)
         }
         assertEquals("Track 4", f.saved.last())
-        assertEquals(1, f.requests.count { it == "master.m3u8" })
+        assertEquals("https://fixture.test/master.m3u8", f.player.currentMediaItem?.localConfiguration?.uri.toString())
     }
 
-    @Test fun transient502DuringAudioSwitchRetriesFragmentWithoutReloadingMaster() = Fixture().use { f ->
+    @Test fun transient502DuringAudioSwitchRetriesWithinTheSelectedStream() = Fixture().use { f ->
         f.failTrack = "track2/"; f.failuresRemaining = 2
         f.select("Track 2")
         f.player.seekTo(10_000)
@@ -124,7 +126,23 @@ class CineJoyPlaybackIntegrationTest {
         assertEquals(0, f.failuresRemaining)
         assertEquals("Track 2", f.selected())
         assertEquals("Track 2", f.saved.last())
-        assertEquals(1, f.requests.count { it == "master.m3u8" })
+        assertEquals("https://fixture.test/master.m3u8", f.player.currentMediaItem?.localConfiguration?.uri.toString())
+    }
+
+    @Test fun failedVideoQualityFallsBackWithinMasterAndRetainsRequestedAudio() = Fixture(adaptiveVideo = true).use { f ->
+        assertTrue(f.requests.any { it.startsWith("high/") && it.endsWith(".m4s") })
+        assertTrue(f.requests.any { it.startsWith("low/") && it.endsWith(".m4s") })
+        f.select("Track 4")
+        f.player.seekTo(8_000)
+        f.settle()
+        val beforeAudio = f.audio.sampleBufferReadCount
+        val beforeVideo = f.video.sampleBufferReadCount
+        androidx.media3.test.utils.robolectric.TestPlayerRunHelper.play(f.player).ignoringNonFatalErrors().untilPositionAtLeast(11_000)
+        assertTrue(f.audio.sampleBufferReadCount > beforeAudio)
+        assertTrue(f.video.sampleBufferReadCount > beforeVideo)
+        assertEquals("Track 4", f.selected())
+        assertNull(f.player.playerError)
+        assertEquals("https://fixture.test/master.m3u8", f.player.currentMediaItem?.localConfiguration?.uri.toString())
     }
 
     @Test fun controllerTrackIdsAreTranslatedBackToThePlayersRealAudioGroup() = Fixture().use { f ->
@@ -148,7 +166,7 @@ class CineJoyPlaybackIntegrationTest {
         assertEquals("Track 4", f.selected())
         assertEquals(2_000L, f.player.currentPosition)
         assertEquals(listOf("Track 4"), f.saved)
-        assertEquals(1, f.requests.count { it == "master.m3u8" })
+        assertEquals("https://fixture.test/master.m3u8", f.player.currentMediaItem?.localConfiguration?.uri.toString())
     }
 
     @Test fun failedAudioRollsBackWithoutPoisoningPreferenceAndCanBeSelectedAgain() = Fixture().use { f ->
@@ -180,7 +198,7 @@ class CineJoyPlaybackIntegrationTest {
         f.settle()
         assertEquals("Track 4", f.selected())
         assertEquals(12_000L, f.player.currentPosition)
-        assertEquals(1, f.requests.count { it == "master.m3u8" })
+        assertEquals("https://fixture.test/master.m3u8", f.player.currentMediaItem?.localConfiguration?.uri.toString())
     }
 
     @Test fun seekingOutOfAFailedFragmentRestartsIdlePlayerWithTheSameAudio() = Fixture().use { f ->

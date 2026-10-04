@@ -142,7 +142,9 @@ class NativePlaybackService : MediaSessionService() {
                 val upstream = StartupStreamCache.factory(this, DefaultDataSource.Factory(this, playlists)).createDataSource()
                     val current = request
                     if (current != null && current.referer == CineJoyNativeCatalog.REFERER)
-                        CineJoyManifestDataSource(upstream, current) else upstream
+                        CineJoyManifestDataSource(upstream, current,
+                            adaptiveVideo = (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality != PreferredVideoQuality.LOW,
+                        ) else upstream
                 }
             }).setLoadErrorHandlingPolicy(CineJoyLoadErrorPolicy { request?.referer == CineJoyNativeCatalog.REFERER }))
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
@@ -292,8 +294,8 @@ class NativePlaybackService : MediaSessionService() {
             .build()
         player.trackSelectionParameters = preferredQualityParameters(player.trackSelectionParameters,
             (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality)
-        // CineJoy is pinned in the manifest. Its 1920x1080 tag actually decodes to
-        // 2160x1080 for Dark: dimension constraints are not a reliable rendition pin.
+        // CineJoy can mislabel dimensions (Dark's 1080p decodes to 2160x1080).
+        // Keep its AVC quality ladder for Auto rather than forcing that heavy rendition.
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setMinVideoSize(0, 0)
             .build()
@@ -558,6 +560,15 @@ class NativePlaybackService : MediaSessionService() {
 
         internal val decodedAudioEvidence get() = activeService?.speechCapture?.let {
             it.generation to it.decodedFrameCount
+        }
+
+        /** Main-thread diagnostic for device acceptance; never exposes media bytes. */
+        internal fun playbackEvidence(): String {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            val service = activeService ?: return "Service absent"
+            return listOf("local" to service.localPlayer, "session" to service.player).joinToString("\n") { (name, player) ->
+                "$name state=${player.playbackState},position=${player.currentPosition},buffer=${player.totalBufferedDuration},playing=${player.isPlaying},requested=${player.playWhenReady},error=${player.playerError?.stackTraceToString()}"
+            } + "\nrecovery=${service.cineJoyRecovery.message},enabled=${service.cineJoyRecovery.enabled},hasPlayed=${service.cineJoyRecovery.hasPlayed}"
         }
 
         internal fun pauseFromBack() {

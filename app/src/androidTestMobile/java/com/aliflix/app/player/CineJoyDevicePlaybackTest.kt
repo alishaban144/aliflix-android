@@ -31,6 +31,7 @@ class CineJoyDevicePlaybackTest {
         val season = arguments.getString("liveSeason")?.toIntOrNull() ?: 1
         val episode = arguments.getString("liveEpisode")?.toIntOrNull() ?: 1
         val output = File(context.getExternalFilesDir(null), "cinejoy-device-validation/s${season}e${episode}").apply { mkdirs() }
+        output.listFiles()?.filter { it.isFile }?.forEach { it.delete() }
         if (arguments.getString("clearStreamCache") == "true") {
             require(context.packageName.endsWith(".deviceprobe"))
             File(context.cacheDir, "playback-streams").deleteRecursively()
@@ -59,13 +60,23 @@ class CineJoyDevicePlaybackTest {
             val labels = audioLabels(scenario)
             assertEquals("Dark must expose every website audio rendition", 4, labels.size)
             val initialStream = NativePlaybackService.activeStreamUrl
-            output.resolve("startup.txt").writeText("readyMs=${SystemClock.elapsedRealtime() - startedAt}\nstream=$initialStream\n")
+            var videoTracks = ""
+            scenario.onActivity { activity ->
+                videoTracks = activity.playbackController!!.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+                    .joinToString("\n") { group -> "adaptive=${group.isAdaptiveSupported}: " + (0 until group.length).joinToString { index ->
+                        val f = group.getTrackFormat(index)
+                        "${f.width}x${f.height}/${f.bitrate}/${f.codecs}/selected=${group.isTrackSelected(index)}/supported=${group.isTrackSupported(index)}"
+                    } }
+            }
+            output.resolve("startup.txt").writeText("readyMs=${SystemClock.elapsedRealtime() - startedAt}\nstream=$initialStream\n$videoTracks\n")
 
             val audioButton = waitForNode(instrumentation, contentDescription = "Audio & Subtitles")
             assertTrue("Audio & Subtitles button must be clickable", clickNode(audioButton))
             labels.forEach { label -> waitForNode(instrumentation, text = label) }
 
-            val seekRounds = if (arguments.getString("deepSeeks") == "true")
+            val customSeeks = arguments.getString("liveSeekPositions")?.split(',')?.map { it.toLong() }
+            val seekRounds = if (customSeeks != null) customSeeks.map { List(labels.size) { _ -> it } }
+                else if (arguments.getString("deepSeeks") == "true")
                 listOf(13_000L, 245_000L, 600_000L, 1_200_000L, 2_600_000L, 37_000L).map { List(labels.size) { _ -> it } }
                 else listOf(listOf(5_000L, 13_000L, 37_000L, 73_000L))
             seekRounds.forEachIndexed { round, seeks -> labels.forEachIndexed { index, label ->
@@ -109,12 +120,64 @@ class CineJoyDevicePlaybackTest {
                     "label=$label\nseekMs=${seeks[index]}\npositionAdvanced=true\ndecodedPcm=true\nelapsedMs=${SystemClock.elapsedRealtime() - switchStartedAt}\n",
                 )
             } }
+            val soakSeconds = arguments.getString("soakSeconds")?.toIntOrNull() ?: 0
+            if (soakSeconds > 0) {
+                assertTrue(clickNode(waitForNode(instrumentation, text = "Track 3")))
+                scenario.onActivity { it.playbackController!!.seekTo(170_000); it.playbackController!!.play() }
+                waitFor("sustained playback warmup", 90_000) {
+                    var healthy = false
+                    scenario.onActivity { activity ->
+                        val player = activity.playbackController!!
+                        healthy = player.isPlaying && player.playbackState == Player.STATE_READY && player.currentPosition >= 174_000
+                    }
+                    healthy
+                }
+                var startPosition = 0L
+                scenario.onActivity { startPosition = it.playbackController!!.currentPosition }
+                val soakStart = SystemClock.elapsedRealtime()
+                var previousTime = soakStart
+                var wasBuffering = false
+                var bufferingMs = 0L
+                var position = startPosition
+                val sizes = mutableSetOf<String>()
+                val samples = mutableListOf<String>()
+                while (SystemClock.elapsedRealtime() - soakStart < soakSeconds * 1000L) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (wasBuffering) bufferingMs += now - previousTime
+                    previousTime = now
+                    scenario.onActivity { activity ->
+                        val player = activity.playbackController!!
+                        assertNull("Sustained playback source error", player.playerError)
+                        assertNull("Sustained Playback Problem", activity.playbackUiState.error)
+                        wasBuffering = player.playbackState == Player.STATE_BUFFERING
+                        position = player.currentPosition
+                        sizes += "${player.videoSize.width}x${player.videoSize.height}"
+                        if (samples.size <= (now - soakStart) / 5_000)
+                            samples += "elapsed=${now - soakStart},position=$position,bufferMs=${player.totalBufferedDuration},state=${player.playbackState},bandwidth=${androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(context).bitrateEstimate},size=${player.videoSize.width}x${player.videoSize.height}"
+                    }
+                    assertEquals(initialStream, NativePlaybackService.activeStreamUrl)
+                    Thread.sleep(250)
+                }
+                val elapsed = SystemClock.elapsedRealtime() - soakStart
+                output.resolve("soak-samples.txt").writeText(samples.joinToString("\n"))
+                output.resolve("soak.txt").writeText("elapsedMs=$elapsed\nadvancedMs=${position - startPosition}\nbufferingMs=$bufferingMs\nvideoSizes=$sizes\n")
+                assertTrue("Excessive buffering: $bufferingMs ms in $elapsed ms; video=$sizes", bufferingMs <= 3_000)
+                assertTrue("Playback stalled during soak: ${position - startPosition} ms in $elapsed ms", position - startPosition >= elapsed - 3_500)
+            }
             instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
                 output.resolve("dark-s1e1-all-audio.png").outputStream().use {
                     bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
                 }
                 bitmap.recycle()
             }
+        } catch (error: Throwable) {
+            var playerFailure: Throwable? = null
+            var nativeEvidence = ""
+            scenario.onActivity { playerFailure = it.playbackController?.playerError; nativeEvidence = NativePlaybackService.playbackEvidence() }
+            val nativeFailure = NativePlaybackService.playbackFailure
+            output.resolve("failure.txt").writeText(error.stackTraceToString() + "\nController:\n" +
+                playerFailure?.stackTraceToString().orEmpty() + "\nNative:\n" + nativeFailure?.stackTraceToString().orEmpty() + "\n$nativeEvidence")
+            throw error
         } finally {
             scenario.close()
             context.stopService(Intent(context, NativePlaybackService::class.java))

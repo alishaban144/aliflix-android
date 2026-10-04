@@ -40,7 +40,7 @@ class CineJoyLivePlaybackTest {
         val fragments = DataSource.Factory { CineJoyFragmentDataSource(http.createDataSource(), url) }
         val playlists = DataSource.Factory { CineJoyAudioPlaylistDataSource(fragments.createDataSource(), url, fragments) }
         val upstream = StartupStreamCache.factory(RuntimeEnvironment.getApplication(), playlists)
-        val factory = DataSource.Factory { CineJoyManifestDataSource(upstream.createDataSource(), request) }
+        val factory = DataSource.Factory { CineJoyManifestDataSource(upstream.createDataSource(), request, adaptiveVideo = true) }
         val video = FakeRenderer(C.TRACK_TYPE_VIDEO)
         val audio = FakeRenderer(C.TRACK_TYPE_AUDIO)
         val player = ExoPlayer.Builder(RuntimeEnvironment.getApplication(),

@@ -33,6 +33,22 @@ internal object CineJoyHlsProbe {
         return lines.filterIndexed { index, _ -> index !in removed }.joinToString("\n")
     }
 
+    /** Preserve the AVC quality ladder so native Auto can adapt, retaining every audio rendition. */
+    fun adaptiveVideo(body: String): String {
+        val lines = body.lineSequence().toList()
+        if (lines.firstOrNull()?.trim() != "#EXTM3U") return body
+        val variants = lines.indices.filter { lines[it].trim().startsWith("#EXT-X-STREAM-INF:") }
+        val avc = variants.filter { attribute(lines[it].trim(), "CODECS").orEmpty().contains("avc", ignoreCase = true) }
+        if (avc.isEmpty()) return body
+        val removed = mutableSetOf<Int>()
+        for (index in variants.filter { it !in avc }) {
+            removed.add(index)
+            (index + 1 until lines.size).firstOrNull { lines[it].isNotBlank() && !lines[it].trim().startsWith('#') }
+                ?.let(removed::add)
+        }
+        return lines.filterIndexed { index, _ -> index !in removed }.joinToString("\n")
+    }
+
     fun master(url: String, body: String): Master {
         require(body.lineSequence().firstOrNull()?.trim() == "#EXTM3U")
         val lines = body.lineSequence().map(String::trim).toList()

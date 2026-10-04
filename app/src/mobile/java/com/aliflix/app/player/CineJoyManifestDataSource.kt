@@ -13,6 +13,7 @@ import java.io.ByteArrayInputStream
 internal class CineJoyManifestDataSource(
     private val upstream: DataSource,
     private val request: NativePlaybackRequest,
+    private val adaptiveVideo: Boolean = false,
 ) : DataSource {
     private var manifest: ByteArrayInputStream? = null
     private var manifestUri: Uri? = null
@@ -25,7 +26,8 @@ internal class CineJoyManifestDataSource(
         buffered = true
         manifestUri = dataSpec.uri
         val body = DataSourceInputStream(upstream, dataSpec).use { it.readBytes().toString(Charsets.UTF_8) }
-        val bytes = CineJoyHlsProbe.pinVideo(body, request.preferredVideoWidth, request.preferredVideoHeight)
+        val bytes = (if (adaptiveVideo) CineJoyHlsProbe.adaptiveVideo(body)
+            else CineJoyHlsProbe.pinVideo(body, request.preferredVideoWidth, request.preferredVideoHeight))
             .toByteArray(Charsets.UTF_8)
         manifest = ByteArrayInputStream(bytes)
         return bytes.size.toLong()

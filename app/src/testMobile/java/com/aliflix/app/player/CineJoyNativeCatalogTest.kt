@@ -163,4 +163,16 @@ class CineJoyNativeCatalogTest {
         assertEquals(master, CineJoyHlsProbe.pinVideo(master, 999, 999))
     }
 
+    @Test fun autoRetainsEveryAvcQualityAndAllAudioInsteadOfForcing1080() {
+        val master = checkNotNull(javaClass.getResource("/cinejoy/dark-s1e1-master.m3u8")).readText()
+        val adaptive = CineJoyHlsProbe.adaptiveVideo(master)
+        val parsed = CineJoyHlsProbe.master("https://cdn.example/master.m3u8", adaptive)
+        assertEquals(setOf(360, 720, 1080), parsed.video.map { it.height }.toSet())
+        assertTrue(parsed.video.all { it.codecs.contains("avc") })
+        assertEquals(listOf("Track 1", "Track 2", "Track 3", "Track 4"), parsed.audio.map { it.label })
+        assertEquals(adaptive, CineJoyHlsProbe.adaptiveVideo(adaptive))
+        val media = "#EXTM3U\n#EXTINF:6.0,\nchunk.html\n#EXT-X-ENDLIST"
+        assertEquals(media, CineJoyHlsProbe.adaptiveVideo(media))
+    }
+
 }

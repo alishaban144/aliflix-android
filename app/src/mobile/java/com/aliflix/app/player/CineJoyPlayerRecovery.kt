@@ -47,12 +47,18 @@ internal class CineJoyPlayerRecovery(
         if (player.playbackState == Player.STATE_READY) hasPlayed = true
         audio.select(choice)
         val resume = stoppedOnFailure && resumeAfterFailure
+        val restartRendition = hasPlayed && selected() != choice
+        val play = player.playWhenReady || resume
         generation++; recovering = false; stoppedOnFailure = false; message = null
         bufferingSince = SystemClock.elapsedRealtime(); observedChoice = null
+        // Repeated rendition changes after distant seeks can leave the HLS audio
+        // clock blocked on an old timestamp adjuster while reporting READY. Flush
+        // that pipeline before changing audio, retaining the item and position.
+        if (restartRendition) player.stop()
         apply(choice)
         // Track overrides alone do not restart an IDLE player after a source error.
-        if (player.playerError != null || player.playbackState == Player.STATE_IDLE) player.prepare()
-        if (resume) player.play()
+        if (restartRendition || player.playerError != null || player.playbackState == Player.STATE_IDLE) player.prepare()
+        if (play) player.play()
         return true
     }
 
