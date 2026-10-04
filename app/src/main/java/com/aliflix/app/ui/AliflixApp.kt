@@ -1437,7 +1437,7 @@ fun AliflixApp(
 
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
-                PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> provider.defaultBaseUrl
+                MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> provider.defaultBaseUrl
                 PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
                 PlaybackProviderId.ANIKURO -> provider.defaultBaseUrl
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
@@ -1451,7 +1451,7 @@ fun AliflixApp(
                 defaultUrl = provider.defaultBaseUrl,
                 onSave = { newUrl ->
                     when (provider) {
-                        PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
+                        MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
@@ -1462,7 +1462,7 @@ fun AliflixApp(
                 },
                 onReset = {
                     when (provider) {
-                        PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
+                        MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()

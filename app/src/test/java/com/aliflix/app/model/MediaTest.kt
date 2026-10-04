@@ -126,9 +126,10 @@ class MediaTest {
     }
 
     @Test
-    fun mobilePlaybackProvidersStartWithCinejoy() {
+    fun mobilePlaybackProvidersStartWithFlixer() {
         assertEquals(
             listOf(
+                MobilePlaybackProvider.FLIXER,
                 PlaybackProviderId.CINEJOY,
                 PlaybackProviderId.MOVIEPIRE,
                 PlaybackProviderId.RAMOFLIX,
@@ -143,7 +144,7 @@ class MediaTest {
     @Test
     fun newInstallDefaultChangesOnlyForMobile() {
         assertEquals(
-            PlaybackProviderId.CINEJOY,
+            MobilePlaybackProvider.FLIXER,
             defaultGeneralPlaybackProvider(isTv = false),
         )
         assertEquals(

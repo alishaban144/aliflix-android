@@ -11,8 +11,8 @@ import kotlinx.coroutines.withTimeout
 
 class PlaybackSourceFallbackTest {
     @Test fun otherSourcesFallBackWithoutChangingEpisodeIdentity() {
-        val generalProviders = listOf(PlaybackProviderId.CINEJOY, PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY)
-        for (provider in (PlaybackProviderId.entries + MobilePlaybackProvider.entries).filter { it != PlaybackProviderId.CINEJOY }) {
+        val generalProviders = listOf(MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY)
+        for (provider in (PlaybackProviderId.entries + MobilePlaybackProvider.entries)) {
             val preferences = PlaybackPreferences(dorabyBaseUrl = "https://doraby.example", moviepireBaseUrl = "https://moviepire.example")
             val episode = PlaybackSelection(Media(1396, MediaType.TV, "Breaking Bad"), 2, 3, "Bit by a Dead Bee",
                 source = PlaybackSource(provider, "https://selected.example"))
@@ -54,19 +54,9 @@ class PlaybackSourceFallbackTest {
         assertFalse(PlaybackProviderId.ANIKURO.isAvailableFor(Media(550, MediaType.MOVIE, "Fight Club", originalLanguage = "en")))
         val selection = PlaybackSelection(anime, 1, 243, "Episode 243", source = PlaybackSource(PlaybackProviderId.ANIKURO))
         val choices = playbackSourceFallbacks(selection, PlaybackPreferences())
-        assertEquals(
-            listOf(
-                PlaybackProviderId.ANIKURO,
-                PlaybackProviderId.CINEJOY,
-                PlaybackProviderId.MIRURO,
-                PlaybackProviderId.RAMOFLIX,
-                PlaybackProviderId.DORABY,
-                PlaybackProviderId.MOVIEPIRE,
-                MobilePlaybackProvider.SEVEN_MOVIES,
-                MobilePlaybackProvider.MOVY,
-            ),
-            choices.map { it.source.identity },
-        )
+        assertEquals(PlaybackProviderId.ANIKURO, choices.first().source.identity)
+        assertTrue(choices.any { it.source.identity == MobilePlaybackProvider.FLIXER })
+        assertEquals(listOf(PlaybackProviderId.ANIKURO, PlaybackProviderId.MIRURO), initialPlaybackRace(choices).map { it.source.identity })
         assertEquals("https://anikuro.to/", choices.first().source.buildEntryUrl(anime))
         choices.forEach {
             assertEquals(anime, it.media)
@@ -74,11 +64,13 @@ class PlaybackSourceFallbackTest {
         }
     }
 
-    @Test fun cinejoySelectionRemainsOnCinejoyEvenWhenOtherProvidersExist() {
+    @Test fun cinejoyFailureTriesAllOtherProvidersAutomatically() {
         val selection = PlaybackSelection(Media(550, MediaType.MOVIE, "Fight Club"), source = PlaybackSource(PlaybackProviderId.CINEJOY))
         val candidates = playbackSourceFallbacks(selection, PlaybackPreferences())
-        assertEquals(listOf(selection), candidates)
-        assertEquals(listOf(candidates.first()), initialPlaybackRace(candidates))
+        assertEquals(selection, candidates.first())
+        assertEquals(MobilePlaybackProvider.FLIXER, candidates[1].source.identity)
+        assertTrue(candidates.size >= 7)
+        assertEquals(candidates, initialPlaybackRace(candidates))
     }
 
     @Test fun newSourcesPreserveExactEpisodeRoutes() {

@@ -28,6 +28,7 @@ enum class MobilePlaybackProvider(
     override val displayName: String,
     override val defaultBaseUrl: String,
 ) : PlaybackProvider {
+    FLIXER("Flixer", "https://flixer.gd/"),
     SEVEN_MOVIES("7Movies", "https://7movies.ac/"),
     MOVY("Movy", "https://www.movy.sx/");
 
@@ -111,10 +112,11 @@ enum class PlaybackProviderId(
     }
 }
 
-internal fun defaultGeneralPlaybackProvider(isTv: Boolean): PlaybackProviderId =
-    if (isTv) PlaybackProviderId.RAMOFLIX else PlaybackProviderId.CINEJOY
+internal fun defaultGeneralPlaybackProvider(isTv: Boolean): PlaybackProvider =
+    if (isTv) PlaybackProviderId.RAMOFLIX else MobilePlaybackProvider.FLIXER
 
 internal fun mobileGeneralPlaybackProviders(): List<PlaybackProvider> = buildList {
+    add(MobilePlaybackProvider.FLIXER)
     add(PlaybackProviderId.CINEJOY)
     add(PlaybackProviderId.MOVIEPIRE)
     addAll(
@@ -122,7 +124,7 @@ internal fun mobileGeneralPlaybackProviders(): List<PlaybackProvider> = buildLis
             provider.supportsGeneralPlayback && !provider.usesMoviepire && provider != PlaybackProviderId.CINEJOY
         },
     )
-    addAll(MobilePlaybackProvider.entries.filter { it.supportsGeneralPlayback })
+    addAll(MobilePlaybackProvider.entries.filter { it.supportsGeneralPlayback && it != MobilePlaybackProvider.FLIXER })
 }
 
 enum class SubtitleLanguage(
@@ -193,6 +195,9 @@ data class PlaybackSource(
         episodeNumber: Int? = null,
     ): String? = when (identity) {
         PlaybackProviderId.CINEJOY -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
+            "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
+        } else "/watch/movie/${media.id}"
+        MobilePlaybackProvider.FLIXER -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
             "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
         } else "/watch/movie/${media.id}"
         MobilePlaybackProvider.SEVEN_MOVIES -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
@@ -268,6 +273,7 @@ data class PlaybackPreferences(
             ?: effectiveGeneralProvider
         return when (provider) {
             PlaybackProviderId.CINEJOY -> PlaybackSource(PlaybackProviderId.CINEJOY)
+            MobilePlaybackProvider.FLIXER -> PlaybackSource(MobilePlaybackProvider.FLIXER)
             MobilePlaybackProvider.SEVEN_MOVIES -> PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES)
             MobilePlaybackProvider.MOVY -> PlaybackSource(MobilePlaybackProvider.MOVY)
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)

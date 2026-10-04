@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "234"
-  RELEASE_VERSION_NAME: "3.1.144"
+  RELEASE_VERSION_CODE: "235"
+  RELEASE_VERSION_NAME: "3.1.145"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -351,7 +351,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: CineJoy resets the audio decoder pipeline when changing tracks, retains the selected stream and seek position, recovers stale 502 fragments and verified audio playlists, and lets Auto adapt video quality with gateway-error quality fallback. Native playback loads no website scripts or popups. Tested on a physical Android phone; mobile only."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Flixer is now the default for movies, episodes, and downloads. Its original fast server selection is preserved, with automatic fallback to other sources. Original subtitles load automatically in your selected language. Download quality and audio controls sit together, shared episode audio appears once, and duplicate sizes are removed. Verified movie playback and Dark S1E1 with English and Arabic subtitles on a physical phone. Mobile only."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -379,7 +379,13 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "CineJoy Auto now retains the AVC quality ladder instead of forcing 1080p, preserving every declared audio rendition. Resets the audio decoder and timestamp pipeline on rendition changes to prevent stuck playback after repeated switches and distant seeks. Adds 502/504 fallback among video qualities without changing audio. Includes the native audio-selection, seek recovery, fresh-key 502 fragment retries, and timestamp-verified indexed audio playlist recovery from v3.1.143. Based on the latest published release, not main. Physical Android 16 validation covers all four audio choices at 13 seconds, 4:05, 10:00, 20:00, 43:20, and a backward seek to 37 seconds on Dark S1E1 and S1E2 on Lisbon. Each case checks the selected track, decoded PCM, advancing playback, no Playback Problem, and unchanged stream URL. Both episodes also passed 90-second sustained playback checks with zero buffering after the audio and seek cases. Native playback loads no website scripts or popups. The final Android gate passed 404 unit cases with one opt-in live case skipped, lint with zero errors, and app/test APK builds. The unchanged Worker passed typecheck and 115 tests. No emulator was used. Mobile only; TV and recommendation Worker unchanged."
+          body: |
+            Flixer is the default source for movies, episodes, and downloads. The original Flixer player keeps its own automatic server testing and selection, then hands a validated stream to native playback. Failed titles or playback attempts automatically try other providers concurrently while retaining episode and resume position.
+
+            Original Flixer subtitles appear before manual search and load automatically in the selected language. Known popups, ad resources, and the source subtitle promotion are suppressed. Download quality and audio controls sit together above the list, matching audio tracks are shared across episodes, and the repeated size display is removed. Batch preparation automatically recovers from an unavailable Flixer episode.
+
+            Physical Pixel 7a validation covers Fight Club and Dark S1E1 with original English and Arabic captions, decoded video, selected audio, caption rendering, seeking, and offline subtitle preparation. Mobile only; TV and recommendation Worker unchanged.
+
 
           files: |
             aliflix-mobile.apk

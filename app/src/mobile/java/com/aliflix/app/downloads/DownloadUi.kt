@@ -286,8 +286,16 @@ internal interface DownloadUiDependencies {
     val commonHeights = if (selectedKeys.isNotEmpty() && selectedKeys.all { prepared[it] != null })
         selectedKeys.map { key -> prepared.getValue(key).qualities.map { it.height }.toSet() }
             .reduce { a, b -> a.intersect(b) }.sortedDescending() else emptyList()
+    val sameQualityChoices = selectedKeys.mapNotNull { prepared[it]?.qualities?.map { q -> q.height } }.distinct().size <= 1
     val selectedLabels = selectedKeys.mapNotNull { quality[it]?.label }.distinct()
     val qualityLabel = selectedLabels.singleOrNull() ?: if (selectedLabels.isEmpty()) "Quality" else "Mixed"
+    val selectedAudioTracks = selectedKeys.map { key -> quality[key]?.let { prepared[key]?.audioTracksFor(it) }.orEmpty() }
+    val commonAudioTracks = selectedAudioTracks.firstOrNull()?.takeIf { first ->
+        first.isNotEmpty() && selectedAudioTracks.all { tracks -> tracks.map { it.label to it.language } == first.map { it.label to it.language } }
+    }.orEmpty()
+    val sharedAudioChoice = selectedKeys.map { key -> audio[key]?.let { index ->
+        if (index == -1) "All tracks" else quality[key]?.let { prepared[key]?.audioTracksFor(it) }?.firstOrNull { it.index == index }?.label
+    } ?: "Default" }.distinct().singleOrNull() ?: "Mixed"
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
         AliflixSheet(Modifier.fillMaxWidth().windowInsetsPadding(AliflixInsets.Safe).padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Large).heightIn(max = 700.dp), contentColor = AliflixContentPrimary) {
             Column(Modifier.downloadAtmosphere().padding(AliflixSpacing.Panel), verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Medium)) {
@@ -328,12 +336,13 @@ internal interface DownloadUiDependencies {
                         }) { Text(if (selectedKeys == eligible && selectedKeys.isNotEmpty()) "Clear" else "Select all") }
                     }
                 }
-                Box {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
                     var menu by remember { mutableStateOf(false) }
                     OutlinedButton(onClick = { menu = true }, enabled = !saving && commonHeights.isNotEmpty(), shape = AliflixCorners.Card, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), border = null) {
                         Icon(Icons.Rounded.HighQuality, null); Spacer(Modifier.width(10.dp))
                         Text("$qualityLabel ▾")
-                        Spacer(Modifier.weight(1f)); Text(total, style = MaterialTheme.typography.labelMedium)
+
                     }
                     DropdownMenu(menu, { menu = false },
         shape = AliflixCorners.Chrome,
@@ -347,6 +356,19 @@ internal interface DownloadUiDependencies {
                             }
                     }
                 }
+                    if (commonAudioTracks.isNotEmpty()) {
+                        DownloadAudioMenu(commonAudioTracks, sharedAudioChoice, !saving, Modifier.weight(1f)) { label ->
+                            selectedKeys.forEach { key ->
+                                when (label) {
+                                    "Default" -> audio.remove(key)
+                                    "All tracks" -> audio[key] = -1
+                                    else -> quality[key]?.let { prepared[key]?.audioTracksFor(it) }?.firstOrNull { it.label == label }?.let { audio[key] = it.index }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (selectedKeys.isNotEmpty()) Text(total, color = AliflixContentSecondary, style = MaterialTheme.typography.labelMedium)
                 if (listLoading) CircularProgressIndicator(Modifier.size(20.dp).semantics { contentDescription = "Loading episodes" }, strokeWidth = 2.dp)
                 if (media.type == MediaType.TV && preparing && selectedKeys.isNotEmpty()) {
                     val finished = selectedKeys.count { validated(it) || it in errors }
@@ -409,60 +431,24 @@ internal interface DownloadUiDependencies {
                                         modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Retry preparation, $title" }) { Text("Retry") }
                                 }
                                 quality[key]?.let { selected ->
-                                    Box {
-                                        var qualityMenu by remember(key) { mutableStateOf(false) }
-                                        TextButton(onClick = { qualityMenu = true }, enabled = !saving, shape = AliflixCorners.Small, colors = ButtonDefaults.textButtonColors(containerColor = AliflixAccentPrimary.copy(alpha = .14f))) {
-                                            Text("${selected.label} · ${selected.sizeLabel}", color = AliflixAccentSecondary)
-                                            Icon(Icons.Rounded.ExpandMore, "Quality", Modifier.size(18.dp))
-                                        }
-                                        DropdownMenu(qualityMenu, { qualityMenu = false },
-        shape = AliflixCorners.Chrome,
-        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
-        tonalElevation = AliflixElevation.None,
-        shadowElevation = AliflixElevation.None,
-                                        ) {
-                                            prepared[key]?.qualities.orEmpty().forEach { option ->
-                                                DropdownMenuItem(text = { Text("${option.label} · ${option.sizeLabel}") },
-                                                    trailingIcon = { if (selected == option) Icon(Icons.Rounded.Check, null) },
-                                                    onClick = { sharedHeight = null; quality[key] = option
-                                                        if (audio[key] != -1 && prepared[key]?.audioTracksFor(option)?.none { it.index == audio[key] } == true) audio.remove(key)
-                                                        qualityMenu = false })
+                                    if (media.type == MediaType.TV && selections.size > 1 && !sameQualityChoices) {
+                                        Box {
+                                            var qualityMenu by remember(key) { mutableStateOf(false) }
+                                            TextButton(onClick = { qualityMenu = true }, enabled = !saving, modifier = Modifier.semantics { contentDescription = "Quality for $title" }) { Text(selected.label); Icon(Icons.Rounded.ExpandMore, "Quality", Modifier.size(18.dp)) }
+                                            DropdownMenu(qualityMenu, { qualityMenu = false }, containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
+                                                prepared[key]?.qualities.orEmpty().forEach { option ->
+                                                    DropdownMenuItem(text = { Text(option.label) }, onClick = { sharedHeight = null; quality[key] = option; qualityMenu = false })
+                                                }
                                             }
                                         }
                                     }
                                     val tracks = prepared[key]?.audioTracksFor(selected).orEmpty()
-                                    if (tracks.size > 1) {
-                                        Box {
-                                            var audioMenu by remember(key) { mutableStateOf(false) }
-                                            val choice = audio[key]
-                                            val name = when (choice) {
-                                                null -> "Default"
-                                                -1 -> "All tracks"
-                                                else -> tracks.firstOrNull { it.index == choice }?.label ?: "Default"
-                                            }
-                                            TextButton(onClick = { audioMenu = true }, enabled = !saving,
-                                                shape = AliflixCorners.Small,
-                                                colors = ButtonDefaults.textButtonColors(containerColor = AliflixAccentPrimary.copy(alpha = .14f))) {
-                                                Text("Audio: $name", color = AliflixAccentSecondary)
-                                                Icon(Icons.Rounded.ExpandMore, "Audio tracks", Modifier.size(18.dp))
-                                            }
-                                            DropdownMenu(audioMenu, { audioMenu = false },
-                                                shape = AliflixCorners.Chrome,
-                                                containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
-                                                tonalElevation = AliflixElevation.None,
-                                                shadowElevation = AliflixElevation.None) {
-                                                DropdownMenuItem(text = { Text("Default") },
-                                                    trailingIcon = { if (choice == null) Icon(Icons.Rounded.Check, null) },
-                                                    onClick = { audio.remove(key); audioMenu = false })
-                                                DropdownMenuItem(text = { Text("All tracks") },
-                                                    trailingIcon = { if (choice == -1) Icon(Icons.Rounded.Check, null) },
-                                                    onClick = { audio[key] = -1; audioMenu = false })
-                                                tracks.forEach { track ->
-                                                    DropdownMenuItem(text = { Text(track.label) },
-                                                        trailingIcon = { if (choice == track.index) Icon(Icons.Rounded.Check, null) },
-                                                        onClick = { audio[key] = track.index; audioMenu = false })
-                                                }
-                                            }
+                                    if (commonAudioTracks.isEmpty() && tracks.isNotEmpty()) {
+                                        val choice = audio[key]
+                                        val name = if (choice == -1) "All tracks" else tracks.firstOrNull { it.index == choice }?.label ?: "Default"
+                                        DownloadAudioMenu(tracks, name, !saving) { label ->
+                                            when (label) { "Default" -> audio.remove(key); "All tracks" -> audio[key] = -1
+                                                else -> tracks.firstOrNull { it.label == label }?.let { audio[key] = it.index } }
                                         }
                                     }
                                 }
@@ -661,5 +647,25 @@ internal fun Modifier.downloadAtmosphere(): Modifier = background(
             topLeft = androidx.compose.ui.geometry.Offset(size.width * .45f + index * 18.dp.toPx(), -size.width * .38f),
             size = androidx.compose.ui.geometry.Size(size.width * .9f, size.width * .9f),
             style = androidx.compose.ui.graphics.drawscope.Stroke(.8.dp.toPx()))
+    }
+}
+
+@Composable private fun DownloadAudioMenu(tracks: List<DownloadAudioTrack>, name: String, enabled: Boolean,
+    modifier: Modifier = Modifier, onChoice: (String) -> Unit) {
+    Box(modifier) {
+        var menu by remember { mutableStateOf(false) }
+        OutlinedButton(onClick = { menu = true }, enabled = enabled && tracks.size > 1,
+            shape = AliflixCorners.Card, border = null, colors = ButtonDefaults.outlinedButtonColors(disabledContentColor = AliflixContentSecondary), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+            Icon(Icons.Rounded.Audiotrack, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+            Text("Audio: ${if (tracks.size == 1) tracks.single().label else name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (tracks.size > 1) Icon(Icons.Rounded.ExpandMore, "Audio tracks", Modifier.size(18.dp))
+        }
+        DropdownMenu(menu, { menu = false }, shape = AliflixCorners.Chrome,
+            containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated), tonalElevation = AliflixElevation.None, shadowElevation = AliflixElevation.None) {
+            (listOf("Default", "All tracks") + tracks.map { it.label }).distinct().forEach { label ->
+                DropdownMenuItem(text = { Text(label) }, trailingIcon = { if (name == label) Icon(Icons.Rounded.Check, null) },
+                    onClick = { onChoice(label); menu = false })
+            }
+        }
     }
 }

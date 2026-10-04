@@ -10,6 +10,9 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadProgress
@@ -36,6 +39,7 @@ class DownloadBatchUiTest {
         override val entries = MutableStateFlow<List<SavedDownload>>(emptyList())
         override val preferredHeight = 720
         override val requestNotifications = false
+        var audioForPrepared: (String) -> List<DownloadAudioTrack> = { emptyList() }
         var heightsForPrepared: (String) -> List<Int> = { listOf(1080, 720, 480) }
         val enqueued = mutableListOf<List<Pair<String, String>>>()
         val paused = mutableListOf<String>()
@@ -48,9 +52,9 @@ class DownloadBatchUiTest {
             onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit) {
             preparations++
             selections.forEach { (key, selection) ->
-                onPrepared(key, PreparedDownload(selection, request(selection),
-                    heightsForPrepared(key).map { height -> DownloadQuality("${height}p", height, 1_000_000, true, emptyList()) },
-                    true, "Vid"))
+                onPrepared(key, PreparedDownload(selection.copy(source = com.aliflix.app.model.PlaybackSource(com.aliflix.app.model.PlaybackProviderId.RAMOFLIX)), request(selection),
+                    heightsForPrepared(key).map { height -> DownloadQuality("${height}p", height, 1_000_000, true, emptyList(), "audio") },
+                    true, "Vid", audioTracks = audioForPrepared(key)))
             }
         }
         override fun blockedIds() = emptySet<String>()
@@ -80,21 +84,17 @@ class DownloadBatchUiTest {
     }
 
     private fun openPicker(fake: FakeUi, episode: Episode?) {
-        compose.setContent { DownloadButton(Media(1396, MediaType.TV, "Series"), episode, dependencies = fake) }
+        compose.setContent { com.aliflix.app.ui.theme.AliflixMobileTheme { DownloadButton(Media(1396, MediaType.TV, "Series"), episode, dependencies = fake) } }
         compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Download, Series", true)
             .fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("Download, Series").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("Select all").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Clear").fetchSemanticsNodes().isNotEmpty() }
     }
 
     private fun selectAll() {
-        compose.waitUntil(10_000) { runCatching {
-            compose.onNodeWithText("Select all").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsActions.OnClick)
-        }.getOrDefault(false) }
-        compose.onNodeWithText("Select all").performClick()
+        // Opening the batch picker selects all eligible episodes automatically.
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("Quality for all 3 episodes", true).fetchSemanticsNodes().isNotEmpty() ||
-                compose.onAllNodesWithText("Available qualities differ", true).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("720p ▾").fetchSemanticsNodes().isNotEmpty()
         }
     }
 
@@ -102,13 +102,13 @@ class DownloadBatchUiTest {
         val fake = FakeUi()
         openPicker(fake, null)
         selectAll()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("Quality for all 3 episodes", true).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Quality for all 3 episodes", true).assertExists()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("720p ▾").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("720p ▾").assertExists()
         assertEquals(0, compose.onAllNodes(hasContentDescription("Quality for E", true)).fetchSemanticsNodes().size)
-        compose.onNodeWithText("720p · ≈ 3 MB total ▾").performClick()
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("1080p · ≈ 3 MB total").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("1080p · ≈ 3 MB total").performClick()
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("1080p · ≈ 3 MB total ▾").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("720p ▾").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("1080p").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("1080p").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("1080p ▾").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Download 3 episodes").performClick()
         compose.waitUntil(10_000) { fake.enqueued.isNotEmpty() }
         val requests = fake.enqueued.single()
@@ -119,17 +119,32 @@ class DownloadBatchUiTest {
 
     @Test fun perEpisodeQualityMenusAppearWhenQualitiesDiffer() {
         val fake = FakeUi()
-        fake.heightsForPrepared = { key -> if (key == "1:1") listOf(1080, 720) else listOf(720, 480) }
+        fake.heightsForPrepared = { key -> if (key.contains(":e1:")) listOf(1080, 720) else listOf(720, 480) }
         openPicker(fake, null)
         selectAll()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("Available qualities differ", true).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodes(hasContentDescription("Quality for E1", true)).fetchSemanticsNodes().isNotEmpty() }
         (1..3).forEach { episode ->
+            compose.onAllNodes(hasScrollAction()).onLast().performScrollToNode(hasContentDescription("Quality for E$episode", true))
             assertEquals(1, compose.onAllNodes(hasContentDescription("Quality for E$episode", true)).fetchSemanticsNodes().size)
         }
-        assertEquals(0, compose.onAllNodesWithText("Quality for all 3 episodes", true).fetchSemanticsNodes().size)
         compose.onNodeWithText("Download 3 episodes").performClick()
         compose.waitUntil(10_000) { fake.enqueued.isNotEmpty() }
         assertEquals(listOf("tv:1396:s1:e1", "tv:1396:s1:e2", "tv:1396:s1:e3"), fake.enqueued.single().map { it.first })
+    }
+
+    @Test fun identicalEpisodeAudioAppearsOnceBesideSharedQuality() {
+        val fake = FakeUi()
+        fake.audioForPrepared = { listOf(DownloadAudioTrack("Track 1", null, "audio", 0)) }
+        openPicker(fake, null)
+        selectAll()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Audio: Track 1").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(1, compose.onAllNodesWithText("Audio: Track 1").fetchSemanticsNodes().size)
+        assertEquals(0, compose.onAllNodes(hasContentDescription("Quality for E", true)).fetchSemanticsNodes().size)
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val output = java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "flixer-validation").apply { mkdirs() }
+        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+            java.io.File(output, "download-episodes.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }; bitmap.recycle()
+        }
     }
 
     @Test fun downloadingRingShowsDeterminateProgressAndClickPauses() {

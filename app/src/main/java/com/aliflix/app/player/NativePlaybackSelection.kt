@@ -81,6 +81,9 @@ internal fun nativePreparationScript(): String = """
       // Peach uses an icon-only overlay with no accessible label; target that play cover only.
       if (isHost('peachify.top')) selectors.unshift('div.bg-black\\/30.visible > button.pointer-events-auto');
       const prepare = () => {
+        if (isHost('flixer.gd')) {
+          document.querySelectorAll('[role="presentation"]:has(> [aria-labelledby="support-notice-title"]), [class^="fixed z-[60]"]:has(> div.relative > button)').forEach(node => node.remove());
+        }
         document.querySelectorAll('video').forEach(video => {
           if (video.mediaKeys) return;
           video.muted = true;

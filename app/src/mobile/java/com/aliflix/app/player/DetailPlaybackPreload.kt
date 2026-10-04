@@ -39,8 +39,7 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
     DetailPreloadStore.claimed = DetailPreloadStore.ready?.takeIf {
         playbackProgressKey(it.selection) == playbackProgressKey(selection) &&
             it.selection.source.identity == selection.source.identity &&
-            SystemClock.elapsedRealtime() - it.at < 120_000 &&
-            selection.source.identity == PlaybackProviderId.CINEJOY
+            SystemClock.elapsedRealtime() - it.at < 120_000
     }
     DetailPreloadStore.ready = null
     DetailPreloadStore.cancel?.invoke()
@@ -53,7 +52,7 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
     val progress = remember(activity) { PlaybackProgressStore(activity) }
     val selection = remember(media.key, episode?.seasonNumber, episode?.number) {
         PlaybackSelection(media, episode?.seasonNumber, episode?.number, episode?.title, episodes,
-            PlaybackSource(PlaybackProviderId.CINEJOY))
+            com.aliflix.app.data.PlaybackProviderRepository(activity).preferences.value.sourceFor(media))
     }
     LaunchedEffect(selection.key, enabled, lifecycle) {
         if (!enabled || (media.type == MediaType.TV && episode == null)) return@LaunchedEffect
@@ -77,8 +76,7 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
                 if (caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true ||
                     offline?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) return@repeatOnLifecycle
                 val position = ((PlaybackProgressStore(activity).progressFor(selection)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
-                // Preload only the source the user is choosing. The CineJoy catalogue
-                // races its own servers without switching provider identity.
+                // Preload the selected source and preserve its own automatic server selection.
                 withTimeoutOrNull(30_000) {
                     try {
                         val adapter = NativeStreamResolver(activity, progress, host)

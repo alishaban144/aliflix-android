@@ -11,10 +11,10 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DownloadPreparationBatchTest {
-    @Test fun cineJoyIsTheFirstDownloadSource() {
+    @Test fun flixerIsTheFirstDownloadSource() {
         val dark = selection(1)
         val order = downloadProviderOrder(dark)
-        assertEquals(PlaybackProviderId.CINEJOY, order.first())
+        assertEquals(MobilePlaybackProvider.FLIXER, order.first())
         assertEquals(1, order.count { it == PlaybackProviderId.CINEJOY })
     }
 
@@ -279,4 +279,17 @@ class DownloadPreparationBatchTest {
         } catch (_: TimeoutCancellationException) { cancelled = true }
         assertTrue(cancelled)
     }
+    @Test fun unavailableFlixerEpisodeAutomaticallyDiscoversAnotherSource() = runTest {
+        val first = prepared(selection(1).copy(source = PlaybackSource(MobilePlaybackProvider.FLIXER))).copy(server = "Flixer")
+        var discoveryCount = 0
+        val results = mutableMapOf<String, PreparedDownload>()
+        prepareDownloadBatchInternal(items(2), "en", mapOf("1" to first),
+            discover = { discoveryCount++; prepared(it.copy(source = source)) },
+            resolvePinned = { _, _ -> error("Episode unavailable on Flixer") },
+            inspect = ::inspected, onPrepared = { key, value -> results[key] = value }, onError = { _, error -> fail(error) })
+        assertEquals(1, discoveryCount)
+        assertEquals(MobilePlaybackProvider.FLIXER, results.getValue("1").selection.source.identity)
+        assertEquals(source, results.getValue("2").selection.source)
+    }
+
 }

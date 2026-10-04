@@ -23,6 +23,7 @@ internal class CineJoyPlayerRecovery(
         private set
     private var generation = 0
     private var recovering = false
+    internal val exhausted get() = stoppedOnFailure
     private var stoppedOnFailure = false
     private var resumeAfterFailure = false
     private var bufferingSince = 0L

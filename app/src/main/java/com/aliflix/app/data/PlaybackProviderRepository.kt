@@ -145,10 +145,10 @@ class PlaybackProviderRepository(private val context: Context) {
     }
 
     private fun loadPreferences(): PlaybackPreferences {
-        if (!BuildConfig.IS_TV && !prefs.getBoolean("cinejoy_default_v1", false)) {
+        if (!BuildConfig.IS_TV && !prefs.getBoolean("flixer_default_v1", false)) {
             prefs.edit {
-                putBoolean("cinejoy_default_v1", true)
-                putString(KEY_GENERAL_PROVIDER_ID, PlaybackProviderId.CINEJOY.name)
+                putBoolean("flixer_default_v1", true)
+                putString(KEY_GENERAL_PROVIDER_ID, com.aliflix.app.model.MobilePlaybackProvider.FLIXER.name)
                 putLong(KEY_UPDATED_AT_MILLIS, System.currentTimeMillis())
             }
         }

@@ -104,6 +104,9 @@ class NativePlayerActivity : FragmentActivity() {
             if (activeSubtitleCuesJson != null) disableSubtitles()
             return
         }
+        // The initial Flixer catalogue wins over a previously saved external search result.
+        if (current.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER &&
+            (ui.activeSubtitleTrack == null || subtitleJob?.isActive == true)) return
         val language = subtitleChoices.getString("language", null) ?: intent.getStringExtra("subtitleLanguage") ?: "EN"
         val raw = captionPreferences.getString(captionKey(current), null) ?: return
         val saved = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return
@@ -196,9 +199,7 @@ class NativePlayerActivity : FragmentActivity() {
                             return@retry
                         }
                         exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0
-                        val pinned = ui.server.takeIf { selection?.source?.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY &&
-                            CineJoyNativeCatalog.serverFromLabel(it) != null }
-                        prepareSelection(preferredServer = pinned, strictPreferredServer = pinned != null)
+                        prepareSelection()
                     },
                     onServer = { prepareSelection() },
                     onSelectServer = ::selectServer,
@@ -447,7 +448,8 @@ class NativePlayerActivity : FragmentActivity() {
         return when (provider) {
             com.aliflix.app.model.PlaybackProviderId.CINEJOY ->
                 CineJoyNativeCatalog.fetchServers().map(CineJoyNativeCatalog::serverLabel)
-            com.aliflix.app.model.MobilePlaybackProvider.MOVY -> listOf(provider.displayName)
+            com.aliflix.app.model.MobilePlaybackProvider.MOVY,
+            com.aliflix.app.model.MobilePlaybackProvider.FLIXER -> listOf(provider.displayName)
             com.aliflix.app.model.PlaybackProviderId.MOVIEPIRE,
             com.aliflix.app.model.MobilePlaybackProvider.SEVEN_MOVIES -> preferredNativeEmbeds(probe).map { it.first }
             com.aliflix.app.model.PlaybackProviderId.MIRURO,
@@ -588,6 +590,8 @@ class NativePlayerActivity : FragmentActivity() {
             val choices = getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
             val auto = choices.getBoolean("enabled", intent.getBooleanExtra("autoSubtitles", true))
             val language = canonicalSubtitleLanguageCode(choices.getString("language", null) ?: intent.getStringExtra("subtitleLanguage") ?: "EN")
+            val originalCaptions = if (current.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER)
+                launch { FlixerSubtitleRepository.tracks(current) } else null
             try {
                 val preferences = com.aliflix.app.data.PlaybackProviderRepository(this@NativePlayerActivity).preferences.value
                 val history = getSharedPreferences("native-resolver-performance", MODE_PRIVATE)
@@ -633,7 +637,7 @@ class NativePlayerActivity : FragmentActivity() {
                         // Refresh this exact server before permitting any other provider.
                     }
                 }
-                repeat(if (strictPreferredServer) 2 else 4) {
+                repeat(if (strictPreferredServer) 2 else orderedSources.size + 2) {
                     ensureActive()
                     val candidates = orderedSources.filter { it.source.identity !in exhaustedSources }
                     if (candidates.isEmpty()) return@repeat
@@ -649,8 +653,12 @@ class NativePlayerActivity : FragmentActivity() {
                     val warmed = detailWarm ?: warmedEpisode?.takeIf { it.first.key == current.key && preferredServer == null && android.os.SystemClock.elapsedRealtime() - warmedAt < 120_000 }?.let { it.copy(third = it.third.copy(positionMs = resume)) }
                     detailWarm = null
                     warmedEpisode = null
+                    val preferredFlixerFinished = CompletableDeferred<Unit>()
+                    val flixerFirst = candidates.first().source.identity == MobilePlaybackProvider.FLIXER
                     val winner = try {
                         warmed ?: firstSuccessful(batch.map { candidate -> suspend {
+                            // Give Flixer's own fast server race a head start, then race alternatives.
+                            if (flixerFirst && candidate != candidates.first()) withTimeoutOrNull(8_000) { preferredFlixerFinished.await() }
                             val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                             var server = ""
                             val excluded = excludedBySource.getOrPut(candidate.source.identity) { mutableSetOf() }
@@ -660,6 +668,7 @@ class NativePlayerActivity : FragmentActivity() {
                                     com.aliflix.app.model.PlaybackProviderId.MIRURO -> 45_000
                                     com.aliflix.app.model.PlaybackProviderId.ANIKURO -> 60_000
                                     com.aliflix.app.model.PlaybackProviderId.CINEJOY,
+                                    com.aliflix.app.model.MobilePlaybackProvider.FLIXER,
                                     com.aliflix.app.model.MobilePlaybackProvider.SEVEN_MOVIES,
                                     com.aliflix.app.model.MobilePlaybackProvider.MOVY -> 35_000
                                     else -> 16_000
@@ -680,8 +689,12 @@ class NativePlayerActivity : FragmentActivity() {
                                 } else if (error is NoNativeServersException || candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.MOVY) {
                                     exhaustedSources.add(candidate.source.identity)
                                 }
+                                if (!strictPreferredServer) exhaustedSources.add(candidate.source.identity)
                                 throw error
-                            } finally { adapter.close() }
+                            } finally {
+                                if (candidate.source.identity == MobilePlaybackProvider.FLIXER) preferredFlixerFinished.complete(Unit)
+                                adapter.close()
+                            }
                         } }, parallelism = 2)
                     } catch (error: Exception) { ensureActive(); return@repeat }
                     val (candidate, server, resolved) = winner
@@ -703,6 +716,12 @@ class NativePlayerActivity : FragmentActivity() {
                                 .putString("$seriesKey:server", server).apply()
                         }
                         if (auto) loadAutomaticSubtitles(candidate, language, resolved.url)
+                        else if (candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER) {
+                            subtitleJob = lifecycleScope.launch {
+                                val tracks = FlixerSubtitleRepository.tracks(candidate)
+                                if (selection?.key == candidate.key) ui = ui.copy(subtitleTracks = tracks)
+                            }
+                        }
                         intent.putExtra("selection", candidate.nativeJson())
                         ui = ui.copy(stage = null, ready = true, error = null,
                             message = null)
@@ -724,16 +743,17 @@ class NativePlayerActivity : FragmentActivity() {
                             cineJoyLowQuality = cineJoyLowQuality || code in 4000..4999
                         } else {
                             cineJoyRetryServer = null
-                            if (!strictPreferredServer) excludedBySource.getOrPut(candidate.source.identity) { mutableSetOf() }.add(server)
+                            if (!strictPreferredServer) {
+                                excludedBySource.getOrPut(candidate.source.identity) { mutableSetOf() }.add(server)
+                                exhaustedSources.add(candidate.source.identity)
+                            }
                         }
                         controller?.stop()
                     }
                 }
-                val message = if (current.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY)
-                    "CineJoy couldn't load this video at this position. Retry the same server or choose another one."
-                else "We couldn't prepare this title. Check your connection and try again."
+                val message = "This video is currently unavailable. Please try again later."
                 ui = ui.copy(stage = null, error = message, subtitleLoading = false)
-            } finally { resolver?.close(); resolver = null }
+            } finally { originalCaptions?.cancel(); resolver?.close(); resolver = null }
         }
     }
 
@@ -793,16 +813,18 @@ class NativePlayerActivity : FragmentActivity() {
 
     private fun loadAutomaticSubtitles(current: PlaybackSelection, language: String, streamUrl: String) {
         subtitleJob?.cancel()
-        if (restoreCaption(current, language)) return
+        if (current.source.identity != com.aliflix.app.model.MobilePlaybackProvider.FLIXER && restoreCaption(current, language)) return
         if (NativePlaybackService.embeddedSubtitlesActive) return
         subtitleJob = lifecycleScope.launch {
             ui = ui.copy(subtitleLoading = true)
             try {
                 withTimeout(20_000) {
                     val repository = SubdlSubtitleRepository()
-                    val tracks = normalizeMobileSubtitleTracks(repository.search(current, language).getOrThrow())
+                    val tracks = if (current.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER) FlixerSubtitleRepository.tracks(current)
+                        else normalizeMobileSubtitleTracks(repository.search(current, language).getOrThrow())
                     ui = ui.copy(subtitleTracks = tracks)
-                    val candidates = mobileSubtitleCandidates(tracks, language, current.seasonNumber, current.episodeNumber, current.media.title)
+                    val candidates = if (current.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER) tracks.filter { it.languageCode.equals(language, true) }.sortedBy { it.hearingImpaired }
+                        else mobileSubtitleCandidates(tracks, language, current.seasonNumber, current.episodeNumber, current.media.title)
                     for (track in candidates.take(3)) {
                         ensureActive()
                         if (selection?.key != current.key || NativePlaybackService.activeStreamUrl != streamUrl || NativePlaybackService.embeddedSubtitlesActive) return@withTimeout
@@ -864,11 +886,10 @@ class NativePlayerActivity : FragmentActivity() {
         if (selection == null || preparation?.isActive == true) return
         stalledSince = 0
         if (NativePlaybackService.retryCineJoyPlayback()) return
-        val cineJoy = selection?.source?.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY
-        val pinnedServer = ui.server.takeIf { cineJoy && CineJoyNativeCatalog.serverFromLabel(it) != null }
-        if (!cineJoy && ui.server.isNotBlank()) triedServers.add(ui.server)
-        if (recoveryCount++ < 8) prepareSelection(preferredServer = pinnedServer, strictPreferredServer = pinnedServer != null)
-        else ui = ui.copy(stage = null, error = "Playback was interrupted. Retry to reconnect or choose another server.")
+        if (ui.server.isNotBlank()) triedServers.add(ui.server)
+        selection?.source?.identity?.let(exhaustedSources::add)
+        if (recoveryCount++ < 8) prepareSelection()
+        else ui = ui.copy(stage = null, error = "This video is currently unavailable. Please try again later.")
     }
 
     private fun offlineSubtitleRequest(): NativePlaybackRequest? {
@@ -1258,7 +1279,7 @@ class NativePlayerActivity : FragmentActivity() {
         if (NativePlaybackService.handlesCineJoyRecovery) {
             NativePlaybackService.cineJoyRecoveryMessage?.let { if (ui.message != it) ui = ui.copy(message = it) }
         }
-        if (!NativePlaybackService.handlesCineJoyRecovery && current.playerError != null && preparation?.isActive != true && ui.error == null) {
+        if (!NativePlaybackService.handlesCineJoyRecovery && (current.playerError != null || NativePlaybackService.cineJoyRecoveryExhausted) && preparation?.isActive != true && ui.error == null) {
             if (selection != null) recover() else ui = ui.copy(error = "This stream couldn't play. Choose the title again to get a fresh stream.")
         }
     }

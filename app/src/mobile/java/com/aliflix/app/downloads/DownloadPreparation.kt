@@ -31,7 +31,7 @@ internal data class PreparedDownload(val selection: PlaybackSelection, val playb
 }
 
 internal fun downloadProviderOrder(selection: PlaybackSelection): List<PlaybackProvider> =
-    (listOf(PlaybackProviderId.CINEJOY, selection.source.identity) + mobileGeneralPlaybackProviders())
+    (listOf(MobilePlaybackProvider.FLIXER, selection.source.identity) + mobileGeneralPlaybackProviders())
         .filter { it.isAvailableFor(selection.media) }.distinct()
 
 internal fun downloadStreamKeys(quality: DownloadQuality, tracks: List<DownloadAudioTrack>, audioIndex: Int?): List<StreamKey> {
@@ -48,21 +48,18 @@ internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLay
     val prefs = PlaybackProviderRepository(activity).preferences.value
     var last: Exception? = null
     val providers = downloadProviderOrder(selection)
-    for (provider in providers) {
-        currentCoroutineContext().ensureActive()
+    suspend fun attempt(provider: PlaybackProvider): PreparedDownload {
         val candidate = selection.copy(source = if (provider == selection.source.identity) selection.source else prefs.sourceFor(selection.media, provider))
-        try {
-            var server = ""
-            val request = NativeStreamResolver(activity, progress, host).use {
-                it.resolve(candidate, 0, emptySet(), onServer = { name -> server = name })
-            }.copy(selectionJson = candidate.nativeJson(), subtitleLanguage = language.lowercase(), positionMs = 0)
-            return inspectDownload(candidate, request, language).copy(server = server)
-        } catch (timeout: TimeoutCancellationException) {
-            currentCoroutineContext().ensureActive()
-            last = IllegalStateException("The provider timed out. Retry preparation.", timeout)
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { currentCoroutineContext().ensureActive(); last = error }
+        var server = ""
+        val request = NativeStreamResolver(activity, progress, host).use {
+            it.resolve(candidate, 0, emptySet(), onServer = { name -> server = name })
+        }.copy(selectionJson = candidate.nativeJson(), subtitleLanguage = language.lowercase(), positionMs = 0)
+        return inspectDownload(candidate, request, language).copy(server = server)
     }
+    try { return attempt(providers.first()) }
+    catch (error: Exception) { currentCoroutineContext().ensureActive(); last = error }
+    try { return firstSuccessful(providers.drop(1).map { provider -> suspend { attempt(provider) } }, parallelism = 2) }
+    catch (error: Exception) { currentCoroutineContext().ensureActive(); last = error }
     throw IllegalStateException("No downloadable video found. Try again.", last)
 }
 
@@ -135,10 +132,13 @@ internal suspend fun prepareDownloadBatchInternal(
             return try {
                 inspect(candidate, resolvePinned(candidate, anchor.server), language).copy(server = anchor.server)
             } catch (timeout: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
+                if (anchor.selection.source.identity == MobilePlaybackProvider.FLIXER) return discover(selection)
                 throw IllegalStateException("${anchor.server}: timed out", timeout)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
+                if (anchor.selection.source.identity == MobilePlaybackProvider.FLIXER) return discover(selection)
                 throw IllegalStateException("${anchor.server}: ${error.message.orEmpty().ifBlank { "Unavailable" }}", error)
             }
         }
@@ -280,6 +280,17 @@ internal suspend fun inspectDownload(selection: PlaybackSelection, request: Nati
 internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, language: String, autoSubtitles: Boolean,
     audioIndex: Int? = null): DownloadRequest {
     var vtt = playback.subtitlesVtt
+    if (selection.source.identity == MobilePlaybackProvider.FLIXER && language.isNotBlank()) {
+        val originals = FlixerSubtitleRepository.tracks(selection).filter { it.languageCode.equals(language, true) }.sortedBy { it.hearingImpaired }
+        for (original in originals.take(3)) {
+            val cues = withTimeoutOrNull(5_000) { SubdlSubtitleRepository().download(original, selection).getOrNull() }.orEmpty()
+            if (cues.isEmpty() || !subtitleLanguageIsPlausible(cues, language)) continue
+            vtt = nativeSubtitlesVtt(JSONArray().apply { cues.forEach {
+                put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text))
+            } }.toString(), 0.0)
+            break
+        }
+    }
     if (!hasOriginalSubtitles && vtt.isBlank() && language.isNotBlank()) {
         val repo = SubdlSubtitleRepository()
         val tracks = withTimeout(20_000) { repo.search(selection, language).getOrThrow() }

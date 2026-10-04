@@ -173,7 +173,8 @@ class SubdlSubtitleRepository(
                 parseTimedTextSubtitleCues(decoded)
             }
             if (cues.isEmpty()) throw SubtitleException("This subtitle file has no readable cues")
-            cues
+            if (!BuildConfig.IS_TV && track.id.startsWith("flixer:"))
+                cues.filterNot { it.text.contains("hoofoot.ru", ignoreCase = true) } else cues
         }
     }
 

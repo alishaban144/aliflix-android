@@ -81,9 +81,13 @@ internal class NativeStreamResolver(
                 onServer = onServer,
             ).also { close() }
         }
+        if (selection.source.identity == MobilePlaybackProvider.FLIXER) {
+            onServers(listOf("Flixer")); onServer("Flixer")
+            return resolveFlixer(selection, positionMs).also { close() }
+        }
         val catalogueProvider = selection.source.identity in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY)
         val embeds = when {
-            selection.source.identity == MobilePlaybackProvider.MOVY ->
+            selection.source.identity in setOf(MobilePlaybackProvider.MOVY, MobilePlaybackProvider.FLIXER) ->
                 listOf(selection.source.identity.displayName to checkNotNull(selection.entryUrl))
             catalogueProvider -> FmovieNativeCatalog().embeds(selection)
             else -> preferredNativeEmbeds(selection)
@@ -126,6 +130,34 @@ internal class NativeStreamResolver(
         onServer(winner.first)
         return winner.second
     }
+
+    /** Keep Flixer's own live server queue running while native Media3 validates each selected URL. */
+    private suspend fun resolveFlixer(selection: PlaybackSelection, positionMs: Long): NativePlaybackRequest =
+        withTimeout(30_000) {
+            val controller = WebPlayerController(activity, progress, nativePreparation = true)
+            web = controller
+            view = controller.viewFor(selection)
+            host.addView(view, FrameLayout.LayoutParams(-1, -1))
+            controller.setVisible(true)
+            val rejected = mutableSetOf<String>()
+            while (true) {
+                controller.probeNativeStreamUrl()
+                val request = controller.preparedNativeRequest(0, positionMs, allowUnready = true)
+                if (request != null && request.url !in rejected) {
+                    try {
+                        android.util.Log.i("AliflixFlixer", "Validating selected Flixer stream")
+                        StartupStreamCache.awaitPlayable(activity, request)
+                        return@withTimeout request
+                    } catch (error: Exception) {
+                        currentCoroutineContext().ensureActive()
+                        rejected.add(request.url)
+                        android.util.Log.w("AliflixFlixer", "Flixer stream failed; awaiting its next selected server", error)
+                    }
+                }
+                delay(150)
+            }
+            @Suppress("UNREACHABLE_CODE") error("Flixer servers unavailable")
+        }
 
     private suspend fun resolveSingle(
         selection: PlaybackSelection, positionMs: Long, excluded: Set<String>, preferredServer: String?,

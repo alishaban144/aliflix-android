@@ -524,9 +524,10 @@ class NativePlaybackService : MediaSessionService() {
         private var activeService: NativePlaybackService? = null
 
         internal val handlesCineJoyRecovery get() = activeService?.let {
-            it.cineJoyRecovery.enabled && it.cineJoyRecovery.hasPlayed &&
+            it.cineJoyRecovery.enabled && it.cineJoyRecovery.hasPlayed && !it.cineJoyRecovery.exhausted &&
                 it.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL
         } == true
+        internal val cineJoyRecoveryExhausted get() = activeService?.cineJoyRecovery?.let { it.enabled && it.exhausted } == true
         internal val cineJoyRecoveryMessage get() = activeService?.cineJoyRecovery?.message
 
         internal fun retryCineJoyPlayback(manual: Boolean = false): Boolean {

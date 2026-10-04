@@ -75,6 +75,7 @@ class WebPlayerController(
 ) {
     private var nativeStream: JSONObject? = null
     private var nativeStreamReceivedAt = 0L
+    private var flixerVideoReady = false
 
     private fun rememberNativeStream(candidate: JSONObject?) {
         if (candidate != null && shouldReplaceNativeStream(nativeStream, candidate)) {
@@ -83,14 +84,15 @@ class WebPlayerController(
         }
     }
 
-    internal fun preparedNativeRequest(after: Long, positionMs: Long): NativePlaybackRequest? {
+    internal fun preparedNativeRequest(after: Long, positionMs: Long, allowUnready: Boolean = false): NativePlaybackRequest? {
+        if (activeSelection?.source?.identity == MobilePlaybackProvider.FLIXER && !allowUnready && !flixerVideoReady) return null
         if (nativeStreamReceivedAt < after) return null
         val stream = nativeStream ?: return null
         val selection = activeSelection ?: return null
         val view = webView ?: return null
         val url = stream.optString("url")
         if (!isNativeStreamUrl(url)) return null
-        if (shouldAwaitHlsMaster(stream, SystemClock.elapsedRealtime() - nativeStreamReceivedAt)) return null
+        if (selection.source.identity != MobilePlaybackProvider.FLIXER && shouldAwaitHlsMaster(stream, SystemClock.elapsedRealtime() - nativeStreamReceivedAt)) return null
         return NativePlaybackRequest(url, stream.optString("mimeType", "video/mp4"),
             stream.optString("referer"), view.settings.userAgentString,
             CookieManager.getInstance().getCookie(url).orEmpty(),
@@ -109,7 +111,11 @@ class WebPlayerController(
      */
     internal fun probeNativeStreamUrl() {
         val view = webView ?: return
-        if (nativeStream != null) return
+        if (activeSelection?.source?.identity == MobilePlaybackProvider.FLIXER) {
+            view.evaluateJavascript("Boolean(document.querySelector('video')?.readyState >= 2 && !document.querySelector('video')?.error)") {
+                flixerVideoReady = it == "true"
+            }
+        } else if (nativeStream != null) return
         view.evaluateJavascript(
             """
             (() => {
@@ -218,6 +224,7 @@ class WebPlayerController(
         val defaultKey = selection.key
         if (loadedKey != defaultKey) {
             nativeStream = null
+            flixerVideoReady = false
             loadedKey = defaultKey
             pendingSeekSeconds = playbackProgressStore.progressFor(selection)?.takeIf { it.resumeEligible }?.positionSeconds
             latestPositionSeconds = 0.0
@@ -732,7 +739,7 @@ class WebPlayerController(
             installMoviepireMessageListener(view, sourceHost)
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 moviepireDocumentStartScriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                    view, nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript() + preparationScript(),
+                    view, (if (selection.source.identity == MobilePlaybackProvider.FLIXER) mobileMoviepireAdShieldScript() else "") + nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript() + preparationScript(),
                     nativePlaybackOriginRules(sourceHost),
                 )
             }
@@ -1192,7 +1199,7 @@ class WebPlayerController(
                     request: WebResourceRequest?,
                 ): WebResourceResponse? {
                     if (
-                        isMobileMoviepireSelection() &&
+                        (isMobileMoviepireSelection() || (!BuildConfig.IS_TV && nativePreparation)) &&
                         request != null &&
                         PlaybackNavigationPolicy.isBlockedMoviepireResource(
                             request.url.toString(),
@@ -1917,7 +1924,7 @@ class WebPlayerController(
         if (nativePreparation && nativeEmbedUrl != null) return
         when (selection.source.identity) {
             PlaybackProviderId.CINEJOY -> Unit // Exact TMDB movie/episode route, native HLS discovery.
-            MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Exact mobile TMDB routes.
+            MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Exact mobile TMDB routes.
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.MOVIEPIRE -> {
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)
