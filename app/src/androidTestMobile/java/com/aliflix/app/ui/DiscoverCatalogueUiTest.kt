@@ -32,10 +32,11 @@ class DiscoverCatalogueUiTest {
         store.session(null, "Tom", "Movies").apply { items = listOf(movie); updatedAt = System.currentTimeMillis(); hasMore = false }
         var submitted: String? = null
         var openedPerson: MediaCreator? = null
+        var openedCategory: String? = null
         var filter by mutableStateOf("All")
         compose.setContent { AliflixMobileTheme {
             DiscoverScreen(state = SearchUiState(), aiEnabled = false, catalogueStore = store,
-                onPerson = { openedPerson = it }, onCategory = {}, homeContent = null, recent = emptyList(),
+                onPerson = { openedPerson = it }, onCategory = { openedCategory = it }, homeContent = null, recent = emptyList(),
                 focusRequestId = null, onFocusRequestConsumed = {}, onQueryChange = {}, onSubmitSearch = { submitted = it },
                 onSearchTitles = { emptyList() }, onModeChange = {}, onOpen = {}, catalogGridState = rememberLazyGridState(),
                 recommendationListState = rememberLazyListState(), mediaFilter = filter, onMediaFilterChange = { filter = it })
@@ -43,10 +44,9 @@ class DiscoverCatalogueUiTest {
         compose.onNodeWithContentDescription("Account").assertDoesNotExist()
         compose.onNodeWithTag("discover-search-button").assertIsDisplayed()
         compose.onNodeWithText("Ask Aliflix").assertDoesNotExist()
-        compose.onNodeWithText("Trending").assertIsDisplayed()
-        compose.onNodeWithTag("discover-idle").performScrollToNode(hasText("Top Rated"))
-        compose.onNodeWithText("Top Rated").assertIsDisplayed()
-        compose.onNodeWithTag("discover-idle").performScrollToIndex(0)
+        compose.onNodeWithText("Explore").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals("trending", openedCategory) }
+        compose.onNodeWithTag("discover-explore-posters").assertIsDisplayed()
         compose.onNodeWithText("Mind-bending").assertDoesNotExist()
         val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         val context = InstrumentationRegistry.getInstrumentation().targetContext

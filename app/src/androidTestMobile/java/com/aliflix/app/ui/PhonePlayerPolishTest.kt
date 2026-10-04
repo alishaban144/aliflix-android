@@ -136,23 +136,24 @@ class PhonePlayerPolishTest {
         compose.setContent { AliflixMobileTheme {
             NativePlayerScreen(NativePlayerUi(title = "Pinch", ready = true), null, onFit = { zoomed = it })
         } }
+        // pinch arguments are start0, end0, start1, end1.
         compose.onRoot().performTouchInput {
             pinch(androidx.compose.ui.geometry.Offset(width * .35f, height * .5f),
-                androidx.compose.ui.geometry.Offset(width * .65f, height * .5f),
                 androidx.compose.ui.geometry.Offset(width * .15f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .65f, height * .5f),
                 androidx.compose.ui.geometry.Offset(width * .85f, height * .5f), 300)
         }
         compose.runOnIdle { assertTrue(zoomed) }
         compose.onRoot().performTouchInput {
             pinch(androidx.compose.ui.geometry.Offset(width * .15f, height * .5f),
-                androidx.compose.ui.geometry.Offset(width * .85f, height * .5f),
                 androidx.compose.ui.geometry.Offset(width * .35f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .85f, height * .5f),
                 androidx.compose.ui.geometry.Offset(width * .65f, height * .5f), 300)
         }
         compose.runOnIdle { assertFalse(zoomed) }
     }
 
-    @Test fun firstLibrarySwipeExpandsViewportWithoutFlingingToTheBottom() {
+    @Test fun librarySwipesCollapseMaterialChromeAndContinueScrolling() {
         val grid = androidx.compose.foundation.lazy.grid.LazyGridState()
         val items = (1..150).map { Media(it, MediaType.MOVIE, "Library title $it") }
         compose.setContent { AliflixMobileTheme {
@@ -161,13 +162,18 @@ class PhonePlayerPolishTest {
                 0, {}, PlaybackProviderId.MOVIEPIRE, {}, {}, false, {}, RecommendationAiModel.entries.first(), {},
                 SubtitleLanguage.ENGLISH, {}, true, {}, MobileUpdateUiState(), {}, {}, {})
         } }
-        compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 100) }
-        compose.waitForIdle()
-        compose.runOnIdle { assertTrue("The expansion gesture must not fling the list", grid.firstVisibleItemIndex < 8) }
-        compose.onNodeWithText("My Space").assertDoesNotExist()
         compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 500) }
         compose.waitForIdle()
-        compose.runOnIdle { assertTrue("The next gesture must scroll normally", grid.firstVisibleItemIndex > 0) }
+        var firstIndex = 0
+        compose.runOnIdle {
+            firstIndex = grid.firstVisibleItemIndex
+            assertTrue("The Material scroll must advance the grid", firstIndex > 0)
+            assertTrue("One drag must not reach the bottom", grid.layoutInfo.visibleItemsInfo.last().index < items.lastIndex)
+        }
+        compose.onNodeWithText("My Space").assertIsNotDisplayed()
+        compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 500) }
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue("The next gesture must continue scrolling", grid.firstVisibleItemIndex > firstIndex) }
     }
 
     private fun capture(name: String) {
