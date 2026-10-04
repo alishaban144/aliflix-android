@@ -66,6 +66,7 @@ class NativePlaybackService : MediaSessionService() {
     private var request: NativePlaybackRequest? = null
     private var preferredQualityApplied = false
     private var preferredAudioLabelApplied = false
+    private lateinit var cineJoyRecovery: CineJoyPlayerRecovery
     private var originalItem: MediaItem? = null
     private var externalCaptionCues: List<SubtitleCue> = emptyList()
     private val speechCapture = PlaybackSpeechBuffer()
@@ -87,6 +88,7 @@ class NativePlaybackService : MediaSessionService() {
     private val captionTask = object : Runnable {
         override fun run() {
             if (releasing) return
+            cineJoyRecovery.tick()
             val cues = currentCaptionCues()
             presentationPlayerView?.subtitleView?.setCues(cues)
             NativeCastActivity.renderCaptions(cues)
@@ -125,12 +127,24 @@ class NativePlaybackService : MediaSessionService() {
             .setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory {
                 if (request?.offlineDownloadId?.isNotBlank() == true) DefaultDataSource(this, com.aliflix.app.downloads.OfflineDownloads.get(this).offlineFactory().createDataSource())
                 else {
-                    val upstream = StartupStreamCache.factory(this, DefaultDataSource.Factory(this, scopedHttp)).createDataSource()
+                val fragments = androidx.media3.datasource.DataSource.Factory {
+                    val source = scopedHttp.createDataSource()
+                    val current = request
+                    if (current?.referer == CineJoyNativeCatalog.REFERER)
+                        CineJoyFragmentDataSource(source, current.url) else source
+                }
+                val playlists = androidx.media3.datasource.DataSource.Factory {
+                    val source = fragments.createDataSource()
+                    val current = request
+                    if (current?.referer == CineJoyNativeCatalog.REFERER)
+                        CineJoyAudioPlaylistDataSource(source, current.url, fragments) else source
+                }
+                val upstream = StartupStreamCache.factory(this, DefaultDataSource.Factory(this, playlists)).createDataSource()
                     val current = request
                     if (current != null && current.referer == CineJoyNativeCatalog.REFERER)
                         CineJoyManifestDataSource(upstream, current) else upstream
                 }
-            }))
+            }).setLoadErrorHandlingPolicy(CineJoyLoadErrorPolicy { request?.referer == CineJoyNativeCatalog.REFERER }))
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -144,36 +158,15 @@ class NativePlaybackService : MediaSessionService() {
                 .build()
         }.onFailure { android.util.Log.e("AliflixCast", "Google Cast initialization failed", it) }
             .getOrDefault(localPlayer)
+        cineJoyRecovery = CineJoyPlayerRecovery(player, handler, ::saveAudioChoice)
+        player.addListener(cineJoyRecovery)
         player.addListener(object : Player.Listener {
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 if (!preferredQualityApplied && (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality == PreferredVideoQuality.LOW && lowestVideoTrack(tracks) != null) {
                     preferredQualityApplied = true
                     applyLowestVideoTrack(player, tracks)
                 }
-                if (!preferredAudioLabelApplied) {
-                    val audioPrefs = getSharedPreferences("native-audio-choice", MODE_PRIVATE)
-                    val savedLabel = selection?.let {
-                        audioPrefs.getString("label:${it.source.identity.name}:${it.key}", null)
-                    }
-                    // A title's explicit rendition wins over a global language choice
-                    // made on another source. CineJoy's tracks have no language tags.
-                    if (!savedLabel.isNullOrBlank()) {
-                        val match = tracks.groups.asSequence().filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { group ->
-                            (0 until group.length).asSequence().map { group to it }
-                        }.firstOrNull { (group, index) ->
-                            group.isTrackSupported(index) && group.getTrackFormat(index).label == savedLabel
-                        }
-                        if (match != null) {
-                            preferredAudioLabelApplied = true
-                            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
-                                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second))
-                                .build()
-                        }
-                    } else {
-                        preferredAudioLabelApplied = true
-                    }
-                }
+                applySavedAudioChoice(tracks)
                 if (request?.preferEmbeddedSubtitles != true || embeddedSubtitlesActive) return
                 val language = canonicalSubtitleLanguageCode(request?.subtitleLanguage.orEmpty())
                 val match = tracks.groups.asSequence().filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { group ->
@@ -191,7 +184,10 @@ class NativePlaybackService : MediaSessionService() {
             override fun onEvents(player: Player, events: Player.Events) {
                 if (releasing) return
                 playbackReady = player.playbackState == Player.STATE_READY
-                if (playbackReady) PlaybackStartupTiming.mark("ready")
+                if (playbackReady) {
+                    PlaybackStartupTiming.mark("ready")
+                    applySavedAudioChoice(player.currentTracks)
+                }
                 playbackFailure = player.playerError
                 hasSelectedAudio = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
                 updateWifiLock()
@@ -279,6 +275,7 @@ class NativePlaybackService : MediaSessionService() {
     }
 
     private fun load(next: NativePlaybackRequest) {
+        cineJoyRecovery.reset(false)
         speechCapture.reset()
         lastAudioFingerprint = ""
         saveProgress(true)
@@ -346,11 +343,44 @@ class NativePlaybackService : MediaSessionService() {
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
         }
         originalItem = itemBuilder.build()
+        cineJoyRecovery.reset(next.offlineDownloadId.isBlank() && next.referer == CineJoyNativeCatalog.REFERER)
         player.setMediaItem(checkNotNull(originalItem), next.positionMs)
         PlaybackStartupTiming.mark("media3_prepare")
         player.prepare()
         player.playWhenReady = next.playing
         updateDisplay()
+    }
+
+    private fun applySavedAudioChoice(tracks: androidx.media3.common.Tracks) {
+        if (preferredAudioLabelApplied) return
+        val savedLabel = selection?.let {
+            getSharedPreferences("native-audio-choice", MODE_PRIVATE).getString("label:${it.source.identity.name}:${it.key}", null)
+        }
+        if (savedLabel.isNullOrBlank()) { preferredAudioLabelApplied = true; return }
+        val match = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { group ->
+            (0 until group.length).map { group to it }
+        }.firstOrNull { (group, index) -> group.isTrackSupported(index, true) && group.getTrackFormat(index).label == savedLabel } ?: return
+        // v142 could persist a failed choice. Establish default audio first, then
+        // restore the preference transactionally so a bad saved track cannot trap startup.
+        if (cineJoyRecovery.enabled && player.playbackState != Player.STATE_READY) return
+        preferredAudioLabelApplied = true
+        if (cineJoyRecovery.enabled) cineJoyRecovery.select(match.first.mediaTrackGroup, match.second)
+        else player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+            .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second)).build()
+    }
+
+    private fun saveAudioChoice(language: String?, label: String?) {
+        val prefs = getSharedPreferences("native-audio-choice", MODE_PRIVATE).edit()
+        val key = selection?.let { "label:${it.source.identity.name}:${it.key}" }
+        if (!language.isNullOrBlank() && language != "und") {
+            prefs.putString("language", language)
+            key?.let(prefs::remove)
+        } else if (!label.isNullOrBlank()) {
+            prefs.remove("language")
+            key?.let { prefs.putString(it, label) }
+        }
+        prefs.remove("label").apply()
     }
 
     private fun relayConverter(): MediaItemConverter = object : MediaItemConverter {
@@ -491,7 +521,44 @@ class NativePlaybackService : MediaSessionService() {
     companion object {
         private var activeService: NativePlaybackService? = null
 
+        internal val handlesCineJoyRecovery get() = activeService?.let {
+            it.cineJoyRecovery.enabled && it.cineJoyRecovery.hasPlayed &&
+                it.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL
+        } == true
+        internal val cineJoyRecoveryMessage get() = activeService?.cineJoyRecovery?.message
+
+        internal fun retryCineJoyPlayback(manual: Boolean = false): Boolean {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            if (!handlesCineJoyRecovery) return false
+            activeService?.cineJoyRecovery?.recover(manual)
+            return true
+        }
+
+        internal fun saveAudioPreference(language: String?, label: String?) {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            activeService?.saveAudioChoice(language, label)
+        }
+
+        internal fun selectAudio(group: androidx.media3.common.TrackGroup, index: Int) {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            val service = activeService ?: return
+            val choice = nativeAudioChoice(service.player.currentTracks, group, index) ?: return
+            // Explicit selection supersedes the startup-only saved-label application.
+            service.preferredAudioLabelApplied = true
+            val actualIndex = choice.trackIndices.first()
+            if (service.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL &&
+                service.cineJoyRecovery.select(choice.mediaTrackGroup, actualIndex)) return
+            service.player.trackSelectionParameters = service.player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false).setOverrideForType(choice).build()
+            val format = choice.mediaTrackGroup.getFormat(actualIndex)
+            service.saveAudioChoice(format.language, format.label)
+        }
+
         internal val isPlaybackRequested get() = activeService?.player?.playWhenReady == true
+
+        internal val decodedAudioEvidence get() = activeService?.speechCapture?.let {
+            it.generation to it.decodedFrameCount
+        }
 
         internal fun pauseFromBack() {
             check(Looper.myLooper() == Looper.getMainLooper())

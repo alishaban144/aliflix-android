@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 232
-val mobileVersionName = "3.1.142"
+val mobileVersionCode = 233
+val mobileVersionName = "3.1.143"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
@@ -181,6 +181,8 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jsoup:jsoup:1.19.1")
 
+    add("testMobileImplementation", "org.robolectric:robolectric:4.16")
+    add("testMobileImplementation", "androidx.media3:media3-test-utils-robolectric:1.11.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
     testImplementation("org.json:json:20250107")

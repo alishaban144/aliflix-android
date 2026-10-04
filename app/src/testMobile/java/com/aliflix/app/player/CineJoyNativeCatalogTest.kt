@@ -52,14 +52,17 @@ class CineJoyNativeCatalogTest {
         assertNull(CineJoyNativeCatalog.serverFromLabel("CineJoy"))
     }
 
-    @Test fun onlyHlsMastersAreNativePlayableWithAllAudio() {
+    @Test fun typedHlsEndpointsDoNotNeedAM3u8Suffix() {
         val decrypted = JSONObject(
             """{"status":200,"result":{"data":{"stream":[
                 {"type":"hls","id":"primary","playlist":"https://cdn.example/playlist/master.m3u8","captions":[]},
-                {"type":"hls","id":"embed","playlist":"https://cdn.example/content?v=token","captions":[]}
+                {"type":"hls","id":"solara","playlist":"https://cdn.example/content?v=token","captions":[]},
+                {"type":"iframe","playlist":"https://cdn.example/embed"},
+                {"playlist":"https://cdn.example/untyped-embed"},
+                {"type":"hls","playlist":"javascript:alert(1)"}
             ]}}}""",
         )
-        assertEquals(listOf("https://cdn.example/playlist/master.m3u8"), CineJoyNativeCatalog.parsePlaylists(decrypted))
+        assertEquals(listOf("https://cdn.example/playlist/master.m3u8", "https://cdn.example/content?v=token"), CineJoyNativeCatalog.parsePlaylists(decrypted))
         assertTrue(CineJoyNativeCatalog.isHlsMasterUrl("https://cdn.example/a.m3u8?token=x"))
         assertFalse(CineJoyNativeCatalog.isHlsMasterUrl("https://cdn.example/content?v=token"))
         assertFalse(CineJoyNativeCatalog.isHlsMasterUrl("blob:https://cdn.example/id"))

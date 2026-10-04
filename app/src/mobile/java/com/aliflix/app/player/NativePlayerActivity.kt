@@ -190,7 +190,11 @@ class NativePlayerActivity : FragmentActivity() {
                     settings = playerSettings,
                     onBack = ::pauseAndLeavePlayer,
                     onResumeClicked = { selection?.let { (application as AliflixApplication).libraryStore.markPlayed(it.media) } },
-                    onRetry = {
+                    onRetry = retry@{
+                        if (NativePlaybackService.retryCineJoyPlayback(manual = true)) {
+                            ui = ui.copy(error = null, stage = null)
+                            return@retry
+                        }
                         exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0
                         val pinned = ui.server.takeIf { selection?.source?.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY &&
                             CineJoyNativeCatalog.serverFromLabel(it) != null }
@@ -220,20 +224,18 @@ class NativePlayerActivity : FragmentActivity() {
                     },
                     onSubtitleSearch = { searchSubtitles() },
                     onSubtitle = ::applySubtitle,
-                    onAudioSelected = { language, label ->
-                        val prefs = getSharedPreferences("native-audio-choice", MODE_PRIVATE).edit()
-                        val labelKey = selection?.let { "label:${it.source.identity.name}:${it.key}" }
-                        if (!language.isNullOrBlank() && language != "und") {
-                            prefs.putString("language", language)
-                            labelKey?.let(prefs::remove)
-                        } else if (!label.isNullOrBlank()) {
-                            // CineJoy masters tag renditions "Track 1..4" with no language;
-                            // remember this title and source's choice across restarts.
-                            prefs.remove("language")
-                            labelKey?.let { prefs.putString(it, label) }
+                    onAudioSelected = { group, index ->
+                        if (selection?.source?.identity == PlaybackProviderId.CINEJOY && !ui.external) {
+                            NativePlaybackService.selectAudio(group, index)
+                        } else {
+                            controller?.let { player ->
+                                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                                    .setOverrideForType(TrackSelectionOverride(group, index)).build()
+                            }
+                            val format = group.getFormat(index)
+                            NativePlaybackService.saveAudioPreference(format.language, format.label)
                         }
-                        prefs.remove("label")
-                        prefs.apply()
                     },
                     onSubtitleDisable = ::disableSubtitles,
                     onSubtitleDelayChange = ::updateSubtitleDelay,
@@ -273,6 +275,7 @@ class NativePlayerActivity : FragmentActivity() {
                 updateOutput()
                 val current = controller
                 if (preparation?.isActive != true && current?.playWhenReady == true && current.playbackState == Player.STATE_BUFFERING) {
+                    if (NativePlaybackService.handlesCineJoyRecovery) { stalledSince = 0; delay(300); continue }
                     if (stalledSince == 0L) stalledSince = android.os.SystemClock.elapsedRealtime()
                     if (android.os.SystemClock.elapsedRealtime() - stalledSince > 30_000) recover()
                 } else stalledSince = 0
@@ -860,6 +863,7 @@ class NativePlayerActivity : FragmentActivity() {
         }
         if (selection == null || preparation?.isActive == true) return
         stalledSince = 0
+        if (NativePlaybackService.retryCineJoyPlayback()) return
         val cineJoy = selection?.source?.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY
         val pinnedServer = ui.server.takeIf { cineJoy && CineJoyNativeCatalog.serverFromLabel(it) != null }
         if (!cineJoy && ui.server.isNotBlank()) triedServers.add(ui.server)
@@ -1251,7 +1255,10 @@ class NativePlayerActivity : FragmentActivity() {
         ui = ui.copy(external = external, revision = ui.revision + 1,
             ready = ui.ready || (ui.stage == null && current.playbackState == Player.STATE_READY),
             title = selection?.media?.title ?: current.mediaMetadata.title?.toString().orEmpty().ifBlank { "Aliflix" })
-        if (current.playerError != null && preparation?.isActive != true && ui.error == null) {
+        if (NativePlaybackService.handlesCineJoyRecovery) {
+            NativePlaybackService.cineJoyRecoveryMessage?.let { if (ui.message != it) ui = ui.copy(message = it) }
+        }
+        if (!NativePlaybackService.handlesCineJoyRecovery && current.playerError != null && preparation?.isActive != true && ui.error == null) {
             if (selection != null) recover() else ui = ui.copy(error = "This stream couldn't play. Choose the title again to get a fresh stream.")
         }
     }

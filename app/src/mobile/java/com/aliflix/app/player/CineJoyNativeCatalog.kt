@@ -92,8 +92,8 @@ internal object CineJoyNativeCatalog {
 
     /**
      * The decrypted reply is {status, result:{data:{stream:[{type, playlist|url, captions}]}}}.
-     * Non-playlist embeds (e.g. /content?v=...) stay on the site player; only HLS masters
-     * are native-playable with every alternate audio rendition intact.
+     * HLS endpoints need not end in .m3u8 (Solara uses /content?v=...). Trust the
+     * explicit HLS type here, then validate the response as a playlist in resolve.
      */
     fun parsePlaylists(decrypted: JSONObject): List<String> {
         val data = decrypted.optJSONObject("result")?.optJSONObject("data") ?: return emptyList()
@@ -105,7 +105,7 @@ internal object CineJoyNativeCatalog {
             val candidate = item.optString("playlist").takeIf { it.isNotBlank() }
                 ?: item.optString("url").takeIf { it.isNotBlank() }
                 ?: return@mapNotNull null
-            candidate.takeIf(::isHlsMasterUrl)
+            candidate.takeIf { isNativeStreamUrl(it) && (type == "hls" || type == "m3u8" || isHlsMasterUrl(it)) }
         }.distinct()
     }
 
@@ -213,11 +213,15 @@ internal object CineJoyNativeCatalog {
                 val playlists = playlistsForServer(selection, server, userAgent)
                 val master = playlists.firstOrNull()
                     ?: throw NoNativeServersException()
-                val manifest = CineJoyHlsProbe.master(master, httpGet(master, userAgent))
+                val body = httpGet(master, userAgent)
+                val manifest = CineJoyHlsProbe.master(master, body)
+                // A media playlist can carry muxed audio/video without variants.
+                require(manifest.video.isNotEmpty() || body.lineSequence().any { it.startsWith("#EXTINF:") }) {
+                    "CineJoy did not return a media playlist"
+                }
                 // Do not make a single CDN probe a playback gate. Media3 owns media loading,
                 // retries and audio selection; a transient 502 must not erase resume progress.
                 val video = CineJoyHlsProbe.preferredVideos(manifest.video, lowQuality).firstOrNull()
-                    ?: throw NoNativeServersException()
                 val request = NativePlaybackRequest(
                     url = master,
                     mimeType = "application/x-mpegURL",
@@ -228,8 +232,8 @@ internal object CineJoyNativeCatalog {
                     positionMs = positionMs,
                     playing = true,
                     selectionJson = selection.nativeJson(),
-                    preferredVideoWidth = video.width,
-                    preferredVideoHeight = video.height,
+                    preferredVideoWidth = video?.width ?: 0,
+                    preferredVideoHeight = video?.height ?: 0,
                 )
                 // Catalogue-only preparation never loads the website, scripts or popups.
                 server to request

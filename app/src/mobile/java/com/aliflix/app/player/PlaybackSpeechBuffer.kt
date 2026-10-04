@@ -43,12 +43,14 @@ internal class PlaybackSpeechBuffer(
     private var lastTime = Double.NEGATIVE_INFINITY
     @Volatile var generation = 0L
         private set
+    @Volatile var decodedFrameCount = 0L
+        private set
     @Volatile var unavailable = false
         private set
 
     @Synchronized fun reset() {
         head = 0; count = 0; lastTime = Double.NEGATIVE_INFINITY
-        clearPartialFrame(); closeDetector(); unavailable = false; generation++
+        decodedFrameCount = 0; clearPartialFrame(); closeDetector(); unavailable = false; generation++
     }
     private fun clearPartialFrame() { frameCount = 0; phase = 0; sum = 0.0; averaged = 0 }
     private fun closeDetector() { runCatching { detector?.close() }; detector = null }
@@ -99,6 +101,7 @@ internal class PlaybackSpeechBuffer(
                         times[head] = frameStart
                         bits[head] = if (vad.speech(frame)) 1 else 0
                         head = (head + 1) % times.size; count = min(count + 1, times.size)
+                        decodedFrameCount++
                         frameCount = 0
                     }
                 }

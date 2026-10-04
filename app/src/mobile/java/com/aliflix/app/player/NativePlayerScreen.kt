@@ -214,7 +214,7 @@ internal fun NativePlayerScreen(
     onRotate: () -> Unit = {},
     onSubtitleSearch: () -> Unit = {},
     onSubtitle: (SubtitleTrack) -> Unit = {},
-    onAudioSelected: (String?, String?) -> Unit = { _, _ -> },
+    onAudioSelected: (androidx.media3.common.TrackGroup, Int) -> Unit = { _, _ -> },
     onSubtitleDisable: () -> Unit = {},
     onSubtitleDelayChange: (Int) -> Unit = {},
     onSyncWithAudio: () -> Unit = {},
@@ -588,6 +588,7 @@ internal fun NativePlayerScreen(
                         isPlaying = playing,
                         onPlayPause = {
                             player?.let { p ->
+                                if (p.playerError != null) p.prepare()
                                 if (ended) p.seekTo(0)
                                 if (p.playWhenReady && !ended) p.pause() else { onResumeClicked(); p.play() }
                             }
@@ -918,7 +919,7 @@ internal fun NativePlayerScreen(
 
                     "Audio & subtitles" -> {
                         Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision) { language, label -> onAudioSelected(language, label) }
+                        TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, onTrackSelected = onAudioSelected) { _, _ -> }
                         Spacer(Modifier.height(4.dp))
                         // Subtitle Sync / Delay
                         Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
@@ -1139,7 +1140,8 @@ private fun SheetOption(
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-private fun TrackOptions(player: Player?, type: Int, revision: Int, onSelect: (String?, String?) -> Unit) {
+private fun TrackOptions(player: Player?, type: Int, revision: Int,
+    onTrackSelected: ((androidx.media3.common.TrackGroup, Int) -> Unit)? = null, onSelect: (String?, String?) -> Unit) {
     val groups = remember(player, type, revision) { player?.currentTracks?.groups.orEmpty().filter { it.type == type } }
     groups.forEach { group ->
         (0 until group.length).filter { group.isTrackSupported(it, true) }.forEach { index ->
@@ -1149,7 +1151,8 @@ private fun TrackOptions(player: Player?, type: Int, revision: Int, onSelect: (S
             else format.label ?: format.language?.let { Locale.forLanguageTag(it).displayLanguage }
             ?: "Subtitles"
             SheetOption(label, selected = group.isTrackSelected(index)) {
-                player?.let {
+                if (onTrackSelected != null) onTrackSelected(group.mediaTrackGroup, index)
+                else player?.let {
                     it.trackSelectionParameters = it.trackSelectionParameters.buildUpon()
                         .setTrackTypeDisabled(type, false)
                         .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
