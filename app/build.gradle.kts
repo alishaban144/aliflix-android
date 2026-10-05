@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 237
-val mobileVersionName = "3.1.147"
+val mobileVersionCode = 238
+val mobileVersionName = "3.1.148"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
@@ -150,12 +150,18 @@ val validateReleaseSigning by tasks.registering {
 
 // Optional real Windows JNI validation; ordinary CI still runs the portable
 // labelled-speech and alignment regressions. No emulator or JVM VAD substitute.
-tasks.withType<Test>().matching { name.startsWith("testMobile") }.configureEach {
-    System.getenv("ALIFLIX_SYNC_HOST_CLASSES")?.let { directory -> jvmArgs("-Xbootclasspath/a:$directory") }
-    System.getenv("ALIFLIX_SYNC_JNI_DIR")?.let { directory ->
-        systemProperty("java.library.path", directory)
-        systemProperty("onnxruntime.native.path", directory)
-    }
+tasks.withType<Test>().matching { it.name.startsWith("testMobile") }.configureEach {
+    // Filter on the task's name, not the project name. Argument providers append
+    // these optional host paths after AGP's default JNI configuration.
+    jvmArgumentProviders.add(org.gradle.process.CommandLineArgumentProvider {
+        buildList {
+            System.getenv("ALIFLIX_SYNC_HOST_CLASSES")?.let { add("-Xbootclasspath/a:$it") }
+            System.getenv("ALIFLIX_SYNC_JNI_DIR")?.let {
+                add("-Djava.library.path=$it")
+                add("-Donnxruntime.native.path=$it")
+            }
+        }
+    })
 }
 
 // The Firebase project currently registers only the mobile application ID.

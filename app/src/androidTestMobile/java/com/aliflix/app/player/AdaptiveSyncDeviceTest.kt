@@ -45,12 +45,14 @@ class AdaptiveSyncDeviceTest {
                         it.syncWithAudio() // Active action is Cancel.
                         assertNull(it.playbackUiState.audioSyncState)
                         assertFalse(it.playbackUiState.audioSyncApplied)
-                        it.playbackController!!.setPlaybackSpeed(4f)
                     }
                     Thread.sleep(200)
+                    await("Selected audio history accumulates passively at normal speed", 180_000) {
+                        var heard = false; player.onActivity { heard = it.playbackController!!.currentPosition >= 130_000 }; heard
+                    }
                     val began = android.os.SystemClock.elapsedRealtime()
                     player.onActivity { it.syncWithAudio() }
-                    await("One tap must accumulate and independently verify future scenes", 120_000) {
+                    await("One tap must independently verify buffered audio within twenty seconds", 20_000) {
                         var state: String? = null; player.onActivity { state = it.playbackUiState.audioSyncState }
                         if (state == "Unable to Verify") fail("Streaming verification failed: ${NativePlaybackService.speechDiagnostics()}")
                         state == "Synced"
@@ -63,7 +65,8 @@ class AdaptiveSyncDeviceTest {
                         assertEquals(-47.0, correction.offset, .6)
                         assertEquals(1.0, correction.rate, .0001)
                         assertTrue(it.playbackController!!.isPlaying)
-                        File(root, "streaming-sync-device.txt").writeText("oneTap=true,cancelNoCommit=true,playbackSpeed=4,offset=${correction.offset},confidence=${correction.confidence},elapsedMs=${android.os.SystemClock.elapsedRealtime()-began}\n${NativePlaybackService.speechDiagnostics()}\n")
+                        assertTrue(android.os.SystemClock.elapsedRealtime() - began < 20_000)
+                        File(root, "streaming-sync-device.txt").writeText("oneTap=true,cancelNoCommit=true,playbackSpeed=1,buffered=true,offset=${correction.offset},confidence=${correction.confidence},elapsedMs=${android.os.SystemClock.elapsedRealtime()-began}\n${NativePlaybackService.speechDiagnostics()}\n")
                         it.resetSubtitleSync()
                     }
                 }
@@ -74,7 +77,7 @@ class AdaptiveSyncDeviceTest {
         }
     }
 
-    @Test fun coldStreamingVerifiesFramerateMismatchFromFutureAudio() {
+    @Test fun bufferedStreamingVerifiesFramerateMismatchWithinTwentySeconds() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("physicalSync") == "true")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val root = requireNotNull(context.getExternalFilesDir(null))
@@ -92,9 +95,12 @@ class AdaptiveSyncDeviceTest {
                 ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java)
                     .putExtra("requestFile", payload.name), nativePhoneLaunchOptions()).use { player ->
                     await("Cold streaming ready") { var ready = false; player.onActivity { ready = it.playbackUiState.audioSyncAvailable && it.playbackController?.isPlaying == true }; ready }
+                    await("FPS evidence accumulates passively at normal speed", 240_000) {
+                        var heard = false; player.onActivity { heard = it.playbackController!!.currentPosition >= 200_000 }; heard
+                    }
                     val began = android.os.SystemClock.elapsedRealtime()
-                    player.onActivity { it.resetSubtitleSync(); it.playbackController!!.setPlaybackSpeed(4f); it.syncWithAudio() }
-                    await("Future independent audio establishes the FPS model", 120_000) {
+                    player.onActivity { it.resetSubtitleSync(); it.syncWithAudio() }
+                    await("Independent buffered audio establishes the FPS model within twenty seconds", 20_000) {
                         var state: String? = null; player.onActivity { state = it.playbackUiState.audioSyncState }
                         if (state == "Unable to Verify") fail("Cold drift failed: ${NativePlaybackService.speechDiagnostics()}")
                         state == "Synced"
@@ -108,7 +114,8 @@ class AdaptiveSyncDeviceTest {
                         assertEquals(-47 * rate, correction.offset, .6)
                         correction.apply(target).zip(truth).forEach { (actual, expected) -> assertEquals(expected.startSeconds, actual.startSeconds, .6) }
                         assertTrue(it.playbackController!!.isPlaying)
-                        File(root, "streaming-drift-device.txt").writeText("oneTap=true,coldStart=true,playbackSpeed=4,offset=${correction.offset},rate=${correction.rate},confidence=${correction.confidence},elapsedMs=${android.os.SystemClock.elapsedRealtime()-began},mediaPositionMs=${it.playbackController!!.currentPosition}\n")
+                        assertTrue(android.os.SystemClock.elapsedRealtime() - began < 20_000)
+                        File(root, "streaming-drift-device.txt").writeText("oneTap=true,buffered=true,playbackSpeed=1,offset=${correction.offset},rate=${correction.rate},confidence=${correction.confidence},elapsedMs=${android.os.SystemClock.elapsedRealtime()-began},mediaPositionMs=${it.playbackController!!.currentPosition}\n")
                         it.resetSubtitleSync()
                     }
                 }
@@ -176,12 +183,13 @@ class AdaptiveSyncDeviceTest {
                         it.playbackController!!.addListener(listener)
                         it.syncWithAudio()
                     }
-                    await("$mode sync must verify", 165_000) {
+                    await("$mode sync must verify within twenty seconds", 20_000) {
                         var state: String? = null; player.onActivity { state = it.playbackUiState.audioSyncState }
                         if (state == "Unable to Verify" && mode != "ambiguous") fail("$mode unable to verify; ${NativePlaybackService.speechDiagnostics()}")
                         state == if (mode == "ambiguous") "Unable to Verify" else "Synced"
                     }
                     player.onActivity {
+                        assertTrue("$mode exceeded twenty seconds", android.os.SystemClock.elapsedRealtime() - began < 20_000)
                         val original = requireNotNull(NativePlaybackService.originalSubtitles())
                         val key = subtitleCorrectionKey(requireNotNull(NativePlaybackService.activeRequest), selection.key, original,
                             NativePlaybackService.selectedAudioFingerprint())

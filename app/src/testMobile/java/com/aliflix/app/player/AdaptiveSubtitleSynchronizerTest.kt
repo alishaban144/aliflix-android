@@ -6,6 +6,30 @@ import java.util.Random
 import kotlin.math.abs
 
 class AdaptiveSubtitleSynchronizerTest {
+    @Test fun shortBufferedScenesVerifyOffsetWithoutWaitingForFortySecondBlocks() {
+        val originals = cues()
+        assertNull(AdaptiveSubtitleSynchronizer.matchQuick(originals, windows(cues(455), 2.0)).correction)
+        val observed = windows(originals, -47.0, starts = listOf(700.0, 721.0))
+        val result = AdaptiveSubtitleSynchronizer.matchQuick(originals, observed)
+        assertNotNull(result.toString(), result.correction)
+        assertEquals(-47.0, result.correction!!.offset, .12)
+        assertEquals(1.0, result.correction.rate, .0001)
+    }
+    @Test fun shortReferenceChecksVerifyTheSuppliedClockWithoutSearchingForAnotherOffset() {
+        val originals = cues()
+        val observed = windows(originals, 0.0, starts = listOf(700.0, 721.0))
+        assertTrue(AdaptiveSubtitleSynchronizer.verifyReferenceQuick(originals, observed))
+        assertFalse(AdaptiveSubtitleSynchronizer.verifyReferenceQuick(originals, windows(originals, 3.0, starts = listOf(700.0, 721.0))))
+        assertFalse(AdaptiveSubtitleSynchronizer.verifyReferenceQuick(originals, emptyList()))
+        assertFalse(AdaptiveSubtitleSynchronizer.verifyReferenceQuick(cues(818), observed))
+    }
+    @Test fun shortPeriodicOrContradictingEvidenceCannotBeAcceptedToMeetADeadline() {
+        val periodic = List(3000) { SubtitleCue(it * 3.0, it * 3.0 + 1.0, "Repeated") }
+        assertNull(AdaptiveSubtitleSynchronizer.matchQuick(periodic, windows(periodic, 2.0)).correction)
+        val originals = cues()
+        assertNull(AdaptiveSubtitleSynchronizer.matchQuick(originals,
+            windows(originals, 4.0, starts = listOf(700.0, 740.0, 780.0), corrupt = 1)).correction)
+    }
     private fun cues(seed: Long = 7621): List<SubtitleCue> {
         val rng = Random(seed); var time = 0.0
         return List(2200) {

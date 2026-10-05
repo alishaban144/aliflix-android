@@ -162,6 +162,7 @@ internal data class NativePlayerUi(
     val subtitleLoading: Boolean = false,
     val subtitleError: String? = null,
     val audioSyncState: String? = null,
+    val audioSyncRemainingSeconds: Int? = null,
     val audioSyncAvailable: Boolean = false,
     val audioSyncApplied: Boolean = false,
     val audioSyncMessage: String? = null,
@@ -938,6 +939,10 @@ internal fun NativePlayerScreen(
                             Text(state.audioSyncState ?: "Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             if (syncing) {
                                 Spacer(Modifier.weight(1f))
+                                state.audioSyncRemainingSeconds?.let {
+                                    Text("${it}s", fontSize = 11.sp, color = AliflixAccentSecondary.copy(alpha = .7f))
+                                    Spacer(Modifier.width(8.dp))
+                                }
                                 Text("Cancel", fontSize = 11.sp)
                             }
                         }

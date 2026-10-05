@@ -1,0 +1,3 @@
+film=Tears of Steel,normalSpeed=true,coldSilence=Unable to Verify,elapsedMs=19040
+realSubtitles=Synced,offset=-7.28,rate=1.0,score=0.8013672292455596,elapsedMs=506,discontinuities=0,buffers=0
+generation=2,frames=4302,blocks=5,boundaries=5,duplicates=0,unavailable=false,reason=null,captureMs=8476,sileroReady=true,sileroFailure=null,queue=0,dropped=0,inferences=2694,inferenceMs=17849

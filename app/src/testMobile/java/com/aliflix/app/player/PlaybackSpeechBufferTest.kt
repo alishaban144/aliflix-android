@@ -9,6 +9,27 @@ import java.nio.ByteOrder
 import kotlin.math.sin
 
 class PlaybackSpeechBufferTest {
+    @Test fun partialUnalignedRunsAreAvailableWithinEighteenSecondsAndNeverBridgeASeek() {
+        val capture = capture()
+        val format = Format.Builder().setSampleRate(8000).setChannelCount(1).setPcmEncoding(C.ENCODING_PCM_16BIT).build()
+        fun feed(startUs: Long, seconds: Int) {
+            val data = ByteBuffer.allocate(seconds * 16000).order(ByteOrder.LITTLE_ENDIAN)
+            repeat(seconds * 8000) { data.putShort(if (it / 8000.0 % 4.3 < 1.8) 1000 else 0) }
+            data.flip(); capture.pcm(data, format, startUs, 0)
+        }
+        feed(201_350_000, 18)
+        assertTrue("Old all-or-nothing block path hides the entire run", capture.windows().isEmpty())
+        val first = capture.quickWindows(219.35).single()
+        assertEquals(201.36, first.start, .02)
+        assertTrue(first.speech.size in 18 * SPEECH_HZ - 1..18 * SPEECH_HZ)
+        val heard = capture.quickWindows(213.35).single()
+        assertTrue(heard.start + heard.speech.size.toDouble() / SPEECH_HZ <= 213.35)
+        capture.discontinuity(); feed(501_350_000, 9)
+        assertEquals(2, capture.quickWindows().size)
+        assertEquals(27 * SPEECH_HZ, capture.quickWindows().sumOf { it.speech.size })
+        capture.reset()
+        assertTrue(capture.quickWindows().isEmpty())
+    }
     private fun capture() = PlaybackSpeechBuffer {
         object : PlaybackSpeechDetector {
             override fun speech(frame: ShortArray) = frame.any { kotlin.math.abs(it.toInt()) > 200 }

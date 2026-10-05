@@ -630,6 +630,7 @@ class NativePlaybackService : MediaSessionService() {
         }
 
         internal fun speechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.windows(it.playedUntil) }.orEmpty()
+        internal fun quickSpeechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.quickWindows(it.playedUntil) }.orEmpty()
         internal fun speechDiagnostics(): String = activeService?.speechCapture?.diagnostics() ?: "service_absent"
         internal fun embeddedReference(): EmbeddedSyncReference.Reference? = activeService?.embeddedSyncReference?.observed()
         internal fun originalSubtitles(): String? = activeService?.originalCaptionJson

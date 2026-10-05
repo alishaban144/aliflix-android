@@ -17,7 +17,8 @@ import java.nio.ByteBuffer
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal object OfflineSpeechAnalysis {
     data class Evidence(val windows: List<SpeechWindow>, val reference: List<SubtitleCue>?, val complete: Boolean = false)
-    suspend fun analyse(context: Context, request: NativePlaybackRequest, audio: String): Evidence? = withContext(Dispatchers.Main.immediate) {
+    suspend fun analyse(context: Context, request: NativePlaybackRequest, audio: String,
+                        progress: (Evidence) -> Unit = {}): Evidence? = withContext(Dispatchers.Main.immediate) {
         val downloads = OfflineDownloads.get(context)
         val saved = downloads.entries.value.firstOrNull { it.id == request.offlineDownloadId &&
             it.download.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED } ?: return@withContext null
@@ -57,25 +58,32 @@ internal object OfflineSpeechAnalysis {
             scanner.trackSelectionParameters = scanner.trackSelectionParameters.buildUpon()
                 .setOverrideForType(TrackSelectionOverride(selected.first.mediaTrackGroup, selected.second)).build()
             scanner.play()
-            withTimeout(120_000) {
+            var lastProgress = 0L
+            withTimeout(18_000) {
                 while (scanner.playbackState != Player.STATE_ENDED) {
                     scanner.playerError?.let { throw it }
                     if (capture.unavailable) return@withTimeout
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (now - lastProgress >= 1_000) {
+                        lastProgress = now
+                        val observed = withContext(Dispatchers.Default) { capture.quickWindows() }
+                        progress(Evidence(observed, null))
+                    }
                     delay(50)
                 }
             }
             withContext(Dispatchers.IO) { capture.awaitNeuralIdle() }
             android.util.Log.d("AliflixAudioSync", "offline_scan:${capture.diagnostics()}")
-            val windows = capture.windows()
+            val windows = capture.quickWindows()
             android.util.Log.d("AliflixAudioSync", "offline_known_blocks:${windows.map { it.start }},complete=${scanner.playbackState == Player.STATE_ENDED}")
             Evidence(windows, reference.preferred()?.cues, scanner.playbackState == Player.STATE_ENDED)
         } catch (_: TimeoutCancellationException) {
-            Evidence(capture.windows(), null).takeIf { it.windows.isNotEmpty() }
+            Evidence(capture.quickWindows(), null).takeIf { it.windows.isNotEmpty() }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
             android.util.Log.d("AliflixAudioSync", "offline_scan_failed:${error.javaClass.simpleName}")
             // Partial cached evidence is still useful; gaps remain unknown.
-            Evidence(capture.windows(), null).takeIf { it.windows.isNotEmpty() }
+            Evidence(capture.quickWindows(), null).takeIf { it.windows.isNotEmpty() }
         } finally { scanner.release(); capture.close() }
     }
 

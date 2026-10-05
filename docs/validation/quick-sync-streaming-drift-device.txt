@@ -1,0 +1,1 @@
+oneTap=true,buffered=true,playbackSpeed=1,offset=-48.92,rate=1.0416666666666667,confidence=0.8696737012048796,elapsedMs=509,mediaPositionMs=200604

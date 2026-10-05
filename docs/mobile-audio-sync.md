@@ -1,17 +1,17 @@
 # Mobile adaptive subtitle synchronisation
 
 Baseline: published v3.1.145, `04dfd3b8c0211231d0a6b50c1b266c99d3115f6c`.
-This change affects mobile playback, its tests and its release packaging only.
+Current release: v3.1.148. This change affects mobile playback, its tests and its release packaging only.
 
 ## Failure diagnosis
 
 | Component | Published behaviour and failure | Replacement |
 | --- | --- | --- |
 | `SpeechCaptureAudioSink` | Already forced a decoder when supported and captured a duplicate of PCM before downstream writes. Flush/reset erased all evidence. Output-stream changes had no explicit capture boundary. | Preserve the existing decoder/passthrough decision and partial-write deduplication; distinguish identity reset from decoder continuity; reset partial/recurrent state on flush, discontinuity and stream-offset changes. Recover when raw PCM becomes available after passthrough. |
-| `PlaybackSpeechBuffer` | A 30-second ring retained only a 6–12-second current exchange, rejected a tap without speech in the last second, and lost useful scenes on seek. Native failures had no actionable diagnostics. | Sparse timestamped speech fingerprints retain up to six hours. Unknown bins remain unknown. Sample-count continuity handles codec PTS rounding. Seek retains the soundtrack's observed scenes; source/audio identity changes erase them. Diagnostics include frames, boundaries, duplicates, unavailable reason, detector readiness, queue loss and inference/capture time. |
+| `PlaybackSpeechBuffer` | A 30-second ring retained only a 6–12-second current exchange, rejected a tap without speech in the last second, and lost useful scenes on seek. Native failures had no actionable diagnostics. | Sparse timestamped speech fingerprints retain up to six hours. Unknown bins remain unknown. Sample-count continuity handles codec PTS rounding. Quantize the first decision once per continuity run, then increment integer bins; repeated floating-point rounding at half-bin positions must not create duplicate/missing evidence. Partial blocks are available before a 20-second block fills. Seek retains the soundtrack's observed scenes; source/audio identity changes erase them. Diagnostics include frames, boundaries, duplicates, unavailable reason, detector readiness, queue loss and inference/capture time. |
 | `AudioSubtitleAlignment` | One short sample, a ±120-second search, offset only, manual delay inside the fitting signal, no independent confirmation. A previously cached rate could persist without new drift evidence. | Keep the cancellable FFT primitive; replace the old matcher with normalized observed-window correlations, ±600-second offsets, discrete FPS hypotheses, measured slope hypotheses and penalised edit regions. Fit and confirmation scenes are separate. |
 | `NativePlaybackService` | PCM clock conversion already used renderer PTS minus output-stream offset; it was not an arbitrary wall clock. There was no durable multi-scene identity/observed-position contract or immutable service-owned subtitle source. | Preserve the clock conversion, bound evidence to actually played media, reset on selected soundtrack changes, own original cue JSON, and feed the same once-corrected VTT to local playback and Cast relay. |
-| `NativePlayerActivity` | Two-second failure deadline, dialogue-dependent tap, original cue initialization restricted to offline requests, and transient URLs/credentials in cache identities. | One cancellable job automatically collects evidence for at most five minutes, allowing five independent 40-second scenes to establish drift/FPS from a cold stream. Each CPU attempt has a 25-second cooperative deadline. Originals survive recreation through service ownership; signed credentials are excluded from identity. Late results cannot commit after identity, generation, account revision or Cast changes. |
+| `NativePlayerActivity` | Two-second failure deadline, dialogue-dependent tap, original cue initialization restricted to offline requests, and transient URLs/credentials in cache identities. | One cancellable job uses a single 19-second deadline covering references, collection, decoding and CPU work, leaving presentation headroom within 20 seconds. Reuse automatically accumulated evidence from normal playback; an independent UI watchdog handles temporarily cancellation-resistant I/O. Originals survive recreation through service ownership; signed credentials are excluded from identity. Late results cannot commit after identity, generation, account revision or Cast changes. |
 | Arabic text | Neutral punctuation and mixed Latin text depended on inferred paragraph direction. | Set Unicode paragraph direction independently for each Arabic/RTL line; retain glyph order and embedded spans. Local captions and exported VTT share the direction policy. |
 
 ## Upstream implementation review
@@ -42,7 +42,8 @@ unobserved streaming scene cannot be verified without additional reference evide
   Partial references use only complete observed windows. A seek invalidates the
   reference's continuity; only an uninterrupted end-of-container pass establishes
   a complete timeline. External SRT/VTT is excluded from embedded references.
-- Fit on alternating independent observed scenes and confirm on withheld scenes.
+- Split contiguous known audio into 6-, 12- or 20-second independent scenes, depending on available history. Fit on two scenes per group of three and confirm on the withheld scene; legacy full-reference fitting uses alternating scenes. Close only short internal syllable pauses (up to 320 ms) in both speech and subtitle envelopes.
+- Joint fitting establishes whole-timeline peak uniqueness. Held-out scenes independently verify local correlation and displacement. Scenes with no captions or nearly constant caption occupancy cannot provide timing evidence; informative contradictory scenes still veto a result.
   Reject silence, nearly constant occupancy, periodic/repeated matches, weak or
   non-unique peaks, inconsistent scene offsets, search-edge peaks and competing
   timing models. Scores are correlations, not claimed probabilities.
@@ -124,80 +125,95 @@ audio or subtitle changes cancel pending analysis and prevent stale commits.
 The Audio & Subtitles panel keeps one Sync with Audio action. It shows Analysing,
 Collecting Evidence, Synced or Unable to Verify, with Cancel on the active action
 and a separate automatic Reset. It does not require a dialogue-time tap or show
-intrusive error messages. Evidence collection ends after three minutes.
+intrusive error messages. The button displays a countdown. The single analysis budget is 19 seconds, with one second reserved for presentation/persistence. It cannot remain collecting for minutes. The deadline covers every analysis path, and a late result cannot commit.
 
-## Validation boundaries
+## Validation boundaries for v3.1.148
 
-Portable regressions exercise real recorded speech fingerprints, offsets to
-±310 seconds, PAL/inverse-PAL and measured drift, edits combined with FPS changes,
-independent rejection, cancellation, immutable originals, manual-delay separation,
-stable nested credentials, seeking/backward PCM and Arabic paragraph direction.
-Optional host tests use the actual Media3 WAV extractor, native WebRTC JNI and
-production ONNX session. The downstream hardware AudioSink is a test double;
-the host uses the actual AOSP Pair utility rather than Gradle's empty Android stub.
+No emulator is used. A connected Pixel 7a on Android 17 runs the actual Media3
+renderer, AudioTrack, WebRTC JNI and production ONNX detector.
 
-No emulator is run, as requested. The connected Pixel 7a on Android 17 passed
-actual Media3/AudioTrack playback, native VAD measurement, Android Arabic layout,
-and downloaded-media analysis with its fixture server shut down. The thirty public
-recordings are concatenated with two-second silent boundaries by
-[`phone_fixture.py`](../tools/audio-sync/phone_fixture.py); raw audio is not shipped.
-The 322-second fixture independently verifies a 47-second offset, 25/24 drift and
-a 60-second edit after 120 seconds. Every accepted corrected cue must be within
-0.6 seconds of its annotation. An ambiguous 18-second edit is rejected. Tests also
-assert zero buffering/discontinuities during correction, unchanged originals,
-separate manual delay, cache storage, and Reset preserving manual delay.
+The real-film test streams the official
+[Tears of Steel movie](https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov)
+and attaches its [published English captions](https://download.blender.org/demo/movies/ToS/subtitles/TOS-en.srt),
+shifted by +7.25 seconds. No fingerprints are generated from subtitle times.
+At normal playback speed, its silent opening could not establish a subtitle clock:
+the action ended as Unable to Verify in 19,040 ms, without changing any timing.
+After normal playback naturally accumulated 85 seconds of soundtrack, one tap
+verified the correction in 506 ms: offset -7.28 seconds, rate 1.0, confidence
+0.8014, zero position discontinuities and zero rebuffer events. Playback remained
+running. See [actual-film phone report](validation/quick-sync-real-film-device.txt).
+The preparation time is ordinary playback before the tap; it is not claimed as
+cold-start synchronization in 506 ms.
 
-Streaming acceptance starts without a speech-time tap, observes Collecting
-Evidence, tests Cancel without a stale commit, then verifies later independent
-scenes from a single action. Four-times playback shortens this test; timestamps
-still use media time. See [streaming report](validation/streaming-sync-device.txt)
-and [downloaded-media report](validation/adaptive-sync-device.txt).
-Real caption attachment and forward/backward seeks passed without re-preparing
-the stream. Cast subtitle conversion/round-trip identity passed on Android; an
-actual receiver and sustained battery measurement remain unverified.
+Measured fingerprints from another actual phone playback are committed as a
+small permanent [regression input](../app/src/testMobile/resources/audio-sync-tears-of-steel.json).
+It contains binary speech decisions and numeric published caption times; it
+contains neither PCM nor movie transcript text. This tests film offset correction,
+direct-clock reference verification and FPS correction against a verified full
+subtitle reference, without a network download in CI.
 
-The fully R8-minified mobile benchmark APK also passed through an independent
-Android framework driver: the actual Audio & Subtitles controls collect evidence,
-verify the 25/24 FPS model and offset (-48.88 seconds against -48.958), show Synced and Reset. No app
-classes, shared JUnit dependencies, substitutes or reduced optimisation are used
-by this driver. Its normal-speed cold-stream FPS collection took 200 seconds; prior
-observed speech avoids starting collection from zero. See
-[minified report](validation/minified-sync-device.txt).
-This gate found and fixed a release-only ONNX JNI abort: R8 renamed/deleted
-TensorInfo/OnnxJavaType looked up from native code. The mobile flavor now includes
-the [official ONNX keep rule](https://onnxruntime.ai/docs/build/android.html).
-TV's shrinker configuration is unchanged. The benchmark uses the local debug
-certificate; GitHub's release gate verifies the production signer separately.
+Normal streaming playback separately verified a -46.92-second offset in 746 ms
+and a 25/24 FPS correction in 509 ms, after 130 and 200 seconds of automatically
+accumulated normal-speed history respectively. Cancel prevented a stale commit.
+See [streaming offset](validation/quick-sync-streaming-offset-device.txt) and
+[streaming FPS](validation/quick-sync-streaming-drift-device.txt) reports.
 
-### Long-film consistency safeguard (v3.1.147)
+The independent downloaded-media test uses thirty public manually labelled human
+recordings, concatenated with silent boundaries by
+[`phone_fixture.py`](../tools/audio-sync/phone_fixture.py). The complete 322-second
+cache is analysed with its fixture server shut down. Physical results:
 
-A final regression demonstrated that limiting fitting to eighteen scenes could
-discard an already observed contradiction. A forty-scene fixture with scene seven
-shifted by seventeen seconds incorrectly accepted the four-second global offset.
-The final implementation still bounds the expensive +/-600-second hypothesis fit
-to eighteen independent scenes. It then checks every remaining usable observed
-scene with a small +/-1.6-second FFT around the proposed corrected clock; weak or
-displaced evidence rejects the correction. The same guard covers piecewise models.
-Streaming exports all known evidence instead of selecting thirty-six blocks first.
-Compact bytes are copied under the capture monitor and expanded outside it, so
-long-film verification does not hold the audible PCM renderer lock. Dialogue
-qualification is performed once per model rather than repeatedly per scene.
-Regressions require both rejection of the discarded contradiction and acceptance
-of consistent long-film offset, FPS and measured-drift evidence. v3.1.147 supersedes
-v3.1.146 so devices that obtained the first release receive this additional guard.
+| Case | Verified result | Tap to result |
+| --- | --- | ---: |
+| Constant offset | -46.96 seconds (expected -47) | 6,239 ms |
+| Framerate mismatch | 25/24; -48.92 seconds | 6,250 ms |
+| Edited scenes | Two regions; -46.93 initial offset | 6,623 ms |
+| Ambiguous edits | Rejected; original times preserved | 7,687 ms |
 
-Three early scenes with 0.3% drift also demonstrated a false global offset with
-0.929 correlation. Constant-offset verification now inspects all independent scene
-peaks for a consistent trend, including held-out scenes, and rejects small observed
-drift that would exceed a second across the full subtitle duration. It collects
-more evidence rather than fitting a rate from those held-out scenes. The collection
-deadline permits at least five 40-second scenes from a cold stream; Cancel and the
-per-attempt CPU budget remain available throughout.
-Near-equal competing rate models are compared across the whole target timeline,
-so locally similar clocks cannot silently diverge in unobserved later scenes.
-Cache identities and stored transforms use confidence schema 4. Earlier schema-3
-corrections cannot be replayed after upgrading or Firebase restoration; newly
-verified transforms and Reset tombstones retain the existing account sync store.
+See [downloaded-media phone report](validation/quick-sync-offline-device.txt).
+Every accepted corrected cue must be within 0.6 seconds of its separate human
+annotation. Tests also check unchanged originals, manual delay applied separately,
+zero playback discontinuities/rebuffer events, cache storage and Reset preserving
+manual delay. A partial offline scan must not commit before later cached scenes
+have been checked: an initial physical regression caught competing 25/24 and
+25/23.976 hypotheses, and complete-scan verification resolved it without weakening
+the expected-rate assertion.
+
+Deadline regressions include silent input, a 25-second cancellation-resistant
+worker, successful early completion and explicit user cancellation. The watchdog
+expires at 19 seconds and never returns a late correction. PCM regressions include
+half-bin timestamps, partial runs, seeks, unknown gaps and clipping unheard audio.
+Alignment tests retain large offsets, progressive drift, piecewise timing,
+periodic/wrong-film rejection and known contradictions outside the bounded fit.
+
+Optional host tests use the real Media3 WAV extractor, native WebRTC JNI and ONNX
+session. Only the downstream host hardware AudioSink is a test double; physical
+checks cover Android audio output. The mobile Gradle task filter explicitly checks the task name. JVM argument
+providers supply host JNI paths after Android's default test configuration.
+
+Full-film fitting remains bounded to eighteen scenes, then verifies every other
+informative observed scene near the proposed clock. Sparse streaming evidence
+cannot establish an edit boundary in an unseen scene. Full verified subtitle
+references, including other languages, can supply that missing timeline; their
+clock must first agree with the selected decoded audio. Missing language metadata
+uses the title's original language only to find candidates, never as proof.
+
+The fully R8-minified benchmark APK is checked by a separate Android framework
+driver through actual Audio & Subtitles accessibility controls. The driver has no
+application/library references, shared JUnit runtime, detector substitute or
+reduced optimisation. GitHub independently checks mobile tests, lint, production
+signing and published artifact hashes. ONNX's official keep rule remains scoped
+to mobile. Cast conversion has host/device coverage from v3.1.147, but no actual
+Cast receiver or sustained battery test is claimed.
+
+The final v3.1.148 minified APK passed the real-film driver: one tap verified
+-7.32 seconds against the known -7.25-second offset in 1,043 ms, then Reset
+restored original timestamps. This used normal-speed, automatically accumulated
+playback evidence. See [minified phone report](validation/quick-sync-minified-device.txt).
+
+Original cue ownership, independent manual delay, stable signed-URL-free identity
+and Firebase confidence schema 4 remain intact. Arabic paragraph direction and
+the dedicated Japanese anime source routing below are retained from v3.1.147.
 
 ## Japanese anime startup
 

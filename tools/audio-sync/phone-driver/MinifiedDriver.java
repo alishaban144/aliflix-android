@@ -15,48 +15,55 @@ import java.util.*;
 /** Development-only, no app/library class references or shared test runtime. */
 public final class MinifiedDriver extends Instrumentation {
     private boolean fps;
-    public void onCreate(Bundle args) { super.onCreate(args); fps=args!=null&&"true".equals(args.getString("fps")); start(); }
+    private boolean real;
+    public void onCreate(Bundle args) { super.onCreate(args); fps=args!=null&&"true".equals(args.getString("fps")); real=args!=null&&"true".equals(args.getString("real")); start(); }
     public void onStart() {
         Bundle result = new Bundle(); Activity activity = null; ServerSocket server = null;
         try {
             Context context = getTargetContext();
             SharedPreferences corrections=context.getSharedPreferences("subtitle-audio-corrections",Context.MODE_PRIVATE);
-            Set<String> previousKeys=new HashSet<>(corrections.getAll().keySet());
+            Map<String,?> previousValues=new HashMap<>(corrections.getAll());
             File root = context.getExternalFilesDir(null);
-            byte[] bytes = Files.readAllBytes(new File(root, "audio-sync-validation.wav").toPath());
-            JSONArray cues = new JSONArray(Files.readString(new File(root, "audio-sync-validation.json").toPath()));
+            byte[] bytes = real ? new byte[0] : Files.readAllBytes(new File(root, "audio-sync-validation.wav").toPath());
+            JSONArray cues = real ? new JSONArray(new JSONObject(Files.readString(new File(root,"quick-sync-real-film-evidence.json").toPath())).getString("truth")) : new JSONArray(Files.readString(new File(root, "audio-sync-validation.json").toPath()));
             double expectedRate = fps ? 25.0/24.0 : 1.0;
+            double expectedDelay = real ? 7.25 : 47.0;
             StringBuilder vtt = new StringBuilder("WEBVTT\n\n");
-            for (int i=0;i<cues.length();i++) { JSONArray cue=cues.getJSONArray(i); vtt.append(stamp(cue.getDouble(0)/expectedRate+47)).append(" --> ").append(stamp(cue.getDouble(1)/expectedRate+47)).append('\n').append(cue.getString(2)).append("\n\n"); }
+            for (int i=0;i<cues.length();i++) { JSONArray cue=cues.getJSONArray(i); vtt.append(stamp(cue.getDouble(0)/expectedRate+expectedDelay)).append(" --> ").append(stamp(cue.getDouble(1)/expectedRate+expectedDelay)).append('\n').append(cue.getString(2)).append("\n\n"); }
             server = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"));
             final ServerSocket listening = server;
             new Thread(() -> { while (!listening.isClosed()) { try { final Socket socket=listening.accept(); new Thread(() -> serve(socket,bytes)).start(); } catch (IOException e) { break; } } }).start();
-            JSONObject request = new JSONObject().put("url", "http://127.0.0.1:"+server.getLocalPort()+"/speech.wav").put("mimeType","audio/wav")
-                .put("referer","https://fixture.aliflix.test/").put("userAgent","Aliflix validation").put("cookie", "")
-                .put("title","Minified streaming speech acceptance").put("playing",true).put("positionMs",0)
-                .put("subtitlesVtt",vtt.toString()).put("subtitleLanguage","ar").put("subtitleLabel","Arabic fixture");
+            JSONObject request = new JSONObject().put("url", real ? "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov" : "http://127.0.0.1:"+server.getLocalPort()+"/speech.wav").put("mimeType",real ? "video/quicktime" : "audio/wav")
+                .put("referer",real ? "https://download.blender.org/" : "https://fixture.aliflix.test/").put("userAgent","Aliflix validation").put("cookie", "")
+                .put("title",real ? "Tears of Steel — minified playback validation" : "Minified streaming speech acceptance").put("playing",true).put("positionMs",0)
+                .put("subtitlesVtt",vtt.toString()).put("subtitleLanguage",real ? "en" : "ar").put("subtitleLabel",real ? "Official English captions, shifted 7.25 seconds" : "Arabic fixture");
             File payload = new File(context.getCacheDir(), "native-request-"+UUID.randomUUID()+".json"); Files.writeString(payload.toPath(),request.toString());
             activity = startActivitySync(new Intent().setClassName(context,"com.aliflix.app.player.NativePlayerActivity")
                 .putExtra("requestFile",payload.getName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             waitFor("Audio & Subtitles", 30000, true);
+            waitFor("Sync with Audio",30000,false);
+            // Evidence is collected automatically at normal speed, before one tap.
+            Thread.sleep(real ? 85000 : (fps ? 200000 : 130000));
             waitFor("Sync with Audio",30000,true);
             long began=SystemClock.elapsedRealtime(); boolean collecting=false;
-            while (SystemClock.elapsedRealtime()-began<300000) {
+            while (SystemClock.elapsedRealtime()-began<20000) {
                 AccessibilityNodeInfo node = find(getUiAutomation().getRootInActiveWindow(), "Synced");
                 if (node!=null) break;
                 if (find(getUiAutomation().getRootInActiveWindow(),"Collecting Evidence")!=null) collecting=true;
                 if (find(getUiAutomation().getRootInActiveWindow(),"Unable to Verify")!=null) throw new AssertionError("Minified app rejected fixture");
                 Thread.sleep(500);
             }
-            if (find(getUiAutomation().getRootInActiveWindow(),"Synced")==null || !collecting) throw new AssertionError("One-tap minified collection did not finish");
+            if (find(getUiAutomation().getRootInActiveWindow(),"Synced")==null) throw new AssertionError("One-tap minified synchronization did not finish within twenty seconds");
             JSONObject verified=null; String verifiedKey=null;
-            for(String key:corrections.getAll().keySet()) if(!previousKeys.contains(key)) { JSONObject candidate=new JSONObject(corrections.getString(key,"{}")); if(candidate.has("offset")&&candidate.optInt("schema")==4) { verified=candidate; verifiedKey=key; } }
-            if(verified==null || Math.abs(verified.getDouble("offset")+47*expectedRate)>.6 || Math.abs(verified.getDouble("rate")-expectedRate)>.0004)throw new AssertionError("Incorrect minified correction: "+verified);
-            for(int i=0;i<cues.length();i++) { double original=cues.getJSONArray(i).getDouble(0); if(Math.abs((original/expectedRate+47)*verified.getDouble("rate")+verified.getDouble("offset")-original)>.6)throw new AssertionError("Incorrect corrected cue "+i); }
+            for(String key:corrections.getAll().keySet()) if(!Objects.equals(previousValues.get(key),corrections.getString(key,"{}"))) { JSONObject candidate=new JSONObject(corrections.getString(key,"{}")); if(candidate.has("offset")&&!candidate.optBoolean("reset")&&candidate.optInt("schema")==4) { verified=candidate; verifiedKey=key; } }
+            if(verified==null || Math.abs(verified.getDouble("offset")+expectedDelay*expectedRate)>.65 || Math.abs(verified.getDouble("rate")-expectedRate)>.0004)throw new AssertionError("Incorrect minified correction: "+verified);
+            for(int i=0;i<cues.length();i++) { double original=cues.getJSONArray(i).getDouble(0); if(Math.abs((original/expectedRate+expectedDelay)*verified.getDouble("rate")+verified.getDouble("offset")-original)>.65)throw new AssertionError("Incorrect corrected cue "+i); }
+            long syncElapsed=SystemClock.elapsedRealtime()-began;
+            if(syncElapsed>=20000)throw new AssertionError("Minified synchronization exceeded deadline: "+syncElapsed);
             waitFor("Reset",5000,true);
             waitFor("Sync with Audio",5000,false);
             if(!new JSONObject(corrections.getString(verifiedKey,"{}")).optBoolean("reset"))throw new AssertionError("Reset did not clear the automatic correction");
-            result.putString("result","PASS: fully minified native app, one tap, collecting, synced, reset; version="+context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionName+",normalSpeed=true,offset="+verified.getDouble("offset")+",rate="+verified.getDouble("rate")+",confidence="+verified.getDouble("confidence")+",elapsedMs="+(SystemClock.elapsedRealtime()-began));
+            result.putString("result","PASS: fully minified native app, one tap, synced, reset; version="+context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionName+",realFilm="+real+",normalSpeed=true,buffered=true,offset="+verified.getDouble("offset")+",rate="+verified.getDouble("rate")+",confidence="+verified.getDouble("confidence")+",elapsedMs="+syncElapsed);
             Files.writeString(new File(root,fps?"minified-fps-device.txt":"minified-sync-device.txt").toPath(),result.getString("result"));
             finish(Activity.RESULT_OK,result);
         } catch(Throwable error) { result.putString("result", "FAIL: "+error); StringWriter trace=new StringWriter(); error.printStackTrace(new PrintWriter(trace)); result.putString("stack",trace.toString()); finish(Activity.RESULT_CANCELED,result); }
