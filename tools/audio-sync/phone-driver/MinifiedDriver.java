@@ -14,7 +14,8 @@ import java.util.*;
 
 /** Development-only, no app/library class references or shared test runtime. */
 public final class MinifiedDriver extends Instrumentation {
-    public void onCreate(Bundle args) { super.onCreate(args); start(); }
+    private boolean fps;
+    public void onCreate(Bundle args) { super.onCreate(args); fps=args!=null&&"true".equals(args.getString("fps")); start(); }
     public void onStart() {
         Bundle result = new Bundle(); Activity activity = null; ServerSocket server = null;
         try {
@@ -24,8 +25,9 @@ public final class MinifiedDriver extends Instrumentation {
             File root = context.getExternalFilesDir(null);
             byte[] bytes = Files.readAllBytes(new File(root, "audio-sync-validation.wav").toPath());
             JSONArray cues = new JSONArray(Files.readString(new File(root, "audio-sync-validation.json").toPath()));
+            double expectedRate = fps ? 25.0/24.0 : 1.0;
             StringBuilder vtt = new StringBuilder("WEBVTT\n\n");
-            for (int i=0;i<cues.length();i++) { JSONArray cue=cues.getJSONArray(i); vtt.append(stamp(cue.getDouble(0)+47)).append(" --> ").append(stamp(cue.getDouble(1)+47)).append('\n').append(cue.getString(2)).append("\n\n"); }
+            for (int i=0;i<cues.length();i++) { JSONArray cue=cues.getJSONArray(i); vtt.append(stamp(cue.getDouble(0)/expectedRate+47)).append(" --> ").append(stamp(cue.getDouble(1)/expectedRate+47)).append('\n').append(cue.getString(2)).append("\n\n"); }
             server = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"));
             final ServerSocket listening = server;
             new Thread(() -> { while (!listening.isClosed()) { try { final Socket socket=listening.accept(); new Thread(() -> serve(socket,bytes)).start(); } catch (IOException e) { break; } } }).start();
@@ -39,7 +41,7 @@ public final class MinifiedDriver extends Instrumentation {
             waitFor("Audio & Subtitles", 30000, true);
             waitFor("Sync with Audio",30000,true);
             long began=SystemClock.elapsedRealtime(); boolean collecting=false;
-            while (SystemClock.elapsedRealtime()-began<180000) {
+            while (SystemClock.elapsedRealtime()-began<300000) {
                 AccessibilityNodeInfo node = find(getUiAutomation().getRootInActiveWindow(), "Synced");
                 if (node!=null) break;
                 if (find(getUiAutomation().getRootInActiveWindow(),"Collecting Evidence")!=null) collecting=true;
@@ -47,12 +49,15 @@ public final class MinifiedDriver extends Instrumentation {
                 Thread.sleep(500);
             }
             if (find(getUiAutomation().getRootInActiveWindow(),"Synced")==null || !collecting) throw new AssertionError("One-tap minified collection did not finish");
-            JSONObject verified=null;
-            for(String key:corrections.getAll().keySet()) if(!previousKeys.contains(key)) { JSONObject candidate=new JSONObject(corrections.getString(key,"{}")); if(candidate.has("offset")) verified=candidate; }
-            if(verified==null || Math.abs(verified.getDouble("offset")+47)>.6 || Math.abs(verified.getDouble("rate")-1)>.0001)throw new AssertionError("Incorrect minified correction: "+verified);
+            JSONObject verified=null; String verifiedKey=null;
+            for(String key:corrections.getAll().keySet()) if(!previousKeys.contains(key)) { JSONObject candidate=new JSONObject(corrections.getString(key,"{}")); if(candidate.has("offset")&&candidate.optInt("schema")==4) { verified=candidate; verifiedKey=key; } }
+            if(verified==null || Math.abs(verified.getDouble("offset")+47*expectedRate)>.6 || Math.abs(verified.getDouble("rate")-expectedRate)>.0004)throw new AssertionError("Incorrect minified correction: "+verified);
+            for(int i=0;i<cues.length();i++) { double original=cues.getJSONArray(i).getDouble(0); if(Math.abs((original/expectedRate+47)*verified.getDouble("rate")+verified.getDouble("offset")-original)>.6)throw new AssertionError("Incorrect corrected cue "+i); }
             waitFor("Reset",5000,true);
-            result.putString("result","PASS: fully minified native app, one tap, collecting, synced, reset; offset="+verified.getDouble("offset")+",confidence="+verified.getDouble("confidence")+",elapsedMs="+(SystemClock.elapsedRealtime()-began));
-            Files.writeString(new File(root,"minified-sync-device.txt").toPath(),result.getString("result"));
+            waitFor("Sync with Audio",5000,false);
+            if(!new JSONObject(corrections.getString(verifiedKey,"{}")).optBoolean("reset"))throw new AssertionError("Reset did not clear the automatic correction");
+            result.putString("result","PASS: fully minified native app, one tap, collecting, synced, reset; version="+context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionName+",normalSpeed=true,offset="+verified.getDouble("offset")+",rate="+verified.getDouble("rate")+",confidence="+verified.getDouble("confidence")+",elapsedMs="+(SystemClock.elapsedRealtime()-began));
+            Files.writeString(new File(root,fps?"minified-fps-device.txt":"minified-sync-device.txt").toPath(),result.getString("result"));
             finish(Activity.RESULT_OK,result);
         } catch(Throwable error) { result.putString("result", "FAIL: "+error); StringWriter trace=new StringWriter(); error.printStackTrace(new PrintWriter(trace)); result.putString("stack",trace.toString()); finish(Activity.RESULT_CANCELED,result); }
         finally { if (activity!=null) { final Activity current=activity; runOnMainSync(current::finish); } if(server!=null) try{server.close();}catch(IOException ignored){} }

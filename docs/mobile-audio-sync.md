@@ -11,7 +11,7 @@ This change affects mobile playback, its tests and its release packaging only.
 | `PlaybackSpeechBuffer` | A 30-second ring retained only a 6–12-second current exchange, rejected a tap without speech in the last second, and lost useful scenes on seek. Native failures had no actionable diagnostics. | Sparse timestamped speech fingerprints retain up to six hours. Unknown bins remain unknown. Sample-count continuity handles codec PTS rounding. Seek retains the soundtrack's observed scenes; source/audio identity changes erase them. Diagnostics include frames, boundaries, duplicates, unavailable reason, detector readiness, queue loss and inference/capture time. |
 | `AudioSubtitleAlignment` | One short sample, a ±120-second search, offset only, manual delay inside the fitting signal, no independent confirmation. A previously cached rate could persist without new drift evidence. | Keep the cancellable FFT primitive; replace the old matcher with normalized observed-window correlations, ±600-second offsets, discrete FPS hypotheses, measured slope hypotheses and penalised edit regions. Fit and confirmation scenes are separate. |
 | `NativePlaybackService` | PCM clock conversion already used renderer PTS minus output-stream offset; it was not an arbitrary wall clock. There was no durable multi-scene identity/observed-position contract or immutable service-owned subtitle source. | Preserve the clock conversion, bound evidence to actually played media, reset on selected soundtrack changes, own original cue JSON, and feed the same once-corrected VTT to local playback and Cast relay. |
-| `NativePlayerActivity` | Two-second failure deadline, dialogue-dependent tap, original cue initialization restricted to offline requests, and transient URLs/credentials in cache identities. | One cancellable job automatically collects evidence for at most three minutes. Each CPU attempt has a 25-second cooperative deadline. Originals survive recreation through service ownership; signed credentials are excluded from identity. Late results cannot commit after identity, generation, account revision or Cast changes. |
+| `NativePlayerActivity` | Two-second failure deadline, dialogue-dependent tap, original cue initialization restricted to offline requests, and transient URLs/credentials in cache identities. | One cancellable job automatically collects evidence for at most five minutes, allowing five independent 40-second scenes to establish drift/FPS from a cold stream. Each CPU attempt has a 25-second cooperative deadline. Originals survive recreation through service ownership; signed credentials are excluded from identity. Late results cannot commit after identity, generation, account revision or Cast changes. |
 | Arabic text | Neutral punctuation and mixed Latin text depended on inferred paragraph direction. | Set Unicode paragraph direction independently for each Arabic/RTL line; retain glyph order and embedded spans. Local captions and exported VTT share the direction policy. |
 
 ## Upstream implementation review
@@ -82,7 +82,7 @@ boundaries: isolated-clip accuracy was not sufficient. After 32 consecutive chun
 below 0.1 speech probability (1.024 seconds), the session starts fresh. Ordinary
 pauses and uncertain speech retain history. In the continuous phone fixture this
 improved Silero F1 from 0.8735 to 0.9321; WebRTC measured 0.8858. Android Silero mean
-inference was 0.371 ms, p95 0.418 ms per 32 ms chunk, compared with WebRTC mean
+inference was 0.367 ms, p95 0.416 ms per 32 ms chunk, compared with WebRTC mean
 0.0051 ms per 20 ms frame. See [device measurements](validation/native-vad-device.json).
 
 One background CPU worker uses ONNX Runtime Android 1.30.0 with one inference
@@ -158,9 +158,9 @@ actual receiver and sustained battery measurement remain unverified.
 
 The fully R8-minified mobile benchmark APK also passed through an independent
 Android framework driver: the actual Audio & Subtitles controls collect evidence,
-verify the offset (-46.92 seconds against -47), show Synced and Reset. No app
+verify the 25/24 FPS model and offset (-48.88 seconds against -48.958), show Synced and Reset. No app
 classes, shared JUnit dependencies, substitutes or reduced optimisation are used
-by this driver. Its normal-speed streaming collection took 121 seconds; prior
+by this driver. Its normal-speed cold-stream FPS collection took 200 seconds; prior
 observed speech avoids starting collection from zero. See
 [minified report](validation/minified-sync-device.txt).
 This gate found and fixed a release-only ONNX JNI abort: R8 renamed/deleted
@@ -168,6 +168,36 @@ TensorInfo/OnnxJavaType looked up from native code. The mobile flavor now includ
 the [official ONNX keep rule](https://onnxruntime.ai/docs/build/android.html).
 TV's shrinker configuration is unchanged. The benchmark uses the local debug
 certificate; GitHub's release gate verifies the production signer separately.
+
+### Long-film consistency safeguard (v3.1.147)
+
+A final regression demonstrated that limiting fitting to eighteen scenes could
+discard an already observed contradiction. A forty-scene fixture with scene seven
+shifted by seventeen seconds incorrectly accepted the four-second global offset.
+The final implementation still bounds the expensive +/-600-second hypothesis fit
+to eighteen independent scenes. It then checks every remaining usable observed
+scene with a small +/-1.6-second FFT around the proposed corrected clock; weak or
+displaced evidence rejects the correction. The same guard covers piecewise models.
+Streaming exports all known evidence instead of selecting thirty-six blocks first.
+Compact bytes are copied under the capture monitor and expanded outside it, so
+long-film verification does not hold the audible PCM renderer lock. Dialogue
+qualification is performed once per model rather than repeatedly per scene.
+Regressions require both rejection of the discarded contradiction and acceptance
+of consistent long-film offset, FPS and measured-drift evidence. v3.1.147 supersedes
+v3.1.146 so devices that obtained the first release receive this additional guard.
+
+Three early scenes with 0.3% drift also demonstrated a false global offset with
+0.929 correlation. Constant-offset verification now inspects all independent scene
+peaks for a consistent trend, including held-out scenes, and rejects small observed
+drift that would exceed a second across the full subtitle duration. It collects
+more evidence rather than fitting a rate from those held-out scenes. The collection
+deadline permits at least five 40-second scenes from a cold stream; Cancel and the
+per-attempt CPU budget remain available throughout.
+Near-equal competing rate models are compared across the whole target timeline,
+so locally similar clocks cannot silently diverge in unobserved later scenes.
+Cache identities and stored transforms use confidence schema 4. Earlier schema-3
+corrections cannot be replayed after upgrading or Firebase restoration; newly
+verified transforms and Reset tombstones retain the existing account sync store.
 
 ## Japanese anime startup
 
@@ -184,9 +214,16 @@ soft/Japanese subtitles and native HLS/MP4 servers preserve their provider heade
 AniKuro races current provider endpoints internally rather than waiting through
 three sequential attempts at its primary server. Catalogue requests disconnect on
 cancellation, and only validated native media candidates can win either race.
+An intermittent live startup failure recovered on an isolated rerun. Catalogue
+fetches now automatically retry once after 200 ms for a connection failure or
+HTTP 408/429/5xx, within the existing source deadline. Permanent HTTP failures,
+invalid payloads and cancellation do not retry; source failures log their type
+without signed URLs or credentials. An actual Android HTTP test serves 503 then
+200 and requires recovery from a single caller action. Fresh-start tests invalidate
+their previous direct stream before fetching each catalogue again.
 
 Actual fresh starts on the Pixel decoded video and audio through Miruro for One
-Piece S1E1 in 3,248 ms and Attack on Titan S1E1 in 1,413 ms. Both passed a forward
+Piece S1E1 in 2,689 ms and Attack on Titan S1E1 in 1,826 ms. Both passed a forward
 seek to 180 seconds with audio retained; playback progress identity remains
 provider independent. See [startup measurements](validation/anime-startup-device.txt).
 AniKuro's primary CDN timed out during investigation; the race lets the verified

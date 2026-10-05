@@ -8,6 +8,7 @@ import kotlin.math.*
  */
 internal object AdaptiveSubtitleSynchronizer {
     private const val HZ = 25
+    private val markup = Regex("<[^>]*>")
     const val MAX_OFFSET = 600.0
     val rates = listOf(1.0, 25.0 / 24.0, 24.0 / 25.0, 25.0 / 23.976,
         23.976 / 25.0, 24.0 / 23.976, 23.976 / 24.0)
@@ -26,7 +27,7 @@ internal object AdaptiveSubtitleSynchronizer {
     }
 
     fun dialogue(cue: SubtitleCue): Boolean {
-        val text = cue.text.replace(Regex("<[^>]*>"), "").trim()
+        val text = cue.text.replace(markup, "").trim()
         return cue.startSeconds.isFinite() && cue.endSeconds.isFinite() && cue.startSeconds >= 0 &&
             cue.endSeconds > cue.startSeconds && cue.endSeconds - cue.startSeconds <= 15 &&
             text.any(Char::isLetter) && !text.startsWith("♪") && !text.startsWith("♫") &&
@@ -43,14 +44,14 @@ internal object AdaptiveSubtitleSynchronizer {
     }
 
     private fun curve(cues: List<SubtitleCue>, window: SpeechWindow, rate: Double,
-                      cancelled: () -> Unit): Curve {
+                      cancelled: () -> Unit, radiusSeconds: Double = MAX_OFFSET): Curve {
         cancelled()
         val a = smooth(DoubleArray(window.speech.size / 2) { (window.speech[it * 2] + window.speech[it * 2 + 1]) / 2 })
-        val radius = (MAX_OFFSET * HZ).toInt()
-        val start = window.start - MAX_OFFSET
+        val radius = (radiusSeconds * HZ).toInt()
+        val start = window.start - radiusSeconds
         val raw = DoubleArray(a.size + 2 * radius)
         cues.forEach { cue ->
-            if (dialogue(cue)) {
+            run {
                 val from = floor((cue.startSeconds * rate - start) * HZ).toInt().coerceIn(0, raw.size)
                 val to = ceil((cue.endSeconds * rate - start) * HZ).toInt().coerceIn(0, raw.size)
                 for (i in from until to) raw[i] = 1.0
@@ -89,16 +90,18 @@ internal object AdaptiveSubtitleSynchronizer {
     }.fold(mutableListOf<SpeechWindow>()) { list, window ->
         if (list.isEmpty() || window.start >= list.last().start + list.last().speech.size.toDouble() / SPEECH_HZ - .02) list.add(window)
         list
-    }.let { all ->
-        // Bound CPU independently of film length, while retaining early/late scenes.
-        if (all.size <= 18) all else (0 until 18).map { all[it * (all.size - 1) / 17] }
     }
 
     fun match(cues: List<SubtitleCue>, windows: List<SpeechWindow>,
               completeReference: List<SubtitleCue>? = null, cancelled: () -> Unit = {}): Result {
         if (cues.size !in 4..20000 || cues.any { !it.startSeconds.isFinite() || !it.endSeconds.isFinite() || it.endSeconds > 21600 })
             return Result(reason = "invalid_target_timeline")
-        val usable = usable(windows)
+        val allObserved = usable(windows)
+        val signal = cues.filter(::dialogue)
+        // Bound expensive hypothesis fitting, not independent verification.
+        val usable = if (allObserved.size <= 18) allObserved else
+            (0 until 18).map { allObserved[it * (allObserved.size - 1) / 17] }
+        val additional = allObserved.filterNot { scene -> usable.any { it === scene } }
         if (usable.size < 3) return Result(reason = "insufficient_independent_windows", windows = usable.size)
         val training = usable.filterIndexed { i, _ -> i % 2 == 0 }
         val validation = usable.filterIndexed { i, _ -> i % 2 != 0 }
@@ -112,7 +115,7 @@ internal object AdaptiveSubtitleSynchronizer {
             val rate = candidateRates[index++]
             // Small FPS differences need enough elapsed media to distinguish them.
             if (rate != 1.0 && (usable.size < 5 || span * abs(rate - 1.0) < 1.0)) continue
-            val curves = training.map { curve(cues, it, rate, cancelled) }
+            val curves = training.map { curve(signal, it, rate, cancelled) }
             searched[rate] = curves
             val aggregate = DoubleArray(curves.first().scores.size) { shift -> curves.map { it.scores[shift] }.average() }
             val peak = aggregate.indices.maxBy { aggregate[it] }
@@ -142,13 +145,16 @@ internal object AdaptiveSubtitleSynchronizer {
         val ranked = proposals.sortedByDescending { it.score - if (it.rate == 1.0) 0.0 else .025 }
         for (proposal in ranked) {
             cancelled()
-            val held = validation.map { curve(cues, it, proposal.rate, cancelled) }
+            val held = validation.map { curve(signal, it, proposal.rate, cancelled) }
             if (held.any { it.at(proposal.offset) < .46 || it.unique(proposal.offset) < .04 ||
                     abs(it.offset(it.peak) - proposal.offset) > .6 }) continue
             if (proposal.curves.any { abs(it.offset(it.peak) - proposal.offset) > .65 }) continue
-            if (proposal.rate == 1.0 && proposal.curves.size >= 3) {
-                val x = proposal.curves.map { it.window.start }
-                val y = proposal.curves.map { it.offset(it.peak) }
+            if (proposal.rate == 1.0) {
+                // All these curves independently support this same candidate;
+                // inspect their measured peaks for evidence against its slope.
+                val observed = proposal.curves + held
+                val x = observed.map { it.window.start }
+                val y = observed.map { it.offset(it.peak) }
                 val xm = x.average(); val ym = y.average()
                 val denominator = x.sumOf { (it - xm).pow(2) }
                 val slope = if (denominator > 0) x.indices.sumOf { (x[it] - xm) * (y[it] - ym) } / denominator else 0.0
@@ -156,7 +162,9 @@ internal object AdaptiveSubtitleSynchronizer {
                 // A short, consistently sloping sequence is evidence AGAINST a
                 // constant offset even when it cannot yet verify a whole-film
                 // drift model. Keep collecting instead of caching the wrong model.
-                if (abs(slope) * (x.max() - x.min()) >= .5 && residual <= .15) continue
+                val observedDrift = abs(slope) * (x.max() - x.min())
+                val projectedDrift = abs(slope) * cues.maxOf { it.endSeconds }
+                if (residual <= .15 && (observedDrift >= .5 || (observedDrift >= .16 && projectedDrift >= 1.0))) continue
             }
             if (proposal.rate !in rates) {
                 // A fitted slope is only safe for the WHOLE target when observed
@@ -169,11 +177,16 @@ internal object AdaptiveSubtitleSynchronizer {
             }
             val competing = proposals.any { other ->
                 other !== proposal && other.score >= proposal.score - .03 &&
-                    usable.any { w -> abs((w.start - proposal.offset) / proposal.rate * other.rate + other.offset - w.start) > .8 }
+                    (usable.any { w -> abs((w.start - proposal.offset) / proposal.rate * other.rate + other.offset - w.start) > .8 } ||
+                        listOf(cues.first().startSeconds, cues.maxOf { it.endSeconds }).any { time ->
+                            abs(time * proposal.rate + proposal.offset - time * other.rate - other.offset) > .8
+                        })
             }
             if (competing) return Result(reason = "ambiguous_timing_models", windows = usable.size)
             val score = min(proposal.score, held.map { it.at(proposal.offset) }.average())
-            return Result(AudioSubtitleCorrection(proposal.offset, proposal.rate, score), "verified_${if (proposal.rate == 1.0) "offset" else "drift"}",
+            val correction = AudioSubtitleCorrection(proposal.offset, proposal.rate, score)
+            if (!verifyAdditional(cues, correction, additional, cancelled)) continue
+            return Result(correction, "verified_${if (proposal.rate == 1.0) "offset" else "drift"}",
                 usable.size, score, min(proposal.margin, held.minOf { it.unique(proposal.offset) }))
         }
         // Edits cannot be located inside unobserved scenes. Only a complete
@@ -183,9 +196,12 @@ internal object AdaptiveSubtitleSynchronizer {
             val pieces = searched.mapNotNull { (rate, fitted) ->
                 var train = 0
                 val local = usable.mapIndexed { index, window ->
-                    if (index % 2 == 0) fitted[train++] else curve(cues, window, rate, cancelled)
+                    if (index % 2 == 0) fitted[train++] else curve(signal, window, rate, cancelled)
                 }
-                split(cues, completeReference, local, rate, cancelled) { rejected.add(it) }
+                val candidate = split(cues, completeReference, local, rate, cancelled) { rejected.add(it) }
+                if (candidate != null && !verifyAdditional(cues, candidate.correction!!, additional, cancelled)) {
+                    rejected.add("known_scene_disagreement"); null
+                } else candidate
             }.sortedByDescending { it.score - if (it.correction?.rate == 1.0) 0.0 else .025 }
             pieces.firstOrNull()?.let { best ->
                 val model = best.correction!!
@@ -200,6 +216,18 @@ internal object AdaptiveSubtitleSynchronizer {
         }
         return Result(reason = "inconsistent_or_ambiguous_evidence", windows = usable.size,
             score = proposals.maxOfOrNull { it.score } ?: 0.0)
+    }
+
+    private fun verifyAdditional(cues: List<SubtitleCue>, correction: AudioSubtitleCorrection,
+                                 windows: List<SpeechWindow>, cancelled: () -> Unit): Boolean {
+        if (windows.isEmpty()) return true
+        val corrected = correction.apply(cues).filter(::dialogue)
+        // A small local FFT checks the already proposed clock on every remaining
+        // known scene. This cannot vote away contradictions or fit another offset.
+        return windows.all { window ->
+            val local = curve(corrected, window, 1.0, cancelled, radiusSeconds = 1.6)
+            local.at(0.0) >= .35 && abs(local.offset(local.peak)) <= .65
+        }
     }
 
     private fun split(cues: List<SubtitleCue>, reference: List<SubtitleCue>, curves: List<Curve>, rate: Double, cancelled: () -> Unit,

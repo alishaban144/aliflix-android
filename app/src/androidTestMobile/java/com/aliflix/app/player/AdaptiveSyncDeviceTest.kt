@@ -67,7 +67,55 @@ class AdaptiveSyncDeviceTest {
                         it.resetSubtitleSync()
                     }
                 }
-            } finally { payload.delete(); context.stopService(Intent(context, NativePlaybackService::class.java)) }
+            } finally {
+                payload.delete(); context.stopService(Intent(context, NativePlaybackService::class.java))
+                removeFixtureHistory(context, selection.media)
+            }
+        }
+    }
+
+    @Test fun coldStreamingVerifiesFramerateMismatchFromFutureAudio() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("physicalSync") == "true")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = requireNotNull(context.getExternalFilesDir(null))
+        val truth = parseTimedTextSubtitleCues(nativeSubtitlesVtt(File(root, "audio-sync-validation.json").readText(), 0.0))
+        val rate = 25.0 / 24.0
+        val target = truth.map { it.copy(startSeconds = it.startSeconds / rate + 47, endSeconds = it.endSeconds / rate + 47) }
+        grantNativeFixtureNetworkPermission()
+        NativeBackgroundPlaybackTest.FixtureServer(File(root, "audio-sync-validation.wav").readBytes()).use { server ->
+            val selection = PlaybackSelection(Media(2147482987, MediaType.MOVIE, "Cold streaming drift acceptance"))
+            val request = NativePlaybackRequest(server.url, "audio/wav", "https://fixture.aliflix.test/", "Aliflix test", "",
+                selection.media.title, 0, true, nativeSubtitlesVtt(subtitleCuesJson(target), 0.0),
+                selectionJson = selection.nativeJson(), subtitleLanguage = "ar")
+            val payload = File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json").apply { writeText(request.toJson()) }
+            try {
+                ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java)
+                    .putExtra("requestFile", payload.name), nativePhoneLaunchOptions()).use { player ->
+                    await("Cold streaming ready") { var ready = false; player.onActivity { ready = it.playbackUiState.audioSyncAvailable && it.playbackController?.isPlaying == true }; ready }
+                    val began = android.os.SystemClock.elapsedRealtime()
+                    player.onActivity { it.resetSubtitleSync(); it.playbackController!!.setPlaybackSpeed(4f); it.syncWithAudio() }
+                    await("Future independent audio establishes the FPS model", 120_000) {
+                        var state: String? = null; player.onActivity { state = it.playbackUiState.audioSyncState }
+                        if (state == "Unable to Verify") fail("Cold drift failed: ${NativePlaybackService.speechDiagnostics()}")
+                        state == "Synced"
+                    }
+                    player.onActivity {
+                        val original = requireNotNull(NativePlaybackService.originalSubtitles())
+                        val key = subtitleCorrectionKey(requireNotNull(NativePlaybackService.activeRequest), selection.key, original,
+                            NativePlaybackService.selectedAudioFingerprint())
+                        val correction = requireNotNull(SubtitleCorrectionStore(context).get(key))
+                        assertEquals(rate, correction.rate, .0004)
+                        assertEquals(-47 * rate, correction.offset, .6)
+                        correction.apply(target).zip(truth).forEach { (actual, expected) -> assertEquals(expected.startSeconds, actual.startSeconds, .6) }
+                        assertTrue(it.playbackController!!.isPlaying)
+                        File(root, "streaming-drift-device.txt").writeText("oneTap=true,coldStart=true,playbackSpeed=4,offset=${correction.offset},rate=${correction.rate},confidence=${correction.confidence},elapsedMs=${android.os.SystemClock.elapsedRealtime()-began},mediaPositionMs=${it.playbackController!!.currentPosition}\n")
+                        it.resetSubtitleSync()
+                    }
+                }
+            } finally {
+                payload.delete(); context.stopService(Intent(context, NativePlaybackService::class.java))
+                removeFixtureHistory(context, selection.media)
+            }
         }
     }
 
@@ -168,9 +216,16 @@ class AdaptiveSyncDeviceTest {
                     payload?.delete(); server.close()
                     instrumentation.runOnMainSync { store.manager.removeDownload(id) }
                     await("Remove acceptance fixture only") { store.entries.value.none { it.id == id } }
+                    removeFixtureHistory(context, selection.media)
                 }
             }
         } finally { settings.updateSubtitleDelayTenths(manual) }
+    }
+
+    private fun removeFixtureHistory(context: android.content.Context, media: Media) {
+        val app = context.applicationContext as AliflixApplication
+        app.playbackProgressStore.removeMedia(media)
+        app.libraryStore.removeRecent(media)
     }
 
     private fun await(description: String, timeout: Long = 30_000, condition: () -> Boolean) {

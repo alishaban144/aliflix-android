@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Serial,
     [string]$SdkPath = "$env:LOCALAPPDATA/Android/Sdk",
     [string]$JavaPath = 'C:/Program Files/Java/jdk-25',
-    [string]$DebugKeystore = "$env:USERPROFILE/.android/debug.keystore"
+    [string]$DebugKeystore = "$env:USERPROFILE/.android/debug.keystore",
+    [switch]$FramerateMismatch
 )
 # Development only. The installed target must use this local debug certificate.
 # Build :app:assembleMobileBenchmark first; never uninstall or clear target data.
@@ -30,7 +31,11 @@ $adb = Join-Path $SdkPath 'platform-tools/adb.exe'
 & $adb -s $Serial install -r "$output/driver.apk"
 Confirm-Command
 & $adb -s $Serial shell pm grant com.aliflix.app android.permission.ACCESS_LOCAL_NETWORK
-& $adb -s $Serial shell am instrument -w com.aliflix.validation/com.aliflix.validation.MinifiedDriver
+if ($FramerateMismatch) {
+    & $adb -s $Serial shell am instrument -w -e fps true com.aliflix.validation/com.aliflix.validation.MinifiedDriver
+} else {
+    & $adb -s $Serial shell am instrument -w com.aliflix.validation/com.aliflix.validation.MinifiedDriver
+}
 Confirm-Command
 # Inspect result=PASS, not only the adb exit code; Android reports test failures
 # through instrumentation result fields. Save minified-sync-device.txt separately.

@@ -629,7 +629,7 @@ class NativePlaybackService : MediaSessionService() {
                 .map { androidx.media3.common.text.Cue.Builder().setText(mobileCaptionText(it.text)).build() }.toList()
         }
 
-        internal fun speechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.windows(it.playedUntil, 36) }.orEmpty()
+        internal fun speechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.windows(it.playedUntil) }.orEmpty()
         internal fun speechDiagnostics(): String = activeService?.speechCapture?.diagnostics() ?: "service_absent"
         internal fun embeddedReference(): EmbeddedSyncReference.Reference? = activeService?.embeddedSyncReference?.observed()
         internal fun originalSubtitles(): String? = activeService?.originalCaptionJson

@@ -1,6 +1,10 @@
 package com.aliflix.app.player
 
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
@@ -15,7 +19,19 @@ internal object AnimeCatalogueHttp {
     private val executor = Executors.newFixedThreadPool(4) { task ->
         Thread(task, "aliflix-anime-catalogue").apply { isDaemon = true }
     }
-    suspend fun get(url: String, userAgent: String, referer: String): Response = suspendCancellableCoroutine { continuation ->
+    suspend fun get(url: String, userAgent: String, referer: String): Response {
+        try { return request(url, userAgent, referer) }
+        catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            if (!animeCatalogueShouldRetry(error)) throw error
+            // One bounded retry recovers a transient catalogue failure without
+            // discarding every server or asking the viewer to start again.
+            android.util.Log.d("AliflixAnime", "catalogue_retry:${error.javaClass.simpleName}:${(error as? AnimeCatalogueHttpException)?.status ?: 0}")
+            delay(200)
+            return request(url, userAgent, referer)
+        }
+    }
+    private suspend fun request(url: String, userAgent: String, referer: String): Response = suspendCancellableCoroutine { continuation ->
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 5000; readTimeout = 8000
             setRequestProperty("Accept", "*/*")
@@ -25,7 +41,8 @@ internal object AnimeCatalogueHttp {
         val task = executor.submit {
             try {
                 if (!continuation.isActive) return@submit
-                check(connection.responseCode in 200..299) { "Anime catalogue HTTP ${connection.responseCode}" }
+                val status = connection.responseCode
+                if (status !in 200..299) throw AnimeCatalogueHttpException(status)
                 val output = java.io.ByteArrayOutputStream()
                 connection.inputStream.use { input ->
                     val chunk = ByteArray(8192)
@@ -41,4 +58,11 @@ internal object AnimeCatalogueHttp {
         }
         continuation.invokeOnCancellation { task.cancel(true); connection.disconnect() }
     }
+}
+
+internal class AnimeCatalogueHttpException(val status: Int) : IOException("Anime catalogue HTTP $status")
+internal fun animeCatalogueShouldRetry(error: Exception): Boolean = when (error) {
+    is AnimeCatalogueHttpException -> error.status == 408 || error.status == 429 || error.status in 500..599
+    is IOException -> true
+    else -> false
 }

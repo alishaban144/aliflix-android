@@ -93,11 +93,21 @@ internal class PlaybackSpeechBuffer(
     @Synchronized fun diagnostics(): String = "generation=$generation,frames=$decodedFrameCount,blocks=${evidence.size}," +
         "boundaries=$boundaryCount,duplicates=$duplicateFrames,unavailable=$unavailable,reason=$failure,captureMs=${captureNanos / 1_000_000},${neural?.diagnostics()}"
 
-    @Synchronized fun windows(positionSeconds: Double = Double.POSITIVE_INFINITY, limit: Int = Int.MAX_VALUE): List<SpeechWindow> {
-        fun observed(source: java.util.TreeMap<Int, ByteArray>, neural: Boolean): List<SpeechWindow> {
-            val threshold = if (neural) 50 else 1
-            val candidates = source.entries.filter { (block, values) ->
-                if (block * 20.0 + 20 > positionSeconds || values.any { it < 0 }) false else if (limit == Int.MAX_VALUE) true else {
+    fun windows(positionSeconds: Double = Double.POSITIVE_INFINITY, limit: Int = Int.MAX_VALUE): List<SpeechWindow> {
+        // Copy compact bytes under the capture monitor; expand/inspect evidence
+        // outside it so a long-film validation never holds up the PCM renderer.
+        val snapshot = synchronized(this) {
+            fun known(source: java.util.TreeMap<Int, ByteArray>) = source.entries.filter { (block, values) ->
+                block * 20.0 + 20 <= positionSeconds && values.none { it < 0 }
+            }
+            val preferred = if (neural?.ready == true) known(neuralEvidence) else emptyList()
+            val useNeural = neural?.ready == true && (preferred.size >= 3 || neural?.dropped == 0L)
+            val entries = if (useNeural) preferred else known(evidence)
+            entries.map { it.key to it.value.copyOf() } to useNeural
+        }
+            val threshold = if (snapshot.second) 50 else 1
+            val candidates = snapshot.first.filter { (_, values) ->
+                if (limit == Int.MAX_VALUE) true else {
                     val voiced = values.count { it >= threshold }
                     voiced in 80..920 && (1 until values.size).count { (values[it] >= threshold) != (values[it - 1] >= threshold) } >= 6
                 }
@@ -109,9 +119,6 @@ internal class PlaybackSpeechBuffer(
             val start = block * 20.0
                 SpeechWindow(start, DoubleArray(values.size) { if (values[it] >= threshold) 1.0 else 0.0 })
             }
-        }
-        val preferred = observed(neuralEvidence, true)
-        return if (neural?.ready == true && (preferred.size >= 3 || neural?.dropped == 0L)) preferred else observed(evidence, false)
     }
 
     @Synchronized fun pcm(buffer: ByteBuffer, format: Format, pts: Long, offset: Long) {

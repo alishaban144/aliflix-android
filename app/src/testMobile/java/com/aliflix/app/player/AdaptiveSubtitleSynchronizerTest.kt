@@ -48,11 +48,41 @@ class AdaptiveSubtitleSynchronizerTest {
         val result = AdaptiveSubtitleSynchronizer.match(cues, windows(cues, 4.0, corrupt = 1))
         assertNull(result.correction)
     }
+    @Test fun fittingBudgetMustNotDiscardKnownContradictingScenesInLongFilms() {
+        val originals = cues()
+        val starts = (0 until 40).map { 700.0 + it * 100 }
+        for (rate in listOf(1.0, 25.0 / 24.0, 1.0123)) {
+            val verified = AdaptiveSubtitleSynchronizer.match(originals, windows(originals, 4.0, rate, starts = starts))
+            assertNotNull("All known scenes support this clock: $rate $verified", verified.correction)
+            assertEquals(rate, verified.correction!!.rate, .0004)
+        }
+        val result = AdaptiveSubtitleSynchronizer.match(originals, windows(originals, 4.0, starts = starts, corrupt = 7))
+        assertNull("A known scene omitted from the fitting subset still contradicts this correction: $result", result.correction)
+    }
     @Test fun shortProgressiveEvidenceCannotBeMislabelledAsAWholeFilmConstantOffset() {
         val originals = cues()
         val result = AdaptiveSubtitleSynchronizer.match(originals,
             windows(originals, 8.0, 1.0123, starts = (0 until 8).map { 700.0 + it * 20 }))
         assertTrue(result.toString(), result.correction == null || kotlin.math.abs(result.correction.rate - 1.0123) < .0004)
+    }
+    @Test fun threeEarlyScenesWithSmallConsistentDriftCannotVerifyAWholeFilmOffset() {
+        val originals = cues()
+        for (rate in listOf(1.003, 1.006, 1.0123)) {
+            val result = AdaptiveSubtitleSynchronizer.match(originals,
+                windows(originals, 8.0, rate, starts = listOf(700.0, 740.0, 780.0)))
+            assertNull("Collect more evidence rather than mislabeling $rate drift: $result", result.correction)
+        }
+    }
+    @Test fun indistinguishableFrameratesCannotBeExtrapolatedAcrossUnseenFilm() {
+        val originals = cues()
+        val starts = listOf(700.0, 800.0, 900.0, 1000.0, 1100.0)
+        val a = windows(originals, 8.0, 25.0 / 24.0, starts)
+        val b = windows(originals, 8.0, 25.0 / 23.976, starts)
+        val ambiguous = a.zip(b).map { (left, right) ->
+            SpeechWindow(left.start, DoubleArray(left.speech.size) { (left.speech[it] + right.speech[it]) / 2 })
+        }
+        val result = AdaptiveSubtitleSynchronizer.match(originals, ambiguous)
+        assertNull("Locally equivalent clocks diverge by seconds over this whole film: $result", result.correction)
     }
     @Test fun silencePeriodicSpeechWrongFilmAndSingleSceneNeverApply() {
         val cues = cues()

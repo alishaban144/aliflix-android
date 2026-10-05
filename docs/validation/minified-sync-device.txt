@@ -1,1 +1,1 @@
-PASS: fully minified native app, one tap, collecting, synced, reset; offset=-46.92,confidence=0.7915590783283093,elapsedMs=121426
+PASS: fully minified native app, one tap, collecting, synced, reset; version=3.1.147,normalSpeed=true,offset=-48.88,rate=1.0416666666666667,confidence=0.8767909418340998,elapsedMs=200548

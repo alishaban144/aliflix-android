@@ -689,6 +689,8 @@ class NativePlayerActivity : FragmentActivity() {
                                 Triple(candidate, server, request)
                             } catch (error: Exception) {
                                 ensureActive()
+                                if (candidate.source.identity.isAnimeNative) android.util.Log.d("AliflixAnime",
+                                    "source_failed:${candidate.source.identity.name}:${error.javaClass.simpleName}")
                                 if (server.isNotBlank() && !strictPreferredServer) excluded.add(server)
                                 if (candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY && cineJoyRetryServer != null) {
                                     excluded.add(checkNotNull(cineJoyRetryServer))
@@ -1074,7 +1076,10 @@ class NativePlayerActivity : FragmentActivity() {
                 val reference = async { loadSyncReference(originals) }
                 var lastEvidence = -1
                 var lastAttempt = 0L
-                while (android.os.SystemClock.elapsedRealtime() - started < 180_000) {
+                // Five independent 40-second scenes are needed for drift/FPS
+                // verification from a cold stream. Remain bounded but permit
+                // that evidence to arrive without another viewer action.
+                while (android.os.SystemClock.elapsedRealtime() - started < 300_000) {
                     ensureActive()
                     refreshAudioCorrection()
                     if (key != audioCorrectionKey || generation != NativePlaybackService.speechGeneration ||

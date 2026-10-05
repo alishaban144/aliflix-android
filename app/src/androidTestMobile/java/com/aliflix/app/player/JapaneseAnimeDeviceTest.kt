@@ -25,6 +25,9 @@ class JapaneseAnimeDeviceTest {
         )
         for (selection in titles) {
             context.stopService(Intent(context, NativePlaybackService::class.java))
+            // Exercise catalogue fetching, rather than reusing this test's
+            // previous direct stream. Provider/server history remains intact.
+            PlaybackRouteStore(File(context.noBackupFilesDir, "playback-routes")).invalidateStream(selection)
             val began = android.os.SystemClock.elapsedRealtime()
             val scenario = ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java)
                 .putExtra("selection", selection.nativeJson()).putExtra("autoSubtitles", false), nativePhoneLaunchOptions())

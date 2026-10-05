@@ -7,7 +7,7 @@
       "failures": "0",
       "errors": "0",
       "skipped": "0",
-      "time": "0.121"
+      "time": "0.129"
     },
     {
       "name": "com.aliflix.app.player.SileroSpeechSessionTest",
@@ -15,15 +15,15 @@
       "failures": "0",
       "errors": "0",
       "skipped": "0",
-      "time": "0.327"
+      "time": "0.311"
     },
     {
       "name": "com.aliflix.app.player.AdaptiveSubtitleSynchronizerTest",
-      "tests": "11",
+      "tests": "14",
       "failures": "0",
       "errors": "0",
       "skipped": "0",
-      "time": "3.311"
+      "time": "7.068"
     },
     {
       "name": "com.aliflix.app.player.PlaybackSpeechBufferTest",
@@ -31,10 +31,12 @@
       "failures": "0",
       "errors": "0",
       "skipped": "0",
-      "time": "0.303"
+      "time": "0.385"
     }
   ],
   "baseline": "04dfd3b8c0211231d0a6b50c1b266c99d3115f6c",
   "kind": "Windows host native JNI validation; no emulator",
-  "downstream_audio_hardware": "host test double; physical device tests use actual AudioTrack"
+  "downstream_audio_hardware": "host test double; physical device tests use actual AudioTrack",
+  "version": "3.1.147",
+  "host_command": "JAVA_TOOL_OPTIONS=-Xbootclasspath/a:<host-classes> -Djava.library.path=<JNI directory> -Donnxruntime.native.path=<JNI directory>; ALIFLIX_SYNC_HOST_VAD=1; ALIFLIX_SYNC_TESTSET=<public testset>; testMobileDebugUnitTest filtered to these four classes"
 }

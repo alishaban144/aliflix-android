@@ -6,6 +6,10 @@ import org.json.JSONArray
 import java.security.MessageDigest
 import java.net.URI
 
+// v4 includes all-known-scene and early-drift verification. Never replay a
+// correction accepted by v3's weaker confidence gates after upgrading.
+internal const val SUBTITLE_CORRECTION_SCHEMA = 4
+
 private val transientSyncField = Regex("(?i)^(headers|token|.*token.*|auth|authorization|cookie|expires?|exp|signature|sig|policy|key-pair-id|hdnea|hdnts|x-amz-.*|x-goog-.*)$")
 
 internal fun audioSyncFingerprint(format: androidx.media3.common.Format, mergedExternalText: Boolean = false): String = format.let { f ->
@@ -49,7 +53,7 @@ internal fun stableSyncRules(rules: String): String = runCatching {
 /** Only identity digests and timing transforms are account-synchronised. */
 internal fun subtitleCorrectionKey(request: NativePlaybackRequest, contentKey: String, cues: String, audioTrack: String): String {
     val digest = MessageDigest.getInstance("SHA-256")
-    listOf("adaptive-speech-v3", contentKey, stableSyncUrl(request.url), request.mimeType, stableSyncUrl(request.referer),
+    listOf("adaptive-speech-v$SUBTITLE_CORRECTION_SCHEMA", contentKey, stableSyncUrl(request.url), request.mimeType, stableSyncUrl(request.referer),
         stableSyncRules(request.streamUrlRules), request.preferredVideoWidth.toString(), request.preferredVideoHeight.toString(),
         runCatching { JSONObject(request.selectionJson).let { "${it.optString("provider")}|${stableSyncUrl(it.optString("baseUrl"))}" } }.getOrDefault(""),
         audioTrack, cues).forEach {
@@ -67,13 +71,13 @@ internal class SubtitleCorrectionStore(context: Context) {
         val offset = json.getDouble("offset"); val rate = json.getDouble("rate"); val score = json.getDouble("confidence")
         val array = json.optJSONArray("regions") ?: JSONArray()
         val regions = (0 until array.length()).map { i -> array.getJSONArray(i).let { TimingRegion(it.getInt(0), it.getDouble(1)) } }
-        if (json.optInt("schema") != 3 || !offset.isFinite() || offset !in -600.0..600.0 || rate !in .9..1.1 || score !in .46..1.00001 ||
+        if (json.optInt("schema") != SUBTITLE_CORRECTION_SCHEMA || !offset.isFinite() || offset !in -600.0..600.0 || rate !in .9..1.1 || score !in .46..1.00001 ||
             regions.size > 8 || regions.any { it.firstCue < 0 || !it.offset.isFinite() || it.offset !in -600.0..600.0 } ||
             regions.zipWithNext().any { it.first.firstCue >= it.second.firstCue }) null
         else AudioSubtitleCorrection(offset, rate, score, regions, json.optString("model", "offset"))
     }.getOrNull()
     fun put(key: String, correction: AudioSubtitleCorrection?) {
-        val json = JSONObject().put("schema", 3).put("reset", correction == null)
+        val json = JSONObject().put("schema", SUBTITLE_CORRECTION_SCHEMA).put("reset", correction == null)
         correction?.let { json.put("offset", it.offset).put("rate", it.rate).put("confidence", it.confidence).put("model", it.model)
             .put("regions", JSONArray().apply { it.regions.forEach { put(JSONArray().put(it.firstCue).put(it.offset)) } }) }
         preferences.edit().putString(key, json.toString()).apply() // Reset is a synced tombstone.

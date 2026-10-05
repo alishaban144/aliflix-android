@@ -1,2 +1,2 @@
-One Piece S1E1: source=MIRURO,firstFrameMs=3248,forwardSeek=passed
-Attack on Titan S1E1: source=MIRURO,firstFrameMs=1413,forwardSeek=passed
+One Piece S1E1: source=MIRURO,firstFrameMs=2689,forwardSeek=passed
+Attack on Titan S1E1: source=MIRURO,firstFrameMs=1826,forwardSeek=passed
