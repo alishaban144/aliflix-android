@@ -67,7 +67,31 @@ class PlaybackSpeechBufferTest {
         assertTrue(recent.start + recent.speech.size / 50.0 <= 7.9)
         assertTrue(recent.speech.size in 300..600)
         assertNotNull(capture.currentWindow(20.1))
+        assertEquals(1, capture.windows(22.0).size)
         assertFalse(capture.unavailable)
+    }
+
+    @Test fun seekRetainsObservedHistoryButNeverFillsUnheardGapsOrRejectsBackwardPcm() {
+        val capture = capture()
+        val format = Format.Builder().setSampleRate(8000).setChannelCount(1).setPcmEncoding(C.ENCODING_PCM_16BIT).build()
+        fun feed(start: Int, seconds: Int) {
+            val data = ByteBuffer.allocate(seconds * 16000).order(ByteOrder.LITTLE_ENDIAN)
+            repeat(seconds * 8000) { data.putShort(if (it / 8000.0 % 4.3 < 1.8) 1000 else 0) }
+            data.flip(); capture.pcm(data, format, start * 1_000_000L, 0)
+        }
+        feed(0, 40)
+        val generation = capture.generation
+        val before = capture.windows()
+        capture.discontinuity(); feed(200, 20)
+        assertEquals(listOf(0.0, 20.0, 200.0), capture.windows().map { it.start })
+        assertEquals(generation, capture.generation)
+        capture.discontinuity(); feed(0, 20)
+        assertArrayEquals(before.first().speech, capture.windows().first().speech, 0.0)
+        assertEquals(listOf(0.0, 20.0, 200.0), capture.windows().map { it.start })
+        assertTrue(capture.decodedFrameCount >= 4000)
+        capture.reset()
+        assertTrue(capture.windows().isEmpty())
+        assertTrue(capture.generation > generation)
     }
 
     @Test fun onlyCurrentDialogueIsReturnedAndSeeksNeverJoinEarlierScenes() {

@@ -10,6 +10,17 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
 class PlaybackSourceFallbackTest {
+    @Test fun japaneseSeriesUseDedicatedSourcesEvenWithAGeneralProviderSaved() {
+        val anime = Media(21, MediaType.TV, "One Piece", genres = listOf("Animation"), originalLanguage = "ja")
+        val preferences = PlaybackPreferences(generalProvider = MobilePlaybackProvider.FLIXER)
+        assertEquals(PlaybackProviderId.MIRURO, preferences.sourceFor(anime).identity)
+        val old = PlaybackSelection(anime, 1, 243, source = PlaybackSource(MobilePlaybackProvider.FLIXER))
+        assertEquals(listOf(PlaybackProviderId.MIRURO, PlaybackProviderId.ANIKURO),
+            initialPlaybackRace(playbackSourceFallbacks(old, preferences)).map { it.source.identity })
+        assertEquals(PlaybackProviderId.CINEJOY, preferences.sourceFor(anime, PlaybackProviderId.CINEJOY).identity)
+        assertEquals(MobilePlaybackProvider.FLIXER, preferences.sourceFor(anime.copy(originalLanguage = "en")).identity)
+        assertEquals(MobilePlaybackProvider.FLIXER, preferences.sourceFor(anime.copy(genres = listOf("Drama"))).identity)
+    }
     @Test fun otherSourcesFallBackWithoutChangingEpisodeIdentity() {
         val generalProviders = listOf(MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY)
         for (provider in (PlaybackProviderId.entries + MobilePlaybackProvider.entries)) {

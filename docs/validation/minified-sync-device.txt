@@ -1,0 +1,1 @@
+PASS: fully minified native app, one tap, collecting, synced, reset; offset=-46.92,confidence=0.7915590783283093,elapsedMs=121426

@@ -22,7 +22,8 @@ private class WebRtcPlaybackSpeechDetector : PlaybackSpeechDetector {
     override fun close() = vad.close()
 }
 
-/** Thirty seconds of 20 ms decisions (~13.5 KiB) and one 320-byte PCM frame.
+/** Timestamped 20 ms decisions. Sparse 20-second blocks retain up to six hours
+ * in at most 1.1 MiB, plus a short compatibility ring and one 320-byte PCM frame.
  * Box-filter resampling preserves 8 kHz timing at 44.1/48/96 kHz across codec buffers.
  * WebRTC's six-band GMM replaces the former loudness/zero-crossing heuristic.
  */
@@ -32,7 +33,15 @@ internal class PlaybackSpeechBuffer(
     private val times = DoubleArray(1500)
     private val bits = ByteArray(1500)
     private val frame = ShortArray(160)
+    private val evidence = java.util.TreeMap<Int, ByteArray>()
+    private val neuralEvidence = java.util.TreeMap<Int, ByteArray>()
+    private var neural: NeuralSpeechWorker? = null
+    private var boundaryCount = 0L
+    private var duplicateFrames = 0L
+    private var failure: String? = null
+    private var captureNanos = 0L
     private var detector: PlaybackSpeechDetector? = null
+    private var detectorFailed = false
     private var head = 0
     private var count = 0
     private var frameCount = 0
@@ -49,36 +58,96 @@ internal class PlaybackSpeechBuffer(
         private set
 
     @Synchronized fun reset() {
+        evidence.clear(); neuralEvidence.clear(); boundaryCount++; duplicateFrames = 0; failure = null; captureNanos = 0
         head = 0; count = 0; lastTime = Double.NEGATIVE_INFINITY
-        decodedFrameCount = 0; clearPartialFrame(); closeDetector(); unavailable = false; generation++
+        decodedFrameCount = 0; clearPartialFrame(); closeDetector(); detectorFailed = false; unavailable = false; generation++
     }
     private fun clearPartialFrame() { frameCount = 0; phase = 0; sum = 0.0; averaged = 0 }
     private fun closeDetector() { runCatching { detector?.close() }; detector = null }
-    @Synchronized override fun close() { reset(); unavailable = true }
+    @Synchronized override fun close() { neural?.close(); neural = null; reset(); unavailable = true }
+
+    @Synchronized fun enableNeural(context: Context) {
+        if (neural == null) neural = NeuralSpeechWorker(context, ::acceptNeural)
+    }
+    @Synchronized private fun acceptNeural(start: Double, probability: Float, token: Long, boundary: Long) {
+        if (token != generation || boundary != boundaryCount) return
+        // Assign each 20 ms bin by its midpoint inside the observed 32 ms
+        // inference interval. Never round both endpoints and fabricate a gap.
+        val first = ceil((start - .01) * SPEECH_HZ).toInt()
+        val end = ceil((start + .032 - .01) * SPEECH_HZ).toInt()
+        for (bin in first until end) if (bin in 0 until 21600 * SPEECH_HZ) {
+            neuralEvidence.getOrPut(bin / 1000) { ByteArray(1000) { -1 } }[bin % 1000] =
+                (probability * 100).roundToInt().coerceIn(0, 100).toByte()
+        }
+    }
+    fun awaitNeuralCapacity() = neural?.awaitCapacity()
+    fun awaitNeuralReady() = neural?.awaitReady()
+    fun awaitNeuralIdle() = neural?.awaitIdle()
+
+    /** Flush/seek changes decoder continuity, not the identity of the soundtrack. */
+    @Synchronized fun discontinuity() {
+        head = 0; count = 0; lastTime = Double.NEGATIVE_INFINITY
+        clearPartialFrame(); closeDetector(); boundaryCount++
+    }
+
+    @Synchronized fun diagnostics(): String = "generation=$generation,frames=$decodedFrameCount,blocks=${evidence.size}," +
+        "boundaries=$boundaryCount,duplicates=$duplicateFrames,unavailable=$unavailable,reason=$failure,captureMs=${captureNanos / 1_000_000},${neural?.diagnostics()}"
+
+    @Synchronized fun windows(positionSeconds: Double = Double.POSITIVE_INFINITY, limit: Int = Int.MAX_VALUE): List<SpeechWindow> {
+        fun observed(source: java.util.TreeMap<Int, ByteArray>, neural: Boolean): List<SpeechWindow> {
+            val threshold = if (neural) 50 else 1
+            val candidates = source.entries.filter { (block, values) ->
+                if (block * 20.0 + 20 > positionSeconds || values.any { it < 0 }) false else if (limit == Int.MAX_VALUE) true else {
+                    val voiced = values.count { it >= threshold }
+                    voiced in 80..920 && (1 until values.size).count { (values[it] >= threshold) != (values[it - 1] >= threshold) } >= 6
+                }
+            }
+            val selected = if (candidates.size <= limit) candidates else (0 until limit).map { i ->
+                candidates[i * (candidates.size - 1) / (limit - 1).coerceAtLeast(1)]
+            }
+            return selected.map { (block, values) ->
+            val start = block * 20.0
+                SpeechWindow(start, DoubleArray(values.size) { if (values[it] >= threshold) 1.0 else 0.0 })
+            }
+        }
+        val preferred = observed(neuralEvidence, true)
+        return if (neural?.ready == true && (preferred.size >= 3 || neural?.dropped == 0L)) preferred else observed(evidence, false)
+    }
 
     @Synchronized fun pcm(buffer: ByteBuffer, format: Format, pts: Long, offset: Long) {
-        if (unavailable || pts == C.TIME_UNSET || format.sampleRate !in 8000..192000 || format.channelCount !in 1..8) return
+        if (unavailable && neural?.ready != true) return
+        if (pts == C.TIME_UNSET || format.sampleRate !in 8000..192000 || format.channelCount !in 1..8) {
+            failure = "invalid_pcm_clock_or_format"; return
+        }
+        val started = System.nanoTime()
         val width = when (format.pcmEncoding) {
+            C.ENCODING_PCM_8BIT -> 1
             C.ENCODING_PCM_16BIT -> 2
             C.ENCODING_PCM_24BIT -> 3
             C.ENCODING_PCM_32BIT, C.ENCODING_PCM_FLOAT -> 4
-            else -> return
+            else -> { failure = "unsupported_pcm_${format.pcmEncoding}"; return }
         }
         val input = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
         val bytesPerFrame = format.channelCount * width
+        val declaredStart = subtitleMediaSeconds(pts, offset, 0, format.sampleRate)
+        val expectedStart = lastTime + 1.0 / format.sampleRate
+        // Codec PTS is quantised independently of sample counts. Keep sample
+        // continuity for sub-frame rounding; real gaps remain explicit boundaries.
+        val batchStart = if (lastTime.isFinite() && abs(declaredStart - expectedStart) <= .003) expectedStart else declaredStart
         var sourceFrame = 0
         try {
             while (input.remaining() >= bytesPerFrame) {
-                val time = subtitleMediaSeconds(pts, offset, sourceFrame++, format.sampleRate)
-                if (time <= lastTime) { input.position(input.position() + bytesPerFrame); continue }
+                val time = batchStart + sourceFrame++ / format.sampleRate.toDouble()
+                if (time <= lastTime) { duplicateFrames++; input.position(input.position() + bytesPerFrame); continue }
                 if (lastTime.isFinite() && abs(time - lastTime - 1.0 / format.sampleRate) > .005) {
                     // A seek/discontinuity is a boundary, never fabricated silent audio.
-                    clearPartialFrame(); closeDetector()
+                    clearPartialFrame(); closeDetector(); boundaryCount++
                 }
                 lastTime = time
                 var mono = 0.0
                 repeat(format.channelCount) { channel ->
                     val value = when (format.pcmEncoding) {
+                        C.ENCODING_PCM_8BIT -> ((input.get().toInt() and 255) - 128) / 128.0
                         C.ENCODING_PCM_16BIT -> input.short / 32768.0
                         C.ENCODING_PCM_24BIT -> ((input.get().toInt() and 255) or
                             ((input.get().toInt() and 255) shl 8) or (input.get().toInt() shl 16)) / 8388608.0
@@ -97,20 +166,42 @@ internal class PlaybackSpeechBuffer(
                     frame[frameCount++] = (sum / averaged * 32767).toInt().coerceIn(-32768, 32767).toShort()
                     sum = 0.0; averaged = 0
                     if (frameCount == frame.size) {
-                        val vad = detector ?: detectorFactory().also { detector = it }
                         times[head] = frameStart
-                        bits[head] = if (vad.speech(frame)) 1 else 0
+                        neural?.offer(frame, frameStart, generation, boundaryCount)
+                        bits[head] = try {
+                            if (detectorFailed) -1 else {
+                                val vad = detector ?: detectorFactory().also { detector = it }
+                                if (vad.speech(frame)) 1 else 0
+                            }
+                        } catch (error: Exception) { detectorFailure(error.javaClass.simpleName) }
+                        catch (error: LinkageError) { detectorFailure(error.javaClass.simpleName) }
+                        // Unknown bins stay -1, never fabricated silence. Round the
+                        // frame start once; codec PTS quantisation must not drift.
+                        val bin = (frameStart * SPEECH_HZ).roundToInt()
+                        if (bin in 0 until 21600 * SPEECH_HZ) {
+                            val block = evidence.getOrPut(bin / 1000) { ByteArray(1000) { -1 } }
+                            block[bin % 1000] = bits[head]
+                        }
                         head = (head + 1) % times.size; count = min(count + 1, times.size)
                         decodedFrameCount++
                         frameCount = 0
                     }
                 }
             }
-        } catch (_: Exception) { failCapture() }
-        catch (_: LinkageError) { failCapture() } // Capture failure must never stop playback.
+        } catch (error: Exception) { failCapture(error.javaClass.simpleName) }
+        catch (error: LinkageError) { failCapture(error.javaClass.simpleName) } // Capture failure must never stop playback.
+        finally { captureNanos += System.nanoTime() - started }
     }
-    private fun failCapture() { unavailable = true; closeDetector(); clearPartialFrame() }
-    @Synchronized fun noDecodedPcm() { failCapture() }
+    private fun failCapture(reason: String) { failure = reason; unavailable = true; closeDetector(); clearPartialFrame() }
+    private fun detectorFailure(reason: String): Byte {
+        detectorFailed = true; failure = "webrtc_$reason"; closeDetector()
+        unavailable = neural == null || neural?.failure != null
+        return -1
+    }
+    @Synchronized fun noDecodedPcm() { failCapture("encoded_passthrough_without_decoder") }
+    @Synchronized fun decodedPcmAvailable() {
+        if (failure == "encoded_passthrough_without_decoder") { unavailable = false; failure = null }
+    }
 
     private data class Snapshot(val times: DoubleArray, val bits: ByteArray)
     @Synchronized private fun snapshot(maxMediaSeconds: Double): Snapshot {
@@ -118,7 +209,7 @@ internal class PlaybackSpeechBuffer(
         var copied = 0
         for (i in 0 until count) {
             val index = (head - count + i + times.size) % times.size
-            if (times[index] + .02 > maxMediaSeconds) continue
+            if (times[index] + .02 > maxMediaSeconds + 1e-6) continue
             t[copied] = times[index]; b[copied++] = bits[index]
         }
         return if (copied == count) Snapshot(t, b) else Snapshot(t.copyOf(copied), b.copyOf(copied))
@@ -171,13 +262,18 @@ internal class SpeechCaptureAudioSink(
     override fun configure(config: AudioSink.AudioSinkConfig) {
         super.configure(config)
         if (format.sampleRate != config.format.sampleRate || format.channelCount != config.format.channelCount || format.pcmEncoding != config.format.pcmEncoding)
-            capture.reset()
+            capture.discontinuity()
         format = config.format
         // Some HDMI routes can play formats the phone cannot decode. Preserve
         // their playback; explain missing PCM instead of disabling working audio.
         if (format.sampleMimeType != MimeTypes.AUDIO_RAW) capture.noDecodedPcm()
+        else capture.decodedPcmAvailable()
     }
-    override fun setOutputStreamOffsetUs(outputStreamOffsetUs: Long) { offset = outputStreamOffsetUs; super.setOutputStreamOffsetUs(outputStreamOffsetUs) }
+    override fun setOutputStreamOffsetUs(outputStreamOffsetUs: Long) {
+        if (offset != outputStreamOffsetUs) { capturedBuffer = null; capture.discontinuity() }
+        offset = outputStreamOffsetUs; super.setOutputStreamOffsetUs(outputStreamOffsetUs)
+    }
+    override fun handleDiscontinuity() { capturedBuffer = null; capturedPts = C.TIME_UNSET; capture.discontinuity(); super.handleDiscontinuity() }
     override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
         if (capturedBuffer !== buffer || capturedPts != presentationTimeUs) {
             capturedBuffer = buffer; capturedPts = presentationTimeUs
@@ -187,8 +283,8 @@ internal class SpeechCaptureAudioSink(
         if (consumed) capturedBuffer = null
         return consumed
     }
-    override fun flush() { capturedBuffer = null; capturedPts = C.TIME_UNSET; capture.reset(); super.flush() }
-    override fun reset() { capturedBuffer = null; capturedPts = C.TIME_UNSET; capture.reset(); super.reset() }
+    override fun flush() { capturedBuffer = null; capturedPts = C.TIME_UNSET; capture.discontinuity(); super.flush() }
+    override fun reset() { capturedBuffer = null; capturedPts = C.TIME_UNSET; capture.discontinuity(); super.reset() }
     override fun release() { capture.close(); super.release() }
 }
 

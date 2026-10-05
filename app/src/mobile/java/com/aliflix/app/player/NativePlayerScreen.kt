@@ -923,27 +923,27 @@ internal fun NativePlayerScreen(
                         Spacer(Modifier.height(4.dp))
                         // Subtitle Sync / Delay
                         Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        val syncing = state.audioSyncState == "Syncing"
+                        val syncing = state.audioSyncState in setOf("Analysing", "Collecting Evidence")
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         FilledTonalButton(
                             onClick = onSyncWithAudio,
                             enabled = state.audioSyncAvailable || syncing,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(containerColor = AliflixAccentPrimary.copy(alpha = .18f), contentColor = AliflixAccentSecondary),
                         ) {
                             if (syncing) com.aliflix.app.ui.common.AliflixSyncBars(Modifier.size(22.dp, 28.dp))
                             else Icon(Icons.Rounded.GraphicEq, null, Modifier.size(20.dp))
                             Spacer(Modifier.width(10.dp))
-                            Text("Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.weight(1f))
-                            state.audioSyncState?.let { Text(if (syncing) "$it · Cancel" else if (it == "Failed") "Retry" else it, fontSize = 11.sp) }
+                            Text(state.audioSyncState ?: "Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            if (syncing) {
+                                Spacer(Modifier.weight(1f))
+                                Text("Cancel", fontSize = 11.sp)
+                            }
                         }
-                        AnimatedVisibility(state.audioSyncMessage != null, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
-                            Text(
-                                text = state.audioSyncMessage.orEmpty(),
-                                color = Color.White.copy(alpha = .60f), fontSize = 11.sp,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                            )
+                        if (state.audioSyncApplied) TextButton(onClick = onResetSubtitleSync) {
+                            Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
+                        }
                         }
                         Surface(
                             shape = RoundedCornerShape(12.dp),
@@ -969,8 +969,8 @@ internal fun NativePlayerScreen(
                                     ) {
                                         Text("\u22120.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
-                                    if (settings.subtitleDelayTenths != 0 || state.audioSyncApplied || syncing) {
-                                        TextButton(onClick = onResetSubtitleSync) {
+                                    if (settings.subtitleDelayTenths != 0) {
+                                        TextButton(onClick = { onSubtitleDelayChange(0) }) {
                                             Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
                                         }
                                     }

@@ -270,7 +270,8 @@ data class PlaybackPreferences(
     ): PlaybackSource {
         val provider = requestedProvider
             ?.takeIf { candidate -> candidate.isAvailableFor(media) }
-            ?: effectiveGeneralProvider
+            ?: if (!com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV && media.isJapaneseAnime)
+                PlaybackProviderId.MIRURO else effectiveGeneralProvider
         return when (provider) {
             PlaybackProviderId.CINEJOY -> PlaybackSource(PlaybackProviderId.CINEJOY)
             MobilePlaybackProvider.FLIXER -> PlaybackSource(MobilePlaybackProvider.FLIXER)

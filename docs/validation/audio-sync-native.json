@@ -1,0 +1,40 @@
+{
+  "device_validation": "See native-vad-device.json and adaptive-sync-device.txt for actual Pixel 7a validation",
+  "tests": [
+    {
+      "name": "com.aliflix.app.player.NativeSpeechCaptureTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.121"
+    },
+    {
+      "name": "com.aliflix.app.player.SileroSpeechSessionTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.327"
+    },
+    {
+      "name": "com.aliflix.app.player.AdaptiveSubtitleSynchronizerTest",
+      "tests": "11",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "3.311"
+    },
+    {
+      "name": "com.aliflix.app.player.PlaybackSpeechBufferTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.303"
+    }
+  ],
+  "baseline": "04dfd3b8c0211231d0a6b50c1b266c99d3115f6c",
+  "kind": "Windows host native JNI validation; no emulator",
+  "downstream_audio_hardware": "host test double; physical device tests use actual AudioTrack"
+}

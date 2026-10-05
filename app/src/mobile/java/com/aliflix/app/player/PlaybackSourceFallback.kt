@@ -14,5 +14,5 @@ internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: 
 /** Native anime sources retain their race; general playback advances through a bounded queue. */
 internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<PlaybackSelection> {
     val anime = candidates.filter { it.source.identity.isAnimeNative }
-    return if (candidates.firstOrNull()?.source?.identity?.isAnimeNative == true) anime else candidates
+    return if (candidates.firstOrNull()?.media?.let { it.type == MediaType.TV && it.isJapaneseAnime } == true && anime.isNotEmpty()) anime else candidates
 }

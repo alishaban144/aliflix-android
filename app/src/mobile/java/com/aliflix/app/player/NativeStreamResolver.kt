@@ -63,7 +63,7 @@ internal class NativeStreamResolver(
         reportServers = onServers
         if (strictPreferredServer) require(!preferredServer.isNullOrBlank()) { "A server is required for pinned preparation." }
         if (selection.source.identity == PlaybackProviderId.MIRURO) {
-            val adapter = MiruroNativeCatalog(activity, host).also { miruro = it }
+            val adapter = MiruroNativeCatalog(activity).also { miruro = it }
             return try {
                 adapter.resolve(selection, positionMs, excluded, preferredServer, strictPreferredServer, onServers, onServer, validateSingle)
             } finally { adapter.close(); miruro = null }

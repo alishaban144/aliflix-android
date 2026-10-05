@@ -10,8 +10,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
-import org.jsoup.Connection
-import org.jsoup.Jsoup
 
 /** One stream AniKuro publishes, already carrying the origin its host demands. */
 internal data class AniKuroSource(val url: String, val quality: String, val hls: Boolean, val referer: String)
@@ -92,29 +90,36 @@ internal class AniKuroNativeCatalog(private val activity: ComponentActivity) {
         strict: Boolean, onServers: (List<String>) -> Unit, onServer: (String) -> Unit, validate: Boolean,
     ): NativePlaybackRequest {
         val mapped = AniListEpisodeMapping.map(activity, selection)
-        val streams = withTimeout(CATALOGUE_TIMEOUT_MS) { streams(mapped.first, mapped.second) }
-        if (streams.isEmpty()) throw NoNativeServersException()
-        onServers(streams.map { it.label })
-        val ordered = streams.filter { it.label !in excluded && (!strict || it.label == preferred || preferred?.startsWith(it.label + " / ") == true) }
-            .sortedBy { if (it.label == preferred || preferred?.startsWith(it.label + " / ") == true) 0 else 1 }
-        // A resolved stream is never discarded just because the quick health check did not pass.
-        // The player, its own readiness gate and the surrounding retry loop decide the outcome.
-        var unverified: NativePlaybackRequest? = null
-        for (stream in ordered) {
-            currentCoroutineContext().ensureActive()
-            onServer(stream.label)
-            val request = request(selection, positionMs, stream)
-            if (!validate) return request
-            try {
-                StartupStreamCache.awaitPlayable(activity, request)
-                return request
-            } catch (error: Exception) {
-                currentCoroutineContext().ensureActive()
-                if (strict && preferred == stream.label) throw error
-                unverified = request
-            }
+        val providers = (listOf(ANIMEPOWER) + SECONDARY_PROVIDERS)
+            .filter { !strict || preferred?.startsWith("AniKuro / $it / ") == true }
+            .sortedBy { if (preferred?.startsWith("AniKuro / $it / ") == true) 0 else 1 }
+        val labels = mutableListOf<String>()
+        val winner = withTimeout(CATALOGUE_TIMEOUT_MS) {
+            firstSuccessful(providers.map { provider -> suspend attempt@ {
+                val streams = if (provider == ANIMEPOWER) animePowerStreams(mapped.first, mapped.second) else {
+                    val payload = fetch(providerPath(provider, mapped.first, mapped.second)) ?: throw NoNativeServersException()
+                    anikuroStreams(provider, anikuroVariants(payload, BASE).filter { it.variant.equals("sub", true) })
+                }
+                labels.addAll(streams.map { it.label }); onServers(labels.distinct())
+                val ordered = streams.filter { it.label !in excluded && (!strict || it.label == preferred) }
+                    .sortedBy { if (it.label == preferred) 0 else 1 }
+                var failure: Exception? = null
+                for (stream in ordered) {
+                    currentCoroutineContext().ensureActive()
+                    val request = request(selection, positionMs, stream)
+                    try {
+                        if (validate) StartupStreamCache.awaitPlayable(activity, request)
+                        return@attempt stream.label to request
+                    } catch (error: Exception) {
+                        currentCoroutineContext().ensureActive(); failure = error
+                        android.util.Log.d("AliflixAnime", "anikuro_candidate_failed:${stream.label}:${error.javaClass.simpleName}")
+                    }
+                }
+                throw failure ?: NoNativeServersException()
+            } }, parallelism = if (strict) 1 else 2)
         }
-        return unverified ?: throw NoNativeServersException()
+        onServer(winner.first)
+        return winner.second
     }
 
     private fun request(selection: PlaybackSelection, positionMs: Long, stream: AniKuroStream) = NativePlaybackRequest(
@@ -129,24 +134,9 @@ internal class AniKuroNativeCatalog(private val activity: ComponentActivity) {
         selectionJson = selection.nativeJson(),
     )
 
-    private suspend fun streams(anilistId: Int, episode: Int): List<AniKuroStream> {
-        val primary = animePowerStreams(anilistId, episode)
-        if (primary.isNotEmpty()) return primary
-        // The website races the remaining mirrors only when animepower has nothing for this episode.
-        return try {
-            withTimeout(SECONDARY_TIMEOUT_MS) {
-                firstSuccessful(SECONDARY_PROVIDERS.map { provider -> suspend {
-                    val payload = fetch("$SOURCES_PATH/$provider/$anilistId:$episode")
-                    val found = if (payload == null) emptyList() else anikuroStreams(provider, anikuroVariants(payload, BASE))
-                    if (found.isEmpty()) throw NoNativeServersException()
-                    found
-                } }, parallelism = SECONDARY_PARALLELISM)
-            }
-        } catch (error: Exception) {
-            currentCoroutineContext().ensureActive()
-            emptyList()
-        }
-    }
+    private fun providerPath(provider: String, id: Int, episode: Int): String =
+        if (provider in setOf("animegg", "anidb", "animedunya", "animeverse")) "/api/v1/$provider/video/$id/$episode"
+        else "$SOURCES_PATH/$provider/$id:$episode"
 
     private suspend fun animePowerStreams(anilistId: Int, episode: Int): List<AniKuroStream> {
         var dubOnly: List<AniKuroStream> = emptyList()
@@ -165,11 +155,8 @@ internal class AniKuroNativeCatalog(private val activity: ComponentActivity) {
     }
 
     private suspend fun fetch(path: String): JSONObject? = withContext(Dispatchers.IO) {
-        runCatching {
-            Jsoup.connect(BASE.trimEnd('/') + path).ignoreContentType(true).timeout(HTTP_TIMEOUT_MS)
-                .userAgent(USER_AGENT).header("Accept", "application/json").header("Referer", BASE)
-                .method(Connection.Method.GET).execute().body().let(::JSONObject)
-        }.getOrNull()
+        try { JSONObject(String(AnimeCatalogueHttp.get(BASE.trimEnd('/') + path, USER_AGENT, BASE).bytes, Charsets.UTF_8)) }
+        catch (error: Exception) { currentCoroutineContext().ensureActive(); null }
     }
 
     private companion object {
@@ -180,9 +167,9 @@ internal class AniKuroNativeCatalog(private val activity: ComponentActivity) {
         const val HTTP_TIMEOUT_MS = 8_000
         const val CATALOGUE_TIMEOUT_MS = 40_000L
         const val SECONDARY_TIMEOUT_MS = 16_000L
-        const val ANIMEPOWER_ATTEMPTS = 3
+        const val ANIMEPOWER_ATTEMPTS = 1
         const val SECONDARY_PARALLELISM = 3
-        val SECONDARY_PROVIDERS = listOf("animepahe", "anikoto", "reanime", "animedao", "allanime", "animix", "senshi")
+        val SECONDARY_PROVIDERS = listOf("animepahe", "senshi", "animegg", "anidb", "animedunya", "animeverse", "anikoto", "reanime", "animedao", "allanime", "animix")
         const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
     }

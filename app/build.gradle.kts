@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 235
-val mobileVersionName = "3.1.145"
+val mobileVersionCode = 236
+val mobileVersionName = "3.1.146"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
@@ -53,6 +53,7 @@ android {
     productFlavors {
         create("mobile") {
             dimension = "formFactor"
+            proguardFile("mobile-proguard-rules.pro")
             versionCode = mobileVersionCode
             versionName = mobileVersionName
             buildConfigField("boolean", "IS_TV", "false")
@@ -126,6 +127,14 @@ android {
     }
 }
 
+// The universal mobile APK carries all supported CPU ABIs. Compress native
+// libraries for download; Android extracts them once at installation. TV keeps
+// its existing packaging. This avoids a 135 MiB stored ONNX library payload.
+androidComponents.onVariants(androidComponents.selector().withFlavor("formFactor" to "mobile")) { variant ->
+    variant.packaging.jniLibs.useLegacyPackaging.set(true)
+    variant.packaging.jniLibs.useLegacyPackagingFromBundle.set(true)
+}
+
 val validateReleaseSigning by tasks.registering {
     group = "verification"
     description = "Fails production release packaging when release signing credentials are unavailable."
@@ -136,6 +145,16 @@ val validateReleaseSigning by tasks.registering {
         check(file(requireNotNull(releaseKeystoreFile)).isFile) {
             "Production release keystore does not exist: $releaseKeystoreFile"
         }
+    }
+}
+
+// Optional real Windows JNI validation; ordinary CI still runs the portable
+// labelled-speech and alignment regressions. No emulator or JVM VAD substitute.
+tasks.withType<Test>().matching { name.startsWith("testMobile") }.configureEach {
+    System.getenv("ALIFLIX_SYNC_HOST_CLASSES")?.let { directory -> jvmArgs("-Xbootclasspath/a:$directory") }
+    System.getenv("ALIFLIX_SYNC_JNI_DIR")?.let { directory ->
+        systemProperty("java.library.path", directory)
+        systemProperty("onnxruntime.native.path", directory)
     }
 }
 
@@ -150,6 +169,7 @@ tasks.matching {
 
 dependencies {
     add("mobileImplementation", files("libs/webrtc-vad-2.0.10.aar"))
+    add("mobileImplementation", "com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     val firebaseBom = platform("com.google.firebase:firebase-bom:34.18.0")
     implementation(composeBom)
