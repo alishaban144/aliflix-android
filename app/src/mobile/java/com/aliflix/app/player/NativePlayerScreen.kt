@@ -290,15 +290,19 @@ internal fun NativePlayerScreen(
     val duration = (player?.duration ?: 0L).coerceAtLeast(0L)
     val position = (player?.currentPosition ?: 0L).coerceIn(0L, duration.coerceAtLeast(1L))
     val next = state.episodes.dropWhile { it.number != state.episodeNumber || it.seasonNumber != state.playbackSelection?.seasonNumber }.drop(1).firstOrNull()
+    val activeSegment = state.segments.firstOrNull { it.isActive(position, duration) }
+    val activeOutro = activeSegment?.takeIf { it.kind == IntroSegmentKind.OUTRO }
 
-    // Next episode countdown
+    // Up Next owns the exact IntroDB outro window and replaces Skip outro.
+    // Cancelling keeps the outro playing; otherwise the next episode starts as the outro window ends.
     var countdownCancelled by remember(state.episodeNumber) { mutableStateOf(false) }
     val remainingMs = duration - position
-    val isNearEnd = duration > 45_000 && remainingMs in 1..25_000
-    val showCountdown = settings.playNextEpisode && next != null && isNearEnd && !countdownCancelled && !ended && !preparing && state.error == null
+    val outroRemainingMs = activeOutro?.let { (it.endMs - position).coerceAtLeast(0L) } ?: 0L
+    val outroDurationMs = activeOutro?.let { (it.endMs - it.startMs).coerceAtLeast(1L) } ?: 1L
+    val showCountdown = settings.playNextEpisode && next != null && activeOutro != null && !countdownCancelled && !ended && !preparing && state.error == null
 
-    LaunchedEffect(showCountdown, remainingMs) {
-        if (showCountdown && remainingMs <= 1200 && next != null) {
+    LaunchedEffect(showCountdown, outroRemainingMs) {
+        if (showCountdown && outroRemainingMs <= 1200 && next != null) {
             onAutoEpisode(next)
         }
     }
@@ -687,10 +691,10 @@ internal fun NativePlayerScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        val sec = (remainingMs / 1000).toInt().coerceIn(1, 25)
-                        val steppedTarget = (sec / 25f).coerceIn(0f, 1f)
+                        val sec = kotlin.math.ceil(outroRemainingMs / 1000.0).toInt().coerceAtLeast(1)
+                        val ringTarget = (outroRemainingMs.toFloat() / outroDurationMs.toFloat()).coerceIn(0f, 1f)
                         val ringProgress by animateFloatAsState(
-                            targetValue = steppedTarget,
+                            targetValue = ringTarget,
                             animationSpec = tween(420, easing = FastOutSlowInEasing),
                             label = "next-episode-ring",
                         )
@@ -723,11 +727,11 @@ internal fun NativePlayerScreen(
             }
         }
 
-        // Intro / Skip Segment Button
-        val segment = state.segments.firstOrNull { it.isActive(position, duration) }
+        // Intro skip control. Outro is represented exclusively by Up Next above.
+        val skipSegment = activeSegment?.takeIf { it.kind == IntroSegmentKind.INTRO }
         if (!preparing && state.error == null && !overlayOpen && player?.isCurrentMediaItemSeekable == true && !showCountdown) {
             AnimatedVisibility(
-                segment != null,
+                skipSegment != null,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier
@@ -735,7 +739,7 @@ internal fun NativePlayerScreen(
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
                     .padding(end = 20.dp, bottom = if (controls) 140.dp else 24.dp)
             ) {
-                segment?.let { marker ->
+                skipSegment?.let { marker ->
                     Button(
                         onClick = { player.seekTo(marker.endMs); interaction++ },
                         shape = RoundedCornerShape(12.dp),
