@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "238"
-  RELEASE_VERSION_NAME: "3.1.148"
+  RELEASE_VERSION_CODE: "239"
+  RELEASE_VERSION_NAME: "3.1.149"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -353,7 +353,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Sync with Audio uses automatically accumulated playback speech and verified references, with a single under-20-second deadline covering collection, downloads and analysis. Fixed PCM timestamp gaps and phrase correlation. Physical Pixel tests verified actual film subtitle correction, downloaded offset/framerate/edit corrections, ambiguity rejection, Cancel and Reset. Arabic direction and dedicated Japanese anime sources retained. Mobile only."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Up Next now replaces Skip Outro and appears for the exact IntroDB outro segment. Skip Intro remains unchanged. The existing Up Next card, Play Now and Cancel controls are preserved; automatic next-episode playback occurs at the end of the outro window. Mobile only."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
