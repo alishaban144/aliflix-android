@@ -41,7 +41,6 @@ class NativeSkipControlsTest {
                         ready = true,
                         revision = revision.intValue,
                         episodes = listOf(
-                            com.aliflix.app.model.Episode(1, 1, "Episode one"),
                             com.aliflix.app.model.Episode(1, 2, "Episode two"),
                         ),
                         episodeNumber = 1,
@@ -52,7 +51,8 @@ class NativeSkipControlsTest {
                         ),
                         segments = listOf(IntroSegment(IntroSegmentKind.INTRO, 12000, 34000), IntroSegment(IntroSegmentKind.OUTRO, 70000, 80000))
                     ),
-                    player = player
+                    player = player,
+                    settings = PlayerSettings(playNextEpisode = false)
                 )
             } }
             compose.onNodeWithText("Skip intro").assertDoesNotExist()
@@ -60,10 +60,12 @@ class NativeSkipControlsTest {
             compose.onNodeWithText("Skip intro").assertIsDisplayed().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
             compose.runOnIdle { assertEquals(34000L, position) }
             compose.onNodeWithText("Skip intro").assertDoesNotExist()
-            compose.runOnIdle { position = 71000; revision.intValue++ }
+            compose.runOnIdle { position = 69_999; revision.intValue++ }
+            compose.onNodeWithText("UP NEXT").assertDoesNotExist()
+            compose.runOnIdle { position = 70_000; revision.intValue++ }
             compose.onNodeWithText("Skip outro").assertDoesNotExist()
             compose.onNodeWithText("UP NEXT").assertIsDisplayed()
-            compose.runOnIdle { position = 80000; revision.intValue++ }
+            compose.runOnIdle { position = 80_000; revision.intValue++ }
             compose.onNodeWithText("UP NEXT").assertDoesNotExist()
         } finally { compose.runOnUiThread { engine.release() } }
     }
