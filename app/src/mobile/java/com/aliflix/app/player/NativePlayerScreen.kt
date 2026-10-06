@@ -289,20 +289,31 @@ internal fun NativePlayerScreen(
     val ended = player?.playbackState == Player.STATE_ENDED
     val duration = (player?.duration ?: 0L).coerceAtLeast(0L)
     val position = (player?.currentPosition ?: 0L).coerceIn(0L, duration.coerceAtLeast(1L))
-    val next = state.episodes.dropWhile { it.number != state.episodeNumber || it.seasonNumber != state.playbackSelection?.seasonNumber }.drop(1).firstOrNull()
-    val activeSegment = state.segments.firstOrNull { it.isActive(position, duration) }
-    val activeOutro = activeSegment?.takeIf { it.kind == IntroSegmentKind.OUTRO }
-    val outroStartMs = state.segments.firstOrNull { it.kind == IntroSegmentKind.OUTRO }?.startMs
+    val currentSeason = state.playbackSelection?.seasonNumber
+    val currentEpisode = state.episodeNumber
+    val next = if (currentSeason != null && currentEpisode != null) {
+        state.episodes
+            .asSequence()
+            .filter { it.seasonNumber > currentSeason || (it.seasonNumber == currentSeason && it.number > currentEpisode) }
+            .minWithOrNull(compareBy<com.aliflix.app.model.Episode>({ it.seasonNumber }, { it.number }))
+    } else null
+    val activeOutro = state.segments.firstOrNull {
+        it.kind == IntroSegmentKind.OUTRO && it.isActive(position, duration)
+    }
+    val activeIntro = state.segments.firstOrNull {
+        it.kind == IntroSegmentKind.INTRO && it.isActive(position, duration)
+    }
 
-    // Up Next replaces Skip outro and starts at the same IntroDB outro marker.
-    // Once shown, it remains available through the end of the episode so post-credit material is preserved.
+    // Up Next is a direct replacement for Skip outro: same IntroDB window, no autoplay dependency.
     var countdownCancelled by remember(state.episodeNumber) { mutableStateOf(false) }
     val remainingMs = duration - position
-    val outroStarted = outroStartMs != null && position >= outroStartMs
-    val showCountdown = settings.playNextEpisode && next != null && outroStarted && !countdownCancelled && !ended && !preparing && state.error == null
+    val showCountdown = next != null && activeOutro != null && !countdownCancelled && !ended && !preparing && state.error == null
+    val autoAdvanceArmed = settings.playNextEpisode && next != null &&
+        state.segments.any { it.kind == IntroSegmentKind.OUTRO && position >= it.startMs } &&
+        !countdownCancelled && !ended && !preparing && state.error == null
 
-    LaunchedEffect(showCountdown, remainingMs) {
-        if (showCountdown && remainingMs <= 1200 && next != null) {
+    LaunchedEffect(autoAdvanceArmed, remainingMs) {
+        if (autoAdvanceArmed && remainingMs <= 1200 && next != null) {
             onAutoEpisode(next)
         }
     }
@@ -692,7 +703,10 @@ internal fun NativePlayerScreen(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         val sec = kotlin.math.ceil(remainingMs / 1000.0).toInt().coerceAtLeast(1)
-                        val ringTarget = (remainingMs.toFloat() / (duration - checkNotNull(outroStartMs)).coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
+                        val ringTarget = activeOutro?.let { marker ->
+                            ((marker.endMs - position).toFloat() / (marker.endMs - marker.startMs).coerceAtLeast(1L).toFloat())
+                                .coerceIn(0f, 1f)
+                        } ?: 0f
                         val ringProgress by animateFloatAsState(
                             targetValue = ringTarget,
                             animationSpec = tween(420, easing = FastOutSlowInEasing),
@@ -728,7 +742,7 @@ internal fun NativePlayerScreen(
         }
 
         // Intro skip control. Outro is represented exclusively by Up Next above.
-        val skipSegment = activeSegment?.takeIf { it.kind == IntroSegmentKind.INTRO }
+        val skipSegment = activeIntro
         if (!preparing && state.error == null && !overlayOpen && player?.isCurrentMediaItemSeekable == true && !showCountdown) {
             AnimatedVisibility(
                 skipSegment != null,
