@@ -292,17 +292,17 @@ internal fun NativePlayerScreen(
     val next = state.episodes.dropWhile { it.number != state.episodeNumber || it.seasonNumber != state.playbackSelection?.seasonNumber }.drop(1).firstOrNull()
     val activeSegment = state.segments.firstOrNull { it.isActive(position, duration) }
     val activeOutro = activeSegment?.takeIf { it.kind == IntroSegmentKind.OUTRO }
+    val outroStartMs = state.segments.firstOrNull { it.kind == IntroSegmentKind.OUTRO }?.startMs
 
-    // Up Next owns the exact IntroDB outro window and replaces Skip outro.
-    // Cancelling keeps the outro playing; otherwise the next episode starts as the outro window ends.
+    // Up Next replaces Skip outro and starts at the same IntroDB outro marker.
+    // Once shown, it remains available through the end of the episode so post-credit material is preserved.
     var countdownCancelled by remember(state.episodeNumber) { mutableStateOf(false) }
     val remainingMs = duration - position
-    val outroRemainingMs = activeOutro?.let { (it.endMs - position).coerceAtLeast(0L) } ?: 0L
-    val outroDurationMs = activeOutro?.let { (it.endMs - it.startMs).coerceAtLeast(1L) } ?: 1L
-    val showCountdown = settings.playNextEpisode && next != null && activeOutro != null && !countdownCancelled && !ended && !preparing && state.error == null
+    val outroStarted = outroStartMs != null && position >= outroStartMs
+    val showCountdown = settings.playNextEpisode && next != null && outroStarted && !countdownCancelled && !ended && !preparing && state.error == null
 
-    LaunchedEffect(showCountdown, outroRemainingMs) {
-        if (showCountdown && outroRemainingMs <= 1200 && next != null) {
+    LaunchedEffect(showCountdown, remainingMs) {
+        if (showCountdown && remainingMs <= 1200 && next != null) {
             onAutoEpisode(next)
         }
     }
@@ -691,8 +691,8 @@ internal fun NativePlayerScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        val sec = kotlin.math.ceil(outroRemainingMs / 1000.0).toInt().coerceAtLeast(1)
-                        val ringTarget = (outroRemainingMs.toFloat() / outroDurationMs.toFloat()).coerceIn(0f, 1f)
+                        val sec = kotlin.math.ceil(remainingMs / 1000.0).toInt().coerceAtLeast(1)
+                        val ringTarget = (remainingMs.toFloat() / (duration - checkNotNull(outroStartMs)).coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
                         val ringProgress by animateFloatAsState(
                             targetValue = ringTarget,
                             animationSpec = tween(420, easing = FastOutSlowInEasing),
