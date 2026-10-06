@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "240"
-  RELEASE_VERSION_NAME: "3.1.150"
+  RELEASE_VERSION_CODE: "241"
+  RELEASE_VERSION_NAME: "3.1.151"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -83,7 +83,7 @@ jobs:
           chmod +x gradlew
       - name: Verify phone playback
         env:
-          ALIFLIX_TEST_CLASSES: ${{ inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '' }}
+          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
         run: bash .github/scripts/test-phone-casting.sh '${{ matrix.api-level }}'
       - name: Upload playback test reports
         if: always()
@@ -353,7 +353,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Up Next now replaces Skip Outro and appears for the exact IntroDB outro segment. Skip Intro remains unchanged. The existing Up Next card, Play Now and Cancel controls are preserved; automatic next-episode playback occurs at the end of the outro window. Mobile only."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Up Next is now a direct replacement for Skip Outro. It appears during the exact IntroDB outro window even when autoplay is disabled, and next-episode lookup no longer requires the current episode to be present in the loaded list. Skip Intro remains unchanged. Mobile only."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -382,18 +382,11 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Sync with Audio now has one 19-second analysis deadline, leaving presentation headroom within 20 seconds. The deadline includes reference downloads, evidence collection, cache scans and CPU fitting. Cancel and Reset remain in the existing Audio & Subtitles panel; playback continues uninterrupted. Late results cannot change subtitles after timeout, cancellation or a source/audio/subtitle/account change.
+            Up Next is now a direct replacement for Skip Outro in the mobile player.
 
-            Fixed a real PCM timestamp rounding defect that duplicated or skipped fingerprint bins at half-bin boundaries. Useful partial speech blocks are available immediately. Phrase-level correlation handles natural syllable pauses; joint peak uniqueness and independent scenes verify the proposed clock. Vocal music without informative captions does not invalidate real dialogue; contradictory captioned scenes still reject the correction. Downloaded audio-only analysis waits for the complete cached scan before committing its timing model.
+            It appears during the exact IntroDB outro window even when Play Next Episode/autoplay is disabled. Autoplay controls only automatic advancement, not whether the card is visible. Next-episode lookup also works when the loaded list contains the next episode but not the current one.
 
-            Physical Pixel 7a / Android 17 validation used the actual Tears of Steel movie and its published English captions shifted by 7.25 seconds. After 85 seconds of normal-speed playback accumulated speech automatically, one tap synchronized in 506 ms with a -7.28-second correction, no seek, no rebuffer and no playback interruption. A tap during its silent opening ended as Unable to Verify in 19.04 seconds, applying no guess. These are measured examples; silence and ambiguous evidence cannot establish timing reliably.
-
-            The downloaded 322-second human-speech recording independently verified constant offset in 6.24 seconds, 25/24 framerate mismatch in 6.25 seconds and edited-scene correction in 6.62 seconds. Ambiguous edits were rejected in 7.69 seconds. Immutable original timestamps, independent manual delay and Reset were checked on the phone. Real captured movie fingerprints are now a permanent host regression, alongside deadline, seek, contradictory-scene and native WebRTC/ONNX tests.
-
-            The final fully R8-minified v3.1.148 APK passed an independent Android driver through the actual Audio & Subtitles controls: the real film synchronized in 1.043 seconds with a -7.32-second correction, then Reset passed. Normal-speed streaming tests separately verified offset in 746 ms and 25/24 framerate correction in 509 ms using automatically accumulated history. Mobile host tests passed 440 cases with zero failures (three opt-in checks skipped); real JNI WebRTC/ONNX and recorded-film checks also passed separately.
-
-            Original timestamp ownership, stable correction identities, Firebase account synchronisation, Cast conversion, Arabic paragraph direction and dedicated Miruro/AniKuro Japanese anime routing are preserved. No streaming-video scan, microphone, Python runtime or separate FFmpeg process is introduced. TV and the recommendation Worker are unchanged. Mobile unit, lint, signing and published artifact checks remain release gates; no emulator is used, as requested.
-
+            Skip Intro is unchanged. The v3.1.151 release gate runs the focused NativeSkipControlsTest plus the normal mobile unit/lint, signing and APK-integrity checks.
           files: |
             aliflix-mobile.apk
             update-mobile.json
