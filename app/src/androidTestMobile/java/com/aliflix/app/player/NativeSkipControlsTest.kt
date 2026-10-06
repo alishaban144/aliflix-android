@@ -16,7 +16,7 @@ import org.junit.Test
 class NativeSkipControlsTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun timedSkipControlSeeksToSegmentEndAndKeepsPostCredits() {
+    @Test fun introSkipsButOutroShowsUpNextInstead() {
         lateinit var engine: ExoPlayer
         lateinit var player: ForwardingPlayer
         var position = 11_999L
@@ -40,6 +40,16 @@ class NativeSkipControlsTest {
                         title = "Aliflix",
                         ready = true,
                         revision = revision.intValue,
+                        episodes = listOf(
+                            com.aliflix.app.model.Episode(1, 1, "Episode one"),
+                            com.aliflix.app.model.Episode(1, 2, "Episode two"),
+                        ),
+                        episodeNumber = 1,
+                        playbackSelection = com.aliflix.app.model.PlaybackSelection(
+                            media = com.aliflix.app.model.Media(1396, com.aliflix.app.model.MediaType.TV, "Series"),
+                            seasonNumber = 1,
+                            episodeNumber = 1,
+                        ),
                         segments = listOf(IntroSegment(IntroSegmentKind.INTRO, 12000, 34000), IntroSegment(IntroSegmentKind.OUTRO, 70000, 80000))
                     ),
                     player = player
@@ -51,9 +61,10 @@ class NativeSkipControlsTest {
             compose.runOnIdle { assertEquals(34000L, position) }
             compose.onNodeWithText("Skip intro").assertDoesNotExist()
             compose.runOnIdle { position = 71000; revision.intValue++ }
-            compose.onNodeWithText("Skip outro").assertIsDisplayed().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
-            compose.runOnIdle { assertEquals(80000L, position) }
             compose.onNodeWithText("Skip outro").assertDoesNotExist()
+            compose.onNodeWithText("UP NEXT").assertIsDisplayed()
+            compose.runOnIdle { position = 80000; revision.intValue++ }
+            compose.onNodeWithText("UP NEXT").assertDoesNotExist()
         } finally { compose.runOnUiThread { engine.release() } }
     }
 }
