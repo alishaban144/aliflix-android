@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "241"
-  RELEASE_VERSION_NAME: "3.1.151"
+  RELEASE_VERSION_CODE: "242"
+  RELEASE_VERSION_NAME: "3.1.152"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -83,7 +83,7 @@ jobs:
           chmod +x gradlew
       - name: Verify phone playback
         env:
-          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
+          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
         run: bash .github/scripts/test-phone-casting.sh '${{ matrix.api-level }}'
       - name: Upload playback test reports
         if: always()
@@ -353,7 +353,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Up Next is now a direct replacement for Skip Outro. It appears during the exact IntroDB outro window even when autoplay is disabled, and next-episode lookup no longer requires the current episode to be present in the loaded list. Skip Intro remains unchanged. Mobile only."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Downloads now discover distinct resolutions across sources, with clear quality tiers and one season choice. Japanese anime downloads use their native sources. Sync with Audio checks recently played dialogue without a countdown, preserves manual delay, and applies only verified corrections. Up Next has a compact floating layout with clear Next episode and Watch credits actions. Mobile only."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -382,11 +382,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Up Next is now a direct replacement for Skip Outro in the mobile player.
+            Mobile downloads discover up to three genuinely distinct resolutions concurrently. Progressive quality cards show Best, Balanced and Smaller file with actual heights and estimated sizes. Seasons share one quality choice, pin their source and server, and automatically recover individual unavailable episodes. Japanese anime downloads now use their dedicated native sources.
 
-            It appears during the exact IntroDB outro window even when Play Next Episode/autoplay is disabled. Autoplay controls only automatic advancement, not whether the card is visible. Next-episode lookup also works when the loaded list contains the next episode but not the current one.
+            Sync with Audio analyses already-played dialogue with a two-second interaction budget. It preserves original captions and manual delay, independently verifies corrections, and gives a short actionable result when evidence is insufficient. The Terminator (1984) passed three dialogue scenes, deliberately wrong offsets in both directions, and the fully minified phone UI checks. Silence and ambiguous dialogue cannot report false success.
 
-            Skip Intro is unchanged. The v3.1.151 release gate runs the focused NativeSkipControlsTest plus the normal mobile unit/lint, signing and APK-integrity checks.
+            Up Next uses compact Next episode / Watch credits controls, keeps the soft loading ring, and floats below the measured video/subtitle area in portrait or above controls in landscape. IntroDB timing, autoplay-off visibility and single advancement remain intact.
+
+            Validated with mobile unit tests and lint, physical offline downloads with subtitles and alternate audio, anime and season preparation, large-text layouts, and portrait/landscape screenshots. The release workflow also runs focused emulator regressions, verifies the production signer and publishes APK integrity metadata. TV is unchanged.
           files: |
             aliflix-mobile.apk
             update-mobile.json

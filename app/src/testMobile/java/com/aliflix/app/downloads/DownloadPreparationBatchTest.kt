@@ -98,7 +98,7 @@ class DownloadPreparationBatchTest {
         assertTrue(errors.values.all { it.contains("No playable provider") && it.contains("Retry") })
     }
 
-    @Test fun individualResolutionInspectionAndTimeoutFailuresDoNotTriggerFallbackOrStopSiblings() = runTest {
+    @Test fun individualFailuresFallBackWithoutChangingTheBatchAnchorOrStoppingSiblings() = runTest {
         var discoveries = 0
         val resolved = mutableListOf<Int?>()
         val results = mutableMapOf<String, PreparedDownload>()
@@ -120,12 +120,11 @@ class DownloadPreparationBatchTest {
                 inspected(episode, request, language)
             },
             onPrepared = { key, value -> results[key] = value }, onError = { key, error -> errors[key] = error })
-        assertEquals(1, discoveries)
+        assertEquals(4, discoveries)
         assertEquals((2..6).toSet(), resolved.toSet())
-        assertEquals(setOf("1", "5", "6"), results.keys)
-        assertEquals(setOf("2", "3", "4"), errors.keys)
-        assertTrue(errors.values.all { it.contains("Vid") && it.contains("Retry this episode") })
-        assertTrue(errors.getValue("4").contains("timed out"))
+        assertEquals((1..6).map { it.toString() }.toSet(), results.keys)
+        assertTrue(errors.isEmpty())
+        assertTrue(results.values.all { it.server == "Vid" })
     }
 
     @Test fun cachedUnselectedAnchorIsReusedForRetryWithoutDiscovery() = runTest {

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.drawBehind
@@ -80,6 +81,18 @@ internal interface DownloadUiDependencies {
     suspend fun prepare(activity: ComponentActivity, host: FrameLayout, selections: List<Pair<String, PlaybackSelection>>,
         language: String, cached: Map<String, PreparedDownload>, onPrepared: (String, PreparedDownload) -> Unit,
         onError: (String, String) -> Unit)
+    suspend fun discover(activity: ComponentActivity, host: FrameLayout, selection: PlaybackSelection,
+        language: String, onUpdate: (DownloadDiscovery) -> Unit): PreparedDownload {
+        var result: PreparedDownload? = null
+        prepare(activity, host, listOf("${playbackProgressKey(selection)}:$language" to selection), language, emptyMap(), { _, value -> result = value }, { _, _ -> })
+        return requireNotNull(result) { "No downloadable video found. Try again." }.also { item ->
+            onUpdate(DownloadDiscovery(item.options.ifEmpty { item.qualities.map { DownloadOption(it, item) } }, true))
+        }
+    }
+    suspend fun prepareTier(activity: ComponentActivity, host: FrameLayout, selections: List<Pair<String, PlaybackSelection>>,
+        language: String, cached: Map<String, PreparedDownload>, option: DownloadOption, audio: String,
+        onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit) =
+        prepare(activity, host, selections, language, cached, onPrepared, onError)
     fun blockedIds(): Set<String>
     suspend fun enqueue(requests: List<DownloadRequest>)
     fun pause(id: String)
@@ -100,6 +113,12 @@ internal interface DownloadUiDependencies {
                 language: String, cached: Map<String, PreparedDownload>, onPrepared: (String, PreparedDownload) -> Unit,
                 onError: (String, String) -> Unit) =
                 prepareDownloadBatch(activity, host, selections, language, cached, onPrepared, onError)
+            override suspend fun discover(activity: ComponentActivity, host: FrameLayout, selection: PlaybackSelection,
+                language: String, onUpdate: (DownloadDiscovery) -> Unit) = prepareDownload(activity, host, selection, language, onUpdate)
+            override suspend fun prepareTier(activity: ComponentActivity, host: FrameLayout, selections: List<Pair<String, PlaybackSelection>>,
+                language: String, cached: Map<String, PreparedDownload>, option: DownloadOption, audio: String,
+                onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit) =
+                prepareDownloadBatch(activity, host, selections, language, cached, onPrepared, onError, option, audio)
             override fun blockedIds(): Set<String> = entries.value.filter { it.download.state != Download.STATE_FAILED }.map { it.id }.toSet() +
                 store.manager.currentDownloads.filter { it.state != Download.STATE_FAILED }.map { it.request.id }
             override suspend fun enqueue(requests: List<DownloadRequest>) = store.enqueue(requests)
@@ -214,301 +233,223 @@ internal interface DownloadUiDependencies {
     dependencies: DownloadUiDependencies? = null, dismiss: () -> Unit) {
     val activity = LocalActivity.current as ComponentActivity
     val store = dependencies ?: rememberDownloadUiDependencies()
-    val entries by store.entries.collectAsState()
     val prefs = remember(activity, media.key) { PlaybackProviderRepository(activity).preferences.value }
     val session = remember(activity) { DownloadSession.get(activity) }
-    val scope = session.scope
     val picker = remember(session, media.key, initialEpisode) {
         session.pickers.getOrPut("${media.key}:${initialEpisode?.seasonNumber}:${initialEpisode?.number}") {
             DownloadPickerState(media, initialEpisode, prefs.preferredSubtitleLanguage.code)
         }
     }
-    val seasons = picker.seasons
+    val entries by store.entries.collectAsState()
     var season by picker::season
-    val episodes = picker.episodes
     var chosen by picker::chosen
-    val prepared = session.prepared
-    val quality = remember(media.key, season) { mutableStateMapOf<String, DownloadQuality>() }
-    val audio = remember(media.key, season) { mutableStateMapOf<String, Int>() }
-    var sharedHeight by picker::height
     var language by picker::language
-    val errors = session.errors
-    val listLoading = picker.loading
-    val listError = picker.error
     var noSubtitles by picker::noSubtitles
     var saving by picker::saving
-    var error by remember(media.key, season, language, noSubtitles) { mutableStateOf<String?>(null) }
     var retry by remember(media.key, season) { mutableIntStateOf(0) }
-    var languageMenu by remember(media.key) { mutableStateOf(false) }
+    var error by remember(media.key, season) { mutableStateOf<String?>(null) }
+    var expanded by remember(media.key) { mutableStateOf(false) }
+    var height by picker::height
+    var audioLabel by remember(media.key, season) { mutableStateOf("Default") }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    LaunchedEffect(media.key, season) { if (activity.hasInternetConnection()) session.load(picker, media, initialEpisode, store) else error = "Connect to the internet and try again" }
-    val rawSelections = if (media.type == MediaType.MOVIE) listOf("movie" to PlaybackSelection(media)) else episodes.map {
-        "${it.seasonNumber}:${it.number}" to PlaybackSelection(media, seasonNumber = it.seasonNumber, episodeNumber = it.number,
-            episodeTitle = it.title, availableEpisodes = episodes)
+    LaunchedEffect(media.key, season) { session.load(picker, media, initialEpisode, store) }
+    val raw = if (media.type == MediaType.MOVIE) listOf("movie" to PlaybackSelection(media)) else picker.episodes.map {
+        "${it.seasonNumber}:${it.number}" to PlaybackSelection(media, it.seasonNumber, it.number, it.title, availableEpisodes = picker.episodes)
     }.distinctBy { it.first }
-    val selections = rawSelections.map { (_, selection) -> session.key(selection, language) to selection }
-    val chosenKeys = rawSelections.filter { it.first in chosen }.map { session.key(it.second, language) }.toSet()
-    val savedById = entries.associateBy { it.id }
-    val eligible = selections.filter { (_, selection) ->
-        val saved = savedById[playbackProgressKey(selection)]
-        saved == null || saved.download.state == Download.STATE_FAILED
-    }.map { it.first }.toSet()
-    val selectedKeys = chosenKeys.intersect(eligible)
-
-    val preparing = selectedKeys.any { it in session.pending }
-    fun validated(key: String): Boolean = prepared[key]?.let { item ->
-        val selectedQuality = quality[key]
-        val selectedAudio = audio[key]
-        item.qualities.isNotEmpty() && selectedQuality in item.qualities && key !in errors &&
-            (selectedAudio == null || selectedQuality != null &&
-                (selectedAudio == -1 && item.audioTracksFor(selectedQuality).isNotEmpty() ||
-                    item.audioTracksFor(selectedQuality).any { track -> track.index == selectedAudio }))
-    } == true
-    LaunchedEffect(media.key, season, language, retry, episodes, selectedKeys) {
-        if (!activity.hasInternetConnection()) { error = "Connect to the internet and try again"; return@LaunchedEffect }
-        session.prepare(store, selections.filter { it.first in selectedKeys }.map { (key, raw) -> key to raw.copy(source = prefs.sourceFor(media)) }, language)
+    val blocked = entries.filter { it.download.state != Download.STATE_FAILED }.map { it.id }.toSet()
+    val selected = raw.filter { it.first in chosen && playbackProgressKey(it.second) !in blocked }
+        .map { (_, value) -> session.key(value, language) to value.copy(source = prefs.sourceFor(media)) }
+    val anchor = selected.minWithOrNull(compareBy<Pair<String, PlaybackSelection>> { it.second.seasonNumber ?: 0 }.thenBy { it.second.episodeNumber ?: 0 })
+    val discovery = anchor?.let { session.discoveries[it.first] }
+    LaunchedEffect(anchor?.first, retry) { anchor?.let { session.discover(store, it.second, language, retry) } }
+    val choices = discovery?.choicesKeeping(height).orEmpty()
+    val option = choices.firstOrNull { it.quality.height == height } ?: discovery?.default
+    LaunchedEffect(discovery?.finished, choices, height) {
+        if (discovery?.finished == true && choices.none { it.quality.height == height }) height = discovery.default?.quality?.height
     }
-    LaunchedEffect(prepared.toMap(), sharedHeight, selectedKeys) {
-        selectedKeys.forEach { key -> prepared[key]?.let { item ->
-            val target = sharedHeight ?: store.preferredHeight
-            if (quality[key] !in item.qualities || sharedHeight != null) {
-                quality[key] = item.qualities.firstOrNull { it.height == preferredDownloadHeight(item.qualities.map { q -> q.height }, target) } ?: item.qualities.first()
-            }
-            audio[key]?.let { selectedAudio ->
-                val tracks = quality[key]?.let(item::audioTracksFor).orEmpty()
-                if (tracks.isEmpty() || selectedAudio != -1 && tracks.none { it.index == selectedAudio }) audio.remove(key)
-            }
-        } }
+    LaunchedEffect(selected, option, discovery?.finished, retry, audioLabel) {
+        if (selected.isEmpty()) session.cancelSelectionWork(media.key)
+        else if (discovery?.finished == true && option != null) session.validateTier(store, selected, language, option, retry, audioLabel)
+        else session.cancelTierWork(media.key)
     }
-    val allValidated = selectedKeys.isNotEmpty() && selectedKeys.all { validated(it) }
-    val ready = allValidated && !preparing
-    val total = selectedKeys.mapNotNull { quality[it] }.totalSizeLabel()
-    val commonHeights = if (selectedKeys.isNotEmpty() && selectedKeys.all { prepared[it] != null })
-        selectedKeys.map { key -> prepared.getValue(key).qualities.map { it.height }.toSet() }
-            .reduce { a, b -> a.intersect(b) }.sortedDescending() else emptyList()
-    val sameQualityChoices = selectedKeys.mapNotNull { prepared[it]?.qualities?.map { q -> q.height } }.distinct().size <= 1
-    val selectedLabels = selectedKeys.mapNotNull { quality[it]?.label }.distinct()
-    val qualityLabel = selectedLabels.singleOrNull() ?: if (selectedLabels.isEmpty()) "Quality" else "Mixed"
-    val selectedAudioTracks = selectedKeys.map { key -> quality[key]?.let { prepared[key]?.audioTracksFor(it) }.orEmpty() }
-    val commonAudioTracks = selectedAudioTracks.firstOrNull()?.takeIf { first ->
-        first.isNotEmpty() && selectedAudioTracks.all { tracks -> tracks.map { it.label to it.language } == first.map { it.label to it.language } }
-    }.orEmpty()
-    val sharedAudioChoice = selectedKeys.map { key -> audio[key]?.let { index ->
-        if (index == -1) "All tracks" else quality[key]?.let { prepared[key]?.audioTracksFor(it) }?.firstOrNull { it.index == index }?.label
-    } ?: "Default" }.distinct().singleOrNull() ?: "Mixed"
+    val qualities = selected.associate { (key, _) -> key to session.prepared[key]?.let {
+        if (it.qualities.isNotEmpty() && option != null) closestDownloadQuality(it.qualities, option.quality.height) else null
+    } }
+    val checking = selected.any { it.first in session.pending }
+    val exceptions = selected.filter { (key, _) -> key in session.errors || session.prepared[key]?.let { item ->
+        val owner = qualities[key]?.let(item::owner) ?: item
+        option != null && (owner.selection.source != option.source.selection.source || owner.server != option.source.server)
+    } == true }
+    val ready = discovery?.finished == true && option != null && selected.isNotEmpty() && !checking &&
+        selected.all { it.first !in session.errors && qualities[it.first] != null && option != null &&
+            session.validated(it.first, option, language, audioLabel) }
+    fun estimate(item: PreparedDownload, quality: DownloadQuality): DownloadQuality {
+        val tracks = item.audioTracksFor(quality)
+        val index = if (audioLabel == "All tracks") -1 else tracks.firstOrNull { it.label == audioLabel }?.index
+        return estimatedDownloadQuality(quality, tracks, index)
+    }
+    val total = selected.mapNotNull { (key, _) -> qualities[key]?.let { quality ->
+        session.prepared[key]?.let { estimate(it, quality) }
+    } }.totalSizeLabel()
+    val anchorEstimate = option?.let { estimate(it.source, it.quality) }
+    val batch = selected.size > 1
+    val tracks = option?.source?.audioTracksFor(option.quality).orEmpty()
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
-        AliflixSheet(Modifier.fillMaxWidth().windowInsetsPadding(AliflixInsets.Safe).padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Large).heightIn(max = 700.dp), contentColor = AliflixContentPrimary) {
-            Column(Modifier.downloadAtmosphere().padding(AliflixSpacing.Panel), verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Medium)) {
+        AliflixSheet(Modifier.fillMaxWidth().windowInsetsPadding(AliflixInsets.Safe)
+            .padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Large).heightIn(max = 700.dp), contentColor = AliflixContentPrimary) {
+            Column(Modifier.downloadAtmosphere().padding(AliflixSpacing.Panel), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Download", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                     AliflixIconButton(onClick = dismiss) { Icon(Icons.Rounded.Close, "Close") }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Content)) {
-                    coil.compose.AsyncImage(media.posterUrl, null, Modifier.size(64.dp, 96.dp).clip(AliflixCorners.Card),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
-                        Text(media.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(media.year, style = MaterialTheme.typography.labelMedium, color = AliflixContentSecondary)
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    coil.compose.AsyncImage(media.posterUrl, null, Modifier.size(48.dp, 72.dp).clip(AliflixCorners.Card), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                    Column(Modifier.weight(1f)) {
+                        Text(media.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(if (initialEpisode != null) "S${initialEpisode.seasonNumber} · E${initialEpisode.number}"
+                            else if (media.type == MediaType.TV) "S$season · ${selected.size} episodes" else media.year,
+                            color = AliflixContentSecondary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
-
-                if (media.type == MediaType.TV && initialEpisode == null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.foundation.lazy.LazyRow(
-                            modifier = Modifier.weight(1f),
-                            horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Tiny),
-        ) {
-                            items(seasons.size) { index ->
-                                val tab = seasons[index]
-                                TextButton(
-                                    onClick = { chosen = emptySet(); season = tab.number },
-                                    enabled = !saving && !listLoading,
-                                    modifier = Modifier.heightIn(min = 48.dp),
-                                    colors = ButtonDefaults.textButtonColors(
-                                        contentColor = if (season == tab.number) AliflixContentPrimary else AliflixContentSecondary,
-                                        containerColor = if (season == tab.number) AliflixSurfaceRaised else Color.Transparent,
-                                    ),
-                                ) { Text("S${tab.number}", fontWeight = if (season == tab.number) FontWeight.Bold else FontWeight.Normal) }
+                if (media.type == MediaType.TV && initialEpisode == null) Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.foundation.lazy.LazyRow(Modifier.weight(1f)) {
+                        items(picker.seasons.size) { index -> val tab = picker.seasons[index]
+                            TextButton(onClick = { session.cancelSelectionWork(media.key); chosen = emptySet(); height = null; season = tab.number }, enabled = !saving) {
+                                Text("S${tab.number}", color = if (tab.number == season) AliflixContentPrimary else AliflixContentSecondary)
                             }
                         }
-                        TextButton(enabled = !saving && !listLoading && eligible.isNotEmpty(), modifier = Modifier.heightIn(min = 48.dp), onClick = {
-                            chosen = if (selectedKeys == eligible) emptySet() else rawSelections.map { it.first }.toSet()
-                        }) { Text(if (selectedKeys == eligible && selectedKeys.isNotEmpty()) "Clear" else "Select all") }
+                    }
+                    TextButton(onClick = { expanded = !expanded }, enabled = !saving) { Text("Episodes"); Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null) }
+                }
+                if (picker.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                if (anchor != null && discovery?.finished != true) Text("Finding download options…", color = AliflixContentSecondary,
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    repeat(if (anchor == null) 0 else if (discovery?.finished == true) choices.size else 3) { index ->
+                        androidx.compose.animation.Crossfade(choices.getOrNull(index), label = "download quality") { available ->
+                            if (available == null) DownloadQualitySkeleton() else {
+                                val title = when {
+                                    choices.size == 3 && index == 0 -> "Best"
+                                    choices.size == 3 && index == 1 -> "Balanced"
+                                    choices.size >= 2 && index == choices.lastIndex -> "Smaller file"
+                                    choices.size == 2 && index == 0 -> "Best"
+                                    else -> available.quality.label
+                                }
+                                val active = available.quality.height == option?.quality?.height
+                                AliflixSurface(shape = AliflixCorners.Card, level = if (active) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content) {
+                                    Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).clickable(enabled = !saving) {
+                                        height = available.quality.height; audioLabel = "Default"
+                                    }.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                                            Text(available.quality.label, color = AliflixContentSecondary, style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        val sized = estimate(available.source, available.quality)
+                                        Text(if (batch && sized.bytes > 0) "≈ ${downloadSize(sized.bytes * selected.size)}"
+                                            else sized.sizeLabel, color = AliflixContentSecondary, fontSize = 12.sp)
+                                        Spacer(Modifier.width(12.dp))
+                                        Icon(if (active) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                                            if (active) "Selected" else null, tint = if (active) AliflixAccentPrimary else AliflixContentSecondary, modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) {
+                if (checking) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp)
+                    Text("Checking episode availability…", color = AliflixContentSecondary, style = MaterialTheme.typography.bodySmall)
+                }
+                if (batch && option != null) Text(if (ready) "$total total" else if ((anchorEstimate?.bytes ?: 0) > 0)
+                    "≈ ${downloadSize(requireNotNull(anchorEstimate).bytes * selected.size)} total · Estimate" else "Size unavailable",
+                    color = AliflixContentSecondary, style = MaterialTheme.typography.labelMedium)
+                if (tracks.isNotEmpty()) DownloadAudioMenu(tracks, audioLabel, !saving) { audioLabel = it }
+                if (expanded || exceptions.isNotEmpty() || picker.error != null) LazyColumn(
+                    Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    picker.error?.let { message -> item { Text(message, color = AliflixError); TextButton(onClick = { session.load(picker, media, initialEpisode, store, true) }) { Text("Retry") } } }
+                    if (expanded) item { TextButton(onClick = { chosen = if (chosen.size == raw.size) emptySet() else raw.map { it.first }.toSet() }, enabled = !saving) { Text(if (chosen.size == raw.size) "Clear" else "Select all") } }
+                    items(if (expanded) raw else raw.filter { (_, s) -> exceptions.any { it.second.episodeNumber == s.episodeNumber } }, key = { it.first }) { (rawKey, value) ->
+                        val key = session.key(value, language)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (expanded) Checkbox(rawKey in chosen, enabled = !saving && playbackProgressKey(value) !in blocked,
+                                onCheckedChange = { chosen = if (it) chosen + rawKey else chosen - rawKey })
+                            Column(Modifier.weight(1f)) {
+                                Text("E${value.episodeNumber} · ${value.episodeTitle.orEmpty()}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (key in session.errors) Text("Unavailable", color = AliflixError, fontSize = 12.sp)
+                                else if (exceptions.any { it.first == key }) Text("Alternative found · ${qualities[key]?.label.orEmpty()}", color = AliflixContentSecondary, fontSize = 12.sp)
+                            }
+                            if (exceptions.any { it.first == key }) {
+                                TextButton(onClick = { session.retryEpisode(key); retry++ }, enabled = !saving && !checking) { Text("Retry") }
+                                TextButton(onClick = { chosen = chosen - rawKey }, enabled = !saving) { Text("Remove") }
+                            }
+                        }
+                    }
+                }
+                if (selected.isNotEmpty()) Box {
                     var menu by remember { mutableStateOf(false) }
-                    OutlinedButton(onClick = { menu = true }, enabled = !saving && commonHeights.isNotEmpty(), shape = AliflixCorners.Card, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), border = null) {
-                        Icon(Icons.Rounded.HighQuality, null); Spacer(Modifier.width(10.dp))
-                        Text("$qualityLabel ▾")
-
-                    }
-                    DropdownMenu(menu, { menu = false },
-        shape = AliflixCorners.Chrome,
-        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
-        tonalElevation = AliflixElevation.None,
-        shadowElevation = AliflixElevation.None,
-                    ) {
-                        commonHeights.forEach { height ->
-                                DropdownMenuItem(text = { Text(if (height > 0) "${height}p" else "Original") }, onClick = { sharedHeight = height; menu = false },
-                                    trailingIcon = { if ((sharedHeight ?: store.preferredHeight) == height) Icon(Icons.Rounded.Check, null) })
-                            }
-                    }
-                }
-                    if (commonAudioTracks.isNotEmpty()) {
-                        DownloadAudioMenu(commonAudioTracks, sharedAudioChoice, !saving, Modifier.weight(1f)) { label ->
-                            selectedKeys.forEach { key ->
-                                when (label) {
-                                    "Default" -> audio.remove(key)
-                                    "All tracks" -> audio[key] = -1
-                                    else -> quality[key]?.let { prepared[key]?.audioTracksFor(it) }?.firstOrNull { it.label == label }?.let { audio[key] = it.index }
-                                }
-                            }
-                        }
-                    }
-                }
-                if (selectedKeys.isNotEmpty()) Text(total, color = AliflixContentSecondary, style = MaterialTheme.typography.labelMedium)
-                if (listLoading) CircularProgressIndicator(Modifier.size(20.dp).semantics { contentDescription = "Loading episodes" }, strokeWidth = 2.dp)
-                if (media.type == MediaType.TV && preparing && selectedKeys.isNotEmpty()) {
-                    val finished = selectedKeys.count { validated(it) || it in errors }
-                    Column(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
-                        Text("$finished / ${selectedKeys.size}", color = AliflixContentSecondary)
-                    }
-                }
-                LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
-                    listError?.let { message -> item {
-                        Text(message, color = AliflixError)
-                        TextButton(onClick = { session.load(picker, media, initialEpisode, store, force = true) }, enabled = !saving, modifier = Modifier.heightIn(min = 48.dp)) { Text("Retry") }
-                    } }
-                    if (!listLoading && selections.isEmpty() && listError == null) item {
-                        Text("No episodes", color = AliflixContentSecondary)
-                    }
-                    items(selections, key = { it.first }) { (key, selection) ->
-                        val saved = savedById[playbackProgressKey(selection)]
-                        val title = if (media.type == MediaType.TV) "E${selection.episodeNumber} · ${selection.episodeTitle.orEmpty()}" else media.title
-                        val checked = key in selectedKeys
-                        AliflixSurface(shape = AliflixCorners.Card,
-                            level = if (checked) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content,
-                        ) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Tiny)) {
-                            Row(modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(
-                                if (media.type == MediaType.TV && initialEpisode == null) Modifier.toggleable(value = checked,
-                                    enabled = !saving && key in eligible, role = Role.Checkbox,
-                                    onValueChange = { val rawKey = "${selection.seasonNumber}:${selection.episodeNumber}"; chosen = if (it) chosen + rawKey else chosen - rawKey }) else Modifier
-                            ), verticalAlignment = Alignment.CenterVertically) {
-                                if (media.type == MediaType.TV && initialEpisode == null) {
-                                    val checkColor by androidx.compose.animation.animateColorAsState(
-                                        if (checked) AliflixAccentPrimary else AliflixSurfaceSecondary, label = "selection color")
-                                    Box(Modifier.padding(horizontal = 12.dp).size(24.dp).clip(AliflixCorners.Small)
-                                        .background(checkColor),
-                                        contentAlignment = Alignment.Center) {
-                                        androidx.compose.animation.AnimatedVisibility(checked,
-                                            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = .5f),
-                                            exit = androidx.compose.animation.fadeOut()) {
-                                            Icon(Icons.Rounded.Check, null, Modifier.size(17.dp), tint = Color.White)
-                                        }
-                                    }
-                                }
-                                Column(Modifier.weight(1f)) {
-                                    Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
-                                    val episode = episodes.firstOrNull { it.seasonNumber == selection.seasonNumber && it.number == selection.episodeNumber }
-                                    (if (media.type == MediaType.MOVIE) media.imdbRating else episode?.imdbRating)?.takeIf { it > 0 }?.let { rating ->
-                                        Text("IMDb ${"%.1f".format(java.util.Locale.ROOT, rating)}", color = Color(0xFFF5C518), style = MaterialTheme.typography.labelSmall)
-                                    }
-                                    saved?.let { Text(it.statusLabel(), color = AliflixContentSecondary, style = MaterialTheme.typography.bodySmall) }
-                                }
-                                if (checked && preparing && !validated(key) && key !in errors) CircularProgressIndicator(
-                                    Modifier.size(20.dp).semantics { contentDescription = "Preparing $title" }, strokeWidth = 2.dp)
-                                else if (saved != null) DownloadButton(media,
-                                    if (media.type == MediaType.TV) Episode(selection.seasonNumber ?: 1, selection.episodeNumber ?: 1, selection.episodeTitle.orEmpty()) else null,
-                                    compact = true, dependencies = store)
-                            }
-                            if (checked) {
-                                errors[key]?.let {
-                                    Text(it, color = AliflixError)
-                                    TextButton(onClick = { errors.remove(key); retry++ }, enabled = !saving && !preparing,
-                                        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Retry preparation, $title" }) { Text("Retry") }
-                                }
-                                quality[key]?.let { selected ->
-                                    if (media.type == MediaType.TV && selections.size > 1 && !sameQualityChoices) {
-                                        Box {
-                                            var qualityMenu by remember(key) { mutableStateOf(false) }
-                                            TextButton(onClick = { qualityMenu = true }, enabled = !saving, modifier = Modifier.semantics { contentDescription = "Quality for $title" }) { Text(selected.label); Icon(Icons.Rounded.ExpandMore, "Quality", Modifier.size(18.dp)) }
-                                            DropdownMenu(qualityMenu, { qualityMenu = false }, containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
-                                                prepared[key]?.qualities.orEmpty().forEach { option ->
-                                                    DropdownMenuItem(text = { Text(option.label) }, onClick = { sharedHeight = null; quality[key] = option; qualityMenu = false })
-                                                }
-                                            }
-                                        }
-                                    }
-                                    val tracks = prepared[key]?.audioTracksFor(selected).orEmpty()
-                                    if (commonAudioTracks.isEmpty() && tracks.isNotEmpty()) {
-                                        val choice = audio[key]
-                                        val name = if (choice == -1) "All tracks" else tracks.firstOrNull { it.index == choice }?.label ?: "Default"
-                                        DownloadAudioMenu(tracks, name, !saving) { label ->
-                                            when (label) { "Default" -> audio.remove(key); "All tracks" -> audio[key] = -1
-                                                else -> tracks.firstOrNull { it.label == label }?.let { audio[key] = it.index } }
-                                        }
-                                    }
-                                }
-
-                            }
-                        }
-                    }
-
-                }
-                }
-                if (selectedKeys.isNotEmpty()) Box {
-                    TextButton(onClick = { languageMenu = true }, enabled = !saving, modifier = Modifier.heightIn(min = 48.dp)) {
+                    TextButton(onClick = { menu = true }, enabled = !saving) {
                         Icon(Icons.Rounded.Subtitles, null); Spacer(Modifier.width(8.dp))
-                        Text(if (noSubtitles) "Subtitles: None ▾" else "Subtitles: ${SubtitleLanguage.entries.firstOrNull { it.code == language }?.displayName ?: language} ▾")
+                        Text(if (noSubtitles) "Subtitles: None" else "Subtitles: ${SubtitleLanguage.entries.firstOrNull { it.code == language }?.displayName ?: language}")
+                        Icon(Icons.Rounded.ExpandMore, null)
                     }
-                    DropdownMenu(languageMenu, { languageMenu = false }, modifier = Modifier.heightIn(max = 280.dp),
-        shape = AliflixCorners.Chrome,
-        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
-        tonalElevation = AliflixElevation.None,
-        shadowElevation = AliflixElevation.None,
-                    ) {
-                        DropdownMenuItem(text = { Text("None") }, onClick = { noSubtitles = true; languageMenu = false })
-                        SubtitleLanguage.entries.forEach { lang -> DropdownMenuItem(text = { Text(lang.displayName) }, onClick = {
-                            language = lang.code; noSubtitles = false; languageMenu = false
-                        }) }
+                    DropdownMenu(menu, { menu = false }, modifier = Modifier.heightIn(max = 280.dp), containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
+                        DropdownMenuItem(text = { Text("None") }, onClick = { noSubtitles = true; menu = false })
+                        SubtitleLanguage.entries.forEach { lang -> DropdownMenuItem(text = { Text(lang.displayName) }, onClick = { language = lang.code; noSubtitles = false; menu = false }) }
                     }
+                }
+                anchor?.let { session.errors[it.first]?.takeIf { discovery?.choices.isNullOrEmpty() } }?.let { message ->
+                    Text(message, color = AliflixError); TextButton(onClick = { retry++ }, enabled = !saving) { Text("Retry") }
                 }
                 error?.let { Text(it, color = AliflixError, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
-                Button(enabled = ready && !saving, shape = AliflixCorners.Card, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), onClick = {
-                    if (!saving && ready) {
-                        saving = true; error = null
-                        val selected = selectedKeys.map { Triple(prepared.getValue(it), quality.getValue(it), audio[it]) }
-                        val requestedLanguage = if (noSubtitles) "" else language
-                        if (store.requestNotifications && Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-                            permissions.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        scope.launch {
-                            try {
-                                val blocked = store.blockedIds()
-                                val requests = coroutineScope {
-                                    val semaphore = Semaphore(3)
-                                    selected.filter { playbackProgressKey(it.first.selection) !in blocked }.map { (item, selectedQuality, selectedAudio) -> async {
-                                        semaphore.withPermit { item.downloadRequest(selectedQuality, requestedLanguage, prefs.autoDisplaySubtitles, selectedAudio) }
-                                    } }.awaitAll()
-                                }
-                                val latestBlocked = store.blockedIds()
-                                val pending = requests.filter { it.id !in latestBlocked }.distinctBy { it.id }
-                                if (pending.isNotEmpty()) store.enqueue(pending)
-                                dismiss()
-                            } catch (cancelled: CancellationException) { throw cancelled }
-                            catch (failure: Exception) { error = failure.message ?: "Download could not start." }
-                            finally { saving = false }
-                        }
+                }
+                Button(enabled = ready && !saving, shape = AliflixCorners.Card, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), onClick = {
+                    saving = true; error = null
+                    val selectedItems = selected.map { (key, _) -> session.prepared.getValue(key) to requireNotNull(qualities[key]) }
+                    val requestedLanguage = if (noSubtitles) "" else language
+                    if (store.requestNotifications && Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) permissions.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    session.scope.launch {
+                        try {
+                            val requests = coroutineScope {
+                                val slots = Semaphore(3)
+                                selectedItems.map { (item, quality) -> async { slots.withPermit {
+                                    val audioTracks = item.audioTracksFor(quality)
+                                    val index = when (audioLabel) {
+                                        "Default" -> null
+                                        "All tracks" -> -1
+                                        else -> audioTracks.firstOrNull { it.label == audioLabel }?.index ?: error("Selected audio is unavailable.")
+                                    }
+                                    item.downloadRequest(quality, requestedLanguage, prefs.autoDisplaySubtitles, index)
+                                } } }.awaitAll()
+                            }
+                            val latestBlocked = store.blockedIds()
+                            val requestsToQueue = requests.filter { it.id !in latestBlocked }.distinctBy { it.id }
+                            if (requestsToQueue.isNotEmpty()) store.enqueue(requestsToQueue)
+                            dismiss()
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { error = "Download could not start. Check audio/subtitles and try again." }
+                        finally { saving = false }
                     }
                 }) {
-                    if (saving) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp)); Text("Starting downloads")
-                    } else Text(if (selectedKeys.size > 1) "Download ${selectedKeys.size} episodes" else "Download")
+                    if (saving) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
+                    Text(if (saving) "Starting downloads" else if (selected.size > 1) "Download ${selected.size} episodes" else "Download")
                 }
             }
+        }
+    }
+}
+
+@Composable private fun DownloadQualitySkeleton() {
+    val pulse = androidx.compose.animation.core.rememberInfiniteTransition(label = "quality skeleton")
+    val alpha by pulse.animateFloat(initialValue = .35f, targetValue = .7f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(850), androidx.compose.animation.core.RepeatMode.Reverse), label = "skeleton pulse")
+    AliflixSurface(shape = AliflixCorners.Card) {
+        Row(Modifier.fillMaxWidth().height(60.dp).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Box(Modifier.width(88.dp).height(10.dp).clip(AliflixCorners.Small).background(AliflixContentSecondary.copy(alpha = alpha)))
+                Box(Modifier.width(44.dp).height(7.dp).clip(AliflixCorners.Small).background(AliflixContentSecondary.copy(alpha = alpha * .6f)))
+            }
+            Box(Modifier.width(54.dp).height(8.dp).clip(AliflixCorners.Small).background(AliflixContentSecondary.copy(alpha = alpha * .6f)))
         }
     }
 }

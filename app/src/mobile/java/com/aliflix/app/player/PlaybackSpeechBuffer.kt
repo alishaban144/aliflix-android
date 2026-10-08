@@ -30,9 +30,18 @@ private class WebRtcPlaybackSpeechDetector : PlaybackSpeechDetector {
 internal class PlaybackSpeechBuffer(
     private val detectorFactory: () -> PlaybackSpeechDetector = { WebRtcPlaybackSpeechDetector() },
 ) : AutoCloseable {
+    @Volatile internal var debugFrameObserver: ((Double, ShortArray) -> Unit)? = null
+    @Volatile internal var dialogueFrameObserver: ((Double, ShortArray, Long, Long, Boolean) -> Unit)? = null
+    @Synchronized internal fun continuityEpoch(): Long = boundaryCount
     private val times = DoubleArray(1500)
     private val bits = ByteArray(1500)
     private val frame = ShortArray(160)
+    private val dialogueFrame = ShortArray(320)
+    private var dialogueCount = 0
+    private var dialogueStart = 0.0
+    private var dialoguePhase = 0
+    private var dialogueSum = 0.0
+    private var dialogueAveraged = 0
     private val evidence = java.util.TreeMap<Int, ByteArray>()
     private val neuralEvidence = java.util.TreeMap<Int, ByteArray>()
     private var neural: NeuralSpeechWorker? = null
@@ -63,7 +72,10 @@ internal class PlaybackSpeechBuffer(
         head = 0; count = 0; lastTime = Double.NEGATIVE_INFINITY
         decodedFrameCount = 0; clearPartialFrame(); closeDetector(); detectorFailed = false; unavailable = false; generation++
     }
-    private fun clearPartialFrame() { frameCount = 0; phase = 0; sum = 0.0; averaged = 0; nextDecisionBin = null }
+    private fun clearPartialFrame() {
+        frameCount = 0; phase = 0; sum = 0.0; averaged = 0; nextDecisionBin = null
+        dialogueCount = 0; dialoguePhase = 0; dialogueSum = 0.0; dialogueAveraged = 0
+    }
     private fun closeDetector() { runCatching { detector?.close() }; detector = null }
     @Synchronized override fun close() { neural?.close(); neural = null; reset(); unavailable = true }
 
@@ -160,6 +172,17 @@ internal class PlaybackSpeechBuffer(
         return if (neuralRuns.sumOf { it.speech.size } >= 18 * SPEECH_HZ) neuralRuns else runs(snapshot.first, 1)
     }
 
+    fun recentWindow(positionSeconds: Double): SpeechWindow? {
+        if (!positionSeconds.isFinite() || positionSeconds < 0) return null
+        val run = quickWindows(positionSeconds).lastOrNull() ?: return null
+        val end = run.start + run.speech.size.toDouble() / SPEECH_HZ
+        if (positionSeconds - end > 1.0) return null
+        val first = (run.speech.size - 30 * SPEECH_HZ).coerceAtLeast(0)
+        val bits = run.speech.copyOfRange(first, run.speech.size)
+        if (bits.size < 18 * SPEECH_HZ) return null
+        return SpeechWindow(run.start + first.toDouble() / SPEECH_HZ, bits)
+    }
+
     @Synchronized fun pcm(buffer: ByteBuffer, format: Format, pts: Long, offset: Long) {
         if (unavailable && neural?.ready != true) return
         if (pts == C.TIME_UNSET || format.sampleRate !in 8000..192000 || format.channelCount !in 1..8) {
@@ -205,6 +228,20 @@ internal class PlaybackSpeechBuffer(
                     if (format.channelCount <= 2 || channel == 2) mono += value
                 }
                 val x = mono / if (format.channelCount <= 2) format.channelCount else 1
+                // Word decoding retains the original signal's 16 kHz bandwidth;
+                // the existing 8 kHz speech detectors and audible PCM are unchanged.
+                if (dialogueFrameObserver != null) {
+                    dialogueSum += x; dialogueAveraged++; dialoguePhase += 16000
+                    if (dialoguePhase >= format.sampleRate) {
+                        val sample = (dialogueSum / dialogueAveraged * 32767).toInt().coerceIn(-32768, 32767).toShort()
+                        if (dialogueCount == 0) dialogueStart = time - (dialogueAveraged - 1.0) / format.sampleRate
+                        while (dialoguePhase >= format.sampleRate) {
+                            dialoguePhase -= format.sampleRate
+                            if (dialogueCount < dialogueFrame.size) dialogueFrame[dialogueCount++] = sample
+                        }
+                        dialogueSum = 0.0; dialogueAveraged = 0
+                    }
+                }
                 sum += x; averaged++; phase += 8000
                 if (phase >= format.sampleRate) {
                     phase -= format.sampleRate
@@ -212,6 +249,7 @@ internal class PlaybackSpeechBuffer(
                     frame[frameCount++] = (sum / averaged * 32767).toInt().coerceIn(-32768, 32767).toShort()
                     sum = 0.0; averaged = 0
                     if (frameCount == frame.size) {
+                        if (com.aliflix.app.BuildConfig.DEBUG) debugFrameObserver?.invoke(frameStart, frame.copyOf())
                         times[head] = frameStart
                         neural?.offer(frame, frameStart, generation, boundaryCount)
                         bits[head] = try {
@@ -221,6 +259,9 @@ internal class PlaybackSpeechBuffer(
                             }
                         } catch (error: Exception) { detectorFailure(error.javaClass.simpleName) }
                         catch (error: LinkageError) { detectorFailure(error.javaClass.simpleName) }
+                        if (dialogueCount == dialogueFrame.size)
+                            dialogueFrameObserver?.invoke(dialogueStart, dialogueFrame, generation, boundaryCount, bits[head] == 1.toByte())
+                        dialogueCount = 0; dialoguePhase = 0; dialogueSum = 0.0; dialogueAveraged = 0
                         // Unknown bins stay -1, never fabricated silence. Round the
                         // frame start once; codec PTS quantisation must not drift.
                         // Quantise once per decoder continuity, then count frames.

@@ -17,21 +17,30 @@ import java.io.File
  * Opt-in because it streams the public Blender film to the attached phone.
  */
 class RealFilmQuickSyncDeviceTest {
-    @Test fun realFilmFinishesWithinTwentySecondsIncludingSilenceAndBufferedAudio() {
+    @Test fun realFilmFinishesWithinTwoSecondsIncludingSilenceAndBufferedAudio() = verify(false)
+    @Test fun secondFilmWithEarlySubtitlesFinishesWithinTwoSeconds() = verify(true)
+    @Test fun wrongFilmSubtitlesNeverReportSuccess() = verify(false, wrong = true)
+    @Test fun repeatedSubtitlePatternsNeverReportSuccess() = verify(false, repetitive = true)
+    private fun verify(second: Boolean, wrong: Boolean = false, repetitive: Boolean = false) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("physicalQuickSync") == "true")
+        grantNativeFixtureNetworkPermission()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val root = requireNotNull(context.getExternalFilesDir(null))
-        val truth = parseTimedTextSubtitleCues(File(root, "TOS-en.srt").readText())
+        val truth = parseTimedTextSubtitleCues(File(root, if (second) "ED-en.srt" else "TOS-en.srt").readText())
         assertTrue(truth.size >= 70)
-        val target = truth.map { it.copy(startSeconds = it.startSeconds + 7.25, endSeconds = it.endSeconds + 7.25) }
-        val selection = PlaybackSelection(Media(2147482988, MediaType.MOVIE, "Tears of Steel — real film sync validation"))
+        val delay = if (second) -4.5 else 7.25
+        val input = if (wrong) parseTimedTextSubtitleCues(File(root, "ED-en.srt").readText())
+            else if (repetitive) (0..180).map { SubtitleCue(it * 3.0, it * 3.0 + 1.5, "Repeated dialogue") } else truth
+        val target = input.map { it.copy(startSeconds = it.startSeconds + delay, endSeconds = it.endSeconds + delay) }
+        val selection = PlaybackSelection(Media(if (second) 2147482987 else 2147482988, MediaType.MOVIE, if (second) "Elephants Dream — real film sync validation" else "Tears of Steel — real film sync validation"))
+        val secondServer = if (second) NativeBackgroundPlaybackTest.FixtureServer(File(root, "ed-dialogue.mp4").readBytes()) else null
         val request = NativePlaybackRequest(
-            "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov", "video/quicktime",
+            if (second) requireNotNull(secondServer).url else "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov", if (second) "video/mp4" else "video/quicktime",
             "https://mango.blender.org/", "Aliflix", "", selection.media.title, 0, true,
             nativeSubtitlesVtt(subtitleCuesJson(target), 0.0), selectionJson = selection.nativeJson(), subtitleLanguage = "en",
         )
         val payload = File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json").apply { writeText(request.toJson()) }
-        val report = File(root, "quick-sync-real-film-device.txt")
+        val report = File(root, if (wrong) "quick-sync-wrong-title-device.txt" else if (repetitive) "quick-sync-repeated-device.txt" else if (second) "quick-sync-second-film-device.txt" else "quick-sync-real-film-device.txt")
         try {
             ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java)
                 .putExtra("requestFile", payload.name), nativePhoneLaunchOptions()).use { scenario ->
@@ -40,15 +49,15 @@ class RealFilmQuickSyncDeviceTest {
                 }; ready }
                 var began = 0L
                 scenario.onActivity { it.resetSubtitleSync(); began = android.os.SystemClock.elapsedRealtime(); it.syncWithAudio() }
-                await("Cold silence must stop within twenty seconds", 21_000) { var done = false; scenario.onActivity {
-                    done = it.playbackUiState.audioSyncState in listOf("Synced", "Unable to Verify")
+                await("Cold silence must stop within two seconds", 2_100) { var done = false; scenario.onActivity {
+                    done = it.playbackUiState.audioSyncState in listOf("Synced", "Not enough dialogue yet", "Couldn't match this dialogue")
                 }; done }
                 scenario.onActivity {
                     val elapsed = android.os.SystemClock.elapsedRealtime() - began
-                    assertTrue("Cold UI exceeded deadline: $elapsed", elapsed < 20_000)
-                    assertEquals("Unable to Verify", it.playbackUiState.audioSyncState) // Dialogue starts at 23 s.
+                    assertTrue("Cold UI exceeded deadline: $elapsed", elapsed < 2_000)
+                    assertEquals("Not enough dialogue yet", it.playbackUiState.audioSyncState) // Dialogue starts at 23 s.
                     assertFalse(it.playbackUiState.audioSyncApplied)
-                    report.writeText("film=Tears of Steel,normalSpeed=true,coldSilence=Unable to Verify,elapsedMs=$elapsed\n")
+                    report.writeText("film=${if (second) "Elephants Dream" else "Tears of Steel"},normalSpeed=true,coldSilence=Not enough dialogue yet,elapsedMs=$elapsed\n")
                 }
                 // Playback history accumulates automatically, without any extra
                 // sync taps or replay/download. The next action uses that history.
@@ -61,18 +70,26 @@ class RealFilmQuickSyncDeviceTest {
                     override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_BUFFERING) buffers++ }
                 }
                 scenario.onActivity { it.playbackController!!.addListener(listener); began = android.os.SystemClock.elapsedRealtime(); it.syncWithAudio() }
-                await("Actual film subtitles must synchronize within twenty seconds", 21_000) { var done = false; scenario.onActivity {
-                    done = it.playbackUiState.audioSyncState in listOf("Synced", "Unable to Verify")
+                await("Actual film subtitles must synchronize within two seconds", 2_100) { var done = false; scenario.onActivity {
+                    done = it.playbackUiState.audioSyncState in listOf("Synced", "Not enough dialogue yet", "Couldn't match this dialogue")
                 }; done }
                 scenario.onActivity {
                     val elapsed = android.os.SystemClock.elapsedRealtime() - began
+                    assertTrue("Actual film sync exceeded deadline: $elapsed", elapsed < 2_000)
+                    if (wrong || repetitive) {
+                        assertNotEquals("Wrong/ambiguous dialogue was accepted", "Synced", it.playbackUiState.audioSyncState)
+                        assertFalse(it.playbackUiState.audioSyncApplied)
+                        report.appendText("negative=${if (wrong) "wrong_title" else "repeated_pattern"},state=${it.playbackUiState.audioSyncState},elapsedMs=$elapsed\n")
+                        it.playbackController!!.removeListener(listener)
+                        return@onActivity
+                    }
                     assertEquals("Sync failed: ${NativePlaybackService.speechDiagnostics()}", "Synced", it.playbackUiState.audioSyncState)
-                    assertTrue("Actual film sync exceeded deadline: $elapsed", elapsed < 20_000)
+                    assertTrue("Actual film sync exceeded deadline: $elapsed", elapsed < 2_000)
                     val original = requireNotNull(NativePlaybackService.originalSubtitles())
                     val key = subtitleCorrectionKey(requireNotNull(NativePlaybackService.activeRequest), selection.key, original,
                         NativePlaybackService.selectedAudioFingerprint())
                     val correction = requireNotNull(SubtitleCorrectionStore(context).get(key))
-                    assertEquals(-7.25, correction.offset, .65)
+                    assertEquals(-delay, correction.offset, .6)
                     assertEquals(1.0, correction.rate, .0001)
                     assertTrue(it.playbackController!!.isPlaying)
                     assertEquals(0, discontinuities)
@@ -86,11 +103,11 @@ class RealFilmQuickSyncDeviceTest {
             }
         } finally {
             val observed = NativePlaybackService.quickSpeechEvidence()
-            File(root, "quick-sync-real-film-evidence.json").writeText(org.json.JSONObject()
+            File(root, if (second) "quick-sync-second-film-evidence.json" else "quick-sync-real-film-evidence.json").writeText(org.json.JSONObject()
                 .put("windows", org.json.JSONArray().apply { observed.forEach { window ->
                     put(org.json.JSONObject().put("start", window.start).put("bits", window.speech.joinToString("") { if (it >= .5) "1" else "0" }))
                 } }).put("target", subtitleCuesJson(target)).put("truth", subtitleCuesJson(truth)).toString())
-            payload.delete(); context.stopService(Intent(context, NativePlaybackService::class.java))
+            secondServer?.close(); payload.delete(); context.stopService(Intent(context, NativePlaybackService::class.java))
             val app = context.applicationContext as AliflixApplication
             app.playbackProgressStore.removeMedia(selection.media); app.libraryStore.removeRecent(selection.media)
         }

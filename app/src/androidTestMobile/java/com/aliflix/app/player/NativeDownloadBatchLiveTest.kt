@@ -13,6 +13,8 @@ import com.aliflix.app.data.PlaybackProviderRepository
 import com.aliflix.app.data.playbackProgressKey
 import com.aliflix.app.downloads.OfflineDownloads
 import com.aliflix.app.downloads.PreparedDownload
+import com.aliflix.app.downloads.DownloadOption
+import com.aliflix.app.downloads.closestDownloadQuality
 import com.aliflix.app.downloads.downloadRequest
 import com.aliflix.app.downloads.prepareDownload
 import com.aliflix.app.downloads.prepareDownloadBatch
@@ -56,7 +58,10 @@ class NativeDownloadBatchLiveTest {
             val single = withContext(Dispatchers.Main) { prepareDownload(current, host, selections.first().second, "en") }
             val singleElapsed = SystemClock.elapsedRealtime() - singleStart
             evidence.append("singleElapsedMs=$singleElapsed\n")
-            prepared = mutableMapOf(selections.first().first to single)
+            assertTrue("Discovery exceeded bounded search: $singleElapsed", singleElapsed < 33_000)
+            val quality = single.qualities.getOrNull(1) ?: single.qualities.first()
+            val anchor = DownloadOption(quality, single.owner(quality))
+            prepared = mutableMapOf(selections.first().first to anchor.source)
             val errors = mutableMapOf<String, String>()
             val batchStart = SystemClock.elapsedRealtime()
             repeat(3) { attempt ->
@@ -65,7 +70,7 @@ class NativeDownloadBatchLiveTest {
                     withContext(Dispatchers.Main) {
                         prepareDownloadBatch(current, host, selections, "en", prepared.toMap(),
                             onPrepared = { key, value -> prepared[key] = value },
-                            onError = { key, message -> put(key, message) })
+                            onError = { key, message -> put(key, message) }, pinnedAnchor = anchor)
                     }
                 })
                 errors.forEach { (key, message) -> evidence.append("attempt${attempt + 1} error[$key]=$message\n") }
@@ -86,15 +91,14 @@ class NativeDownloadBatchLiveTest {
                 batchElapsed < 240_000)
             evidence.append("provider=${prepared.values.first().selection.source.identity}\n")
             evidence.append("server=${prepared.values.first().server}\n")
-            val store = OfflineDownloads.get(context)
+            android.util.Log.i("AliflixBatchTest", evidence.toString())
+            val store = withContext(Dispatchers.Main) { OfflineDownloads.get(context) }
             val requests = prepared.values.map { item ->
-                val lowest = item.qualities.minByOrNull { it.height } ?: item.qualities.first()
+                val lowest = closestDownloadQuality(item.qualities, anchor.quality.height)
                 evidence.append("quality=${lowest.label} estimate=${lowest.bytes}\n")
                 item.downloadRequest(lowest, "", false)
             }
-            instrumentation.runOnMainSync {
-                runBlocking { withContext(Dispatchers.Main) { store.enqueue(requests) } }
-            }
+            withContext(Dispatchers.Main) { store.enqueue(requests) }
             await {
                 requests.all { request ->
                     store.manager.downloadIndex.getDownload(request.id)

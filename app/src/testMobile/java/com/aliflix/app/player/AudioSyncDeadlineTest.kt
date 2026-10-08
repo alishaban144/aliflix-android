@@ -7,14 +7,14 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AudioSyncDeadlineTest {
-    @Test fun silenceOrUnfinishedNetworkCannotKeepTheUiWaitingPastTwentySeconds() = runTest {
+    @Test fun unfinishedAnalysisCannotKeepTheUiWaitingPastTwoSeconds() = runTest {
         var expired = false
         var remaining = 20
         val result = async {
             AudioSyncDeadline.run(clock = { testScheduler.currentTime }, onRemaining = { remaining = it },
                 onExpired = { expired = true }) { awaitCancellation() }
         }
-        advanceTimeBy(18_999); runCurrent()
+        advanceTimeBy(1_799); runCurrent()
         assertFalse(expired)
         assertEquals(1, remaining)
         advanceTimeBy(1); runCurrent()
@@ -31,8 +31,8 @@ class AudioSyncDeadlineTest {
                 "late correction"
             }
         }
-        advanceTimeBy(19_000); runCurrent()
-        assertEquals(19_000L, expiredAt)
+        advanceTimeBy(1_800); runCurrent()
+        assertEquals(1_800L, expiredAt)
         advanceUntilIdle()
         assertNull(result.await())
     }

@@ -9,6 +9,7 @@ import kotlin.math.*
 internal object AdaptiveSubtitleSynchronizer {
     private const val HZ = 25
     private val markup = Regex("<[^>]*>")
+    private val soundDescription = Regex("(?:(?:SOFT|LOUD|LOUDER|DISTANT|BACKGROUND|HOWLING|BUZZING|RINGING|RUMBLING|CHATTERY)\\s+)+(?:WIND|MUSIC|WIRES|VOICES|CONVERSATIONS|FOOTSTEPS|THUNDER|RAIN|BELLS|SIRENS)(?:\\s+AND\\s+.*)?")
     const val MAX_OFFSET = 600.0
     val rates = listOf(1.0, 25.0 / 24.0, 24.0 / 25.0, 25.0 / 23.976,
         23.976 / 25.0, 24.0 / 23.976, 23.976 / 24.0)
@@ -39,7 +40,7 @@ internal object AdaptiveSubtitleSynchronizer {
         return cue.startSeconds.isFinite() && cue.endSeconds.isFinite() && cue.startSeconds >= 0 &&
             cue.endSeconds > cue.startSeconds && cue.endSeconds - cue.startSeconds <= 15 &&
             text.any(Char::isLetter) && !text.startsWith("♪") && !text.startsWith("♫") &&
-            !(text.startsWith("[") && text.endsWith("]"))
+            !(text.startsWith("[") && text.endsWith("]")) && !soundDescription.matches(text)
     }
 
     private fun smooth(raw: DoubleArray, radius: Int = 2): DoubleArray {
@@ -153,8 +154,12 @@ internal object AdaptiveSubtitleSynchronizer {
                    completeReference: List<SubtitleCue>? = null, cancelled: () -> Unit = {}): Result =
         align(cues, windows, completeReference, true, cancelled)
 
+    fun matchCurrent(cues: List<SubtitleCue>, window: SpeechWindow, cancelled: () -> Unit = {}): Result =
+        align(cues, listOf(window), null, true, cancelled, offsetOnly = true)
+
     private fun align(cues: List<SubtitleCue>, windows: List<SpeechWindow>,
-                      completeReference: List<SubtitleCue>?, quick: Boolean, cancelled: () -> Unit): Result {
+                      completeReference: List<SubtitleCue>?, quick: Boolean, cancelled: () -> Unit,
+                      offsetOnly: Boolean = false): Result {
         if (cues.size !in 4..20000 || cues.any { !it.startSeconds.isFinite() || !it.endSeconds.isFinite() || it.endSeconds > 21600 })
             return Result(reason = "invalid_target_timeline")
         val allObserved = usable(windows, quick)
@@ -173,7 +178,7 @@ internal object AdaptiveSubtitleSynchronizer {
         val proposals = mutableListOf<Proposal>()
         val rejected = mutableListOf<String>()
         val searched = mutableMapOf<Double, List<Curve>>()
-        val candidateRates = rates.toMutableList()
+        val candidateRates = (if (offsetOnly) listOf(1.0) else rates).toMutableList()
         var index = 0
         while (index < candidateRates.size) {
             val rate = candidateRates[index++]
@@ -205,7 +210,7 @@ internal object AdaptiveSubtitleSynchronizer {
                 supported.all { it.at(offset) >= (if (shortScenes) .5 else .35) })
                 proposals.add(Proposal(rate, offset, score, margin, supported))
             else rejected.add("weak_fit:$rate:$offset:$score:$margin:${curves.map { it.at(offset) }}")
-            if (rate == 1.0 && usable.size >= 5 && span >= 60) {
+            if (!offsetOnly && rate == 1.0 && usable.size >= 5 && span >= 60) {
                 // LAPSE-style OLS proposal, established on training scenes only.
                 val anchors = curves.filter { it.scores[it.peak] >= .5 && it.unique(it.offset(it.peak)) >= .07 }
                 if (anchors.size >= 3) {
@@ -236,8 +241,14 @@ internal object AdaptiveSubtitleSynchronizer {
                 rejected.add("held:${proposal.rate}:${held.map { listOf(it.at(proposal.offset), it.nearPeakOffset(proposal.offset)) }}")
                 continue
             }
-            if (proposal.curves.any { abs((if (quick) it.nearPeakOffset(proposal.offset) else it.offset(it.peak)) - proposal.offset) > .65 }) {
-                rejected.add("fitting_scene_disagreement:${proposal.rate}"); continue
+            // Hand-authored captions can span a pause beyond the spoken phrase.
+            // Preserve a strong joint clock when a fitting scene has a broad
+            // plateau; the withheld later scenes still require tight agreement.
+            if (proposal.curves.any { curve ->
+                val peak = if (quick) curve.nearPeakOffset(proposal.offset) else curve.offset(curve.peak)
+                abs(peak - proposal.offset) > .65 && (!quick || curve.at(proposal.offset) < .70 || curve.at(peak) - curve.at(proposal.offset) > .12)
+            }) {
+                rejected.add("fitting_scene_disagreement:${proposal.rate}:${proposal.offset}:${proposal.curves.map { listOf(it.window.start, it.at(proposal.offset), it.nearPeakOffset(proposal.offset), it.at(it.nearPeakOffset(proposal.offset)) - it.at(proposal.offset)) }}"); continue
             }
             if (proposal.rate == 1.0) {
                 // All these curves independently support this same candidate;
@@ -434,6 +445,16 @@ internal object AdaptiveSubtitleSynchronizer {
         }
     }
 
+    /** A current-dialogue proposal cannot override contradictory earlier audio.
+     * Recent phrases have their own independent word verification; only earlier
+     * informative windows are checked here, using the already proposed clock.
+     */
+    fun verifyEarlierClock(cues: List<SubtitleCue>, correction: AudioSubtitleCorrection,
+                           audio: List<SpeechWindow>, position: Double, cancelled: () -> Unit = {}): Boolean =
+        verifyAdditional(cues, correction, usable(audio, true).filter {
+            it.start + it.speech.size.toDouble() / SPEECH_HZ <= position - 30
+        }, cancelled, quick = true)
+
     /** Provider/catalogue affiliation alone is never evidence of correct timing. */
     fun verifyReference(reference: List<SubtitleCue>, audio: List<SpeechWindow>, cancelled: () -> Unit = {}): Boolean {
         val result = match(reference, audio, cancelled = cancelled)
@@ -456,7 +477,7 @@ internal object AdaptiveSubtitleSynchronizer {
         val captioned = checks.filter { it.captioned(0.0) }
         return captioned.size >= 3 && captioned.all { local ->
             local.at(0.0) >= (if (local.window.speech.size < 20 * SPEECH_HZ) .55 else .46) &&
-                abs(local.offset(local.peak)) <= .65
+                (abs(local.offset(local.peak)) <= .65 || (local.at(0.0) >= .70 && local.at(local.offset(local.peak)) - local.at(0.0) <= .12))
         }
     }
 }

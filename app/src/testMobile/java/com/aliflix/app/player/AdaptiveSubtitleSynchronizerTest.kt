@@ -6,6 +6,62 @@ import java.util.Random
 import kotlin.math.abs
 
 class AdaptiveSubtitleSynchronizerTest {
+    @Test fun publishedCaptionHangoverDoesNotDiscardAnOtherwiseDistinctiveExchange() {
+        val fixture = org.json.JSONObject(javaClass.getResource("/audio-sync/published-caption-hangover.json")!!.readText())
+        val rows = fixture.getJSONArray("cues")
+        val originals = (0 until rows.length()).map { rows.getJSONArray(it).let { c ->
+            SubtitleCue(c.getDouble(0), c.getDouble(1), c.getString(2))
+        } }
+        val observed = fixture.getJSONArray("windows").let { rows -> (0 until rows.length()).map { rows.getJSONObject(it).let { w ->
+            SpeechWindow(w.getDouble("start"), w.getString("bits").map { if (it == '1') 1.0 else 0.0 }.toDoubleArray())
+        } } }
+        val result = AdaptiveSubtitleSynchronizer.matchQuick(originals, observed)
+        assertNotNull(result.toString(), result.correction)
+        assertEquals(4.5, result.correction!!.offset, .6)
+        assertTrue(AdaptiveSubtitleSynchronizer.verifyReferenceQuick(result.correction.apply(originals), observed))
+        val contradicted = observed + windows(originals, 18.0, starts = listOf(150.0, 180.0))
+        assertFalse(AdaptiveSubtitleSynchronizer.verifyReferenceQuick(result.correction.apply(originals), contradicted))
+        assertFalse(AdaptiveSubtitleSynchronizer.dialogue(SubtitleCue(1.0, 3.0, "HOWLING WIND")))
+        assertTrue(AdaptiveSubtitleSynchronizer.dialogue(SubtitleCue(1.0, 3.0, "DON'T MOVE!")))
+    }
+    @Test fun localWordProposalMustStillRespectEarlierObservedClock() {
+        val originals = cues()
+        val correction = AudioSubtitleCorrection(7.25, 1.0, .9)
+        val previous = windows(originals, 7.25, starts = listOf(90.0, 150.0, 210.0))
+        assertTrue(AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, correction, previous, 740.0))
+        assertFalse(AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, correction,
+            previous + windows(originals, 18.0, starts = listOf(300.0)), 740.0))
+        assertTrue(AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, correction,
+            previous + windows(originals, 18.0, starts = listOf(710.0)), 740.0))
+    }
+    @Test fun currentWindowDoesNotExtrapolateAContradictoryDriftingClock() {
+        val originals = cues()
+        val current = SpeechWindow(700.0, DoubleArray(30 * SPEECH_HZ) { i ->
+            val time = (700 + i.toDouble() / SPEECH_HZ - 7.0) / (25.0 / 24)
+            if (originals.any { time in it.startSeconds..it.endSeconds }) 1.0 else 0.0
+        })
+        assertNull(AdaptiveSubtitleSynchronizer.matchCurrent(originals, current).correction)
+    }
+    @Test fun currentContiguousExchangeFitsEarlierPhrasesAndVerifiesLaterPhrases() {
+        val originals = cues()
+        for (offset in listOf(-47.0, 7.25)) {
+            val current = SpeechWindow(700.0, DoubleArray(30 * SPEECH_HZ) { i ->
+                val time = 700 + i.toDouble() / SPEECH_HZ - offset
+                if (originals.any { time in it.startSeconds..it.endSeconds }) 1.0 else 0.0
+            })
+            val result = AdaptiveSubtitleSynchronizer.matchCurrent(originals, current)
+            assertNotNull(result.toString(), result.correction)
+            assertEquals(offset, result.correction!!.offset, .6)
+            assertEquals(1.0, result.correction.rate, .0001)
+            assertNull(AdaptiveSubtitleSynchronizer.matchCurrent(cues(455), current).correction)
+        }
+    }
+    @Test fun currentDialogueRejectsSilenceAndRepeatedTimingPatterns() {
+        val periodic = List(3000) { SubtitleCue(it * 3.0, it * 3.0 + 1, "Repeated") }
+        val repeated = SpeechWindow(700.0, DoubleArray(30 * SPEECH_HZ) { if (it % 150 < 50) 1.0 else 0.0 })
+        assertNull(AdaptiveSubtitleSynchronizer.matchCurrent(periodic, repeated).correction)
+        assertNull(AdaptiveSubtitleSynchronizer.matchCurrent(cues(), SpeechWindow(700.0, DoubleArray(1500))).correction)
+    }
     @Test fun shortBufferedScenesVerifyOffsetWithoutWaitingForFortySecondBlocks() {
         val originals = cues()
         assertNull(AdaptiveSubtitleSynchronizer.matchQuick(originals, windows(cues(455), 2.0)).correction)

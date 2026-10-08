@@ -51,6 +51,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -115,6 +116,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -142,6 +144,9 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 internal data class NativePlayerUi(
+    val videoBottomPx: Int = 0,
+    val captionBottomPx: Int = 0,
+    val captionTopPx: Int = 0,
     val captionDragging: Boolean = false,
     val title: String = "Aliflix",
     val detail: String = "",
@@ -265,6 +270,8 @@ internal fun NativePlayerScreen(
     val safeTopInset = safeInsets.getTop(density).toFloat()
     val safeRightInset = safeInsets.getRight(density, layoutDirection).toFloat()
     val safeBottomInset = safeInsets.getBottom(density).toFloat()
+    var viewportHeight by remember { mutableIntStateOf(0) }
+    var nextCardHeight by remember { mutableIntStateOf(0) }
     val startVolumeGesture = rememberUpdatedState(onVolumeGestureStarted)
     val hudTopPadding = when {
         controls && isLandscape -> 84.dp
@@ -305,15 +312,17 @@ internal fun NativePlayerScreen(
     }
 
     // Up Next is a direct replacement for Skip outro: same IntroDB window, no autoplay dependency.
-    var countdownCancelled by remember(state.episodeNumber) { mutableStateOf(false) }
+    var countdownCancelled by remember(state.playbackSelection?.key, state.episodeNumber) { mutableStateOf(false) }
+    var episodeAdvanced by remember(state.playbackSelection?.key, state.episodeNumber) { mutableStateOf(false) }
     val remainingMs = duration - position
-    val showCountdown = next != null && activeOutro != null && !countdownCancelled && !ended && !preparing && state.error == null
+    val showCountdown = next != null && activeOutro != null && !countdownCancelled && !episodeAdvanced && !ended && !preparing && state.error == null
     val autoAdvanceArmed = settings.playNextEpisode && next != null &&
         state.segments.any { it.kind == IntroSegmentKind.OUTRO && position >= it.startMs } &&
-        !countdownCancelled && !ended && !preparing && state.error == null
+        !countdownCancelled && !episodeAdvanced && !ended && !preparing && state.error == null
 
     LaunchedEffect(autoAdvanceArmed, remainingMs) {
         if (autoAdvanceArmed && remainingMs <= 1200 && next != null) {
+            episodeAdvanced = true
             onAutoEpisode(next)
         }
     }
@@ -353,6 +362,7 @@ internal fun NativePlayerScreen(
     Box(
         Modifier
             .fillMaxSize()
+            .onSizeChanged { viewportHeight = it.height }
             .pointerInput(preparing, state.error) {
                 if (preparing || state.error != null) return@pointerInput
                 awaitPointerEventScope {
@@ -672,70 +682,62 @@ internal fun NativePlayerScreen(
             }
         }
 
-        // NEXT EPISODE COUNTDOWN CARD
+        // Compact Netflix-style actions, attached to the video region in portrait.
+        val portraitTop = with(density) {
+            val videoBottom = state.videoBottomPx.takeIf { it > 0 } ?: (viewportHeight / 2)
+            val captionBottom = state.captionBottomPx.takeIf { it > 0 } ?: videoBottom
+            val contentBottom = maxOf(videoBottom, captionBottom)
+            val controlsSpace = if (controls) 150.dp.toPx() else 24.dp.toPx()
+            val maximum = (viewportHeight - safeBottomInset - controlsSpace - nextCardHeight).coerceAtLeast(safeTopInset)
+            (contentBottom + 24.dp.toPx()).coerceIn(safeTopInset, maximum).toDp()
+        }
+        val landscapeBottom = with(density) {
+            val controlsBottom = (if (controls) 140.dp else 24.dp).toPx()
+            val captionsBottom = if (state.captionTopPx > 0) viewportHeight - state.captionTopPx + 16.dp.toPx() else 0f
+            maxOf(controlsBottom, captionsBottom).toDp()
+        }
         AnimatedVisibility(
             visible = showCountdown,
-            enter = fadeIn(tween(250)) + slideInVertically(tween(250)) { it / 2 },
-            exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { it / 2 },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
+            enter = fadeIn(tween(220)) + scaleIn(tween(220), initialScale = .97f),
+            exit = fadeOut(tween(180)),
+            modifier = if (isLandscape) Modifier.align(Alignment.BottomEnd)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-                .padding(
-                    end = 16.dp,
-                    bottom = if (isLandscape) {
-                        if (controls) 140.dp else 24.dp
-                    } else {
-                        if (controls) 162.dp else 44.dp
-                    },
-                )
+                .padding(end = 20.dp, bottom = landscapeBottom)
+            else Modifier.align(Alignment.TopCenter).offset(y = portraitTop).padding(horizontal = 20.dp)
         ) {
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xF212151E),
-                border = BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.6f)),
-                shadowElevation = 16.dp,
-                modifier = Modifier.widthIn(max = 360.dp)
+                shape = RoundedCornerShape(20.dp),
+                color = com.aliflix.app.ui.common.AliflixSurfaceDefaults.color(com.aliflix.app.ui.common.AliflixSurfaceLevel.Elevated),
+                shadowElevation = 6.dp,
+                modifier = Modifier.widthIn(max = 350.dp).onSizeChanged { nextCardHeight = it.height }
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        val sec = kotlin.math.ceil(remainingMs / 1000.0).toInt().coerceAtLeast(1)
-                        val ringTarget = activeOutro?.let { marker ->
-                            ((marker.endMs - position).toFloat() / (marker.endMs - marker.startMs).coerceAtLeast(1L).toFloat())
-                                .coerceIn(0f, 1f)
-                        } ?: 0f
-                        val ringProgress by animateFloatAsState(
-                            targetValue = ringTarget,
-                            animationSpec = tween(420, easing = FastOutSlowInEasing),
-                            label = "next-episode-ring",
-                        )
-                        CircularProgressIndicator(
-                            progress = { ringProgress },
-                            color = AliflixAccentPrimary,
-                            trackColor = Color.White.copy(alpha = 0.15f),
-                            modifier = Modifier.size(36.dp),
-                            strokeWidth = 3.dp,
-                        )
-                        Text("$sec", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("UP NEXT", color = AliflixAccentSecondary, fontWeight = FontWeight.Medium, fontSize = 10.sp, letterSpacing = 1.sp)
+                            Text("E${next!!.number} · ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                        Box(contentAlignment = Alignment.Center) {
+                            val target = activeOutro?.let { marker ->
+                                ((marker.endMs - position).toFloat() / (marker.endMs - marker.startMs).coerceAtLeast(1L)).coerceIn(0f, 1f)
+                            } ?: 0f
+                            val ring by animateFloatAsState(target, tween(420, easing = FastOutSlowInEasing), label = "next-episode-ring")
+                            CircularProgressIndicator(progress = { ring }, color = AliflixAccentPrimary,
+                                trackColor = Color.White.copy(alpha = .12f), modifier = Modifier.size(30.dp), strokeWidth = 2.dp)
+                            if (settings.playNextEpisode) Text("${kotlin.math.ceil(remainingMs / 1000.0).toInt().coerceAtLeast(1)}", color = Color.White, fontSize = 11.sp)
+                            else Icon(Icons.Default.PlayArrow, null, tint = AliflixAccentSecondary, modifier = Modifier.size(15.dp))
+                        }
                     }
-                    Column(Modifier.weight(1f)) {
-                        Text("UP NEXT", color = AliflixAccentSecondary, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.sp)
-                        Text("E${next!!.number} \u00b7 ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    OpenPlayerButton(
-                        onClick = { next?.let { onEpisode(it) } },
-                        modifier = Modifier.size(36.dp).background(AliflixAccentPrimary, CircleShape)
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = "Play Now", tint = Color.White, modifier = Modifier.size(20.dp))
-                    }
-                    OpenPlayerButton(
-                        onClick = { countdownCancelled = true },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { countdownCancelled = true }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                            Text("Watch credits", color = Color.White.copy(alpha = .75f), fontSize = 12.sp)
+                        }
+                        Button(onClick = { if (!episodeAdvanced) next?.let { episodeAdvanced = true; onEpisode(it) } }, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                            shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary)) {
+                            Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp)); Text("Next episode", fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -942,7 +944,7 @@ internal fun NativePlayerScreen(
                         Spacer(Modifier.height(4.dp))
                         // Subtitle Sync / Delay
                         Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        val syncing = state.audioSyncState in setOf("Analysing", "Collecting Evidence")
+                        val syncing = state.audioSyncState in setOf("Syncing…")
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         FilledTonalButton(
                             onClick = onSyncWithAudio,
@@ -957,10 +959,6 @@ internal fun NativePlayerScreen(
                             Text(state.audioSyncState ?: "Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             if (syncing) {
                                 Spacer(Modifier.weight(1f))
-                                state.audioSyncRemainingSeconds?.let {
-                                    Text("${it}s", fontSize = 11.sp, color = AliflixAccentSecondary.copy(alpha = .7f))
-                                    Spacer(Modifier.width(8.dp))
-                                }
                                 Text("Cancel", fontSize = 11.sp)
                             }
                         }

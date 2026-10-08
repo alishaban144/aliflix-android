@@ -3,13 +3,20 @@ param(
     [string]$SdkPath = "$env:LOCALAPPDATA/Android/Sdk",
     [string]$JavaPath = 'C:/Program Files/Java/jdk-25',
     [string]$DebugKeystore = "$env:USERPROFILE/.android/debug.keystore",
+    [string]$AdbPath = '',
     [switch]$FramerateMismatch,
-    [switch]$RealFilm
+    [switch]$RealFilm,
+    [switch]$Terminator,
+    [switch]$BuildDriverOnly,
+    [switch]$PlaybackLifecycle,
+    [ValidateRange(0,2)][int]$SceneIndex = 0
 )
 # Development only. The installed target must use this local debug certificate.
 # Build :app:assembleMobileBenchmark first; never uninstall or clear target data.
 # Generate/push the public phone_fixture.py WAV and JSON to Aliflix external files.
+# Supply ALIFLIX_DEBUG_STORE_PASSWORD locally; signing credentials are not embedded.
 $ErrorActionPreference = 'Stop'
+if (!$env:ALIFLIX_DEBUG_STORE_PASSWORD) { throw 'Set ALIFLIX_DEBUG_STORE_PASSWORD for the local validation keystore.' }
 $env:JAVA_HOME = $JavaPath
 $repository = (Resolve-Path "$PSScriptRoot/../..").Path
 $output = Join-Path $repository '.validation-independent-phone-driver'
@@ -26,13 +33,18 @@ Confirm-Command
 $archive = [IO.Compression.ZipFile]::Open("$output/driver-unsigned.apk", [IO.Compression.ZipArchiveMode]::Update)
 try { [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, "$output/dex/classes.dex", 'classes.dex') | Out-Null }
 finally { $archive.Dispose() }
-& "$buildTools/apksigner.bat" sign --ks $DebugKeystore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$output/driver.apk" "$output/driver-unsigned.apk"
+& "$buildTools/apksigner.bat" sign --ks $DebugKeystore --ks-key-alias androiddebugkey --ks-pass env:ALIFLIX_DEBUG_STORE_PASSWORD --key-pass env:ALIFLIX_DEBUG_STORE_PASSWORD --out "$output/driver.apk" "$output/driver-unsigned.apk"
 Confirm-Command
-$adb = Join-Path $SdkPath 'platform-tools/adb.exe'
+$adb = if ($AdbPath) { $AdbPath } else { Join-Path $SdkPath 'platform-tools/adb.exe' }
 & $adb -s $Serial install -r "$output/driver.apk"
 Confirm-Command
 & $adb -s $Serial shell pm grant com.aliflix.app android.permission.ACCESS_LOCAL_NETWORK
-if ($RealFilm) {
+if ($BuildDriverOnly) { return }
+if ($PlaybackLifecycle) {
+    & $adb -s $Serial shell am instrument -w -e lifecycle true com.aliflix.validation/com.aliflix.validation.MinifiedDriver
+} elseif ($Terminator) {
+    & $adb -s $Serial shell am instrument -w -e terminator true -e sceneIndex $SceneIndex com.aliflix.validation/com.aliflix.validation.MinifiedDriver
+} elseif ($RealFilm) {
     & $adb -s $Serial shell am instrument -w -e real true com.aliflix.validation/com.aliflix.validation.MinifiedDriver
 } elseif ($FramerateMismatch) {
     & $adb -s $Serial shell am instrument -w -e fps true com.aliflix.validation/com.aliflix.validation.MinifiedDriver

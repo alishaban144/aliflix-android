@@ -15,13 +15,19 @@ import org.junit.Test
 class OfflineDownloadTest {
     @Test fun mp4PlaysAndSeeksWithSourceGone() = verify(false)
     @Test fun hlsQualityAndOriginalSubtitlesPlayWithSourceGone() = verify(true)
-    private fun verify(hls: Boolean) {
+    @Test fun alternateAudioAndSubtitlesSurviveOwnedManifestAndRestart() = verify(true, true)
+    private fun verify(hls: Boolean, alternate: Boolean = false) {
         grantNativeFixtureNetworkPermission()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val bytes = instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() }
         val files = if (hls) instrumentation.context.assets.list("offline-hls")!!.associateWith { name -> instrumentation.context.assets.open("offline-hls/$name").use { it.readBytes() } } else mapOf("video.mp4" to bytes)
-        val server = OfflineFixtureServer(files, if (hls) "master.m3u8" else "video.mp4")
+        val fixture = if (alternate) files + ("master.m3u8" to ("#EXTM3U\n" +
+            "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"English\",LANGUAGE=\"en\",DEFAULT=YES,AUTOSELECT=YES,URI=\"low.m3u8\"\n" +
+            "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"French\",LANGUAGE=\"fr\",DEFAULT=NO,AUTOSELECT=YES,URI=\"high.m3u8\"\n" +
+            String(files.getValue("master.m3u8"), Charsets.UTF_8).substringAfter("#EXTM3U\n").replace("SUBTITLES=\"subs\"", "SUBTITLES=\"subs\",AUDIO=\"audio\""))
+            .toByteArray()) else files
+        val server = OfflineFixtureServer(fixture, if (hls) "master.m3u8" else "video.mp4", if (hls) 0 else 8)
         val selection = PlaybackSelection(Media(2147482997, MediaType.MOVIE, "Offline fixture"))
         val id = playbackProgressKey(selection)
         lateinit var store: OfflineDownloads
@@ -38,10 +44,24 @@ class OfflineDownloadTest {
                 assertEquals(listOf(180, 90), prepared.qualities.map { it.height })
                 assertTrue(prepared.hasOriginalSubtitles)
             } else assertEquals(bytes.size.toLong(), prepared.qualities.single().bytes)
-            val download = runBlocking { prepared.downloadRequest(prepared.qualities.first(), "EN", true) }
+            val quality = prepared.qualities.first()
+            val foreign = prepared.copy(playback = prepared.playback.copy(url = "https://wrong-source.example/master.m3u8", cookie = "wrong-cookie"), qualities = listOf(quality.copy(height = 560)))
+            val aggregate = DownloadDiscovery(listOf(DownloadOption(foreign.qualities.first(), foreign), DownloadOption(quality, prepared)), true).prepared()
+            val download = runBlocking { aggregate.downloadRequest(quality, "EN", true, if (alternate) -1 else null) }
+            assertEquals(prepared.playback.url, download.uri.toString())
+            if (alternate) assertEquals(2, download.streamKeys.count { it.groupIndex == 1 })
             // Manager and service use the same durable index/cache; foreground transfer is exercised below.
             ActivityScenario.launch<com.aliflix.app.MainActivity>(Intent(context, com.aliflix.app.MainActivity::class.java).putExtra("openDownloads", true)).use {
                 runBlocking { withContext(Dispatchers.Main) { store.enqueue(listOf(download)) } }
+                if (!hls) {
+                    await { store.entries.value.any { item -> item.id == id && item.download.state == Download.STATE_DOWNLOADING && item.downloadedBytes > 0 } }
+                    instrumentation.runOnMainSync { store.pause(id) }
+                    await { store.entries.value.any { item -> item.id == id && item.download.state == Download.STATE_STOPPED } }
+                    Thread.sleep(300)
+                    val paused = store.entries.value.first { item -> item.id == id }
+                    assertEquals(Download.STATE_STOPPED, paused.download.state)
+                    instrumentation.runOnMainSync { store.resume(paused) }
+                }
                 await { store.manager.downloadIndex.getDownload(id)?.state == Download.STATE_COMPLETED }
             }
             if (!hls) assertEquals(bytes.size.toLong(), store.manager.downloadIndex.getDownload(id)!!.bytesDownloaded)
@@ -62,6 +82,17 @@ class OfflineDownloadTest {
             }
             scenario.recreate()
             await { NativePlaybackService.playbackReady }
+            if (alternate) {
+                await { var found = false; scenario.onActivity { found = it.playbackController!!.currentTracks.groups.filter { group -> group.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }.sumOf { group -> group.length } >= 2 }; found }
+                scenario.onActivity { activity ->
+                    val controller = activity.playbackController!!
+                    val tracks = controller.currentTracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
+                    val group = tracks.last()
+                    controller.trackSelectionParameters = controller.trackSelectionParameters.buildUpon()
+                        .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, group.length - 1)).build()
+                }
+                await { NativePlaybackService.playbackReady && NativePlaybackService.playbackFailure == null }
+            }
             val manager = context.getSystemService(android.media.session.MediaSessionManager::class.java)
             instrumentation.uiAutomation.adoptShellPermissionIdentity("android.permission.MEDIA_CONTENT_CONTROL")
             try {
@@ -83,7 +114,7 @@ class OfflineDownloadTest {
     }
 }
 
-internal class OfflineFixtureServer(private val files: Map<String, ByteArray>, entry: String) : AutoCloseable {
+internal class OfflineFixtureServer(private val files: Map<String, ByteArray>, entry: String, private val throttleMs: Long = 0) : AutoCloseable {
     private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
     val url = "http://127.0.0.1:${socket.localPort}/$entry"
     init { kotlin.concurrent.thread(isDaemon = true) { while (!socket.isClosed) {
@@ -103,7 +134,10 @@ internal class OfflineFixtureServer(private val files: Map<String, ByteArray>, e
                 if (range != null) append("Content-Range: bytes $start-$end/${data.size}\r\n")
                 append("Connection: close\r\n\r\n")
             }
-            connection.getOutputStream().apply { write(header.toByteArray()); if (!first.startsWith("HEAD")) write(data, start, end - start + 1); flush() }
+            connection.getOutputStream().apply { write(header.toByteArray()); if (!first.startsWith("HEAD")) {
+                var position = start
+                while (position <= end) { val size = minOf(4096, end - position + 1); write(data, position, size); flush(); position += size; if (throttleMs > 0) Thread.sleep(throttleMs) }
+            }; flush() }
         } } }
     } } }
     override fun close() { socket.close() }

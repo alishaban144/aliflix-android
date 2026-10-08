@@ -23,46 +23,118 @@ internal class DownloadSession private constructor(private val activity: Compone
     val scope get() = activity.lifecycleScope
     fun load(state: DownloadPickerState, media: Media, episode: Episode?, store: DownloadUiDependencies, force: Boolean = false) {
         if (!activity.hasInternetConnection()) { state.error = "Connect to the internet and try again"; return }
-        if (state.loading || (state.loadedSeason == state.season && !force)) return
-        state.loading = true
-        state.error = null
-        scope.launch {
+        if (state.loadedSeason == state.season && !force) return
+        val jobKey = "load:${media.key}"
+        val requested = state.season
+        jobs.remove(jobKey)?.cancel()
+        state.loading = true; state.error = null
+        jobs[jobKey] = scope.launch(start = CoroutineStart.LAZY) {
+            val owner = coroutineContext[Job]
             try {
                 if (media.type == MediaType.TV && episode == null) {
                     if (state.seasons.isEmpty()) {
-                        state.seasons = store.seasons(media)
-                        if (state.loadedSeason == null) state.season = state.seasons.firstOrNull { it.number > 0 }?.number ?: 1
+                        val seasons = store.seasons(media)
+                        ensureActive()
+                        if (jobs[jobKey] !== owner) return@launch
+                        state.seasons = seasons
+                        if (state.loadedSeason == null && seasons.none { it.number == requested })
+                            state.season = seasons.firstOrNull { it.number > 0 }?.number ?: 1
                     }
-                    state.episodes = store.episodes(media, state.season).filter { it.seasonNumber == state.season }
-                    state.chosen = state.episodes.map { "${it.seasonNumber}:${it.number}" }.toSet()
-                    val ratingSeason = state.season
-                    val ratingEpisodes = state.episodes
+                    val targetSeason = state.season
+                    val episodes = store.episodes(media, targetSeason).filter { it.seasonNumber == targetSeason }
+                    ensureActive()
+                    if (jobs[jobKey] !== owner || state.season != targetSeason) return@launch
+                    state.episodes = episodes
+                    state.chosen = episodes.map { "${it.seasonNumber}:${it.number}" }.toSet()
                     scope.launch {
                         try {
-                            val rated = ratingsClient.mobileEpisodeRatings(media, ratingSeason, ratingEpisodes)
-                            if (state.season == ratingSeason) state.episodes = rated
+                            val rated = ratingsClient.mobileEpisodeRatings(media, targetSeason, episodes)
+                            if (state.season == targetSeason) state.episodes = rated
                         } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
                     }
                 }
-                state.loadedSeason = state.season
-                val prefs = PlaybackProviderRepository(activity).preferences.value
-                val selections = if (media.type == MediaType.MOVIE) listOf(PlaybackSelection(media)) else state.episodes.map {
-                    PlaybackSelection(media, seasonNumber = it.seasonNumber, episodeNumber = it.number, episodeTitle = it.title, availableEpisodes = state.episodes)
-                }
-                val blocked = store.blockedIds()
-                prepare(store, selections.filter { playbackProgressKey(it) !in blocked }.map {
-                    key(it, state.language) to it.copy(source = prefs.sourceFor(media))
-                }, state.language)
+                if (jobs[jobKey] === owner) state.loadedSeason = state.season
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { state.error = "Episodes unavailable" }
-            finally { state.loading = false }
+            catch (_: Exception) { if (jobs[jobKey] === owner) state.error = "Episodes unavailable" }
+            finally { if (jobs[jobKey] === owner) { state.loading = false; jobs.remove(jobKey) } }
         }
+        jobs[jobKey]?.start()
     }
     val prepared = mutableStateMapOf<String, PreparedDownload>()
     val errors = mutableStateMapOf<String, String>()
     val pending = mutableStateMapOf<String, Boolean>()
     private val timestamps = mutableMapOf<String, Long>()
     private val jobs = mutableMapOf<String, Job>()
+    val discoveries = mutableStateMapOf<String, DownloadDiscovery>()
+    private val tierSignatures = mutableMapOf<String, String>()
+    private val validatedTiers = mutableMapOf<String, String>()
+    private fun route(option: DownloadOption, language: String, audio: String) =
+        "${option.source.selection.source}:${option.source.server}:${option.quality.height}:$language:$audio"
+    fun validated(key: String, option: DownloadOption, language: String, audio: String) =
+        validatedTiers[key] == route(option, language, audio)
+    fun retryEpisode(key: String) { prepared.remove(key); errors.remove(key); validatedTiers.remove(key); timestamps.remove(key) }
+    fun cancelTierWork(mediaKey: String) {
+        jobs.remove("tier:$mediaKey")?.cancel(); tierSignatures.remove("tier:$mediaKey")
+        pending.keys.filter { it.startsWith("$mediaKey:") }.toList().forEach { pending.remove(it) }
+    }
+    fun cancelSelectionWork(mediaKey: String) {
+        jobs.keys.filter { it == "tier:$mediaKey" || it.startsWith("discover:$mediaKey:") }.toList().forEach { jobs.remove(it)?.cancel() }
+        tierSignatures.remove("tier:$mediaKey")
+        pending.keys.filter { it.startsWith("$mediaKey:") }.toList().forEach { pending.remove(it) }
+    }
+    fun discover(store: DownloadUiDependencies, selection: PlaybackSelection, language: String, retry: Int = 0) {
+        val id = key(selection, language)
+        val jobKey = "discover:$id"
+        if (retry == 0 && (jobs[jobKey]?.isActive == true || discoveries[id]?.finished == true &&
+                android.os.SystemClock.elapsedRealtime() - (timestamps[id] ?: 0L) < 600_000)) return
+        jobs.remove(jobKey)?.cancel()
+        discoveries[id] = DownloadDiscovery(); errors.remove(id)
+        jobs.keys.filter { it.startsWith("discover:${selection.media.key}") && it != jobKey }.toList().forEach { jobs.remove(it)?.cancel() }
+        jobs[jobKey] = scope.launch(start = CoroutineStart.LAZY) {
+            val owner = coroutineContext[Job]
+            try {
+                store.discover(activity, host, selection, language) { update ->
+                    if (jobs[jobKey] === owner) discoveries[id] = update
+                }
+                if (jobs[jobKey] === owner) timestamps[id] = android.os.SystemClock.elapsedRealtime()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (jobs[jobKey] === owner) {
+                discoveries[id] = (discoveries[id] ?: DownloadDiscovery()).copy(finished = true)
+                errors[id] = "No download options available. Try again."
+            } } finally { if (jobs[jobKey] === owner) jobs.remove(jobKey) }
+        }
+        jobs[jobKey]?.start()
+    }
+    fun validateTier(store: DownloadUiDependencies, selections: List<Pair<String, PlaybackSelection>>,
+        language: String, option: DownloadOption, retry: Int = 0, audio: String = "Default") {
+        if (selections.isEmpty()) return
+        val group = "tier:${selections.first().second.media.key}"
+        val route = route(option, language, audio)
+        val signature = "$route:${selections.map { it.first }}:$retry"
+        if (tierSignatures[group] == signature) return
+        jobs.remove(group)?.cancel()
+        pending.keys.filter { it.startsWith(selections.first().second.media.key) }.toList().forEach { pending.remove(it) }
+        tierSignatures[group] = signature
+        val cached = prepared.filter { (key, _) -> key !in errors && validatedTiers[key] == route &&
+            android.os.SystemClock.elapsedRealtime() - (timestamps[key] ?: 0L) < 600_000 }.toMutableMap()
+        val anchorKey = key(option.source.selection, language)
+        cached[anchorKey] = option.source
+        selections.forEach { (key, _) -> pending[key] = true; errors.remove(key) }
+        jobs[group] = scope.launch(start = CoroutineStart.LAZY) {
+            val owner = coroutineContext[Job]
+            try {
+                store.prepareTier(activity, host, selections, language, cached, option, audio, { key, value ->
+                    if (jobs[group] === owner) {
+                        prepared[key] = value; pending.remove(key); errors.remove(key)
+                        validatedTiers[key] = route; timestamps[key] = android.os.SystemClock.elapsedRealtime()
+                    }
+                }, { key, _ -> if (jobs[group] === owner) { pending.remove(key); errors[key] = "Episode unavailable" } })
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (jobs[group] === owner) selections.filter { it.first in pending }.forEach { errors[it.first] = "Episode unavailable" } }
+            finally { if (jobs[group] === owner) { selections.forEach { pending.remove(it.first) }; jobs.remove(group) } }
+        }
+        jobs[group]?.start()
+    }
     init {
         (activity.window.decorView as ViewGroup).addView(host, ViewGroup.LayoutParams(1, 1))
         activity.lifecycle.addObserver(object : DefaultLifecycleObserver {
@@ -74,26 +146,6 @@ internal class DownloadSession private constructor(private val activity: Compone
         })
     }
     fun key(selection: PlaybackSelection, language: String) = "${com.aliflix.app.data.playbackProgressKey(selection)}:$language"
-    fun prepare(store: DownloadUiDependencies, selections: List<Pair<String, PlaybackSelection>>, language: String) {
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (!activity.hasInternetConnection()) { selections.forEach { errors[it.first] = "Connect to the internet and try again" }; return }
-        val batch = selections.filter { (key, _) ->
-            if (now - (timestamps[key] ?: 0L) > 10 * 60_000L) prepared.remove(key)
-            key !in prepared && key !in pending && key !in errors
-        }
-        if (batch.isEmpty()) return
-        batch.forEach { pending[it.first] = true }
-        val jobKey = batch.first().first
-        jobs[jobKey] = activity.lifecycleScope.launch {
-            try {
-                store.prepare(activity, host, batch, language, prepared.toMap(), { key, result ->
-                    pending.remove(key); prepared[key] = result; timestamps[key] = android.os.SystemClock.elapsedRealtime(); errors.remove(key)
-                }, { key, _ -> pending.remove(key); errors[key] = "Unavailable" })
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { batch.filter { it.first !in prepared }.forEach { errors[it.first] = "Unavailable" } }
-            finally { batch.forEach { pending.remove(it.first) }; jobs.remove(jobKey) }
-        }
-    }
     companion object {
         private val sessions = mutableMapOf<ComponentActivity, DownloadSession>()
         fun get(activity: ComponentActivity) = sessions.getOrPut(activity) { DownloadSession(activity) }

@@ -9,6 +9,27 @@ import java.nio.ByteOrder
 import kotlin.math.sin
 
 class PlaybackSpeechBufferTest {
+    @Test fun localWordDecoderReceivesSelectedSixteenKhzAudioWithTheSameClockAndSeekBoundary() {
+        val capture = capture()
+        val frames = mutableListOf<Triple<Double, ShortArray, Long>>()
+        capture.dialogueFrameObserver = { time, pcm, _, boundary, _ -> frames.add(Triple(time, pcm.copyOf(), boundary)) }
+        val format = Format.Builder().setSampleRate(48000).setChannelCount(2).setPcmEncoding(C.ENCODING_PCM_16BIT).build()
+        fun feed(start: Long) {
+            val input = ByteBuffer.allocate(4800 * 4).order(ByteOrder.LITTLE_ENDIAN)
+            repeat(4800) { input.putShort(1200).putShort(1200) }; input.flip()
+            capture.pcm(input, format, start, 0)
+            assertEquals(0, input.position())
+        }
+        feed(10_000_000)
+        assertEquals(5, frames.size)
+        assertTrue(frames.all { it.second.size == 320 && it.second.all { sample -> sample in 1198..1201 } })
+        assertEquals(10.0, frames.first().first, .0001)
+        assertEquals(10.08, frames.last().first, .0001)
+        val boundary = frames.last().third
+        capture.discontinuity(); feed(30_000_000)
+        assertTrue(frames.last().third > boundary)
+        assertEquals(30.08, frames.last().first, .0001)
+    }
     @Test fun partialUnalignedRunsAreAvailableWithinEighteenSecondsAndNeverBridgeASeek() {
         val capture = capture()
         val format = Format.Builder().setSampleRate(8000).setChannelCount(1).setPcmEncoding(C.ENCODING_PCM_16BIT).build()

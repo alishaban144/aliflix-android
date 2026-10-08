@@ -1,0 +1,180 @@
+package com.aliflix.app.player
+
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ParcelFileDescriptor
+import android.speech.RecognitionListener
+import android.speech.RecognitionPart
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.math.abs
+
+internal data class HeardWord(val text: String, val start: Double, val end: Double)
+
+/** Optional Android 14+ local decoder of selected audio, never the microphone.
+ * Bounded continuous sessions retain quiet phrase context. Completed
+ * words stay in memory; a sync tap never starts or waits for recognition.
+ */
+@androidx.annotation.RequiresApi(34)
+internal class RecentDialogueRecognition(private val context: Context, private val language: String) : AutoCloseable {
+    private data class Frame(val start: Double, val pcm: ShortArray, val generation: Long, val boundary: Long, val voiced: Boolean)
+    private val main = Handler(Looper.getMainLooper())
+    private val queue = ArrayBlockingQueue<Frame>(256)
+    private val words = mutableListOf<HeardWord>()
+    @Volatile private var running = true
+    @Volatile private var failed = false
+    @Volatile private var token = 0L
+    private var recognizer: SpeechRecognizer? = null
+    @Volatile private var pipe: Array<ParcelFileDescriptor>? = null
+    @Volatile private var generation = -1L
+    @Volatile private var boundary = -1L
+    @Volatile private var lastOffered = Double.NaN
+    @Volatile private var decodedWindows = 0
+    @Volatile private var errorCode = 0
+    @Volatile private var restart = false
+    private val thread = Thread({ collectFrames() }, "aliflix-local-dialogue").apply { isDaemon = true; start() }
+
+    fun offer(start: Double, pcm: ShortArray, generation: Long, boundary: Long, voiced: Boolean) {
+        if (!running || failed) return
+        if (!lastOffered.isFinite() && queue.isEmpty() && !voiced) return
+        lastOffered = start
+        if (!queue.offer(Frame(start, pcm.copyOf(), generation, boundary, voiced))) {
+            failed = true // Never bridge dropped audio.
+            synchronized(this) { words.clear() }
+            main.post { stopSession() }
+        }
+    }
+    @Synchronized fun current(position: Double, expectedGeneration: Long, expectedBoundary: Long): List<HeardWord> {
+        if (!running || failed || generation != expectedGeneration || boundary != expectedBoundary ||
+            !lastOffered.isFinite() || position - lastOffered > 1.0) return emptyList()
+        return words.filter { it.start >= position - 30 && it.end <= position &&
+            it.start.isFinite() && it.end > it.start }.takeLast(160)
+    }
+    @Synchronized fun diagnostics(): String = "words=${words.size},localFailed=$failed,localError=$errorCode,localGeneration=$generation,localBoundary=$boundary,localEnd=$lastOffered,localWindows=$decodedWindows"
+
+    private fun collectFrames() {
+        var last = Double.NaN
+        var start = Double.NaN
+        var session = -1L
+        var output: ParcelFileDescriptor.AutoCloseOutputStream? = null
+        val bytes = ByteArray(640)
+        try {
+            while (running && !failed) {
+                val frame = queue.take()
+                val discontinuity = frame.generation != generation || frame.boundary != boundary ||
+                    !last.isFinite() || abs(frame.start - last - .02) > .003
+                last = frame.start
+                if (restart && !frame.voiced) {
+                    ++token
+                    runCatching { output?.close() }; output = null
+                    continue
+                }
+                if (output == null && !frame.voiced) continue
+                if (output == null || restart || discontinuity || frame.start - start >= 45) {
+                    // Fence the old listener before closing its descriptor.
+                    session = ++token
+                    runCatching { output?.close() }
+                    val descriptors = ParcelFileDescriptor.createPipe()
+                    pipe?.forEach { runCatching { it.close() } }
+                    pipe = descriptors
+                    restart = false
+                    generation = frame.generation; boundary = frame.boundary
+                    if (discontinuity) synchronized(this) { words.clear() }
+                    start = frame.start
+                    val activeSession = session
+                    val activeStart = start
+                    val ready = CountDownLatch(1)
+                    main.post { if (running && activeSession == token) startSession(descriptors[0], activeSession, activeStart, ready) else ready.countDown() }
+                    if (!ready.await(4, TimeUnit.SECONDS)) { failed = true; errorCode = -1; break }
+                    output = ParcelFileDescriptor.AutoCloseOutputStream(descriptors[1])
+                    decodedWindows++
+                }
+                frame.pcm.forEachIndexed { index, value -> bytes[index * 2] = value.toByte(); bytes[index * 2 + 1] = (value.toInt() shr 8).toByte() }
+                try { output?.write(bytes) } catch (error: java.io.IOException) {
+                    if (!running) break
+                    if (!restart) throw error
+                    runCatching { output?.close() }; output = null
+                }
+            }
+        } catch (_: InterruptedException) { }
+        catch (_: Exception) { if (running) failed = true }
+        finally { runCatching { output?.close() }; main.post { stopSession() } }
+    }
+    private fun startSession(source: ParcelFileDescriptor, session: Long, start: Double, completed: CountDownLatch) {
+        stopRecognizer()
+        try {
+            if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) { failed = true; completed.countDown(); return }
+            recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context).apply {
+                setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle) { completed.countDown() }
+                    override fun onBeginningOfSpeech() = Unit
+                    override fun onRmsChanged(rmsdB: Float) = Unit
+                    override fun onBufferReceived(buffer: ByteArray) = Unit
+                    override fun onEndOfSpeech() = Unit
+                    override fun onError(error: Int) {
+                        if (session == token) {
+                            errorCode = error
+                            // Silence may finish a local session. A later voiced
+                            // frame starts another without waiting in the UI.
+                            if (error in listOf(SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) restart = true
+                            else failed = true
+                            stopSession()
+                        }
+                        completed.countDown()
+                    }
+                    override fun onResults(results: Bundle) { accept(results); restartIfCurrent(); completed.countDown() }
+                    override fun onPartialResults(partialResults: Bundle) = Unit
+                    override fun onEvent(eventType: Int, params: Bundle) = Unit
+                    override fun onSegmentResults(segmentResults: Bundle) = accept(segmentResults)
+                    override fun onEndOfSegmentedSession() { restartIfCurrent(); completed.countDown() }
+                    private fun restartIfCurrent() { if (session == token) restart = true }
+                    private fun accept(bundle: Bundle) {
+                        if (!running || failed || session != token) return
+                        val parts = bundle.getParcelableArrayList(SpeechRecognizer.RECOGNITION_PARTS, RecognitionPart::class.java).orEmpty()
+                        val added = parts.zipWithNext().mapNotNull { (a, b) ->
+                            val first = start + a.timestampMillis / 1000.0
+                            val until = start + b.timestampMillis / 1000.0
+                            if (until > first && until <= lastOffered + .02 && until - first <= 3 && first > start + .4)
+                                HeardWord(a.rawText, first, until) else null
+                        }
+                        if (added.isEmpty()) return
+                        synchronized(this@RecentDialogueRecognition) {
+                            // Prefer a fresh completed interior, retaining words
+                            // outside it, including clipped edges from overlap.
+                            words.removeAll { it.start >= added.first().start && it.start <= added.last().start }
+                            words.addAll(added)
+                            val unique = words.filter { it.end >= lastOffered - 32 }.distinctBy { it.text to it.start }.sortedBy { it.start }.takeLast(180)
+                            words.clear(); words.addAll(unique)
+                        }
+                    }
+                })
+                startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
+                    .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, source)
+                    .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, 16000)
+                    .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+                    .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, android.media.AudioFormat.ENCODING_PCM_16BIT)
+                    .putExtra(RecognizerIntent.EXTRA_MASK_OFFENSIVE_WORDS, false)
+                    .putExtra(RecognizerIntent.EXTRA_REQUEST_WORD_TIMING, true)
+                    .putExtra(RecognizerIntent.EXTRA_REQUEST_WORD_CONFIDENCE, true)
+                    .putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE))
+            }
+        } catch (_: Exception) { failed = true; completed.countDown(); stopSession() }
+    }
+    private fun stopRecognizer() { runCatching { recognizer?.cancel() }; runCatching { recognizer?.destroy() }; recognizer = null }
+    private fun stopSession() { stopRecognizer(); pipe?.forEach { runCatching { it.close() } }; pipe = null }
+    override fun close() {
+        running = false; ++token
+        pipe?.forEach { runCatching { it.close() } }
+        thread.interrupt(); queue.clear()
+        synchronized(this) { words.clear() }
+        if (Looper.myLooper() == Looper.getMainLooper()) stopSession() else main.post { stopSession() }
+    }
+}

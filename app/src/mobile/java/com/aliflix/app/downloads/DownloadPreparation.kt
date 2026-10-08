@@ -20,18 +20,21 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal data class DownloadQuality(val label: String, val height: Int, val bytes: Long, val estimated: Boolean,
-    val keys: List<StreamKey>, val audioGroupId: String? = null) {
+    val keys: List<StreamKey>, val audioGroupId: String? = null, val hasOriginalSubtitles: Boolean? = null) {
     val sizeLabel get() = (if (estimated && bytes > 0) "≈ " else "") + downloadSize(bytes)
 }
-internal data class DownloadAudioTrack(val label: String, val language: String?, val groupId: String, val index: Int)
+internal data class DownloadAudioTrack(val label: String, val language: String?, val groupId: String, val index: Int, val bytes: Long = 0)
 internal data class PreparedDownload(val selection: PlaybackSelection, val playback: NativePlaybackRequest,
     val qualities: List<DownloadQuality>, val hasOriginalSubtitles: Boolean, val server: String = "",
-    val audioTracks: List<DownloadAudioTrack> = emptyList()) {
-    fun audioTracksFor(quality: DownloadQuality) = audioTracks.filter { it.groupId == quality.audioGroupId }
+    val audioTracks: List<DownloadAudioTrack> = emptyList(), val options: List<DownloadOption> = emptyList()) {
+    fun owner(quality: DownloadQuality): PreparedDownload = options.firstOrNull { it.quality == quality }?.source ?: this
+    fun audioTracksFor(quality: DownloadQuality) = owner(quality).audioTracks.filter { it.groupId == quality.audioGroupId }
 }
 
 internal fun downloadProviderOrder(selection: PlaybackSelection): List<PlaybackProvider> =
-    (listOf(MobilePlaybackProvider.FLIXER, selection.source.identity) + mobileGeneralPlaybackProviders())
+    ((if (selection.media.isJapaneseAnime) listOf(selection.source.identity).filter { it.isAnimeNative } +
+        listOf(PlaybackProviderId.MIRURO, PlaybackProviderId.ANIKURO) else emptyList()) +
+        listOf(MobilePlaybackProvider.FLIXER, selection.source.identity) + mobileGeneralPlaybackProviders())
         .filter { it.isAvailableFor(selection.media) }.distinct()
 
 internal fun downloadStreamKeys(quality: DownloadQuality, tracks: List<DownloadAudioTrack>, audioIndex: Int?): List<StreamKey> {
@@ -42,11 +45,21 @@ internal fun downloadStreamKeys(quality: DownloadQuality, tracks: List<DownloadA
     return (quality.keys.filterNot { it.groupIndex == 1 } + chosen.map { StreamKey(1, it.index) }).sorted()
 }
 
+internal fun estimatedDownloadQuality(quality: DownloadQuality, tracks: List<DownloadAudioTrack>, audioIndex: Int?): DownloadQuality {
+    if (audioIndex == null || tracks.isEmpty()) return quality
+    val available = tracks.filter { it.groupId == quality.audioGroupId }
+    val selected = if (audioIndex == -1) available else available.filter { it.index == audioIndex }
+    val defaults = available.filter { track -> quality.keys.any { it.groupIndex == 1 && it.streamIndex == track.index } }
+    if (selected.map { it.index } == defaults.map { it.index }) return quality
+    val bytes = if (quality.bytes <= 0 || (selected + defaults).any { it.bytes <= 0 }) 0
+        else (quality.bytes - defaults.sumOf { it.bytes } + selected.sumOf { it.bytes }).coerceAtLeast(0)
+    return quality.copy(bytes = bytes, estimated = true)
+}
+
 internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLayout, selection: PlaybackSelection,
-    language: String): PreparedDownload {
+    language: String, onUpdate: (DownloadDiscovery) -> Unit = {}, requiredAudio: String = "Default"): PreparedDownload {
     val progress = (activity.application as AliflixApplication).playbackProgressStore
     val prefs = PlaybackProviderRepository(activity).preferences.value
-    var last: Exception? = null
     val providers = downloadProviderOrder(selection)
     suspend fun attempt(provider: PlaybackProvider): PreparedDownload {
         val candidate = selection.copy(source = if (provider == selection.source.identity) selection.source else prefs.sourceFor(selection.media, provider))
@@ -54,22 +67,23 @@ internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLay
         val request = NativeStreamResolver(activity, progress, host).use {
             it.resolve(candidate, 0, emptySet(), onServer = { name -> server = name })
         }.copy(selectionJson = candidate.nativeJson(), subtitleLanguage = language.lowercase(), positionMs = 0)
-        return inspectDownload(candidate, request, language).copy(server = server)
+        val inspected = inspectDownload(candidate, request, language).copy(server = server)
+        val useful = inspected.qualities.filter { quality -> requiredAudio == "Default" ||
+            inspected.audioTracksFor(quality).let { tracks -> if (requiredAudio == "All tracks") tracks.isNotEmpty() else tracks.any { it.label == requiredAudio } } }
+        require(useful.isNotEmpty()) { "Selected audio unavailable" }
+        return inspected.copy(qualities = useful)
     }
-    try { return attempt(providers.first()) }
-    catch (error: Exception) { currentCoroutineContext().ensureActive(); last = error }
-    try { return firstSuccessful(providers.drop(1).map { provider -> suspend { attempt(provider) } }, parallelism = 2) }
-    catch (error: Exception) { currentCoroutineContext().ensureActive(); last = error }
-    throw IllegalStateException("No downloadable video found. Try again.", last)
+    return discoverDownloadOptions(providers, ::attempt, onUpdate).prepared()
 }
 
 internal suspend fun prepareDownloadBatch(activity: ComponentActivity, host: FrameLayout,
     selections: List<Pair<String, PlaybackSelection>>, language: String, cached: Map<String, PreparedDownload>,
-    onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit): Unit = withContext(Dispatchers.Main.immediate) {
+    onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit,
+    pinnedAnchor: DownloadOption? = null, requiredAudio: String = "Default"): Unit = withContext(Dispatchers.Main.immediate) {
     val progress = (activity.application as AliflixApplication).playbackProgressStore
     val prefs = PlaybackProviderRepository(activity).preferences.value
     prepareDownloadBatchInternal(selections, language, cached,
-        discover = { selection -> prepareDownload(activity, host, selection, language) },
+        discover = { selection -> prepareDownload(activity, host, selection, language, requiredAudio = requiredAudio) },
         resolvePinned = { selection, server ->
             var actualServer = ""
             val request = NativeStreamResolver(activity, progress, host).use {
@@ -84,7 +98,7 @@ internal suspend fun prepareDownloadBatch(activity: ComponentActivity, host: Fra
             selection.source == prefs.sourceFor(selection.media, selection.source.identity) ||
                 selections.any { it.second.source == selection.source }
         },
-        onPrepared = onPrepared, onError = onError)
+        onPrepared = onPrepared, onError = onError, pinnedAnchor = pinnedAnchor, requiredAudio = requiredAudio)
 }
 
 private val preparationSlots = kotlinx.coroutines.sync.Semaphore(4)
@@ -96,6 +110,7 @@ internal suspend fun prepareDownloadBatchInternal(
     inspect: suspend (PlaybackSelection, NativePlaybackRequest, String) -> PreparedDownload,
     sourceIsCurrent: (PlaybackSelection) -> Boolean = { true },
     onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit,
+    pinnedAnchor: DownloadOption? = null, requiredAudio: String = "Default",
 ) {
     fun group(selection: PlaybackSelection) = selection.media.key to
         if (selection.media.type == MediaType.TV) selection.seasonNumber ?: 1 else null
@@ -103,7 +118,20 @@ internal suspend fun prepareDownloadBatchInternal(
         first.media.key == second.media.key && first.seasonNumber == second.seasonNumber && first.episodeNumber == second.episodeNumber
     val snapshot = cached.filterValues { it.qualities.isNotEmpty() && sourceIsCurrent(it.selection) }
     coroutineScope {
-        val anchors = snapshot.values.filter { it.server.isNotBlank() }.associateBy { group(it.selection) }.toMutableMap()
+        val anchors = snapshot.values.filter { it.server.isNotBlank() }.groupBy { group(it.selection) }.mapValues { it.value.first() }.toMutableMap()
+        pinnedAnchor?.let { anchors[group(it.source.selection)] = it.source }
+        fun requireAudio(item: PreparedDownload): PreparedDownload {
+            val available = item.qualities.filter { quality -> (pinnedAnchor?.quality?.height?.let { it <= 0 } != false || quality.height > 0) && (requiredAudio == "Default" || item.audioTracksFor(quality).let { tracks ->
+                if (requiredAudio == "All tracks") tracks.isNotEmpty() else tracks.any { it.label == requiredAudio }
+            }) }
+            require(available.isNotEmpty()) { "Selected audio unavailable" }
+            val height = pinnedAnchor?.quality?.height ?: item.qualities.first().height
+            val quality = closestDownloadQuality(available, height)
+            if (requiredAudio != "Default") require(item.audioTracksFor(quality).let { tracks ->
+                if (requiredAudio == "All tracks") tracks.isNotEmpty() else tracks.any { it.label == requiredAudio }
+            }) { "Selected audio unavailable" }
+            return if (requiredAudio == "Default") item else item.copy(qualities = available)
+        }
         val discoveries = mutableMapOf<String, CompletableDeferred<PreparedDownload>>()
         suspend fun discoverOnce(selection: PlaybackSelection): Pair<PreparedDownload, Boolean> {
             var leader = false
@@ -130,16 +158,16 @@ internal suspend fun prepareDownloadBatchInternal(
         suspend fun inspectFromAnchor(selection: PlaybackSelection, anchor: PreparedDownload): PreparedDownload {
             val candidate = selection.copy(source = anchor.selection.source)
             return try {
-                inspect(candidate, resolvePinned(candidate, anchor.server), language).copy(server = anchor.server)
+                withTimeout(30_000) {
+                    requireAudio(inspect(candidate, resolvePinned(candidate, anchor.server), language).copy(server = anchor.server))
+                }
             } catch (timeout: TimeoutCancellationException) {
                 currentCoroutineContext().ensureActive()
-                if (anchor.selection.source.identity == MobilePlaybackProvider.FLIXER) return discover(selection)
-                throw IllegalStateException("${anchor.server}: timed out", timeout)
+                return requireAudio(discover(selection))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                if (anchor.selection.source.identity == MobilePlaybackProvider.FLIXER) return discover(selection)
-                throw IllegalStateException("${anchor.server}: ${error.message.orEmpty().ifBlank { "Unavailable" }}", error)
+                return requireAudio(discover(selection))
             }
         }
         selections.distinctBy { it.first }.map { (key, selection) -> async {
@@ -166,8 +194,9 @@ internal suspend fun prepareDownloadBatchInternal(
                     }
                     currentCoroutineContext().ensureActive()
                     require(result.qualities.isNotEmpty())
-                    if (result.server.isNotBlank()) anchors[group(selection)] = result
-                    onPrepared(key, result)
+                    val accepted = requireAudio(result)
+                    if (result.server.isNotBlank() && group(selection) !in anchors) anchors[group(selection)] = result
+                    onPrepared(key, accepted)
                 } catch (timeout: TimeoutCancellationException) {
                     currentCoroutineContext().ensureActive(); onError(key, "The episode timed out. Retry this episode.")
                 } catch (cancelled: CancellationException) { throw cancelled }
@@ -201,20 +230,20 @@ internal suspend fun inspectDownload(selection: PlaybackSelection, request: Nati
         androidx.media3.common.MimeTypes.isText(it.sampleMimeType) &&
             canonicalSubtitleLanguageCode(it.language.orEmpty()) == canonicalSubtitleLanguageCode(language)
     }
-    fun playlist(url: String): HlsPlaylist {
-        DataSourceInputStream(factory.createDataSource(), DataSpec(Uri.parse(url))).use {
-            return HlsPlaylistParser().parse(Uri.parse(url), it)
-        }
+    suspend fun playlist(url: String): HlsPlaylist {
+        val source = factory.createDataSource()
+        return inspectDownloadSource(source) { DataSourceInputStream(source, DataSpec(Uri.parse(url))).use {
+            HlsPlaylistParser().parse(Uri.parse(url), it)
+        } }
     }
-    fun estimateSegments(playlist: HlsMediaPlaylist): Long {
+    suspend fun estimateSegments(playlist: HlsMediaPlaylist): Long {
         val segments = playlist.segments
         if (segments.isEmpty()) return 0
         val sampled = listOf(0, segments.size / 2, segments.lastIndex).distinct().mapNotNull { index ->
             val segment = segments[index]
             val length = if (segment.byteRangeLength > 0) segment.byteRangeLength else runCatching {
                 val source = factory.createDataSource()
-                try { source.open(DataSpec(androidx.media3.common.util.UriUtil.resolveToUri(playlist.baseUri, segment.url))) }
-                finally { source.close() }
+                inspectDownloadSource(source) { source.open(DataSpec(androidx.media3.common.util.UriUtil.resolveToUri(playlist.baseUri, segment.url))) }
             }.getOrDefault(0)
             if (length > 0 && segment.durationUs > 0) length to segment.durationUs else null
         }
@@ -223,12 +252,24 @@ internal suspend fun inspectDownload(selection: PlaybackSelection, request: Nati
     }
     if (!request.mimeType.contains("mpegurl", true) && !request.url.substringBefore('?').endsWith(".m3u8")) {
         val source = factory.createDataSource()
-        val size = try { source.open(DataSpec(Uri.parse(request.url))) } finally { source.close() }
+        val size = inspectDownloadSource(source) { source.open(DataSpec(Uri.parse(request.url))) }
         val tracks = originalTracks()
         require(tracks.none { it.drmInitData != null }) { "This video is protected." }
         val height = tracks.maxOfOrNull { it.height }?.coerceAtLeast(0) ?: 0
         return@withContext PreparedDownload(selection, request,
             listOf(DownloadQuality(if (height > 0) "${height}p" else "Original", height, size.coerceAtLeast(0), false, emptyList())), tracks.hasSubtitles())
+    }
+    suspend fun downloadable(media: HlsMediaPlaylist): Boolean {
+        if (!media.hasEndTag || media.protectionSchemes != null || media.segments.isEmpty()) return false
+        val segment = media.segments.first()
+        val source = factory.createDataSource()
+        return try {
+            inspectDownloadSource(source) {
+                val uri = androidx.media3.common.util.UriUtil.resolveToUri(media.baseUri, segment.url)
+                DataSourceInputStream(source, DataSpec.Builder().setUri(uri).setPosition(segment.byteRangeOffset.coerceAtLeast(0)).setLength(segment.byteRangeLength.takeIf { it > 0 } ?: androidx.media3.common.C.LENGTH_UNSET.toLong()).build())
+                    .use { it.read() >= 0 }
+            }
+        } catch (_: Exception) { currentCoroutineContext().ensureActive(); false }
     }
     when (val manifest = playlist(request.url)) {
         is HlsMultivariantPlaylist -> {
@@ -236,38 +277,49 @@ internal suspend fun inspectDownload(selection: PlaybackSelection, request: Nati
             val subtitle = manifest.subtitles.withIndex().firstOrNull {
                 canonicalSubtitleLanguageCode(it.value.format.language.orEmpty()) == canonicalSubtitleLanguageCode(language)
             }
-            val firstPlaylist = playlist(manifest.variants.first().url.toString()) as? HlsMediaPlaylist
-            val duration = firstPlaylist?.let {
-                require(it.hasEndTag) { "Live streams cannot be downloaded." }
-                require(it.protectionSchemes == null) { "This video is protected." }
-                it.durationUs / 1_000_000.0
-            } ?: 0.0
-            val audioTracks = manifest.audios.withIndex().map { (index, rendition) ->
+            val audioTracks = manifest.audios.withIndex().mapNotNull { (index, rendition) ->
+                val uri = rendition.url ?: return@mapNotNull null
+                val media = try { playlist(uri.toString()) as? HlsMediaPlaylist }
+                    catch (_: Exception) { currentCoroutineContext().ensureActive(); null }
+                if (media == null || !downloadable(media)) return@mapNotNull null
                 DownloadAudioTrack(formatAudioTrackLabel(rendition.format.language, rendition.format.label),
-                    rendition.format.language, rendition.groupId, index)
+                    rendition.format.language, rendition.groupId, index, estimateSegments(media))
             }
-            val qualities = manifest.variants.mapIndexed { index, variant ->
-                require(variant.format.drmInitData == null) { "This video is protected." }
-                val audio = manifest.audios.withIndex().filter { it.value.groupId == variant.audioGroupId }
-                    .let { tracks -> tracks.firstOrNull { it.value.format.selectionFlags and 1 != 0 } ?: tracks.firstOrNull() }
-                val keys = buildList {
-                    add(StreamKey(0, index))
-                    audio?.let { add(StreamKey(1, it.index)) }
-                    subtitle?.takeIf { it.value.groupId == variant.subtitleGroupId }?.let { add(StreamKey(2, it.index)) }
-                }
-                val bitrate = variant.format.averageBitrate.takeIf { it > 0 } ?: variant.format.peakBitrate
-                val bytes = if (bitrate > 0 && duration > 0) (bitrate * duration / 8 * 1.03).toLong()
-                    else (if (index == 0) firstPlaylist else playlist(variant.url.toString()) as? HlsMediaPlaylist)?.let(::estimateSegments) ?: 0
-                val height = variant.format.height.coerceAtLeast(0)
-                DownloadQuality(if (height > 0) "${height}p" else "Original", height, bytes, true, keys, variant.audioGroupId)
-            }.sortedByDescending { it.height }.distinctBy { it.height }
             val embedded = manifest.muxedCaptionFormats.orEmpty().any {
                 canonicalSubtitleLanguageCode(it.language.orEmpty()) == canonicalSubtitleLanguageCode(language)
             }
+            val qualities = manifest.variants.mapIndexedNotNull { index, variant ->
+                currentCoroutineContext().ensureActive()
+                if (variant.format.drmInitData != null) return@mapIndexedNotNull null
+                val mediaPlaylist = try { playlist(variant.url.toString()) as? HlsMediaPlaylist }
+                    catch (_: Exception) { currentCoroutineContext().ensureActive(); null }
+                if (mediaPlaylist == null || !downloadable(mediaPlaylist))
+                    return@mapIndexedNotNull null
+                val duration = mediaPlaylist.durationUs / 1_000_000.0
+                val audio = manifest.audios.withIndex().filter { it.value.groupId == variant.audioGroupId && audioTracks.any { track -> track.index == it.index } }
+                    .let { tracks -> tracks.firstOrNull { it.value.format.selectionFlags and 1 != 0 } ?: tracks.firstOrNull() }
+                if (variant.audioGroupId != null && audio == null && manifest.audios.any { it.groupId == variant.audioGroupId && it.url != null })
+                    return@mapIndexedNotNull null
+                val variantSubtitle = manifest.subtitles.withIndex().firstOrNull {
+                    it.value.groupId == variant.subtitleGroupId && canonicalSubtitleLanguageCode(it.value.format.language.orEmpty()) == canonicalSubtitleLanguageCode(language)
+                }
+                val keys = buildList {
+                    add(StreamKey(0, index))
+                    audio?.let { add(StreamKey(1, it.index)) }
+                    variantSubtitle?.let { add(StreamKey(2, it.index)) }
+                }
+                val bitrate = variant.format.averageBitrate.takeIf { it > 0 } ?: variant.format.peakBitrate
+                val bytes = if (bitrate > 0 && duration > 0) (bitrate * duration / 8 * 1.03).toLong()
+                    else estimateSegments(mediaPlaylist)
+                val height = variant.format.height.coerceAtLeast(0)
+                DownloadQuality(if (height > 0) "${height}p" else "Original", height, bytes, true, keys, variant.audioGroupId,
+                    embedded || variantSubtitle != null)
+            }.sortedByDescending { it.height }
+            require(qualities.isNotEmpty()) { "No downloadable qualities found." }
             PreparedDownload(selection, request, qualities, subtitle != null || embedded, audioTracks = audioTracks)
         }
         is HlsMediaPlaylist -> {
-            require(manifest.hasEndTag) { "Live streams cannot be downloaded." }
+            require(downloadable(manifest)) { "No downloadable video found." }
             require(manifest.protectionSchemes == null) { "This video is protected." }
             val tracks = originalTracks()
             val height = tracks.maxOfOrNull { it.height }?.coerceAtLeast(0) ?: 0
@@ -279,6 +331,9 @@ internal suspend fun inspectDownload(selection: PlaybackSelection, request: Nati
 
 internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, language: String, autoSubtitles: Boolean,
     audioIndex: Int? = null): DownloadRequest {
+    val source = owner(quality)
+    if (source !== this) return source.downloadRequest(quality, language, autoSubtitles, audioIndex)
+    val originalSubtitles = quality.hasOriginalSubtitles ?: hasOriginalSubtitles
     var vtt = playback.subtitlesVtt
     if (selection.source.identity == MobilePlaybackProvider.FLIXER && language.isNotBlank()) {
         val originals = FlixerSubtitleRepository.tracks(selection).filter { it.languageCode.equals(language, true) }.sortedBy { it.hearingImpaired }
@@ -291,7 +346,7 @@ internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, 
             break
         }
     }
-    if (!hasOriginalSubtitles && vtt.isBlank() && language.isNotBlank()) {
+    if (!originalSubtitles && vtt.isBlank() && language.isNotBlank()) {
         val repo = SubdlSubtitleRepository()
         val tracks = withTimeout(20_000) { repo.search(selection, language).getOrThrow() }
         val track = mobileSubtitleCandidates(normalizeMobileSubtitleTracks(tracks), language,
@@ -305,11 +360,11 @@ internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, 
         } else throw IllegalStateException("Subtitles unavailable. Choose another language or None.")
     }
     val saved = playback.copy(subtitlesVtt = if (language.isBlank()) "" else vtt, subtitleLanguage = language.lowercase(),
-        preferEmbeddedSubtitles = hasOriginalSubtitles && language.isNotBlank(), offlineDownloadId = playbackProgressKey(selection),
+        preferEmbeddedSubtitles = originalSubtitles && language.isNotBlank(), offlineDownloadId = playbackProgressKey(selection),
         offlineAutoSubtitles = autoSubtitles)
     return DownloadRequest.Builder(playbackProgressKey(selection), Uri.parse(playback.url))
         .setMimeType(playback.mimeType).setStreamKeys(downloadStreamKeys(quality, audioTracks, audioIndex)
             .filter { language.isNotBlank() || it.groupIndex != 2 })
         .setData(JSONObject().put("playback", saved.toJson()).put("quality", quality.label)
-            .put("estimate", quality.bytes).toString().toByteArray(Charsets.UTF_8)).build()
+            .put("estimate", estimatedDownloadQuality(quality, audioTracks, audioIndex).bytes).toString().toByteArray(Charsets.UTF_8)).build()
 }

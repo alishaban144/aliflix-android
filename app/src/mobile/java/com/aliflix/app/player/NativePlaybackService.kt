@@ -71,6 +71,8 @@ class NativePlaybackService : MediaSessionService() {
     private var externalCaptionCues: List<SubtitleCue> = emptyList()
     private var originalCaptionJson: String? = null
     private val speechCapture = PlaybackSpeechBuffer()
+    private var dialogueRecognition: RecentDialogueRecognition? = null
+    private var dialogueRecognitionIdentity: String? = null
     private val embeddedSyncReference = EmbeddedSyncReference()
     private var playedUntil = 0.0
     private var lastAudioFingerprint = ""
@@ -514,6 +516,9 @@ class NativePlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        speechCapture.dialogueFrameObserver = null
+        if (android.os.Build.VERSION.SDK_INT >= 34) dialogueRecognition?.close()
+        dialogueRecognition = null
         saveProgress(true)
         releasing = true
         if (activeService === this) activeService = null
@@ -631,11 +636,38 @@ class NativePlaybackService : MediaSessionService() {
 
         internal fun speechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.windows(it.playedUntil) }.orEmpty()
         internal fun quickSpeechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.quickWindows(it.playedUntil) }.orEmpty()
-        internal fun speechDiagnostics(): String = activeService?.speechCapture?.diagnostics() ?: "service_absent"
+        internal fun recentSpeechWindow(positionSeconds: Double): SpeechWindow? = activeService?.speechCapture?.recentWindow(positionSeconds)
+        internal fun configureDialogueRecognition(identity: String?) {
+            val service = activeService ?: return
+            if (android.os.Build.VERSION.SDK_INT < 34) return
+            val language = selectedAudioLanguage().lowercase()
+            val enabledIdentity = identity?.takeIf { language == "en" || language == "eng" || language.startsWith("en-") }
+            if (enabledIdentity == service.dialogueRecognitionIdentity) return
+            service.speechCapture.dialogueFrameObserver = null
+            service.dialogueRecognition?.close(); service.dialogueRecognition = null
+            service.dialogueRecognitionIdentity = enabledIdentity
+            if (enabledIdentity != null && android.speech.SpeechRecognizer.isOnDeviceRecognitionAvailable(service)) {
+                val recognition = RecentDialogueRecognition(service.applicationContext, "en-US")
+                service.dialogueRecognition = recognition
+                service.speechCapture.dialogueFrameObserver = recognition::offer
+            }
+        }
+        internal fun recentDialogueWords(position: Double): List<HeardWord> {
+            val service = activeService ?: return emptyList()
+            if (android.os.Build.VERSION.SDK_INT < 34) return emptyList()
+            return service.dialogueRecognition?.current(position, service.speechCapture.generation,
+                service.speechCapture.continuityEpoch()).orEmpty()
+        }
+        internal fun speechDiagnostics(): String = activeService?.let { it.speechCapture.diagnostics() +
+            if (android.os.Build.VERSION.SDK_INT >= 34) ";${it.dialogueRecognition?.diagnostics()}" else "" } ?: "service_absent"
+        internal fun debugObserveSpeech(observer: ((Double, ShortArray) -> Unit)?) {
+            if (com.aliflix.app.BuildConfig.DEBUG) activeService?.speechCapture?.debugFrameObserver = observer
+        }
         internal fun embeddedReference(): EmbeddedSyncReference.Reference? = activeService?.embeddedSyncReference?.observed()
         internal fun originalSubtitles(): String? = activeService?.originalCaptionJson
         internal fun rememberOriginalSubtitles(json: String?) { activeService?.originalCaptionJson = json }
         internal val speechGeneration: Long get() = activeService?.speechCapture?.generation ?: -1L
+        internal val speechContinuity: Long get() = activeService?.speechCapture?.continuityEpoch() ?: -1L
         internal val speechCaptureUnavailable: Boolean get() = activeService?.speechCapture?.unavailable == true
 
         internal fun selectedAudioFingerprint(): String {

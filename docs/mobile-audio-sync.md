@@ -1,7 +1,7 @@
 # Mobile adaptive subtitle synchronisation
 
-Baseline: published v3.1.145, `04dfd3b8c0211231d0a6b50c1b266c99d3115f6c`.
-Current release: v3.1.148. This change affects mobile playback, its tests and its release packaging only.
+Baseline for this update: published v3.1.151, `e2cf3e2fe4dcd3d40c4b3fe522d5f8ffa54548a2`.
+Current target: v3.1.152. This change affects mobile playback, its tests and its release packaging only.
 
 ## Failure diagnosis
 
@@ -11,7 +11,7 @@ Current release: v3.1.148. This change affects mobile playback, its tests and it
 | `PlaybackSpeechBuffer` | A 30-second ring retained only a 6–12-second current exchange, rejected a tap without speech in the last second, and lost useful scenes on seek. Native failures had no actionable diagnostics. | Sparse timestamped speech fingerprints retain up to six hours. Unknown bins remain unknown. Sample-count continuity handles codec PTS rounding. Quantize the first decision once per continuity run, then increment integer bins; repeated floating-point rounding at half-bin positions must not create duplicate/missing evidence. Partial blocks are available before a 20-second block fills. Seek retains the soundtrack's observed scenes; source/audio identity changes erase them. Diagnostics include frames, boundaries, duplicates, unavailable reason, detector readiness, queue loss and inference/capture time. |
 | `AudioSubtitleAlignment` | One short sample, a ±120-second search, offset only, manual delay inside the fitting signal, no independent confirmation. A previously cached rate could persist without new drift evidence. | Keep the cancellable FFT primitive; replace the old matcher with normalized observed-window correlations, ±600-second offsets, discrete FPS hypotheses, measured slope hypotheses and penalised edit regions. Fit and confirmation scenes are separate. |
 | `NativePlaybackService` | PCM clock conversion already used renderer PTS minus output-stream offset; it was not an arbitrary wall clock. There was no durable multi-scene identity/observed-position contract or immutable service-owned subtitle source. | Preserve the clock conversion, bound evidence to actually played media, reset on selected soundtrack changes, own original cue JSON, and feed the same once-corrected VTT to local playback and Cast relay. |
-| `NativePlayerActivity` | Two-second failure deadline, dialogue-dependent tap, original cue initialization restricted to offline requests, and transient URLs/credentials in cache identities. | One cancellable job uses a single 19-second deadline covering references, collection, decoding and CPU work, leaving presentation headroom within 20 seconds. Reuse automatically accumulated evidence from normal playback; an independent UI watchdog handles temporarily cancellation-resistant I/O. Originals survive recreation through service ownership; signed credentials are excluded from identity. Late results cannot commit after identity, generation, account revision or Cast changes. |
+| `NativePlayerActivity` | Two-second failure deadline, dialogue-dependent tap, original cue initialization restricted to offline requests, and transient URLs/credentials in cache identities. | The mobile action uses a 1.8-second analysis deadline with presentation headroom within two seconds. It first fits a constant offset using up to 30 seconds of contiguous already-played dialogue and independently confirms later phrases and known history. It never waits for future PCM, subtitle downloads, or whole-file scanning. Existing observed history still supports verified drift and a complete already-captured, verified container reference permits edit correction. Reuse automatically accumulated evidence from normal playback; an independent UI watchdog handles temporarily cancellation-resistant I/O. Originals survive recreation through service ownership; signed credentials are excluded from identity. Late results cannot commit after identity, generation, account revision or Cast changes. |
 | Arabic text | Neutral punctuation and mixed Latin text depended on inferred paragraph direction. | Set Unicode paragraph direction independently for each Arabic/RTL line; retain glyph order and embedded spans. Local captions and exported VTT share the direction policy. |
 
 ## Upstream implementation review
@@ -122,10 +122,45 @@ correction payloads. The existing account-scoped correction collection retains
 compare-and-set revisions and reset tombstones. Activity stop, Cancel and source,
 audio or subtitle changes cancel pending analysis and prevent stale commits.
 
-The Audio & Subtitles panel keeps one Sync with Audio action. It shows Analysing,
-Collecting Evidence, Synced or Unable to Verify, with Cancel on the active action
-and a separate automatic Reset. It does not require a dialogue-time tap or show
-intrusive error messages. The button displays a countdown. The single analysis budget is 19 seconds, with one second reserved for presentation/persistence. It cannot remain collecting for minutes. The deadline covers every analysis path, and a late result cannot commit.
+The Audio & Subtitles panel keeps one Sync with Audio action. It shows Syncing…,
+then Synced, Not enough dialogue yet, or Couldn't match this dialogue. There is no
+numeric countdown. Analysis has a 1.8-second budget, leaving 200 ms for applying
+and presenting the correction. It reads existing evidence and never waits for
+future dialogue, downloads, or whole-file scanning. Cancel and automatic Reset
+retain their existing semantics; a late or stale result cannot commit.
+Sync compensates the current manual delay in the stored automatic correction,
+leaving the manual slider unchanged. Rendering combines both transformations
+before clipping cues at zero, so early captions survive. Reset restores the
+original captions with the existing manual delay; later manual adjustments remain
+relative to the synchronized presentation.
+
+For English audio on Android 14+ with an already installed on-device recognition
+service, a bounded worker also feeds selected 16 kHz decoded PCM to the platform
+recognizer through `EXTRA_AUDIO_SOURCE`. This does not open the microphone,
+contact a network recognizer, download a model, or store PCM/transcripts on disk.
+Completed word timings remain in a short in-memory cache. The tap considers only
+words ending at or before its playback position within the latest 30 seconds and
+current decoder continuity. Unsupported services leave native FFT analysis
+available. Recognition follows audio/subtitle identity, closes on service
+release, and invalidates its words across seeks, track changes and lost frames.
+Recognition sessions rotate after 45 seconds and restart after a silence timeout;
+the playback thread never waits for the recognizer.
+
+`DialogueWordAlignment` requires distinctive matching earlier phrases and a
+separate later phrase, a consistent offset, and no similarly supported competing
+clock or progressive drift. Silence-padded leading words use a complete matching
+phrase ending; a missing prefix can verify a clock but cannot train it alone.
+Unambiguous joined words and plural transcription differences are normalized
+without using caption timing. Earlier informative native audio still vetoes a
+contradictory local clock. Coverage is measured from matched words; absent
+platform confidence is never invented. Both analysis paths share cancellation,
+account/track/cue revision fences and persistence of the actual applied correction.
+The Android API contract is documented in the official
+[RecognizerIntent audio-source reference](https://developer.android.com/reference/android/speech/RecognizerIntent#EXTRA_AUDIO_SOURCE)
+and [word timing reference](https://developer.android.com/reference/android/speech/RecognitionPart).
+
+The following v3.1.148 results are historical evidence; their older interaction
+budgets do not describe the v3.1.152 button.
 
 ## Validation boundaries for v3.1.148
 
