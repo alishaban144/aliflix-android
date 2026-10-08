@@ -48,8 +48,11 @@ class DownloadBatchUiTest {
         var discoveryGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
         var progressiveGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
         var preparations = 0
+        var discoveries = 0
+        var unavailable: (String) -> Boolean = { false }
         override suspend fun discover(activity: ComponentActivity, host: android.widget.FrameLayout,
             selection: PlaybackSelection, language: String, onUpdate: (DownloadDiscovery) -> Unit): PreparedDownload {
+            discoveries++
             val gate = progressiveGate ?: return super<DownloadUiDependencies>.discover(activity, host, selection, language, onUpdate)
             fun source(vararg heights: Int) = PreparedDownload(selection, request(selection),
                 heights.map { DownloadQuality("${it}p", it, 1_000_000, true, emptyList()) }, true, "Fixture")
@@ -69,6 +72,7 @@ class DownloadBatchUiTest {
             preparations++
             if (cached.isEmpty()) discoveryGate?.await()
             selections.forEach { (key, selection) ->
+                if (unavailable(key)) { onError(key, "Episode unavailable"); return@forEach }
                 onPrepared(key, cached[key] ?: PreparedDownload(selection.copy(source = com.aliflix.app.model.PlaybackSource(com.aliflix.app.model.PlaybackProviderId.RAMOFLIX)), request(selection),
                     heightsForPrepared(key).map { height -> DownloadQuality("${height}p", height, 1_000_000, true, emptyList(), "audio") },
                     true, "Vid", audioTracks = audioForPrepared(key)))
@@ -174,6 +178,21 @@ class DownloadBatchUiTest {
         compose.onAllNodesWithText("Download").onLast().performClick()
         compose.waitUntil(5_000) { fake.enqueued.isNotEmpty() }
         assertEquals("560p", fake.enqueued.single().single().second)
+    }
+    @Test fun retryingOneUnavailableEpisodePreservesTheSeasonAnchorDiscovery() {
+        val fake = FakeUi()
+        fake.unavailable = { it.contains(":e2:") }
+        openPicker(fake, null)
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Unavailable").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Download 3 episodes").assertIsNotEnabled()
+        val discoveries = fake.discoveries
+        fake.unavailable = { false }
+        compose.onNodeWithText("Retry").performScrollTo().performClick()
+        compose.waitUntil(5_000) { !compose.onNodeWithText("Download 3 episodes").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) }
+        assertEquals(discoveries, fake.discoveries)
+        compose.onNodeWithText("Download 3 episodes").performClick()
+        compose.waitUntil(5_000) { fake.enqueued.isNotEmpty() }
+        assertTrue(fake.enqueued.single().all { it.second == "720p" })
     }
     @Test fun sharedQualityMenuReplacesPerEpisodeMenusAndAppliesToAllEpisodes() {
         val fake = FakeUi()

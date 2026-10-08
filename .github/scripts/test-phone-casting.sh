@@ -29,6 +29,7 @@ emulator -avd casting-phone -port 5554 -no-window -gpu swangle -feature "$emulat
 emulator_pid=$!
 cleanup() {
   timeout 20s adb -s emulator-5554 logcat -d > .validation/device-logcat.txt 2>&1 || true
+  timeout 20s adb -s emulator-5554 pull /sdcard/Android/data/com.aliflix.app/files/ .validation/ui-screenshots >/dev/null 2>&1 || true
   kill "$emulator_pid" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -70,5 +71,4 @@ else
     -Pandroid.testInstrumentationRunnerArguments.class="$classes" --no-daemon --console=plain
 fi
 
-# Keep actual rendered phone screens with the workflow validation artifacts.
-adb -s emulator-5554 pull /sdcard/Android/data/com.aliflix.app/files/ .validation/ui-screenshots >/dev/null 2>&1 || true
+# The exit trap retains rendered screens and failure diagnostics on either result.

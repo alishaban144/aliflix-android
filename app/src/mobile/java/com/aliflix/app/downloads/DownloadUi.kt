@@ -247,6 +247,7 @@ internal interface DownloadUiDependencies {
     var noSubtitles by picker::noSubtitles
     var saving by picker::saving
     var retry by remember(media.key, season) { mutableIntStateOf(0) }
+    var discoveryRetry by remember(media.key, season) { mutableIntStateOf(0) }
     var error by remember(media.key, season) { mutableStateOf<String?>(null) }
     var expanded by remember(media.key) { mutableStateOf(false) }
     var height by picker::height
@@ -261,7 +262,7 @@ internal interface DownloadUiDependencies {
         .map { (_, value) -> session.key(value, language) to value.copy(source = prefs.sourceFor(media)) }
     val anchor = selected.minWithOrNull(compareBy<Pair<String, PlaybackSelection>> { it.second.seasonNumber ?: 0 }.thenBy { it.second.episodeNumber ?: 0 })
     val discovery = anchor?.let { session.discoveries[it.first] }
-    LaunchedEffect(anchor?.first, retry) { anchor?.let { session.discover(store, it.second, language, retry) } }
+    LaunchedEffect(anchor?.first, discoveryRetry) { anchor?.let { session.discover(store, it.second, language, discoveryRetry) } }
     val choices = discovery?.choicesKeeping(height).orEmpty()
     val option = choices.firstOrNull { it.quality.height == height } ?: discovery?.default
     LaunchedEffect(discovery?.finished, choices, height) {
@@ -399,7 +400,7 @@ internal interface DownloadUiDependencies {
                     }
                 }
                 anchor?.let { session.errors[it.first]?.takeIf { discovery?.choices.isNullOrEmpty() } }?.let { message ->
-                    Text(message, color = AliflixError); TextButton(onClick = { retry++ }, enabled = !saving) { Text("Retry") }
+                    Text(message, color = AliflixError); TextButton(onClick = { discoveryRetry++ }, enabled = !saving) { Text("Retry") }
                 }
                 error?.let { Text(it, color = AliflixError, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
                 }

@@ -22,7 +22,8 @@ disabled until discovery and all selected episode validation finish.
 
 Season preparation pins the earliest selected eligible anchor's provider/server
 and target height. Four episodes prepare concurrently; ties choose the lower
-actual height. An individual fallback cannot replace the season anchor. Completed
+actual height. An individual fallback or episode Retry cannot replace or
+rediscover the season anchor. Completed
 preparations remain reusable within the activity session across dismissal.
 
 Unit coverage includes dynamic 320p/560p/930p heights, duplicate/unknown heights,
@@ -63,9 +64,9 @@ original cues, running playback, persisted correction and Reset behavior.
 
 | Physical check | Injected offsets | Manual delay | Largest error | Tap to result |
 | --- | --- | --- | ---: | --- |
-| Native app, three scenes | +6.75 / −9.25 / +14.5 s | +9 s | 229 ms | 230–300 ms |
-| Native app, three scenes | −6.75 / +9.25 / −14.5 s | −9 s | 229 ms | 222–334 ms |
-| Final fully minified UI, three scenes | −9.25 / +6.75 / −14.5 s | −9 s | 229 ms | 219–271 ms |
+| Native app, three scenes | +6.75 / âˆ’9.25 / +14.5 s | +9 s | 229 ms | 230â€“300 ms |
+| Native app, three scenes | âˆ’6.75 / +9.25 / âˆ’14.5 s | âˆ’9 s | 229 ms | 222â€“334 ms |
+| Final fully minified UI, three scenes | âˆ’9.25 / +6.75 / âˆ’14.5 s | âˆ’9 s | 229 ms | 219â€“271 ms |
 
 The separate fully minified Tears of Steel UI test corrected deliberately shifted
 official captions with 70 ms error in 382 ms. Native real-film checks cover Tears
@@ -103,6 +104,10 @@ Mobile unit tests, lint, debug/test assembly and full R8 benchmark assembly run
 locally: 465 unit cases, zero failures/errors, three optional host cases skipped;
 lint has zero errors, 103 warnings and four hints. The final ten download UI cases
 passed on the Pixel, alongside three offline, Skip/IntroDB and Up Next checks.
+The additional episode Retry regression and final 11-case download suite plus
+Up Next passed on the local API 35 emulator. The rotation test invalidates the
+Android accessibility cache before reading the current rendered Compose tree;
+its geometry and interaction assertions remain enforced.
 Focused physical checks are separate from compilation evidence. GitHub
 runs mobile unit/lint and focused emulator regressions without test waivers,
 checks the production signer, ZIP integrity and mobile version consistency, and

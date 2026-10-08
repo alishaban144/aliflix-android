@@ -90,6 +90,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playback-device-test-reports-api-${{ matrix.api-level }}
+          include-hidden-files: true
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/

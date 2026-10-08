@@ -34,12 +34,23 @@ class NativeUpNextDeviceTest {
             3000, true, "WEBVTT\n\n00:00:00.000 --> 00:00:20.000\nCredits remain visible\n", selectionJson = selection.nativeJson())
         val payload = File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json").apply { writeText(request.toJson()) }
         val output = File(context.getExternalFilesDir(null), "up-next-validation").apply { mkdirs() }
+        fun diagnostics(scenario: ActivityScenario<NativePlayerActivity>, phase: String) {
+            scenario.onActivity {
+                File(output, "state-$phase.txt").writeText("${it.playbackUiState}\nposition=${it.playbackController?.currentPosition},duration=${it.playbackController?.duration}\n")
+            }
+            instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                File(output, "screen-$phase.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+            }
+            fun tree(node: AccessibilityNodeInfo?): String = if (node == null) "none" else "${node.text}|${node.contentDescription};" + (0 until node.childCount).joinToString("") { tree(node.getChild(it)) }
+            File(output, "tree-$phase.txt").writeText(tree(instrumentation.uiAutomation.rootInActiveWindow))
+        }
         try {
             ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", payload.name), nativePhoneLaunchOptions()).use { scenario ->
                 await { var ready = false; scenario.onActivity { ready = it.playbackUiState.ready && it.playbackUiState.segments.isNotEmpty(); if (ready) it.playbackController!!.pause() }; ready }
                 for ((name, orientation) in listOf("portrait" to ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, "landscape" to ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)) {
                     scenario.onActivity { it.requestedOrientation = orientation }
-                    await { node("Watch credits") != null && node("Next episode") != null }
+                    try { await { node("Watch credits") != null && node("Next episode") != null } }
+                    catch (error: AssertionError) { diagnostics(scenario, name); throw error }
                     Thread.sleep(500)
                     val bounds = android.graphics.Rect().also { node("Watch credits")!!.getBoundsInScreen(it) }
                     scenario.onActivity {
@@ -67,13 +78,17 @@ class NativeUpNextDeviceTest {
         }
     }
     private fun node(text: String): AccessibilityNodeInfo? {
+        // API 35 can retain the old Compose tree across an orientation change.
+        // Query the rendered window after invalidating the automation cache.
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        automation.clearCache()
         fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
             if (node == null) return null
             if (node.text?.toString() == text) return node
             for (i in 0 until node.childCount) find(node.getChild(i))?.let { return it }
             return null
         }
-        return find(InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow)
+        return find(automation.rootInActiveWindow)
     }
     private fun await(condition: () -> Boolean) {
         val end = android.os.SystemClock.elapsedRealtime() + 15_000
