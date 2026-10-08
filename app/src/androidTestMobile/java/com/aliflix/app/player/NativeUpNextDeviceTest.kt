@@ -70,10 +70,13 @@ class NativeUpNextDeviceTest {
                     try { await {
                         // A fresh Android image places first-fullscreen education above the
                         // app. Acknowledge the system prompt just as a person would.
-                        node("Got it")?.let { prompt ->
-                            var action = prompt
+                        val emulator = android.os.Build.HARDWARE in listOf("ranchu", "goldfish")
+                        val prompt = node("Got it") ?: if (emulator && node("Pixel Launcher isn't responding") != null)
+                            node("Close app") else null
+                        prompt?.let {
+                            var action = it
                             while (!action.isClickable && action.parent != null) action = action.parent
-                            assertTrue("Android fullscreen tutorial could not be dismissed",
+                            assertTrue("Emulator system overlay could not be dismissed",
                                 action.performAction(AccessibilityNodeInfo.ACTION_CLICK))
                         }
                         node("Watch credits") != null && node("Next episode") != null

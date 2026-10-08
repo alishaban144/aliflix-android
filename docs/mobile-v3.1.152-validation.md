@@ -162,3 +162,13 @@ runs mobile unit/lint and focused emulator regressions without test waivers,
 checks the production signer, ZIP integrity and mobile version consistency, and
 publishes the mobile APK and update manifest. Public artifact verification must
 independently compare version, signer, length and SHA-256 against that manifest.
+
+A subsequent CI image displayed an unrelated Pixel Launcher ANR above the ready
+player. The emulator now has four cores/3 GB RAM and settles its initial HOME
+launch before instrumentation. On emulators only, the fixture closes that exact
+background launcher dialog if present. An Aliflix ANR is never dismissed; the
+original visibility, geometry, frame and interaction assertions remain required.
+
+A wholly new API 35 AVD created inside the private validation workspace, with
+the updated CI RAM/core/startup profile, also passes the complete 18-case suite.
+The minified application APK remains byte-identical to the physically tested one.

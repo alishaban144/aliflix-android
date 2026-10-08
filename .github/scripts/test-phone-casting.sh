@@ -10,13 +10,12 @@ mkdir -p "$ANDROID_AVD_HOME" .validation
 sdkmanager --install "platforms;android-$API" "build-tools;37.0.0" platform-tools emulator "system-images;android-$API;google_apis;x86_64" >/dev/null
 echo no | avdmanager create avd --name casting-phone --package "system-images;android-$API;google_apis;x86_64"
 # The generic phone profile avoids the Pixel profile's broken Linux virtual-display buffers.
-printf 'hw.cpu.ncore=2\nhw.ramSize=2048M\nhw.heapSize=512M\n' >> "$ANDROID_AVD_HOME/casting-phone.avd/config.ini"
+printf 'hw.cpu.ncore=4\nhw.ramSize=3072M\nhw.heapSize=512M\n' >> "$ANDROID_AVD_HOME/casting-phone.avd/config.ini"
 echo 'disk.dataPartition.size=6G' >> "$ANDROID_AVD_HOME/casting-phone.avd/config.ini"
 adb start-server
-emulator_options=()
+emulator_options=(-memory 3072 -cores 4)
 emulator_features=-HardwareDecoder
 if [ "$API" = 37.0 ]; then
-  emulator_options=(-memory 3072 -cores 4)
   # Linux host DMA readback conflicts with API 37's mapper.ranchu, aborting SurfaceFlinger.
   emulator_features+=,-GLDirectMem
   # gfxstream initializes its own feature controls from the environment, not the CLI override.
@@ -47,6 +46,10 @@ for attempt in $(seq 1 180); do
   sleep 5
 done
 if [ "$ready" != true ]; then cat .validation/emulator.log; exit 1; fi
+# Boot completion precedes the launcher's first layout on a fresh image. Let its
+# initial HOME launch settle before the app's decoder/Compose work starts.
+timeout 30s adb -s emulator-5554 shell am start -W -a android.intent.action.MAIN -c android.intent.category.HOME
+sleep 5
 for setting in window_animation_scale transition_animation_scale animator_duration_scale; do
   adb -s emulator-5554 shell settings put global "$setting" 0
 done
