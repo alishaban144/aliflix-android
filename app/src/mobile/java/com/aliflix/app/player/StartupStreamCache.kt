@@ -31,7 +31,7 @@ internal object StartupStreamCache {
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
 
-    suspend fun awaitPlayable(context: Context, request: NativePlaybackRequest) = withContext(Dispatchers.Main.immediate) { withTimeout(12_000) {
+    suspend fun awaitPlayable(context: Context, request: NativePlaybackRequest, audioLanguage: String = "", bufferMs: Long = 250) = withContext(Dispatchers.Main.immediate) { withTimeout(12_000) {
         val origin = java.net.URI(request.referer).let { "${it.scheme}://${it.rawAuthority}" }
         val http = DefaultHttpDataSource.Factory().setUserAgent(request.userAgent)
             .setConnectTimeoutMs(4_000).setReadTimeoutMs(4_000)
@@ -54,13 +54,20 @@ internal object StartupStreamCache {
         }
         val player = ExoPlayer.Builder(context.applicationContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(media).setLoadErrorHandlingPolicy(CineJoyLoadErrorPolicy { request.referer == CineJoyNativeCatalog.REFERER }))
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(1_000, 2_000, 250, 500).build()).build()
+            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(
+                if (bufferMs > 250) 4_000 else 1_000, if (bufferMs > 250) 8_000 else 2_000,
+                if (bufferMs > 250) 1_000 else 250, 500).build()).build()
         try {
             player.volume = 0f
-            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setPreferredAudioLanguage(audioLanguage.takeIf { it.isNotBlank() }).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
             player.setMediaItem(MediaItem.Builder().setUri(request.url).setMimeType(request.mimeType).build(), request.positionMs)
             player.prepare()
             while (player.playbackState != Player.STATE_READY) {
+                player.playerError?.let { throw it }
+                delay(50)
+            }
+            while (player.bufferedPosition - player.currentPosition < bufferMs &&
+                player.bufferedPosition < player.duration) {
                 player.playerError?.let { throw it }
                 delay(50)
             }

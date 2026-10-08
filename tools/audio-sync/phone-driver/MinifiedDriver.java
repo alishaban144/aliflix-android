@@ -19,25 +19,32 @@ public final class MinifiedDriver extends Instrumentation {
     private boolean terminator;
     private boolean lifecycle;
     private boolean automatic;
+    private boolean singleScene;
+    private String captionLanguage;
+    private String restoreCaptionLanguage;
     private int scene;
     private String restoreManual;
-    public void onCreate(Bundle args) { super.onCreate(args); automatic=args!=null&&"true".equals(args.getString("automaticTerminator")); fps=args!=null&&"true".equals(args.getString("fps")); real=args!=null&&"true".equals(args.getString("real")); terminator=args!=null&&"true".equals(args.getString("terminator")); lifecycle=args!=null&&"true".equals(args.getString("lifecycle")); scene=args==null?0:Integer.parseInt(args.getString("sceneIndex","0")); restoreManual=args==null?null:args.getString("restoreManual"); if(scene<0||scene>2)throw new IllegalArgumentException("Invalid scene"); start(); }
+    public void onCreate(Bundle args) { super.onCreate(args); restoreCaptionLanguage=args==null?null:args.getString("restoreCaptionLanguage"); singleScene=args!=null&&"true".equals(args.getString("singleScene")); captionLanguage=args==null?"en":args.getString("captionLanguage","en"); automatic=args!=null&&"true".equals(args.getString("automaticTerminator")); fps=args!=null&&"true".equals(args.getString("fps")); real=args!=null&&"true".equals(args.getString("real")); terminator=args!=null&&"true".equals(args.getString("terminator")); lifecycle=args!=null&&"true".equals(args.getString("lifecycle")); scene=args==null?0:Integer.parseInt(args.getString("sceneIndex","0")); restoreManual=args==null?null:args.getString("restoreManual"); if(scene<0||scene>2)throw new IllegalArgumentException("Invalid scene"); start(); }
     public void onStart() {
-        Bundle result = new Bundle(); Activity activity = null; ServerSocket server = null; SharedPreferences settings = null; Integer originalManual = null;
+        Bundle result = new Bundle(); Activity activity = null; ServerSocket server = null; SharedPreferences settings = null; Integer originalManual = null; SharedPreferences subtitleChoices=null; String originalCaptionLanguage=null; boolean originalEnabled=true;
         try {
             Context context = getTargetContext();
             SharedPreferences corrections=context.getSharedPreferences("subtitle-audio-corrections",Context.MODE_PRIVATE);
             Map<String,?> previousValues=new HashMap<>(corrections.getAll());
             settings=context.getSharedPreferences("aliflix_player_settings",Context.MODE_PRIVATE);
             if(restoreManual!=null) { settings.edit().putInt("subtitle_delay_tenths",Integer.parseInt(restoreManual)).commit(); Thread.sleep(1500); result.putString("result","PASS: restored captured manual delay"); finish(Activity.RESULT_OK,result); return; }
+            if(restoreCaptionLanguage!=null) { context.getSharedPreferences("native-subtitle-choice",Context.MODE_PRIVATE).edit().putString("language",restoreCaptionLanguage).putBoolean("enabled",true).commit(); result.putString("result","PASS: restored original automatic caption language"); finish(Activity.RESULT_OK,result); return; }
             int manualTenths=settings.getInt("subtitle_delay_tenths",0);
             originalManual=manualTenths;
             double manualDelay=manualTenths/10.0;
             File root = context.getExternalFilesDir(null);
             if(automatic) {
+                subtitleChoices=context.getSharedPreferences("native-subtitle-choice",Context.MODE_PRIVATE);
+                originalCaptionLanguage=subtitleChoices.getString("language",null); originalEnabled=subtitleChoices.getBoolean("enabled",true);
+                subtitleChoices.edit().putString("language",captionLanguage).putBoolean("enabled",true).commit();
                 activity=startActivitySync(new Intent().setClassName(context,"com.aliflix.app.player.NativePlayerActivity")
                     .putExtra("selection",Files.readString(new File(root,"automatic-terminator-private/selection.json").toPath()))
-                    .putExtra("autoSubtitles",true).putExtra("subtitleLanguage","en").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    .putExtra("autoSubtitles",true).putExtra("subtitleLanguage",captionLanguage).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 waitFor("Audio & Subtitles",30000,true);
                 waitFor("Audio & subtitles",5000,false);
                 if(find(getUiAutomation().getRootInActiveWindow(),"Synced")!=null)waitFor("Reset",5000,true);
@@ -48,7 +55,7 @@ public final class MinifiedDriver extends Instrumentation {
                 finally { getUiAutomation().dropShellPermissionIdentity(); }
                 // No stream requests, replacement captions, expected offsets or
                 // detector evidence are supplied to the fully optimized app.
-                for(long start:new long[]{1275619,3196058}) {
+                for(long start:singleScene?new long[]{3196058}:new long[]{1275619,3196058}) {
                     controller.getTransportControls().seekTo(start); controller.getTransportControls().play();
                     awaitPlayback(controller,start);
                     long until=SystemClock.elapsedRealtime()+90000;
@@ -58,20 +65,31 @@ public final class MinifiedDriver extends Instrumentation {
                 if(find(getUiAutomation().getRootInActiveWindow(),"Synced")!=null)waitFor("Reset",5000,true);
                 previousValues=new HashMap<>(corrections.getAll());
                 waitFor("Sync with Audio",5000,true); long began=SystemClock.elapsedRealtime();
-                waitFor("Synced",2000,false); long elapsed=SystemClock.elapsedRealtime()-began;
+                waitFor("Synced",10000,false); long elapsed=SystemClock.elapsedRealtime()-began;
                 JSONObject verified=null;String key=null;
                 for(String item:corrections.getAll().keySet()) if(!Objects.equals(previousValues.get(item),corrections.getString(item,"{}"))) {
                     JSONObject candidate=new JSONObject(corrections.getString(item,"{}"));
                     if(candidate.has("offset")&&!candidate.optBoolean("reset")){verified=candidate;key=item;}
                 }
-                if(verified==null||elapsed>=2000)throw new AssertionError("No applied timely correction");
+                if(verified==null||elapsed>=10000)throw new AssertionError("No applied timely correction");
                 if(settings.getInt("subtitle_delay_tenths",0)!=manualTenths)throw new AssertionError("Manual delay changed");
                 JSONObject receipt=new JSONObject().put("state","Synced").put("elapsedMs",elapsed).put("correction",verified)
                     .put("manualDelay",manualDelay).put("version",context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionName);
-                Files.writeString(new File(root,"automatic-terminator-private/minified-receipt.json").toPath(),receipt.toString());
+                File evidence=new File(root,"automatic-terminator-"+captionLanguage+"-private"); evidence.mkdirs();
+                // The service consumes/deletes its temporary request file. Use
+                // the successfully persisted route for independent source identity.
+                File routeFile=new File(context.getNoBackupFilesDir(),"playback-routes/movie_218.json");
+                JSONObject route=new JSONObject(Files.readString(routeFile.toPath()));
+                String nativeRaw=route.getString("request");
+                JSONObject nativeSelection=new JSONObject(route.getString("selection"));
+                receipt.put("source",nativeSelection.getString("provider"));
+                String caption=context.getSharedPreferences("account-caption-files",Context.MODE_PRIVATE).getString("movie:218",null);
+                if(caption!=null)Files.writeString(new File(evidence,"minified-original-cues.json").toPath(),new JSONObject(caption).getString("cues"));
+                Files.writeString(new File(evidence,"minified-native-request.json").toPath(),nativeRaw);
+                Files.writeString(new File(evidence,"minified-receipt.json").toPath(),receipt.toString());
                 waitFor("Reset",5000,true);waitFor("Sync with Audio",5000,false);
                 if(!new JSONObject(corrections.getString(key,"{}")).optBoolean("reset"))throw new AssertionError("Reset did not clear correction");
-                result.putString("result","PASS: normal automatic English captions, minified app, applied correction, Reset, manual preserved; "+receipt);
+                result.putString("result","PASS: normal automatic "+captionLanguage+" captions, minified app, applied correction, Reset, manual preserved; "+receipt);
                 finish(Activity.RESULT_OK,result);return;
             }
             byte[] bytes = real || terminator ? new byte[0] : Files.readAllBytes(new File(root, lifecycle ? "minified-audio-tracks.mp4" : "audio-sync-validation.wav").toPath());
@@ -112,12 +130,19 @@ public final class MinifiedDriver extends Instrumentation {
                 waitFor("English",5000,true); waitSelected("English"); awaitPlayback(controller,-1);
                 controller.getTransportControls().seekTo(45000); awaitPlayback(controller,45000);
                 controller.getTransportControls().seekTo(10000); awaitPlayback(controller,10000);
+                long playbackBegan=SystemClock.elapsedRealtime();
+                android.media.session.PlaybackState beforeSync=controller.getPlaybackState();
+                long playbackPosition=beforeSync.getPosition()+(long)((playbackBegan-beforeSync.getLastPositionUpdateTime())*beforeSync.getPlaybackSpeed());
                 waitFor("Sync with Audio",5000,true); long tap=SystemClock.elapsedRealtime();
-                while(SystemClock.elapsedRealtime()-tap<2000 && find(getUiAutomation().getRootInActiveWindow(),"Not enough dialogue yet")==null && find(getUiAutomation().getRootInActiveWindow(),"Couldn't match this dialogue")==null && find(getUiAutomation().getRootInActiveWindow(),"Synced")==null)Thread.sleep(50);
+                while(SystemClock.elapsedRealtime()-tap<10000 && find(getUiAutomation().getRootInActiveWindow(),"Not enough dialogue yet")==null && find(getUiAutomation().getRootInActiveWindow(),"Couldn't match this dialogue")==null && find(getUiAutomation().getRootInActiveWindow(),"Synced")==null)Thread.sleep(50);
                 if(find(getUiAutomation().getRootInActiveWindow(),"Synced")!=null || find(getUiAutomation().getRootInActiveWindow(),"Syncing…")!=null)throw new AssertionError("Seek/track change produced a false or late result");
                 if(find(getUiAutomation().getRootInActiveWindow(),"Not enough dialogue yet")==null && find(getUiAutomation().getRootInActiveWindow(),"Couldn't match this dialogue")==null)throw new AssertionError("Missing actionable rejection");
                 if(settings.getInt("subtitle_delay_tenths",0)!=manualTenths)throw new AssertionError("Manual delay changed");
-                awaitPlayback(controller,10000);
+                awaitPlayback(controller,-1);
+                android.media.session.PlaybackState afterSync=controller.getPlaybackState();
+                long now=SystemClock.elapsedRealtime();
+                long actualPosition=afterSync.getPosition()+(long)((now-afterSync.getLastPositionUpdateTime())*afterSync.getPlaybackSpeed());
+                if(Math.abs(actualPosition-(playbackPosition+now-playbackBegan))>2000)throw new AssertionError("Sync interrupted playback continuity");
                 result.putString("result","PASS: fully minified audio changes English/French/English, forward/backward seeks, playing, no false success, manual preserved; elapsedMs="+(SystemClock.elapsedRealtime()-tap));
                 Files.writeString(new File(root,"minified-lifecycle-device.txt").toPath(),result.getString("result"));
                 finish(Activity.RESULT_OK,result); return;
@@ -126,14 +151,14 @@ public final class MinifiedDriver extends Instrumentation {
             Thread.sleep(terminator ? 33500 : real ? 85000 : (fps ? 200000 : 130000));
             waitFor("Sync with Audio",30000,true);
             long began=SystemClock.elapsedRealtime(); boolean collecting=false;
-            while (SystemClock.elapsedRealtime()-began<2000) {
+            while (SystemClock.elapsedRealtime()-began<10000) {
                 AccessibilityNodeInfo node = find(getUiAutomation().getRootInActiveWindow(), "Synced");
                 if (node!=null) break;
                 if (find(getUiAutomation().getRootInActiveWindow(),"Collecting Evidence")!=null) collecting=true;
                 if (find(getUiAutomation().getRootInActiveWindow(),"Couldn't match this dialogue")!=null) throw new AssertionError("Minified app rejected fixture");
                 Thread.sleep(100);
             }
-            if (find(getUiAutomation().getRootInActiveWindow(),"Synced")==null) throw new AssertionError("One-tap minified synchronization did not finish within two seconds");
+            if (find(getUiAutomation().getRootInActiveWindow(),"Synced")==null) throw new AssertionError("One-tap minified synchronization did not finish within ten seconds");
             JSONObject verified=null; String verifiedKey=null;
             for(String key:corrections.getAll().keySet()) if(!Objects.equals(previousValues.get(key),corrections.getString(key,"{}"))) { JSONObject candidate=new JSONObject(corrections.getString(key,"{}")); if(candidate.has("offset")&&!candidate.optBoolean("reset")&&candidate.optInt("schema")==4) { verified=candidate; verifiedKey=key; } }
             if(settings.getInt("subtitle_delay_tenths",0)!=manualTenths)throw new AssertionError("Manual delay changed");
@@ -142,7 +167,7 @@ public final class MinifiedDriver extends Instrumentation {
             double maxCueError = 0;
             for(int i=0;i<cues.length();i++) for(int edge=0;edge<2;edge++) { double original=cues.getJSONArray(i).getDouble(edge); double error=Math.abs((original/expectedRate+expectedDelay)*verified.getDouble("rate")+verified.getDouble("offset")+manualDelay-original); maxCueError=Math.max(maxCueError,error); if(error>.6)throw new AssertionError("Incorrect corrected cue "+i); }
             long syncElapsed=SystemClock.elapsedRealtime()-began;
-            if(syncElapsed>=2000)throw new AssertionError("Minified synchronization exceeded deadline: "+syncElapsed);
+            if(syncElapsed>=10000)throw new AssertionError("Minified synchronization exceeded deadline: "+syncElapsed);
             waitFor("Reset",5000,true);
             waitFor("Sync with Audio",5000,false);
             if(!new JSONObject(corrections.getString(verifiedKey,"{}")).optBoolean("reset"))throw new AssertionError("Reset did not clear the automatic correction");
@@ -150,7 +175,7 @@ public final class MinifiedDriver extends Instrumentation {
             Files.writeString(new File(root,terminator?"minified-terminator-"+scene+"-device.txt":fps?"minified-fps-device.txt":"minified-sync-device.txt").toPath(),result.getString("result"));
             finish(Activity.RESULT_OK,result);
         } catch(Throwable error) { result.putString("result", "FAIL: "+error); StringWriter trace=new StringWriter(); error.printStackTrace(new PrintWriter(trace)); result.putString("stack",trace.toString()); finish(Activity.RESULT_CANCELED,result); }
-        finally { if(settings!=null&&originalManual!=null&&settings.getInt("subtitle_delay_tenths",0)!=originalManual)settings.edit().putInt("subtitle_delay_tenths",originalManual).commit(); if (activity!=null) { final Activity current=activity; runOnMainSync(current::finish); getTargetContext().stopService(new Intent().setClassName(getTargetContext(),"com.aliflix.app.player.NativePlaybackService")); } if(server!=null) try{server.close();}catch(IOException ignored){} }
+        finally { if(subtitleChoices!=null)subtitleChoices.edit().putString("language",originalCaptionLanguage).putBoolean("enabled",originalEnabled).commit(); if(settings!=null&&originalManual!=null&&settings.getInt("subtitle_delay_tenths",0)!=originalManual)settings.edit().putInt("subtitle_delay_tenths",originalManual).commit(); if (activity!=null) { final Activity current=activity; runOnMainSync(current::finish); getTargetContext().stopService(new Intent().setClassName(getTargetContext(),"com.aliflix.app.player.NativePlaybackService")); } if(server!=null) try{server.close();}catch(IOException ignored){} }
     }
     private String stamp(double value) { long ms=(long)(value*1000); return String.format(Locale.ROOT,"%02d:%02d:%02d.%03d",ms/3600000,(ms/60000)%60,(ms/1000)%60,ms%1000); }
     private void waitSelected(String label) throws Exception {

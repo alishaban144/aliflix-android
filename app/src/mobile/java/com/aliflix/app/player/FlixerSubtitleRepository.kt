@@ -17,14 +17,17 @@ internal object FlixerSubtitleRepository {
         val route = if (selection.media.type == MediaType.TV)
             "tv/${selection.media.id}/${selection.seasonNumber ?: 1}/${selection.episodeNumber ?: 1}"
         else "movie/${selection.media.id}"
-        val tracks = listOf("v1", "v2").map { version -> async(Dispatchers.IO) {
+        val catalogues = listOf("v1", "v2").map { version -> async(Dispatchers.IO) {
             try {
                 val connection = URL("https://sub.vdrk.site/$version/$route").openConnection() as HttpURLConnection
                 connection.connectTimeout = 5_000; connection.readTimeout = 5_000
                 try { parse(connection.inputStream.bufferedReader().use { it.readText() }) }
                 finally { connection.disconnect() }
             } catch (error: Exception) { currentCoroutineContext().ensureActive(); emptyList() }
-        } }.awaitAll().flatten().distinctBy { it.downloadToken }
+        } }.awaitAll()
+        // Give both original catalogues an early opportunity. Flattening lets
+        // many variants from v1 bury the sole complete release from v2.
+        val tracks = interleaveSubtitleCandidates(catalogues[0], catalogues[1])
         if (tracks.isNotEmpty()) cache[key] = Cached(System.currentTimeMillis(), tracks)
         tracks
     }

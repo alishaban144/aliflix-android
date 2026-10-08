@@ -9,6 +9,21 @@ import java.nio.ByteOrder
 import kotlin.math.sin
 
 class PlaybackSpeechBufferTest {
+    @Test fun finiteDialogueContainsOnlyPlayedContiguousPcmAndClearsOnSeek() {
+        val capture = capture()
+        capture.dialogueFrameObserver = { _, _, _, _, _ -> }
+        val format = Format.Builder().setSampleRate(16000).setChannelCount(1).setPcmEncoding(C.ENCODING_PCM_16BIT).build()
+        val buffer = ByteBuffer.allocate(20 * 16000 * 2).order(ByteOrder.LITTLE_ENDIAN)
+        repeat(20 * 16000) { buffer.putShort(1200) }; buffer.flip()
+        capture.pcm(buffer, format, 100_000_000, 0)
+        val observed = requireNotNull(capture.playedDialoguePcm(115.0))
+        assertEquals(100.0, observed.start, .001)
+        assertTrue(observed.start + observed.frames.size * .02 <= 115.0)
+        assertNull(capture.playedDialoguePcm(105.0))
+        capture.discontinuity()
+        assertNull(capture.playedDialoguePcm(115.0))
+    }
+
     @Test fun localWordDecoderReceivesSelectedSixteenKhzAudioWithTheSameClockAndSeekBoundary() {
         val capture = capture()
         val frames = mutableListOf<Triple<Double, ShortArray, Long>>()

@@ -60,6 +60,7 @@ import java.net.Inet4Address
 class NativePlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
     private var startupVolume: Float? = null
+    private var pendingResumeMs: Long? = null
     private lateinit var localPlayer: ExoPlayer
     private lateinit var player: Player
     private val httpFactory = DefaultHttpDataSource.Factory()
@@ -165,6 +166,7 @@ class NativePlaybackService : MediaSessionService() {
             .build()
         localPlayer.addListener(object : Player.Listener {
             override fun onRenderedFirstFrame() {
+                if (!restorePendingResume()) return
                 renderedStreamUrl = activeStreamUrl
                 releaseStartupMute()
                 PlaybackStartupTiming.mark("first_frame")
@@ -306,6 +308,7 @@ class NativePlaybackService : MediaSessionService() {
         embeddedSyncReference.reset(); playedUntil = 0.0
         lastAudioFingerprint = ""
         saveProgress(true)
+        pendingResumeMs = next.positionMs.takeIf { it > 0 }
         player.stop(); player.clearMediaItems()
         relay?.close(); relay = null
         request = next
@@ -385,6 +388,19 @@ class NativePlaybackService : MediaSessionService() {
         player.prepare()
         player.playWhenReady = next.playing
         updateDisplay()
+    }
+
+    private fun restorePendingResume(): Boolean {
+        val pending = pendingResumeMs ?: return true
+        val duration = player.duration
+        if (duration <= 0) return false
+        val target = pending.coerceAtMost((duration - 1_000).coerceAtLeast(0))
+        if (kotlin.math.abs(player.currentPosition - target) > 3_000) {
+            player.seekTo(target)
+            return false
+        }
+        pendingResumeMs = null
+        return true
     }
 
     private fun releaseStartupMute() {
@@ -528,7 +544,8 @@ class NativePlaybackService : MediaSessionService() {
 
     private fun saveProgress(urgent: Boolean) {
         val current = selection ?: return
-        if (player.currentMediaItem?.mediaId != current.key || player.playbackState !in setOf(Player.STATE_READY, Player.STATE_ENDED)) return
+        if (!canRecordProgress || player.currentMediaItem?.mediaId != current.key ||
+            player.playbackState !in setOf(Player.STATE_READY, Player.STATE_BUFFERING, Player.STATE_ENDED)) return
         val duration = player.duration
         if (duration <= 0) return
         (application as AliflixApplication).playbackProgressStore.savePlayerProgress(current, player.currentPosition / 1000.0, duration / 1000.0, urgent, ended = player.playbackState == Player.STATE_ENDED)
@@ -654,12 +671,16 @@ class NativePlaybackService : MediaSessionService() {
         }
 
         internal fun speechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.windows(it.playedUntil) }.orEmpty()
+        internal val canRecordProgress: Boolean get() = activeService?.let {
+            it.pendingResumeMs == null && (renderedStreamUrl == activeStreamUrl ||
+                it.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE)
+        } == true
         internal fun quickSpeechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.quickWindows(it.playedUntil) }.orEmpty()
         internal fun recentSpeechWindow(positionSeconds: Double): SpeechWindow? = activeService?.speechCapture?.recentWindow(positionSeconds)
-        internal fun configureDialogueRecognition(identity: String?, captionLanguage: String) {
+        internal fun configureDialogueRecognition(identity: String?, captionLanguage: String, originalLanguage: String = "") {
             val service = activeService ?: return
             if (android.os.Build.VERSION.SDK_INT < 34) return
-            val language = dialogueRecognitionLanguage(selectedAudioLanguage(), captionLanguage)
+            val language = dialogueRecognitionLanguage(selectedAudioLanguage(), captionLanguage, originalLanguage)
             val enabledIdentity = identity?.takeIf { language != null }
             if (enabledIdentity == service.dialogueRecognitionIdentity) return
             service.speechCapture.dialogueFrameObserver = null
@@ -670,6 +691,10 @@ class NativePlaybackService : MediaSessionService() {
                 service.dialogueRecognition = recognition
                 service.speechCapture.dialogueFrameObserver = recognition::offer
             }
+        }
+        internal fun playedDialoguePcm(position: Double): PlayedDialoguePcm? = activeService?.speechCapture?.playedDialoguePcm(position)
+        internal fun pauseContinuousRecognition(paused: Boolean) {
+            if (android.os.Build.VERSION.SDK_INT >= 34) activeService?.dialogueRecognition?.pauseForFiniteRecognition(paused)
         }
         internal fun recentDialogueWords(position: Double): List<HeardWord> {
             val service = activeService ?: return emptyList()
@@ -707,6 +732,8 @@ class NativePlaybackService : MediaSessionService() {
             // identity. Exact source/rendition/content are already in the cache key.
             return selected.ifBlank { service.lastAudioFingerprint }
         }
+
+        internal fun selectedVideoFrameRate(): Float = activeService?.localPlayer?.videoFormat?.frameRate ?: -1f
 
         internal fun selectedAudioLanguage(): String = activeService?.localPlayer?.currentTracks?.groups
             ?.filter { it.type == C.TRACK_TYPE_AUDIO }?.flatMap { group ->

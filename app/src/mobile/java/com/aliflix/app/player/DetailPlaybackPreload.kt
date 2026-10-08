@@ -73,7 +73,7 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
             if (caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true ||
                 offline?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) return@repeatOnLifecycle
             val progress = PlaybackProgressStore(activity)
-            val position = ((progress.progressFor(selection)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
+            val position = mobileSavedResumeMs(progress.progressFor(selection))
             val parent = activity.findViewById<ViewGroup>(android.R.id.content)
             val host = FrameLayout(activity).apply {
                 alpha = 0f
@@ -95,6 +95,7 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
                                 val request = withTimeout(resolveBudgetMillis(candidate.source.identity)) {
                                     adapter.resolve(candidate, position, emptySet(), parallelism = 2) { server = it }
                                 }
+                                StartupStreamCache.awaitPlayable(activity, request.copy(playing = false))
                                 DetailPreloadStore.Entry(candidate, server, request)
                             } finally { adapter.close() }
                         } }, parallelism = 4)

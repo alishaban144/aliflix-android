@@ -8,9 +8,11 @@ class DialogueRecognitionRecoveryTest {
         assertEquals("en-US", dialogueRecognitionLanguage("", "EN"))
         assertEquals("en-US", dialogueRecognitionLanguage("und", "eng"))
         assertEquals("en-US", dialogueRecognitionLanguage("en-GB", "ar"))
-        assertNull(dialogueRecognitionLanguage("ja", "en"))
-        assertNull(dialogueRecognitionLanguage("fr", "en"))
+        assertEquals("ja-JP", dialogueRecognitionLanguage("ja", "en"))
+        assertEquals("fr-FR", dialogueRecognitionLanguage("fr", "en"))
         assertNull(dialogueRecognitionLanguage("", "ar"))
+        assertEquals("en-US", dialogueRecognitionLanguage("und", "ar", "en"))
+        assertEquals("fr-FR", dialogueRecognitionLanguage("fr", "ar", "en"))
     }
     @Test fun serverDisconnectionAndBusySessionsRecoverInsteadOfDisablingTheFilm() {
         for (code in listOf(11, 8, -1, -2)) {

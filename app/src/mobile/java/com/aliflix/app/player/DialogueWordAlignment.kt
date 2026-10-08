@@ -96,7 +96,7 @@ internal object DialogueWordAlignment {
         val verified = supportedRates.flatMap { rate ->
             val adjusted = anchors.map { it.copy(offset = it.offset + (1 - rate) * it.captionTime) }
             val candidates = adjusted.map { seed ->
-                adjusted.filter { abs(it.offset - seed.offset) <= .55 }.distinctBy { it.cue }.sortedBy { it.time }
+                adjusted.filter { abs(it.offset - seed.offset) <= .550001 }.distinctBy { it.cue }.sortedBy { it.time }
             }.filter { it.size >= 3 && it.last().end - it.first().time >= 8 &&
                 (recentAfter == null || it.last().end >= recentAfter) }
                 .distinctBy { group -> group.map { it.cue } }
@@ -105,8 +105,14 @@ internal object DialogueWordAlignment {
                 val held = group.last()
                 val offsets = training.map { it.offset }.sorted()
                 val offset = (offsets[(offsets.size - 1) / 2] + offsets[offsets.size / 2]) / 2
-                if (training.count { it.coverage >= .85 } < 2 || training.maxOf { abs(it.offset - offset) } > .55 || abs(held.offset - offset) > .55) null
-                else Verified(offset, rate, group.sumOf { it.weight }, group.size, group.minOf { it.coverage })
+                if (training.count { it.coverage >= .85 } < 2 || training.maxOf { abs(it.offset - offset) } > .550001 || abs(held.offset - offset) > .550001) null
+                else {
+                    // The held phrase has already passed independently. Center
+                    // the applied clock over every verified boundary to minimize
+                    // its worst timing error, rather than favoring earlier words.
+                    val centered = (group.minOf { it.offset } + group.maxOf { it.offset }) / 2
+                    Verified(centered, rate, group.sumOf { it.weight }, group.size, group.minOf { it.coverage })
+                }
             }
         }.sortedByDescending { it.weight }
         val best = verified.firstOrNull() ?: run { diagnostic("word_no_independent_clock"); return null }
@@ -115,6 +121,15 @@ internal object DialogueWordAlignment {
             (abs((it.rate - best.rate) * from + it.offset - best.offset) > .6 ||
                 abs((it.rate - best.rate) * until + it.offset - best.offset) > .6) && it.weight >= best.weight - 2
         }) return null
+        // A candidate cannot discard the latest clearly recognized phrase merely
+        // because that phrase contradicts its clock. That would accept the first
+        // half of a drifting scene and ignore the evidence the user just heard.
+        val latest = anchors.filter { it.coverage >= .85 && it.weight >= 3 }
+            .maxByOrNull { it.end }
+        if (latest != null && abs(latest.offset + (1 - best.rate) * latest.captionTime - best.offset) > .6) {
+            diagnostic("word_latest_phrase_contradicts_clock")
+            return null
+        }
         // Independently matched phrases must not support a steadily changing clock.
         val supporting = anchors.map { it.copy(offset = it.offset + (1 - best.rate) * it.captionTime) }.filter { abs(it.offset - best.offset) <= 1.5 }.distinctBy { it.cue }.sortedBy { it.time }
         if (supporting.size >= 3) {

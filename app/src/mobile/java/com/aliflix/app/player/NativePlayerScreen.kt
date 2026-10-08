@@ -7,6 +7,8 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 
 import android.content.res.Configuration
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -680,7 +682,7 @@ internal fun NativePlayerScreen(
             }
         }
 
-        // Compact Netflix-style actions, attached to the video region in portrait.
+        // Hulu end-card action hierarchy in a smaller floating Aliflix control.
         val portraitTop = with(density) {
             val videoBottom = state.videoBottomPx.takeIf { it > 0 } ?: (viewportHeight / 2)
             val captionBottom = state.captionBottomPx.takeIf { it > 0 } ?: videoBottom
@@ -689,6 +691,7 @@ internal fun NativePlayerScreen(
             val maximum = (viewportHeight - safeBottomInset - controlsSpace - nextCardHeight).coerceAtLeast(safeTopInset)
             (contentBottom + 24.dp.toPx()).coerceIn(safeTopInset, maximum).toDp()
         }
+        val animatedPortraitTop by animateDpAsState(portraitTop, spring(dampingRatio = .9f, stiffness = 380f), label = "next-placement")
         val landscapeBottom = with(density) {
             val controlsBottom = (if (controls) 140.dp else 24.dp).toPx()
             val captionsBottom = if (state.captionTopPx > 0) viewportHeight - state.captionTopPx + 16.dp.toPx() else 0f
@@ -696,46 +699,47 @@ internal fun NativePlayerScreen(
         }
         AnimatedVisibility(
             visible = showCountdown,
-            enter = fadeIn(tween(220)) + scaleIn(tween(220), initialScale = .97f),
-            exit = fadeOut(tween(180)),
+            enter = fadeIn(tween(180, delayMillis = 40)) + scaleIn(spring(dampingRatio = .88f, stiffness = 430f), initialScale = .94f) +
+                slideInVertically(spring(dampingRatio = .9f, stiffness = 430f)) { it / 8 },
+            exit = fadeOut(tween(140)) + scaleOut(tween(160), targetScale = .97f) + slideOutVertically(tween(160)) { it / 10 },
             modifier = if (isLandscape) Modifier.align(Alignment.BottomEnd)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
                 .padding(end = 20.dp, bottom = landscapeBottom)
-            else Modifier.align(Alignment.TopCenter).offset(y = portraitTop).padding(horizontal = 20.dp)
+            else Modifier.align(Alignment.TopCenter).offset(y = animatedPortraitTop).padding(horizontal = 20.dp)
         ) {
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(18.dp),
                 color = com.aliflix.app.ui.common.AliflixSurfaceDefaults.color(com.aliflix.app.ui.common.AliflixSurfaceLevel.Elevated),
-                shadowElevation = 6.dp,
-                modifier = Modifier.widthIn(max = 350.dp).onSizeChanged { nextCardHeight = it.height }
+                border = BorderStroke(.5.dp, Color.White.copy(alpha = .09f)),
+                shadowElevation = 5.dp,
+                modifier = Modifier.widthIn(max = 288.dp).animateContentSize(tween(220)).onSizeChanged { nextCardHeight = it.height }
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Column(Modifier.weight(1f)) {
-                            Text("UP NEXT", color = AliflixAccentSecondary, fontWeight = FontWeight.Medium, fontSize = 10.sp, letterSpacing = 1.sp)
-                            Text("E${next!!.number} · ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                            Text("Next episode", color = AliflixAccentSecondary, fontWeight = FontWeight.Medium, fontSize = 11.sp)
+                            Text("S${next!!.seasonNumber} E${next.number} · ${next.title}", color = Color.White,
+                                fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
-                        Box(contentAlignment = Alignment.Center) {
-                            val target = nextWindowStart?.let { start ->
-                                (remainingMs.toFloat() / (duration - start).coerceAtLeast(1L)).coerceIn(0f, 1f)
-                            } ?: 0f
-                            val ring by animateFloatAsState(target, tween(420, easing = FastOutSlowInEasing), label = "next-episode-ring")
-                            CircularProgressIndicator(progress = { ring }, color = AliflixAccentPrimary,
-                                trackColor = Color.White.copy(alpha = .12f), modifier = Modifier.size(30.dp), strokeWidth = 2.dp)
-                            if (settings.playNextEpisode) Text("${kotlin.math.ceil(remainingMs / 1000.0).toInt().coerceAtLeast(1)}", color = Color.White, fontSize = 11.sp)
-                            else Icon(Icons.Default.PlayArrow, null, tint = AliflixAccentSecondary, modifier = Modifier.size(15.dp))
+                        IconButton(onClick = { if (!episodeAdvanced) next?.let { episodeAdvanced = true; onEpisode(it) } },
+                            modifier = Modifier.size(48.dp)) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(40.dp)) {
+                                val target = nextWindowStart?.let { start ->
+                                    (remainingMs.toFloat() / (duration - start).coerceAtLeast(1L)).coerceIn(0f, 1f)
+                                } ?: 0f
+                                val ring by animateFloatAsState(target, tween(600, easing = FastOutSlowInEasing), label = "next-episode-ring")
+                                CircularProgressIndicator(progress = { ring }, color = AliflixAccentPrimary,
+                                    trackColor = Color.White.copy(alpha = .12f), modifier = Modifier.size(40.dp), strokeWidth = 2.dp)
+                                Box(Modifier.size(30.dp).background(AliflixAccentPrimary.copy(alpha = .16f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.PlayArrow, "Play next episode", tint = AliflixAccentSecondary, modifier = Modifier.size(21.dp))
+                                }
+                            }
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { countdownCancelled = true }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
-                            Text("Watch credits", color = Color.White.copy(alpha = .75f), fontSize = 12.sp)
-                        }
-                        Button(onClick = { if (!episodeAdvanced) next?.let { episodeAdvanced = true; onEpisode(it) } }, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary)) {
-                            Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp)); Text("Next episode", fontSize = 12.sp)
-                        }
+                    TextButton(onClick = { countdownCancelled = true },
+                        modifier = Modifier.align(Alignment.Start).heightIn(min = 48.dp),
+                        contentPadding = PaddingValues(horizontal = 0.dp)) {
+                        Text("Watch credits", color = Color.White.copy(alpha = .65f), fontSize = 11.sp)
                     }
                 }
             }

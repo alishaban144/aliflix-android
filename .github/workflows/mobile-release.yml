@@ -35,8 +35,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "243"
-  RELEASE_VERSION_NAME: "3.1.153"
+  RELEASE_VERSION_CODE: "244"
+  RELEASE_VERSION_NAME: "3.1.154"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -83,7 +83,7 @@ jobs:
           chmod +x gradlew
       - name: Verify phone playback
         env:
-          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.153' || github.ref_name == 'v3.1.153' || github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest,com.aliflix.app.player.NativeResolverSilenceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
+          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.153' || github.ref_name == 'release/v3.1.154' || github.ref_name == 'v3.1.154' || github.ref_name == 'v3.1.153' || github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest,com.aliflix.app.player.NativeResolverSilenceTest,com.aliflix.app.player.MobileResumeDeviceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
         run: bash .github/scripts/test-phone-casting.sh '${{ matrix.api-level }}'
       - name: Upload playback test reports
         if: always()
@@ -354,7 +354,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Sync with Audio recovers disconnected recognition and supports unlabeled audio with English captions. Already-played phrases verify subtitle offset and playback rate within a two-second interaction budget. Up Next retains valid IntroDB credit starts when a stream ends before the database end time. Mobile only."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Unfinished progress resumes across sources and servers. Sync with Audio tries complete already-played dialogue within ten seconds and verifies references across subtitle languages. Smaller animated Up Next controls silently buffer the next episode. IntroDB, AniSkip and IntroHater timing metadata are supported. Mobile only."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -385,11 +385,13 @@ jobs:
           body: |
             Mobile downloads discover up to three genuinely distinct resolutions concurrently. Progressive quality cards show Best, Balanced and Smaller file with actual heights and estimated sizes. Seasons share one quality choice, pin their source and server, and automatically recover individual unavailable episodes. Japanese anime downloads now use their dedicated native sources.
 
-            Sync with Audio recovers transient recognition disconnections and tries local English recognition for unlabeled audio when English captions are selected. Bounded already-played phrase history verifies playback-rate differences using independently held dialogue. The two-second interaction budget, original captions, manual delay and Reset are preserved.
+            Sync with Audio actively recognizes a complete sample of already-played dialogue when the continuous decoder cannot provide a match. A ten-second interaction budget allows a real matching attempt. Background subtitle references support translations and edition differences; selected captions, manual delay and Reset are preserved.
 
-            Up Next retains valid IntroDB credit starts when its reported end extends past the stream duration, and refreshes missing-outro metadata sooner. Compact floating controls, the soft ring, autoplay-off visibility and end-of-episode fallback remain intact. Some episodes have no IntroDB credits marker and still use the fallback window.
+            Up Next uses a smaller animated floating control with the soft ring and clear Play/Watch credits actions. The next episode buffers silently using its own source and audio settings. IntroDB, AniSkip and IntroHater provide bounded concurrent timing lookups. Services without a marker retain the end-of-episode fallback.
 
-            Validation includes automatically selected English Terminator captions, independently timed decoded speech, minified phone checks, wrong-offset and ambiguity rejection tests, mobile tests and lint, and portrait/landscape Up Next checks. Existing download, subtitle and audio-track support is retained. The workflow verifies the production signer and APK integrity. TV is unchanged.
+            Mobile resume retains unfinished positions even after a title is marked watched, and preserves the movie/episode position across provider and server changes.
+
+            Validation includes automatically selected Terminator captions, independently timed decoded speech, minified phone checks, wrong-offset and ambiguity rejection tests, mobile tests and lint, and portrait/landscape Up Next checks. Existing download, subtitle and audio-track support is retained. The workflow verifies the production signer and APK integrity. TV is unchanged.
           files: |
             aliflix-mobile.apk
             update-mobile.json

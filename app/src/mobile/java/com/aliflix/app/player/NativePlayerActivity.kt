@@ -58,11 +58,15 @@ class NativePlayerActivity : FragmentActivity() {
     private var subtitleJob: Job? = null
     private var subtitleSyncDebounceJob: Job? = null
     private var audioSyncJob: Job? = null
+    private var referencePreparation: Job? = null
+    private var referencePreparationKey: String? = null
+    private var syncReferences: List<SubtitleSyncReference> = emptyList()
     private var audioCorrection: AudioSubtitleCorrection? = null
     private var audioCorrectionKey: String? = null
     private var correctionIdentity: List<String?>? = null
     private val correctionStore by lazy { SubtitleCorrectionStore(this) }
     private var subtitleRenderJob: Job? = null
+    internal val preparedSyncReferences get() = syncReferences.toList()
     internal var subtitleTimingEvidence: SubtitleTimingMatch? = null
         private set
     private var activeSubtitleCues: List<SubtitleCue> = emptyList()
@@ -348,6 +352,7 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     override fun onNewIntent(intent: Intent) {
+        recordCurrentProgress(urgent = true)
         super.onNewIntent(intent); setIntent(intent)
         if (intent.hasExtra("selection") || intent.hasExtra("request") || intent.hasExtra("requestFile")) {
             requestAccepted = false; exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0; acceptRequest(intent)
@@ -505,8 +510,9 @@ class NativePlayerActivity : FragmentActivity() {
         if (introKey != selection?.key) {
             introKey = selection?.key; introJob?.cancel(); ui = ui.copy(segments = emptyList())
             selection?.let { current -> introJob = lifecycleScope.launch {
-                val markers = IntroDbRepository(this@NativePlayerActivity).segments(current)
-                if (selection?.key == current.key) ui = ui.copy(segments = markers)
+                MobileSkipMarkers(this@NativePlayerActivity).discover(current, { controller?.duration ?: 0L }) { markers ->
+                    if (selection?.key == current.key) ui = ui.copy(segments = markers)
+                }
             } }
         }
         selection?.let {
@@ -548,8 +554,10 @@ class NativePlayerActivity : FragmentActivity() {
         ui = ui.copy(providerDiscovery = ProviderServerDiscovery())
         recordCurrentProgress(urgent = true)
         val startingSource = current.source
-        val resume = positionMs ?: controller?.takeIf { it.currentMediaItem?.mediaId == current.key }?.currentPosition?.takeIf { it > 0 }
-            ?: ((progress.progressFor(current)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
+        val active = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it) }.getOrNull() }
+        val resume = positionMs ?: controller?.takeIf {
+            mobileSameContent(active, current) && NativePlaybackService.playbackReady && it.currentPosition > 0
+        }?.currentPosition ?: mobileSavedResumeMs(progress.progressFor(current))
         if (warmingEpisodeKey != current.key) nextEpisodeWarmup?.cancel()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel()
         val offlineStore = com.aliflix.app.downloads.OfflineDownloads.get(this)
@@ -733,7 +741,7 @@ class NativePlayerActivity : FragmentActivity() {
                     hideSystemBars()
                     PlaybackStartupTiming.mark("stream_resolved")
                     try {
-                        val attempt = startNative(resolved.copy(playing = false, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
+                        val attempt = startNative(resolved.copy(positionMs = resume, playing = false, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
                         awaitNativeReady(resolved.url, attempt)
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                             runCatching { routeStore.save(candidate, server, resolved) }
@@ -792,14 +800,29 @@ class NativePlayerActivity : FragmentActivity() {
             while (selection?.key == current.key) {
                 delay(250)
                 val player = controller ?: continue
-                if (player.duration <= 45_000 || player.duration - player.currentPosition !in 1..90_000) continue
-                val next = selection?.availableEpisodes?.firstOrNull { it.seasonNumber == current.seasonNumber && it.number == (current.episodeNumber ?: 1) + 1 } ?: return@launch
+                val credits = upNextWindowStart(player.duration, ui.segments) ?: continue
+                if (player.duration <= 45_000 || player.currentPosition < (credits - 15_000).coerceAtLeast(0) ||
+                    player.currentPosition >= player.duration) continue
+                val next = selection?.availableEpisodes?.filter {
+                    it.seasonNumber > (current.seasonNumber ?: 1) ||
+                        (it.seasonNumber == current.seasonNumber && it.number > (current.episodeNumber ?: 1))
+                }?.minWithOrNull(compareBy({ it.seasonNumber }, { it.number })) ?: return@launch
                 val candidate = current.copy(seasonNumber = next.seasonNumber, episodeNumber = next.number, episodeTitle = next.title)
                 warmingEpisodeKey = candidate.key
                 val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                 try {
-                    val request = withTimeout(if (candidate.source.identity.isAnimeNative) 45_000 else 16_000) { adapter.resolve(candidate, 0, emptySet(), preferredServer = server) {} }
-                    warmedEpisode = Triple(candidate, server, request)
+                    var resolvedServer = server
+                    val request = withTimeout(if (candidate.source.identity.isAnimeNative) 45_000 else 25_000) {
+                        val resolved = adapter.resolve(candidate, 0, emptySet(), preferredServer = server,
+                            validateSingle = true) { resolvedServer = it }
+                        val audio = NativePlaybackService.selectedAudioLanguage()
+                        StartupStreamCache.awaitPlayable(this@NativePlayerActivity, resolved.copy(playing = false), audio, bufferMs = 3_000)
+                        resolved
+                    }
+                    ensureActive()
+                    // A tap can already be handing this job off to this exact next episode.
+                    if (selection?.key != current.key && selection?.key != candidate.key) return@launch
+                    warmedEpisode = Triple(candidate, resolvedServer, request)
                     warmedAt = android.os.SystemClock.elapsedRealtime()
                 } catch (error: Exception) { ensureActive(); delay(3_000); continue }
                 finally { adapter.close() }
@@ -813,9 +836,9 @@ class NativePlayerActivity : FragmentActivity() {
     private fun captionKey(current: PlaybackSelection): String =
         subtitleContentKey(current)
 
-    private fun saveCaption(current: PlaybackSelection, track: SubtitleTrack, json: String) {
+    private fun saveCaption(current: PlaybackSelection, track: SubtitleTrack, json: String, automatic: Boolean = false) {
         val raw = org.json.JSONObject().put("cues", json).put("language", track.languageCode)
-            .put("label", track.languageName).put("id", track.id).toString()
+            .put("label", track.languageName).put("id", track.id).put("automatic", automatic).toString()
         getSharedPreferences("account-caption-files", MODE_PRIVATE).edit().putString(captionKey(current), raw).apply()
     }
 
@@ -825,7 +848,7 @@ class NativePlayerActivity : FragmentActivity() {
         if (canonicalSubtitleLanguageCode(saved.getString("language")) != canonicalSubtitleLanguageCode(language)) return false
         val json = saved.getString("cues")
         val restoredCues = parseTimedTextSubtitleCues(nativeSubtitlesVtt(json, 0.0))
-        if (!subtitleLanguageIsPlausible(restoredCues, language)) return false
+        if (!subtitleLanguageIsPlausible(restoredCues, language) || (saved.optBoolean("automatic", true) && !automaticCaptionCoversMovie(restoredCues, current, controller?.duration ?: 0))) return false
         val vtt = renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
         activeSubtitleCuesJson = json
         activeSubtitleCues = restoredCues
@@ -847,26 +870,34 @@ class NativePlayerActivity : FragmentActivity() {
             try {
                 withTimeout(20_000) {
                     val repository = SubdlSubtitleRepository()
-                    val tracks = if (current.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER) FlixerSubtitleRepository.tracks(current)
-                        else normalizeMobileSubtitleTracks(repository.search(current, language).getOrThrow())
-                    ui = ui.copy(subtitleTracks = tracks)
-                    val candidates = if (current.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER) tracks.filter { it.languageCode.equals(language, true) }.sortedBy { it.hearingImpaired }
-                        else mobileSubtitleCandidates(tracks, language, current.seasonNumber, current.episodeNumber, current.media.title)
-                    for (track in candidates.take(3)) {
-                        ensureActive()
-                        if (selection?.key != current.key || NativePlaybackService.activeStreamUrl != streamUrl || NativePlaybackService.embeddedSubtitlesActive) return@withTimeout
-                        val cues = withTimeoutOrNull(5_000) { repository.download(track, current).getOrNull() }.orEmpty()
-                        if (cues.isEmpty() || !subtitleLanguageIsPlausible(cues, language)) continue
-                        if (NativePlaybackService.embeddedSubtitlesActive) return@withTimeout
-                        activeSubtitleCues = cues
-                        val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
-                        activeSubtitleCuesJson = json
-                        saveCaption(current, track, json)
-                        NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds), track.languageCode.lowercase(), track.languageName, automatic = true)
-                        ui = ui.copy(activeSubtitleTrack = track, subtitleError = null)
-                        updateSubtitleCues()
-                        return@withTimeout
+                    suspend fun chooseFrom(tracks: List<SubtitleTrack>): Boolean {
+                        ui = ui.copy(subtitleTracks = (ui.subtitleTracks + tracks).distinctBy { it.downloadToken })
+                        val candidates = mobileSubtitleCandidates(tracks, language, current.seasonNumber, current.episodeNumber, current.media.title)
+                        for (track in rankCompleteSubtitleCandidates(candidates, NativePlaybackService.selectedVideoFrameRate()).take(8)) {
+                            ensureActive()
+                            if (selection?.key != current.key || NativePlaybackService.activeStreamUrl != streamUrl || NativePlaybackService.embeddedSubtitlesActive) return true
+                            val cues = withTimeoutOrNull(5_000) { repository.download(track, current).getOrNull() }.orEmpty()
+                            if (cues.isEmpty() || !subtitleLanguageIsPlausible(cues, language) || !automaticCaptionCoversMovie(cues, current, controller?.duration ?: 0)) continue
+                            if (NativePlaybackService.embeddedSubtitlesActive) return true
+                            activeSubtitleCues = cues
+                            val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
+                            activeSubtitleCuesJson = json
+                            saveCaption(current, track, json, automatic = true)
+                            NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds), track.languageCode.lowercase(), track.languageName, automatic = true)
+                            ui = ui.copy(activeSubtitleTrack = track, subtitleError = null)
+                            updateSubtitleCues()
+                            return true
+                        }
+                        return false
                     }
+                    val tracks = if (current.source.identity == MobilePlaybackProvider.FLIXER) FlixerSubtitleRepository.tracks(current)
+                        else normalizeMobileSubtitleTracks(repository.search(current, language).getOrThrow())
+                    if (chooseFrom(tracks)) return@withTimeout
+                    if (current.source.identity == MobilePlaybackProvider.FLIXER) {
+                        val fallback = normalizeMobileSubtitleTracks(repository.search(current, language).getOrNull().orEmpty())
+                        if (chooseFrom(fallback)) return@withTimeout
+                    }
+                    ui = ui.copy(subtitleError = "No complete subtitles found. Choose another subtitle file.")
                 }
             } catch (error: Exception) {
                 ensureActive()
@@ -1064,9 +1095,85 @@ class NativePlayerActivity : FragmentActivity() {
         }
         val available = key != null && json != null && activeSubtitleCues.size >= 4 && controller != null &&
             !NativePlaybackService.embeddedSubtitlesActive && controller?.deviceInfo?.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE
-        NativePlaybackService.configureDialogueRecognition(key.takeIf { available },
-            ui.activeSubtitleTrack?.languageCode ?: request?.subtitleLanguage.orEmpty())
+        val captionLanguage = ui.activeSubtitleTrack?.languageCode ?: request?.subtitleLanguage.orEmpty()
+        val originalLanguage = selection?.media?.originalLanguage.orEmpty()
+        // Keep already heard audio when switching subtitle language/edition.
+        val recognitionKey = request?.let { listOf(stableSyncUrl(it.url), selection?.key, track,
+            getSharedPreferences("player-account-scopes", MODE_PRIVATE).getString("active", "guest")).joinToString("|") }
+        NativePlaybackService.configureDialogueRecognition(recognitionKey.takeIf { available }, captionLanguage, originalLanguage)
+        prepareSyncReferences(key.takeIf { available }, captionLanguage, originalLanguage)
         if (ui.audioSyncAvailable != available) ui = ui.copy(audioSyncAvailable = available)
+    }
+
+    private fun prepareSyncReferences(key: String?, captions: String, original: String) {
+        val language = dialogueRecognitionLanguage(NativePlaybackService.selectedAudioLanguage(), captions, original)
+            ?.substringBefore('-') ?: return
+        val preparationKey = key
+        if (preparationKey == referencePreparationKey) return
+        referencePreparation?.cancel(); referencePreparationKey = preparationKey; syncReferences = emptyList()
+        val current = selection ?: return
+        if (preparationKey == null) return
+        val target = activeSubtitleCues.toList()
+        referencePreparation = lifecycleScope.launch {
+            try {
+                withTimeout(20_000) {
+                    val repository = SubdlSubtitleRepository()
+                    // Catalogue diversity avoids spending the whole background budget
+                    // comparing near-identical copies of one mistimed release.
+                    val catalogues = coroutineScope {
+                        val originals = async { FlixerSubtitleRepository.tracks(current) }
+                        val external = async { normalizeMobileSubtitleTracks(repository.search(current, language).getOrNull().orEmpty()) }
+                        originals.await() to external.await()
+                    }
+                    val originalCandidates = mobileSubtitleCandidates(catalogues.first, language, current.seasonNumber, current.episodeNumber, current.media.title)
+                    val externalCandidates = mobileSubtitleCandidates(catalogues.second, language, current.seasonNumber, current.episodeNumber, current.media.title)
+                    val primary = if (current.source.identity == MobilePlaybackProvider.FLIXER) originalCandidates else externalCandidates
+                    val secondary = if (current.source.identity == MobilePlaybackProvider.FLIXER) externalCandidates else originalCandidates
+                    val candidates = interleaveSubtitleCandidates(
+                        rankCompleteSubtitleCandidates(primary, NativePlaybackService.selectedVideoFrameRate()),
+                        rankCompleteSubtitleCandidates(secondary, NativePlaybackService.selectedVideoFrameRate()))
+                    android.util.Log.i("AliflixAudioSync", "reference_candidates:count=${candidates.size},language=$language")
+                    coroutineScope {
+                        val completed = kotlinx.coroutines.channels.Channel<SubtitleSyncReference?>(12)
+                        val gate = kotlinx.coroutines.sync.Semaphore(2)
+                        val jobs = candidates.take(12).mapIndexed { index, candidate -> launch {
+                            gate.acquire()
+                            val prepared = try {
+                                val cues = withTimeoutOrNull(4_000) { repository.download(candidate, current).getOrNull() }.orEmpty()
+                                android.util.Log.i("AliflixAudioSync", "reference_download:index=$index,count=${cues.size},fps=${candidate.fps},direct=${candidate.downloadToken.startsWith("https:")}")
+                                if (cues.size < 4 || !subtitleLanguageIsPlausible(cues, language) ||
+                                    !automaticCaptionCoversMovie(cues, current, controller?.duration ?: 0)) null
+                                else try { withContext(Dispatchers.Default) {
+                                    val context = currentCoroutineContext()
+                                    val deadline = android.os.SystemClock.elapsedRealtime() + 2_000
+                                    TranslatedSubtitleSync.prepare(target, cues) {
+                                        context.ensureActive()
+                                        if (android.os.SystemClock.elapsedRealtime() >= deadline) throw ReferenceAlignmentTimeout()
+                                    }
+                                } } catch (_: ReferenceAlignmentTimeout) { null }
+                            } finally { gate.release() }
+                            completed.send(prepared)
+                        } }
+                        try {
+                            repeat(jobs.size) {
+                                val prepared = completed.receive() ?: return@repeat
+                                if (referencePreparationKey != preparationKey || audioCorrectionKey != key) return@coroutineScope
+                                val diverse = syncReferences.none {
+                                    kotlin.math.abs(it.targetToReference.rate - prepared.targetToReference.rate) < .0003 &&
+                                        kotlin.math.abs(it.targetToReference.offset - prepared.targetToReference.offset) < .6
+                                }
+                                if (syncReferences.isEmpty() || diverse) syncReferences = syncReferences + prepared
+                                android.util.Log.i("AliflixAudioSync", "translation_reference_ready,count=${syncReferences.size},rate=${prepared.targetToReference.rate},offset=${prepared.targetToReference.offset}")
+                                if (syncReferences.size >= 4 || syncReferences.map { (it.targetToReference.rate / .0003).toInt() }.distinct().size >= 2) return@coroutineScope
+                            }
+                        } finally {
+                            jobs.forEach { it.cancel() }
+                            completed.close()
+                        }
+                    }
+                }
+            } catch (error: Exception) { ensureActive() }
+        }
     }
 
     internal fun syncWithAudio() {
@@ -1085,8 +1192,7 @@ class NativePlayerActivity : FragmentActivity() {
         val generation = NativePlaybackService.speechGeneration
         val continuity = NativePlaybackService.speechContinuity
         val position = (controller?.currentPosition ?: 0L) / 1000.0
-        val heard = NativePlaybackService.recentDialogueWords(position)
-        val heardHistory = NativePlaybackService.dialogueWordHistory(position)
+        val initialHistory = NativePlaybackService.dialogueWordHistory(position)
         val playing = controller?.isPlaying == true
         val speed = controller?.playbackParameters?.speed ?: 1f
         val manualDelay = settingsStore.settings.value.subtitleDelaySeconds
@@ -1101,39 +1207,77 @@ class NativePlayerActivity : FragmentActivity() {
                     onExpired = { if (audioSyncJob === owner) {
                         audioSyncJob = null
                         ui = ui.copy(audioSyncState = "Couldn't match this dialogue", audioSyncRemainingSeconds = null)
-                    } }, budgetMs = 1_800,
+                    } }, budgetMs = 9_500,
                 ) { deadlineCheck ->
-                    withContext(Dispatchers.Default) {
-                        val context = currentCoroutineContext()
-                        val check = { context.ensureActive(); deadlineCheck() }
-                        hadDialogue = heard.size >= 9
-                        val observed = NativePlaybackService.quickSpeechEvidence()
-                        val wordCorrection = DialogueWordAlignment.match(originals, heard, observed,
-                            diagnostic = { android.util.Log.i("AliflixAudioSync", it) }, cancelled = check)
-                        if (wordCorrection != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, wordCorrection, observed, position, check)) {
-                            android.util.Log.i("AliflixAudioSync", "instant:verified_local_words,count=${heard.size},score=${wordCorrection.confidence}")
-                            return@withContext wordCorrection
+                    var solution: AudioSubtitleCorrection? = null
+                    var finiteWords: List<HeardWord> = emptyList()
+                    var finiteRequested = false
+                    while (solution == null && android.os.SystemClock.elapsedRealtime() - began < 9_000) {
+                        deadlineCheck()
+                        val observedPosition = withContext(Dispatchers.Main.immediate) {
+                            (controller?.currentPosition ?: 0L) / 1000.0
                         }
-                        // Earlier independently heard phrases can prove a supported
-                        // subtitle rate; a short current exchange cannot invent drift.
-                        val historicalClock = if (heard.isNotEmpty()) DialogueWordAlignment.match(originals, heardHistory, observed, recentAfter = position - 30,
-                            diagnostic = { android.util.Log.i("AliflixAudioSync", "history:$it") }, cancelled = check) else null
-                        if (historicalClock != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, historicalClock, observed, position, check,
-                            diagnostic = { android.util.Log.i("AliflixAudioSync", it) }))
-                            return@withContext historicalClock
-                        val recent = NativePlaybackService.recentSpeechWindow(position)
-                        android.util.Log.i("AliflixAudioSync", "instant_context:position=$position,heard=${heard.size},heardStart=${heard.firstOrNull()?.start},heardEnd=${heard.lastOrNull()?.end},recentStart=${recent?.start},recentFrames=${recent?.speech?.size};${NativePlaybackService.speechDiagnostics()}")
-                        hadDialogue = hadDialogue || (recent != null && recent.speech.average() in .04.. .96)
-                        val local = recent?.let { AdaptiveSubtitleSynchronizer.matchCurrent(originals, it, check) }
-                        val correction = local?.correction
-                        val accepted = if (correction != null &&
-                            AdaptiveSubtitleSynchronizer.verifyReferenceQuick(correction.apply(originals), observed, check)) local else null
-                        val reference = NativePlaybackService.embeddedReference()?.takeIf { it.complete &&
-                            AdaptiveSubtitleSynchronizer.verifyReferenceQuick(it.cues, observed, check) }?.cues
-                        val attempt = accepted ?: AdaptiveSubtitleSynchronizer.matchQuick(originals, observed, reference, cancelled = check)
-                        android.util.Log.i("AliflixAudioSync", "instant:${attempt.reason},windows=${attempt.windows},score=${attempt.score},margin=${attempt.margin};${NativePlaybackService.speechDiagnostics()}")
-                        attempt.correction
+                        val latestHeard = (NativePlaybackService.recentDialogueWords(observedPosition) +
+                            finiteWords.filter { it.start >= observedPosition - 30 && it.end <= observedPosition })
+                            .distinctBy { it.text to it.start }.sortedBy { it.start }
+                        val latestHistory = (initialHistory + NativePlaybackService.dialogueWordHistory(observedPosition) + finiteWords)
+                            .distinctBy { it.text to it.start }.sortedBy { it.start }
+                        val latestReferences = syncReferences.toList()
+                        solution = withContext(Dispatchers.Default) {
+                            val context = currentCoroutineContext()
+                            val check = { context.ensureActive(); deadlineCheck() }
+                            hadDialogue = hadDialogue || latestHeard.size >= 9
+                            val observed = NativePlaybackService.quickSpeechEvidence()
+                            for (reference in latestReferences.sortedByDescending { kotlin.math.abs(it.targetToReference.rate - 1.0) }) {
+                                check()
+                                TranslatedSubtitleSync.match(reference, latestHeard, latestHistory, observed, observedPosition, check)?.let {
+                                    android.util.Log.i("AliflixAudioSync", "instant:verified_translation")
+                                    return@withContext it
+                                }
+                            }
+                            val wordCorrection = DialogueWordAlignment.match(originals, latestHeard, observed, recentAfter = observedPosition - 18,
+                                diagnostic = { android.util.Log.i("AliflixAudioSync", it) }, cancelled = check)
+                            if (wordCorrection != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, wordCorrection, observed, observedPosition, check)) {
+                                android.util.Log.i("AliflixAudioSync", "instant:verified_local_words,count=${latestHeard.size},score=${wordCorrection.confidence}")
+                                return@withContext wordCorrection
+                            }
+                            // Earlier independently heard phrases can prove a supported
+                            // subtitle rate; a short current exchange cannot invent drift.
+                            val historicalClock = if (latestHistory.any { it.end >= observedPosition - 30 }) DialogueWordAlignment.match(originals, latestHistory, observed, recentAfter = observedPosition - 18,
+                                diagnostic = { android.util.Log.i("AliflixAudioSync", "history:$it") }, cancelled = check) else null
+                            if (historicalClock != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, historicalClock, observed, observedPosition, check,
+                                diagnostic = { android.util.Log.i("AliflixAudioSync", it) }))
+                                return@withContext historicalClock
+
+                            val recent = NativePlaybackService.recentSpeechWindow(observedPosition)
+                            android.util.Log.i("AliflixAudioSync", "instant_context:position=$position,latestHeard=${latestHeard.size},latestHeardStart=${latestHeard.firstOrNull()?.start},latestHeardEnd=${latestHeard.lastOrNull()?.end},recentStart=${recent?.start},recentFrames=${recent?.speech?.size};${NativePlaybackService.speechDiagnostics()}")
+                            hadDialogue = hadDialogue || (recent != null && recent.speech.average() in .04.. .96)
+                            val local = recent?.let { AdaptiveSubtitleSynchronizer.matchCurrent(originals, it, check) }
+                            val correction = local?.correction
+                            val accepted = if (correction != null &&
+                                AdaptiveSubtitleSynchronizer.verifyReferenceQuick(correction.apply(originals), observed, check)) local else null
+                            val reference = NativePlaybackService.embeddedReference()?.takeIf { it.complete &&
+                                AdaptiveSubtitleSynchronizer.verifyReferenceQuick(it.cues, observed, check) }?.cues
+                            val attempt = accepted ?: AdaptiveSubtitleSynchronizer.matchQuick(originals, observed, reference, cancelled = check)
+                            android.util.Log.i("AliflixAudioSync", "instant:${attempt.reason},windows=${attempt.windows},score=${attempt.score},margin=${attempt.margin};${NativePlaybackService.speechDiagnostics()}")
+                            attempt.correction
+                        }
+                        if (solution == null && !finiteRequested && android.os.Build.VERSION.SDK_INT >= 34) {
+                            finiteRequested = true
+                            val pcm = NativePlaybackService.playedDialoguePcm(observedPosition)
+                            val language = dialogueRecognitionLanguage(NativePlaybackService.selectedAudioLanguage(),
+                                ui.activeSubtitleTrack?.languageCode.orEmpty(), selection?.media?.originalLanguage.orEmpty())
+                            if (pcm != null && language != null) {
+                                NativePlaybackService.pauseContinuousRecognition(true)
+                                try {
+                                    finiteWords = PlayedDialogueRecognition.recognize(this@NativePlayerActivity, language, pcm)
+                                    android.util.Log.i("AliflixAudioSync", "finite_dialogue:words=${finiteWords.size},start=${pcm.start}")
+                                } finally { NativePlaybackService.pauseContinuousRecognition(false) }
+                            }
+                        }
+                        if (solution == null) delay(250)
                     }
+                    solution
                 }
                 ensureActive()
                 refreshAudioCorrection()
@@ -1268,9 +1412,10 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun recordCurrentProgress(urgent: Boolean = true) {
-        val sel = selection ?: return
+        val sel = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it) }.getOrNull() } ?: return
         val c = controller ?: return
-        if (c.currentMediaItem?.mediaId != sel.key || c.playbackState !in setOf(Player.STATE_READY, Player.STATE_ENDED)) return
+        if (!NativePlaybackService.canRecordProgress || c.currentMediaItem?.mediaId != sel.key ||
+            c.playbackState !in setOf(Player.STATE_READY, Player.STATE_BUFFERING, Player.STATE_ENDED)) return
         val dur = c.duration.toDouble() / 1000.0
         val pos = c.currentPosition.toDouble() / 1000.0
         if (dur > 0.0 && pos >= 0.0) {
@@ -1383,7 +1528,7 @@ class NativePlayerActivity : FragmentActivity() {
         recordCurrentProgress(urgent = true)
         if (::subtitles.isInitialized) subtitles.removeCallbacks(subtitleLayoutUpdate)
         subtitleRenderJob?.cancel()
-        nextEpisodeWarmup?.cancel()
+        nextEpisodeWarmup?.cancel(); referencePreparation?.cancel()
         preparation?.cancel(); resolver?.close(); resolver = null; subtitleJob?.cancel(); subtitleSyncDebounceJob?.cancel(); episodeQueueJob?.cancel(); introJob?.cancel(); super.onDestroy()
     }
     override fun onConfigurationChanged(newConfig: Configuration) {

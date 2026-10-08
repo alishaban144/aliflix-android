@@ -37,6 +37,7 @@ internal class PlaybackSpeechBuffer(
     private val bits = ByteArray(1500)
     private val frame = ShortArray(160)
     private val dialogueFrame = ShortArray(320)
+    private val playedPcm = java.util.ArrayDeque<Pair<Double, ShortArray>>()
     private var dialogueCount = 0
     private var dialogueStart = 0.0
     private var dialoguePhase = 0
@@ -67,7 +68,16 @@ internal class PlaybackSpeechBuffer(
     @Volatile var unavailable = false
         private set
 
+    @Synchronized fun playedDialoguePcm(position: Double): PlayedDialoguePcm? {
+        val rows = playedPcm.filter { it.first >= position - 30 && it.first + .02 <= position }
+        if (rows.size < 400 || rows.last().first < position - 1 || rows.zipWithNext().any {
+            kotlin.math.abs(it.second.first - it.first.first - .02) > .003
+        }) return null
+        return PlayedDialoguePcm(rows.first().first, rows.map { it.second.copyOf() })
+    }
+
     @Synchronized fun reset() {
+        playedPcm.clear()
         evidence.clear(); neuralEvidence.clear(); boundaryCount++; duplicateFrames = 0; failure = null; captureNanos = 0
         head = 0; count = 0; lastTime = Double.NEGATIVE_INFINITY
         decodedFrameCount = 0; clearPartialFrame(); closeDetector(); detectorFailed = false; unavailable = false; generation++
@@ -100,7 +110,7 @@ internal class PlaybackSpeechBuffer(
     /** Flush/seek changes decoder continuity, not the identity of the soundtrack. */
     @Synchronized fun discontinuity() {
         head = 0; count = 0; lastTime = Double.NEGATIVE_INFINITY
-        clearPartialFrame(); closeDetector(); boundaryCount++
+        playedPcm.clear(); clearPartialFrame(); closeDetector(); boundaryCount++
     }
 
     @Synchronized fun diagnostics(): String = "generation=$generation,frames=$decodedFrameCount,blocks=${evidence.size}," +
@@ -210,7 +220,7 @@ internal class PlaybackSpeechBuffer(
                 if (time <= lastTime) { duplicateFrames++; input.position(input.position() + bytesPerFrame); continue }
                 if (lastTime.isFinite() && abs(time - lastTime - 1.0 / format.sampleRate) > .005) {
                     // A seek/discontinuity is a boundary, never fabricated silent audio.
-                    clearPartialFrame(); closeDetector(); boundaryCount++
+                    playedPcm.clear(); clearPartialFrame(); closeDetector(); boundaryCount++
                 }
                 lastTime = time
                 var mono = 0.0
@@ -259,8 +269,11 @@ internal class PlaybackSpeechBuffer(
                             }
                         } catch (error: Exception) { detectorFailure(error.javaClass.simpleName) }
                         catch (error: LinkageError) { detectorFailure(error.javaClass.simpleName) }
-                        if (dialogueCount == dialogueFrame.size)
+                        if (dialogueCount == dialogueFrame.size) {
+                            playedPcm.addLast(dialogueStart to dialogueFrame.copyOf())
+                            while (playedPcm.size > 1600) playedPcm.removeFirst()
                             dialogueFrameObserver?.invoke(dialogueStart, dialogueFrame, generation, boundaryCount, bits[head] == 1.toByte())
+                        }
                         dialogueCount = 0; dialoguePhase = 0; dialogueSum = 0.0; dialogueAveraged = 0
                         // Unknown bins stay -1, never fabricated silence. Round the
                         // frame start once; codec PTS quantisation must not drift.

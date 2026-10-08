@@ -844,7 +844,13 @@ fun AliflixApp(
         requestedProvider: PlaybackProvider? = null,
     ) {
         viewModel.markPlayed(selection.media)
-        playerSelection = viewModel.playbackProgressStore.resumeSelection(selection).copy(
+        val unfinished = if (selection.media.type == MediaType.TV && selection.seasonNumber == null && selection.episodeNumber == null)
+            viewModel.playbackProgressStore.entries.value.values.filter { it.media.key == selection.media.key &&
+                it.positionSeconds > 0 && it.positionSeconds < it.durationSeconds && !it.explicitlyRestarted }
+                .maxByOrNull { it.updatedAtMillis } else null
+        val resumed = unfinished?.let { selection.copy(seasonNumber = it.seasonNumber, episodeNumber = it.episodeNumber, episodeTitle = it.episodeTitle) }
+            ?: viewModel.playbackProgressStore.resumeSelection(selection)
+        playerSelection = resumed.copy(
             source = playbackPreferences.sourceFor(
                 media = selection.media,
                 requestedProvider = requestedProvider,

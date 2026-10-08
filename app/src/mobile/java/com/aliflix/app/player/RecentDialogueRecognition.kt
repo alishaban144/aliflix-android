@@ -19,7 +19,8 @@ internal data class HeardWord(val text: String, val start: Double, val end: Doub
 
 /** Optional Android 14+ local decoder of selected audio, never the microphone.
  * Bounded continuous sessions retain quiet phrase context. Completed
- * words stay in memory; a sync tap never starts or waits for recognition.
+ * words stay in memory. A sync tap can separately analyze a finite played sample
+ * without opening the microphone or altering video playback.
  */
 @androidx.annotation.RequiresApi(34)
 internal class RecentDialogueRecognition(private val context: Context, private val language: String) : AutoCloseable {
@@ -32,6 +33,7 @@ internal class RecentDialogueRecognition(private val context: Context, private v
     private var recordedWord: HeardWord? = null
     private var recordedBoundary = -1L
     @Volatile private var running = true
+    @Volatile private var probePaused = false
     @Volatile private var failed = false
     private val sessionTokens = java.util.concurrent.atomic.AtomicLong()
     private val token get() = sessionTokens.get()
@@ -57,8 +59,19 @@ internal class RecentDialogueRecognition(private val context: Context, private v
     }
     private val thread = Thread({ collectFrames() }, "aliflix-local-dialogue").apply { isDaemon = true; start() }
 
+    fun pauseForFiniteRecognition(paused: Boolean) {
+        probePaused = paused
+        if (paused) {
+            queue.clear(); restart = true
+            val pauseToken = sessionTokens.incrementAndGet()
+            pipe?.forEach { runCatching { it.close() } }
+            if (Looper.myLooper() == Looper.getMainLooper()) stopSession()
+            else main.post { if (pauseToken == token) stopSession() }
+        }
+    }
+
     fun offer(start: Double, pcm: ShortArray, generation: Long, boundary: Long, voiced: Boolean) {
-        if (!running || failed) return
+        if (!running || failed || probePaused) return
         if (!lastOffered.isFinite() && queue.isEmpty() && !voiced) return
         lastOffered = start
         if (!queue.offer(Frame(start, pcm.copyOf(), generation, boundary, voiced))) {

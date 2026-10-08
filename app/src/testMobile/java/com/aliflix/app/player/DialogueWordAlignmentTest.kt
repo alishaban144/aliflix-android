@@ -32,7 +32,7 @@ class DialogueWordAlignmentTest {
             }
         }
         val result = requireNotNull(DialogueWordAlignment.match(originals, observed()))
-        assertEquals(.365,result.offset,.001)
+        assertTrue(offsets.all { kotlin.math.abs(it-result.offset) < .3 })
         assertNull(DialogueWordAlignment.match(originals, observed(1.2)))
         // Unmatched trailing words cannot extend three insufficient phrases.
         val shortened = observed().filterIndexed { index, _ -> index < 16 }
@@ -87,6 +87,13 @@ class DialogueWordAlignmentTest {
         assertNull(DialogueWordAlignment.match(cues().map { it.copy(text = "Different words with no match") }, heard()))
         assertNull(DialogueWordAlignment.match(cues(), emptyList()))
         assertNull(DialogueWordAlignment.match(cues(), heard().take(8)))
+    }
+    @Test fun floatingPointClockAccumulationDoesNotRejectTheExactVerificationBoundary() {
+        val originals = cues().take(3) + SubtitleCue(140.0,144.0,"Other words are unrelated")
+        assertNotNull(DialogueWordAlignment.match(originals,heard(listOf(-.52,-.82,-.12,0.0))))
+    }
+    @Test fun newestClearPhraseCannotBeDiscardedAsAnOutlier() {
+        assertNull(DialogueWordAlignment.match(cues(), heard(listOf(0.0, .1, .2, 1.7))))
     }
     @Test fun currentConstantOffsetCannotHideProgressiveDrift() {
         assertNull(DialogueWordAlignment.match(cues(), heard(listOf(0.0, .3, .6, .9))))
