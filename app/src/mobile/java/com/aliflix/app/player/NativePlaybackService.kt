@@ -59,6 +59,7 @@ import java.net.Inet4Address
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
+    private var startupVolume: Float? = null
     private lateinit var localPlayer: ExoPlayer
     private lateinit var player: Player
     private val httpFactory = DefaultHttpDataSource.Factory()
@@ -160,7 +161,11 @@ class NativePlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         localPlayer.addListener(object : Player.Listener {
-            override fun onRenderedFirstFrame() { renderedStreamUrl = activeStreamUrl; PlaybackStartupTiming.mark("first_frame") }
+            override fun onRenderedFirstFrame() {
+                renderedStreamUrl = activeStreamUrl
+                releaseStartupMute()
+                PlaybackStartupTiming.mark("first_frame")
+            }
         })
         player = runCatching {
             CastPlayer.Builder(this).setLocalPlayer(localPlayer)
@@ -205,6 +210,9 @@ class NativePlaybackService : MediaSessionService() {
                 }
                 playbackFailure = player.playerError
                 hasSelectedAudio = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
+                if (playbackReady && hasSelectedAudio && player.currentTracks.groups.none { it.type == C.TRACK_TYPE_VIDEO }) {
+                    releaseStartupMute() // Audio-only media has no first-frame callback.
+                }
                 updateWifiLock()
                 updateDisplay()
                 if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) || events.contains(Player.EVENT_IS_PLAYING_CHANGED) || events.contains(Player.EVENT_POSITION_DISCONTINUITY) || events.contains(Player.EVENT_DEVICE_INFO_CHANGED)) saveProgress(true)
@@ -366,11 +374,19 @@ class NativePlaybackService : MediaSessionService() {
         }
         originalItem = itemBuilder.build()
         cineJoyRecovery.reset(next.offlineDownloadId.isBlank() && next.referer == CineJoyNativeCatalog.REFERER)
+        // Even direct/offline requests cannot emit local sound ahead of the first video frame.
+        startupVolume = startupVolume ?: localPlayer.volume
+        localPlayer.volume = 0f
         player.setMediaItem(checkNotNull(originalItem), next.positionMs)
         PlaybackStartupTiming.mark("media3_prepare")
         player.prepare()
         player.playWhenReady = next.playing
         updateDisplay()
+    }
+
+    private fun releaseStartupMute() {
+        startupVolume?.let { localPlayer.volume = it }
+        startupVolume = null
     }
 
     private fun applySavedAudioChoice(tracks: androidx.media3.common.Tracks) {

@@ -78,6 +78,7 @@ internal class NativeStreamResolver(
                 selection, positionMs, excluded, preferredServer,
                 onServers, strictPreferredServer,
                 lowQuality = forceLowQuality || (activity.application as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality == PreferredVideoQuality.LOW,
+                validate = { request -> if (validateSingle && !strictPreferredServer) StartupStreamCache.awaitPlayable(activity, request) },
                 onServer = onServer,
             ).also { close() }
         }

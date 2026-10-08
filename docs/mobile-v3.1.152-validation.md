@@ -94,20 +94,61 @@ The compact Next episode / Watch credits pattern adapts the selected
 [Netflix UI reference](https://medium.com/@karinsuvaryan/ui-ux-case-study-netflix-81ae5a7d1563)
 to Aliflix surfaces, without a thumbnail and with the existing soft ring. Measured
 video and caption bounds plus safe insets separate the portrait card from the
-video and screen bottom. Landscape places it above player controls.
+video and screen bottom. Landscape places it above the timeline and hides the
+central seek controls while the offer is visible, avoiding overlapping actions.
 
 Physical portrait/landscape screenshots and large-caption tests verify its bounds.
-Credits dismissal, autoplay-disabled visibility, IntroDB timing and single episode
-advancement retain focused instrumentation coverage.
+IntroDB outro start timing remains supported. Without a valid marker, a final
+window (up to 30 seconds, scaled for short episodes) offers the next episode.
+The offer persists beyond marker expiration and in the ended state when autoplay
+is disabled. Watch credits cancels it for the current episode; advancement remains
+single-shot. Season metadata refresh supplies the following season, while the
+final episode has no successor and no offer. Physical and emulator tests cover
+missing markers, marker expiration, ended state, cancellation and the final episode.
+
+The final landscape polish also passes all four targeted physical Up Next/silence
+checks. The final fully minified candidate repeats all three Terminator scenes twice:
+six accepted corrections, worst cue error 363 ms, analysis completion 233-339 ms.
+Manual delay and Reset remain intact. The final minified second-title check has
+70 ms maximum cue error and 262 ms analysis; its English/French/English track and
+forward/backward seek test rejects unrelated captions in 132 ms without false success.
+
+## Silent details preparation and playback startup
+
+Details starts four bounded provider attempts, retaining the in-progress session
+when Play claims the exact title/episode/source/resume position. Unclaimed sessions
+cancel on lifecycle exit; transferred sessions cancel on foreground cancellation
+or the bounded handoff timeout. A complete source preparation survives handoff.
+The former eight-second Flixer head start no longer delays other providers.
+
+CineJoy previously won on a catalogue playlist before its media could play.
+Its server race now verifies playable media before winning speculative discovery,
+using the same fragment/audio/manifest wrappers and source-owned credentials as
+native playback. Pinned recovery retains its existing route retry behavior.
+
+Resolver hosts are invisible and excluded from focus/accessibility. Native resolver
+WebViews are muted before navigation through AndroidX MUTE_AUDIO where supported;
+a document-start media/WebAudio guard supplies the older-WebView fallback. Provider
+scripts cannot unmute preparation. Native startup remains paused until the matching
+request renders a first frame; direct requests are also muted until video renders.
+Audio-only requests release the gate at track readiness.
+
+On the physical Pixel, Undone S1E1 now reuses its details preparation: first frame
+at 2,369 ms and ready playing UI at 2,974 ms after Play, after about two seconds on
+details. The test verifies no native playback during details, no playing audio
+behind preparation, and continued playback after a distant seek. Provider silence
+also passes a page that explicitly sets muted=false and volume=1. External provider
+availability and latency remain variable.
 
 ## Release gates
 
 Mobile unit tests, lint, debug/test assembly and full R8 benchmark assembly run
-locally: 466 unit cases, zero failures/errors, three optional host cases skipped;
-lint has zero errors, 103 warnings and four hints. All 16 focused physical checks
+locally: 473 unit cases, zero failures/errors, three optional host cases skipped;
+lint has zero errors, 109 warnings and four hints. All 18 focused physical checks
 passed on the Pixel: 11 download UI cases, three offline cases, Skip/IntroDB and
-Up Next. This includes episode Retry without anchor rediscovery. The 11-case
-download suite plus Up Next also passed on the local API 35 emulator.
+Up Next (with and without metadata), and provider silence. This includes episode
+Retry without anchor rediscovery. The same 18-case suite passed on the local API 35
+emulator.
 The rotation test invalidates the
 Android accessibility cache before reading the current rendered Compose tree;
 its geometry and interaction assertions remain enforced.

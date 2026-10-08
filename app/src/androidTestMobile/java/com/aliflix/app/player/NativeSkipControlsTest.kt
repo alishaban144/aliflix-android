@@ -21,13 +21,15 @@ class NativeSkipControlsTest {
         lateinit var player: ForwardingPlayer
         var position = 11_999L
         val revision = mutableIntStateOf(0)
+        val episode = mutableIntStateOf(1)
+        var playbackState = Player.STATE_READY
         compose.runOnUiThread {
             engine = ExoPlayer.Builder(InstrumentationRegistry.getInstrumentation().targetContext).build()
             player = object : ForwardingPlayer(engine) {
                 override fun getDuration() = 90_000L
                 override fun getCurrentPosition() = position
                 override fun isCurrentMediaItemSeekable() = true
-                override fun getPlaybackState() = Player.STATE_READY
+                override fun getPlaybackState() = playbackState
                 override fun getPlayWhenReady() = false
                 override fun getMediaItemCount() = 1
                 override fun seekTo(positionMs: Long) { position = positionMs; revision.intValue++ }
@@ -43,11 +45,11 @@ class NativeSkipControlsTest {
                         episodes = listOf(
                             com.aliflix.app.model.Episode(1, 2, "Episode two"),
                         ),
-                        episodeNumber = 1,
+                        episodeNumber = episode.intValue,
                         playbackSelection = com.aliflix.app.model.PlaybackSelection(
                             media = com.aliflix.app.model.Media(1396, com.aliflix.app.model.MediaType.TV, "Series"),
                             seasonNumber = 1,
-                            episodeNumber = 1,
+                            episodeNumber = episode.intValue,
                         ),
                         segments = listOf(IntroSegment(IntroSegmentKind.INTRO, 12000, 34000), IntroSegment(IntroSegmentKind.OUTRO, 70000, 80000))
                     ),
@@ -66,7 +68,13 @@ class NativeSkipControlsTest {
             compose.onNodeWithText("Skip outro").assertDoesNotExist()
             compose.onNodeWithText("UP NEXT").assertIsDisplayed()
             compose.runOnIdle { position = 80_000; revision.intValue++ }
+            compose.onNodeWithText("UP NEXT").assertIsDisplayed()
+            compose.runOnIdle { position = 90_000; playbackState = Player.STATE_ENDED; revision.intValue++ }
+            compose.onNodeWithText("UP NEXT").assertIsDisplayed()
+            compose.onNodeWithText("Watch credits").performClick()
             compose.onNodeWithText("UP NEXT").assertDoesNotExist()
+            compose.runOnIdle { episode.intValue = 2; revision.intValue++ }
+            compose.onNodeWithText("UP NEXT").assertDoesNotExist() // The last episode has no successor.
         } finally { compose.runOnUiThread { engine.release() } }
     }
 }

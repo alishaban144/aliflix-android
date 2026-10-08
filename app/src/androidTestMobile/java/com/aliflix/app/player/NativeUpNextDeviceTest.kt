@@ -15,7 +15,10 @@ import java.io.File
 
 /** Real video/subtitle geometry, safe areas and credits dismissal, without external providers. */
 class NativeUpNextDeviceTest {
-    @Test fun floatingActionsStayBelowPortraitCaptionsAndAboveLandscapeControls() {
+    @Test fun floatingActionsStayBelowPortraitCaptionsAndAboveLandscapeControls() = checkFloatingActions(true)
+    @Test fun everyEpisodeOffersNextWithoutAnOutroMarkerAndAtTheEnd() = checkFloatingActions(false)
+
+    private fun checkFloatingActions(withMarker: Boolean) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         grantNativeFixtureNetworkPermission()
@@ -27,7 +30,8 @@ class NativeUpNextDeviceTest {
             1, 1, "First episode", availableEpisodes = listOf(Episode(1, 1, "First episode"), Episode(1, 2, "The next chapter")))
         val marker = File(context.cacheDir, "introdb-v1/tt999999999-1-1.json").apply {
             parentFile!!.mkdirs()
-            writeText("""{"imdb_id":"tt999999999","season":1,"episode":1,"outro":{"start_ms":1000,"end_ms":9000}}""")
+            writeText(if (withMarker) """{"imdb_id":"tt999999999","season":1,"episode":1,"outro":{"start_ms":1000,"end_ms":9000}}"""
+                else """{"imdb_id":"tt999999999","season":1,"episode":1,"outro":null}""")
         }
         val server = NativeBackgroundPlaybackTest.FixtureServer(instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() })
         val request = NativePlaybackRequest(server.url, "video/mp4", "https://fixture.aliflix.test/", "Aliflix test", "", selection.media.title,
@@ -50,14 +54,16 @@ class NativeUpNextDeviceTest {
         }
         try {
             ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", payload.name), nativePhoneLaunchOptions()).use { scenario ->
-                await { var ready = false; scenario.onActivity { ready = it.playbackUiState.ready && it.playbackUiState.segments.isNotEmpty() }; ready }
+                await { var ready = false; scenario.onActivity { ready = it.playbackUiState.ready && (!withMarker || it.playbackUiState.segments.isNotEmpty()) }; ready }
                 // Readiness and marker loading can precede the initial seek on
                 // a slower decoder. Freeze explicitly inside the real outro.
-                scenario.onActivity { it.playbackController!!.pause(); it.playbackController!!.seekTo(3000) }
+                scenario.onActivity { it.playbackController!!.pause(); it.playbackController!!.seekTo(
+                    if (withMarker) 3000 else it.playbackController!!.duration - 500) }
                 await { var inside = false; scenario.onActivity {
                     val position = it.playbackController!!.currentPosition
                     inside = it.playbackController!!.playbackState == androidx.media3.common.Player.STATE_READY &&
-                        it.playbackUiState.segments.any { segment -> segment.kind == IntroSegmentKind.OUTRO && position in segment.startMs until segment.endMs }
+                        (if (withMarker) it.playbackUiState.segments.any { segment -> segment.kind == IntroSegmentKind.OUTRO && position in segment.startMs until segment.endMs }
+                        else position >= requireNotNull(upNextWindowStart(it.playbackController!!.duration, emptyList())))
                 }; inside }
                 for ((name, orientation) in listOf("portrait" to ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, "landscape" to ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)) {
                     scenario.onActivity { it.requestedOrientation = orientation }
@@ -75,6 +81,11 @@ class NativeUpNextDeviceTest {
                     instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
                         File(output, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
                     }
+                }
+                if (!withMarker) {
+                    scenario.onActivity { it.playbackController!!.seekTo(it.playbackController!!.duration); it.playbackController!!.play() }
+                    await { var ended = false; scenario.onActivity { ended = it.playbackController!!.playbackState == androidx.media3.common.Player.STATE_ENDED }; ended }
+                    await { node("Next episode") != null }
                 }
                 var action = requireNotNull(node("Watch credits"))
                 while (!action.isClickable && action.parent != null) action = action.parent

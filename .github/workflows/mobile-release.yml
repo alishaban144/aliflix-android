@@ -83,7 +83,7 @@ jobs:
           chmod +x gradlew
       - name: Verify phone playback
         env:
-          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
+          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest,com.aliflix.app.player.NativeResolverSilenceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
         run: bash .github/scripts/test-phone-casting.sh '${{ matrix.api-level }}'
       - name: Upload playback test reports
         if: always()

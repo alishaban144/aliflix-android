@@ -450,7 +450,7 @@ class WebPlayerController(
         playerVisible = visible
         if (!visible && (customView != null || nativeFullscreenRequested)) {
             hideCustomView()
-        } else {
+        } else if (!nativePreparation) {
             setSystemBarsVisible(activity, !visible)
         }
         webView?.let {
@@ -458,7 +458,7 @@ class WebPlayerController(
             if (visible) {
                 it.onResume()
                 it.resumeTimers()
-                it.requestFocus()
+                if (!nativePreparation) it.requestFocus()
             } else {
                 it.onPause()
             }
@@ -1019,6 +1019,9 @@ class WebPlayerController(
             }
         }.apply {
             setBackgroundColor(Color.BLACK)
+            if (nativePreparation && !BuildConfig.IS_TV && WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) {
+                WebViewCompat.setAudioMuted(this, true)
+            }
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER

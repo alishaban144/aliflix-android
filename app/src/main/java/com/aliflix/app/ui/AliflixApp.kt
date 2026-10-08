@@ -5541,8 +5541,10 @@ private fun EpisodeRow(
                         lineHeight = 21.sp,
                     )
                 }
-                val ratings = episodeRatingsPresentation(episode)
-                EpisodeRatingPill(source = "IMDb", value = ratings.imdb, accent = Color(0xFFF5C518))
+                if (BuildConfig.IS_TV) {
+                    val ratings = episodeRatingsPresentation(episode)
+                    EpisodeRatingPill(source = "IMDb", value = ratings.imdb, accent = Color(0xFFF5C518))
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),

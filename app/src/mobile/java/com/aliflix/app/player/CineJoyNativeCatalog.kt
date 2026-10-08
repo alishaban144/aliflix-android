@@ -182,6 +182,7 @@ internal object CineJoyNativeCatalog {
         strictPreferredServer: Boolean = false,
         lowQuality: Boolean = false,
         userAgent: String = USER_AGENT,
+        validate: suspend (NativePlaybackRequest) -> Unit = {},
         onServer: (String) -> Unit,
     ): NativePlaybackRequest = withContext(Dispatchers.IO) {
         if (strictPreferredServer) require(!preferredServer.isNullOrBlank()) { "A server is required for pinned preparation." }
@@ -235,7 +236,9 @@ internal object CineJoyNativeCatalog {
                     preferredVideoWidth = video?.width ?: 0,
                     preferredVideoHeight = video?.height ?: 0,
                 )
-                // Catalogue-only preparation never loads the website, scripts or popups.
+                // A foreground/preload race must verify usable media before this server wins.
+                // Pinned recovery can still use the catalogue without a speculative gate.
+                validate(request)
                 server to request
             } }, parallelism = 2)
         } catch (error: Exception) {

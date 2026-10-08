@@ -145,7 +145,12 @@ class NativePlayerActivity : FragmentActivity() {
         val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
         playerRoot = root
         root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateSubtitlePadding() }
-        resolverHost = FrameLayout(this).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS }
+        resolverHost = FrameLayout(this).apply {
+            alpha = 0f
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        }
         root.addView(resolverHost, FrameLayout.LayoutParams(-1, -1))
         receiverButton = androidx.mediarouter.app.MediaRouteButton(this).apply {
             visibility = View.INVISIBLE; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -366,7 +371,32 @@ class NativePlayerActivity : FragmentActivity() {
         intent.putExtra("selection", selection!!.nativeJson())
         exhaustedSources.clear(); triedServers.clear()
         recoveryCount = 0
+        loadEpisodeQueue()
         prepareSelection()
+    }
+
+    private fun loadEpisodeQueue() {
+        val current = selection?.takeIf { it.media.type == com.aliflix.app.model.MediaType.TV } ?: return
+        episodeQueueJob?.cancel()
+        episodeQueueJob = lifecycleScope.launch {
+            try {
+                val repository = com.aliflix.app.data.MobileEpisodeRepository(this@NativePlayerActivity,
+                    com.aliflix.app.recommendation.RecommendationAiClient(com.aliflix.app.BuildConfig.RECOMMENDATION_AI_BASE_URL))
+                val season = current.seasonNumber ?: 1
+                val episodes = repository.episodes(current.media.id, season)
+                fun merge(additions: List<Episode>) {
+                    val selected = selection?.takeIf { it.media.key == current.media.key } ?: return
+                    selection = selected.copy(availableEpisodes = (selected.availableEpisodes.filterNot { old ->
+                        additions.any { it.seasonNumber == old.seasonNumber && it.number == old.number }
+                    } + additions).sortedWith(compareBy({ it.seasonNumber }, { it.number })))
+                    updateSelectionUi()
+                }
+                merge(episodes)
+                val followingSeason = repository.seasons(current.media.id)
+                    .firstOrNull { it.number > season && it.episodeCount > 0 }
+                if (followingSeason != null) merge(repository.episodes(current.media.id, followingSeason.number))
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+        }
     }
 
     private fun activeSelectionKey() = NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it).key }.getOrNull() }
@@ -375,18 +405,7 @@ class NativePlayerActivity : FragmentActivity() {
         selection = intent.getStringExtra("selection")?.let { runCatching { nativeSelection(it) }.getOrNull() }
             ?: NativePlaybackService.activeRequest?.selectionJson?.let { runCatching { nativeSelection(it) }.getOrNull() }
         updateSelectionUi()
-        if (selection?.media?.type == com.aliflix.app.model.MediaType.TV && selection?.availableEpisodes.orEmpty().let { it.isEmpty() || it.any { episode -> episode.stillPath.isNullOrBlank() } }) {
-            val current = checkNotNull(selection)
-            episodeQueueJob?.cancel()
-            episodeQueueJob = lifecycleScope.launch {
-                try {
-                    val repository = com.aliflix.app.data.MobileEpisodeRepository(this@NativePlayerActivity,
-                        com.aliflix.app.recommendation.RecommendationAiClient(com.aliflix.app.BuildConfig.RECOMMENDATION_AI_BASE_URL))
-                    val episodes = repository.episodes(current.media.id, current.seasonNumber ?: 1)
-                    if (selection?.key == current.key) { selection = current.copy(availableEpisodes = (current.availableEpisodes.filterNot { old -> episodes.any { it.seasonNumber == old.seasonNumber && it.number == old.number } } + episodes).sortedWith(compareBy({ it.seasonNumber }, { it.number }))); updateSelectionUi() }
-                } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
-            }
-        }
+        loadEpisodeQueue()
         if (requestAccepted) {
             if (selection != null && activeSelectionKey() != selection?.key) prepareSelection()
             return
@@ -547,10 +566,11 @@ class NativePlayerActivity : FragmentActivity() {
             controller?.pause()
             preparation = lifecycleScope.launch {
                 try {
-                    val attempt = startNative(saved.copy(positionMs = resume, playing = true, selectionJson = selection!!.nativeJson()))
+                    val attempt = startNative(saved.copy(positionMs = resume, playing = false, selectionJson = selection!!.nativeJson()))
                     awaitNativeReady(saved.url, attempt)
                     ui = ui.copy(stage = null, ready = true, error = null)
                     reconcileSyncedCaptions()
+                    controller?.play()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
                     controller?.pause()
@@ -627,7 +647,7 @@ class NativePlayerActivity : FragmentActivity() {
                 var preferSaved = preferredServer != null || (savedProvider != null && !animeSeries)
                 if (detailWarm == null && savedRoute?.request != null && triedServers.isEmpty()) {
                     val restored = savedRoute.selection
-                    val request = savedRoute.request.copy(positionMs = resume, playing = true,
+                    val request = savedRoute.request.copy(positionMs = resume, playing = false,
                         selectionJson = restored.nativeJson(), preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase())
                     try {
                         ui = ui.copy(server = savedRoute.server)
@@ -663,12 +683,8 @@ class NativePlayerActivity : FragmentActivity() {
                     val warmed = detailWarm ?: warmedEpisode?.takeIf { it.first.key == current.key && preferredServer == null && android.os.SystemClock.elapsedRealtime() - warmedAt < 120_000 }?.let { it.copy(third = it.third.copy(positionMs = resume)) }
                     detailWarm = null
                     warmedEpisode = null
-                    val preferredFlixerFinished = CompletableDeferred<Unit>()
-                    val flixerFirst = candidates.first().source.identity == MobilePlaybackProvider.FLIXER
                     val winner = try {
                         warmed ?: firstSuccessful(batch.map { candidate -> suspend {
-                            // Give Flixer's own fast server race a head start, then race alternatives.
-                            if (flixerFirst && candidate != candidates.first()) withTimeoutOrNull(8_000) { preferredFlixerFinished.await() }
                             val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                             var server = ""
                             val excluded = excludedBySource.getOrPut(candidate.source.identity) { mutableSetOf() }
@@ -704,10 +720,9 @@ class NativePlayerActivity : FragmentActivity() {
                                 if (!strictPreferredServer) exhaustedSources.add(candidate.source.identity)
                                 throw error
                             } finally {
-                                if (candidate.source.identity == MobilePlaybackProvider.FLIXER) preferredFlixerFinished.complete(Unit)
                                 adapter.close()
                             }
-                        } }, parallelism = 2)
+                        } }, parallelism = 4)
                     } catch (error: Exception) { ensureActive(); return@repeat }
                     val (candidate, server, resolved) = winner
                     selection = candidate.copy(availableEpisodes = selection?.availableEpisodes?.takeUnless { it.isEmpty() } ?: candidate.availableEpisodes)
@@ -718,7 +733,7 @@ class NativePlayerActivity : FragmentActivity() {
                     hideSystemBars()
                     PlaybackStartupTiming.mark("stream_resolved")
                     try {
-                        val attempt = startNative(resolved.copy(playing = true, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
+                        val attempt = startNative(resolved.copy(playing = false, preferEmbeddedSubtitles = auto, subtitleLanguage = language.lowercase()))
                         awaitNativeReady(resolved.url, attempt)
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                             runCatching { routeStore.save(candidate, server, resolved) }

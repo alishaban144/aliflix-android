@@ -27,6 +27,9 @@ class NativeProviderPlaybackTest {
         val selections = if (timingTitles) listOf(
             PlaybackSelection(Media(1339713, MediaType.MOVIE, "Obsession", year = "2026"), source = PlaybackSource.moviepire()),
             PlaybackSelection(Media(1233413, MediaType.MOVIE, "Sinners", year = "2025"), source = PlaybackSource.moviepire()),
+        ) else if (InstrumentationRegistry.getArguments().getString("liveTitle") == "undone") listOf(
+            PlaybackSelection(Media(86340, MediaType.TV, "Undone", year = "2019", imdbId = "tt8101850"), 1, 1, "The Crash",
+                source = PlaybackSource(MobilePlaybackProvider.FLIXER))
         ) else if (InstrumentationRegistry.getArguments().getString("liveTitle") == "got") listOf(
             PlaybackSelection(Media(1399, MediaType.TV, "Game of Thrones"), 1, 1, "Winter Is Coming",
                 source = PlaybackSource(PlaybackProviderId.MOVIEPIRE, "https://moviepire.ru"))
@@ -62,6 +65,9 @@ class NativeProviderPlaybackTest {
                         File(output, "provider-$index.txt").appendText("$stage\n")
                         android.util.Log.i("AliflixProviderTest", "$index $stage")
                         last = stage
+                    }
+                    if (state.stage != null) scenario.onActivity {
+                        assertFalse("Audio must not play behind preparation", it.playbackController?.isPlaying == true)
                     }
                     if (state.error != null) break
                     if (state.ready && state.stage == null) {

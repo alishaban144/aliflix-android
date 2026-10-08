@@ -71,6 +71,19 @@ internal fun preferredNativeEmbeds(selection: PlaybackSelection): List<Pair<Stri
 /** Runs only in the temporary resolver, on approved origins; destroyed after handoff. */
 internal fun nativePreparationScript(): String = """
     (() => {
+      // Fallback for WebView providers without MUTE_AUDIO, installed before page scripts.
+      for (const [name, value] of [['muted', true], ['volume', 0]]) {
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, name);
+        if (descriptor && descriptor.configurable) {
+          Object.defineProperty(HTMLMediaElement.prototype, name, {
+            configurable: true, get() { return value; },
+            set(_) { descriptor.set.call(this, value); }
+          });
+        }
+      }
+      for (const type of [window.AudioContext, window.webkitAudioContext]) {
+        if (type) type.prototype.resume = function() { return Promise.resolve(); };
+      }
       const deadline = Date.now() + 45000;
       const clicked = new WeakMap();
       const host = location.hostname;

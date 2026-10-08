@@ -10,96 +10,108 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.data.playbackProgressKey
 import com.aliflix.app.model.*
 import kotlinx.coroutines.*
 
-/** One details-owned request. No playback service, audio focus, or history writes. */
+/** A muted preparation can transfer from details to Play without restarting its requests. */
 internal object DetailPreloadStore {
-    data class Entry(val owner: Any, val selection: PlaybackSelection, val server: String,
-        val request: NativePlaybackRequest, val at: Long = SystemClock.elapsedRealtime())
-    var ready: Entry? = null
-    var claimed: Entry? = null
-    var cancel: (() -> Unit)? = null
-    fun take(selection: PlaybackSelection, positionMs: Long): Triple<PlaybackSelection, String, NativePlaybackRequest>? {
-        val entry = claimed.also { claimed = null } ?: return null
-        if (playbackProgressKey(entry.selection) != playbackProgressKey(selection) ||
-            entry.selection.source.identity != selection.source.identity ||
-            SystemClock.elapsedRealtime() - entry.at > 120_000 ||
-            kotlin.math.abs(entry.request.positionMs - positionMs) > 3_000) return null
-        val selected = entry.selection.copy(media = selection.media, availableEpisodes = selection.availableEpisodes)
-        return Triple(selected, entry.server, entry.request.copy(positionMs = positionMs, selectionJson = selected.nativeJson()))
+    data class Entry(val selection: PlaybackSelection, val server: String, val request: NativePlaybackRequest)
+    class Session(val selection: PlaybackSelection, val positionMs: Long, val scope: CoroutineScope) {
+        val at = SystemClock.elapsedRealtime()
+        lateinit var result: Deferred<Entry?>
+        var transferred = false
+        fun matches(other: PlaybackSelection) = playbackProgressKey(selection) == playbackProgressKey(other) &&
+            selection.source == other.source && SystemClock.elapsedRealtime() - at < 120_000
+        fun cancel() = scope.cancel()
+    }
+    var current: Session? = null
+    var claimed: Session? = null
+
+    suspend fun take(selection: PlaybackSelection, positionMs: Long): Triple<PlaybackSelection, String, NativePlaybackRequest>? {
+        val session = claimed.also { claimed = null } ?: return null
+        try {
+            if (!session.matches(selection) || kotlin.math.abs(session.positionMs - positionMs) > 3_000) return null
+            // Providers are already racing. Keep a bounded handoff rather than discard their progress.
+            val entry = withTimeoutOrNull(12_000) { session.result.await() } ?: return null
+            val selected = entry.selection.copy(media = selection.media, availableEpisodes = selection.availableEpisodes)
+            PlaybackStartupTiming.mark("details_preload_reused")
+            return Triple(selected, entry.server, entry.request.copy(positionMs = positionMs, selectionJson = selected.nativeJson()))
+        } finally { session.cancel() }
     }
 }
 
 internal fun claimDetailPreload(selection: PlaybackSelection) {
-    DetailPreloadStore.claimed = DetailPreloadStore.ready?.takeIf {
-        playbackProgressKey(it.selection) == playbackProgressKey(selection) &&
-            it.selection.source.identity == selection.source.identity &&
-            SystemClock.elapsedRealtime() - it.at < 120_000
+    DetailPreloadStore.claimed?.cancel()
+    val session = DetailPreloadStore.current
+    DetailPreloadStore.current = null
+    if (session?.matches(selection) == true) {
+        session.transferred = true
+        DetailPreloadStore.claimed = session
+    } else {
+        session?.cancel()
+        DetailPreloadStore.claimed = null
     }
-    DetailPreloadStore.ready = null
-    DetailPreloadStore.cancel?.invoke()
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable internal fun DetailPlaybackPreload(media: Media, episode: Episode?, episodes: List<Episode>, enabled: Boolean) {
     val activity = LocalActivity.current as? ComponentActivity ?: return
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val progress = remember(activity) { PlaybackProgressStore(activity) }
-    val selection = remember(media.key, episode?.seasonNumber, episode?.number) {
-        PlaybackSelection(media, episode?.seasonNumber, episode?.number, episode?.title, episodes,
-            com.aliflix.app.data.PlaybackProviderRepository(activity).preferences.value.sourceFor(media))
+    val preferences = remember(activity) { com.aliflix.app.data.PlaybackProviderRepository(activity) }.preferences.collectAsState().value
+    val selection = remember(media.key, episode?.seasonNumber, episode?.number, preferences) {
+        PlaybackSelection(media, episode?.seasonNumber, episode?.number, episode?.title, episodes, preferences.sourceFor(media))
     }
-    LaunchedEffect(selection.key, enabled, lifecycle) {
+    LaunchedEffect(selection.key, selection.source, enabled, lifecycle) {
         if (!enabled || (media.type == MediaType.TV && episode == null)) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            val owner = Any()
-            val job = currentCoroutineContext().job
-            val cancel: () -> Unit = { job.cancel() }
-            DetailPreloadStore.cancel = cancel
+            val network = activity.getSystemService(android.net.ConnectivityManager::class.java)
+            val caps = network.getNetworkCapabilities(network.activeNetwork)
+            val offline = com.aliflix.app.downloads.OfflineDownloads.get(activity).manager.downloadIndex
+                .getDownload(playbackProgressKey(selection))
+            if (caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true ||
+                offline?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) return@repeatOnLifecycle
+            val progress = PlaybackProgressStore(activity)
+            val position = ((progress.progressFor(selection)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
             val parent = activity.findViewById<ViewGroup>(android.R.id.content)
             val host = FrameLayout(activity).apply {
                 alpha = 0f
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 isClickable = false
+                isFocusable = false
             }
             parent.addView(host, 0, ViewGroup.LayoutParams(-1, -1))
-            try {
-                val network = activity.getSystemService(android.net.ConnectivityManager::class.java)
-                val caps = network.getNetworkCapabilities(network.activeNetwork)
-                val offline = com.aliflix.app.downloads.OfflineDownloads.get(activity).manager.downloadIndex
-                    .getDownload(playbackProgressKey(selection))
-                if (caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) != true ||
-                    offline?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) return@repeatOnLifecycle
-                val position = ((PlaybackProgressStore(activity).progressFor(selection)?.takeUnless { it.completed }?.positionSeconds ?: 0.0) * 1000).toLong()
-                // Preload the selected source and preserve its own automatic server selection.
-                withTimeoutOrNull(30_000) {
-                    try {
-                        val adapter = NativeStreamResolver(activity, progress, host)
-                        val ready = try {
-                            var server = selection.source.identity.displayName
-                            val request = withTimeout(resolveBudgetMillis(selection.source.identity)) {
-                                adapter.resolve(selection, position, emptySet(), parallelism = 2) { server = it }
-                            }
-                            DetailPreloadStore.Entry(owner, selection, server, request)
-                        } finally { adapter.close() }
-                        ensureActive()
-                        DetailPreloadStore.ready = ready
-                    } catch (error: Exception) {
-                        // A failed speculative load must never affect details or foreground playback.
-                        currentCoroutineContext().ensureActive()
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val session = DetailPreloadStore.Session(selection, position, scope)
+            DetailPreloadStore.current?.cancel()
+            session.result = scope.async {
+                try {
+                    withTimeoutOrNull(30_000) {
+                        firstSuccessful(initialPlaybackRace(playbackSourceFallbacks(selection, preferences)).map { candidate -> suspend {
+                            val adapter = NativeStreamResolver(activity, progress, host)
+                            try {
+                                var server = candidate.source.identity.displayName
+                                val request = withTimeout(resolveBudgetMillis(candidate.source.identity)) {
+                                    adapter.resolve(candidate, position, emptySet(), parallelism = 2) { server = it }
+                                }
+                                DetailPreloadStore.Entry(candidate, server, request)
+                            } finally { adapter.close() }
+                        } }, parallelism = 4)
                     }
+                } catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    null
+                } finally {
+                    host.removeAllViews()
+                    parent.removeView(host)
                 }
-                awaitCancellation()
-            } finally {
-                if (DetailPreloadStore.ready?.owner === owner) DetailPreloadStore.ready = null
-                if (DetailPreloadStore.cancel === cancel) DetailPreloadStore.cancel = null
-                host.removeAllViews()
-                parent.removeView(host)
+            }
+            DetailPreloadStore.current = session
+            try { awaitCancellation() }
+            finally {
+                if (DetailPreloadStore.current === session) DetailPreloadStore.current = null
+                if (!session.transferred) session.cancel()
             }
         }
     }

@@ -304,21 +304,19 @@ internal fun NativePlayerScreen(
             .filter { it.seasonNumber > currentSeason || (it.seasonNumber == currentSeason && it.number > currentEpisode) }
             .minWithOrNull(compareBy<com.aliflix.app.model.Episode>({ it.seasonNumber }, { it.number }))
     } else null
-    val activeOutro = state.segments.firstOrNull {
-        it.kind == IntroSegmentKind.OUTRO && it.isActive(position, duration)
-    }
     val activeIntro = state.segments.firstOrNull {
         it.kind == IntroSegmentKind.INTRO && it.isActive(position, duration)
     }
 
-    // Up Next is a direct replacement for Skip outro: same IntroDB window, no autoplay dependency.
+    // Keep the offer through credits and the ended state, including titles without markers.
     var countdownCancelled by remember(state.playbackSelection?.key, state.episodeNumber) { mutableStateOf(false) }
     var episodeAdvanced by remember(state.playbackSelection?.key, state.episodeNumber) { mutableStateOf(false) }
     val remainingMs = duration - position
-    val showCountdown = next != null && activeOutro != null && !countdownCancelled && !episodeAdvanced && !ended && !preparing && state.error == null
-    val autoAdvanceArmed = settings.playNextEpisode && next != null &&
-        state.segments.any { it.kind == IntroSegmentKind.OUTRO && position >= it.startMs } &&
-        !countdownCancelled && !episodeAdvanced && !ended && !preparing && state.error == null
+    val nextWindowStart = upNextWindowStart(duration, state.segments)
+    val withinNextWindow = ended || (nextWindowStart != null && position >= nextWindowStart)
+    val showCountdown = next != null && withinNextWindow && !countdownCancelled &&
+        !episodeAdvanced && !preparing && state.error == null
+    val autoAdvanceArmed = settings.playNextEpisode && showCountdown && (playing || ended)
 
     LaunchedEffect(autoAdvanceArmed, remainingMs) {
         if (autoAdvanceArmed && remainingMs <= 1200 && next != null) {
@@ -609,7 +607,7 @@ internal fun NativePlayerScreen(
                         exit = androidx.compose.animation.slideOutVertically(tween(140)) { -it / 4 }),
                 )
 
-                if (!preparing && state.error == null) {
+                if (!preparing && state.error == null && !(isLandscape && showCountdown)) {
                     MobilePlayerCenterControls(
                         isPlaying = playing,
                         onPlayPause = {
@@ -718,8 +716,8 @@ internal fun NativePlayerScreen(
                             Text("E${next!!.number} · ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                         Box(contentAlignment = Alignment.Center) {
-                            val target = activeOutro?.let { marker ->
-                                ((marker.endMs - position).toFloat() / (marker.endMs - marker.startMs).coerceAtLeast(1L)).coerceIn(0f, 1f)
+                            val target = nextWindowStart?.let { start ->
+                                (remainingMs.toFloat() / (duration - start).coerceAtLeast(1L)).coerceIn(0f, 1f)
                             } ?: 0f
                             val ring by animateFloatAsState(target, tween(420, easing = FastOutSlowInEasing), label = "next-episode-ring")
                             CircularProgressIndicator(progress = { ring }, color = AliflixAccentPrimary,

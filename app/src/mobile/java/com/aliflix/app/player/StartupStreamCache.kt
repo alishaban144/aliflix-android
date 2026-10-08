@@ -39,8 +39,21 @@ internal object StartupStreamCache {
         val scoped = ResolvingDataSource.Factory(http) { spec ->
             request.resolveStreamSpec(spec)
         }
+        val fragments = androidx.media3.datasource.DataSource.Factory {
+            val source = scoped.createDataSource()
+            if (request.referer == CineJoyNativeCatalog.REFERER) CineJoyFragmentDataSource(source, request.url) else source
+        }
+        val playlists = androidx.media3.datasource.DataSource.Factory {
+            val source = fragments.createDataSource()
+            if (request.referer == CineJoyNativeCatalog.REFERER) CineJoyAudioPlaylistDataSource(source, request.url, fragments) else source
+        }
+        val upstream = factory(context, DefaultDataSource.Factory(context, playlists))
+        val media = androidx.media3.datasource.DataSource.Factory {
+            val source = upstream.createDataSource()
+            if (request.referer == CineJoyNativeCatalog.REFERER) CineJoyManifestDataSource(source, request) else source
+        }
         val player = ExoPlayer.Builder(context.applicationContext)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(factory(context, DefaultDataSource.Factory(context, scoped))))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(media).setLoadErrorHandlingPolicy(CineJoyLoadErrorPolicy { request.referer == CineJoyNativeCatalog.REFERER }))
             .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(1_000, 2_000, 250, 500).build()).build()
         try {
             player.volume = 0f
