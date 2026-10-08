@@ -57,18 +57,15 @@ if [ -n "${ALIFLIX_TEST_CLASSES:-}" ]; then
   adb -s emulator-5554 shell wm size 480x960
   adb -s emulator-5554 shell wm density 160
 fi
-if [ "$API" = 37.0 ]; then
-  # Use the same ADB installation/instrumentation path validated locally on Android 17.
-  ./gradlew assembleMobileDebug assembleMobileDebugAndroidTest --no-daemon --console=plain
+# Use the same installation/instrumentation path validated on the physical
+# phone and API 35 locally. Keep test files available for the exit-trap capture;
+# Gradle's connected-test cleanup uninstalls the app before they can be pulled.
+  ./gradlew :app:assembleMobileDebug :app:assembleMobileDebugAndroidTest --no-daemon --console=plain
   adb -s emulator-5554 install -r app/build/outputs/apk/mobile/debug/app-mobile-debug.apk
   adb -s emulator-5554 install -r app/build/outputs/apk/androidTest/mobile/debug/app-mobile-debug-androidTest.apk
   adb -s emulator-5554 shell am instrument -w -r -e class "$classes" \
     com.aliflix.app.test/androidx.test.runner.AndroidJUnitRunner | tee .validation/instrumentation.txt
   # am instrument can exit zero even when assertions fail. Require a completed successful test run.
   tr -d '\r' < .validation/instrumentation.txt | grep -Eq '^OK \([1-9][0-9]* tests?\)$'
-else
-  ./gradlew connectedMobileDebugAndroidTest \
-    -Pandroid.testInstrumentationRunnerArguments.class="$classes" --no-daemon --console=plain
-fi
 
 # The exit trap retains rendered screens and failure diagnostics on either result.

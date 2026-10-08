@@ -36,17 +36,29 @@ class NativeUpNextDeviceTest {
         val output = File(context.getExternalFilesDir(null), "up-next-validation").apply { mkdirs() }
         fun diagnostics(scenario: ActivityScenario<NativePlayerActivity>, phase: String) {
             scenario.onActivity {
-                File(output, "state-$phase.txt").writeText("${it.playbackUiState}\nposition=${it.playbackController?.currentPosition},duration=${it.playbackController?.duration}\n")
+                val state = "${it.playbackUiState}\nposition=${it.playbackController?.currentPosition},duration=${it.playbackController?.duration}\n"
+                File(output, "state-$phase.txt").writeText(state)
+                android.util.Log.i("UpNextGeometryTest", "$phase:$state")
             }
             instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
                 File(output, "screen-$phase.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
             }
             fun tree(node: AccessibilityNodeInfo?): String = if (node == null) "none" else "${node.text}|${node.contentDescription};" + (0 until node.childCount).joinToString("") { tree(node.getChild(it)) }
-            File(output, "tree-$phase.txt").writeText(tree(instrumentation.uiAutomation.rootInActiveWindow))
+            val rendered = tree(instrumentation.uiAutomation.rootInActiveWindow)
+            File(output, "tree-$phase.txt").writeText(rendered)
+            android.util.Log.i("UpNextGeometryTest", "$phase:$rendered")
         }
         try {
             ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", payload.name), nativePhoneLaunchOptions()).use { scenario ->
-                await { var ready = false; scenario.onActivity { ready = it.playbackUiState.ready && it.playbackUiState.segments.isNotEmpty(); if (ready) it.playbackController!!.pause() }; ready }
+                await { var ready = false; scenario.onActivity { ready = it.playbackUiState.ready && it.playbackUiState.segments.isNotEmpty() }; ready }
+                // Readiness and marker loading can precede the initial seek on
+                // a slower decoder. Freeze explicitly inside the real outro.
+                scenario.onActivity { it.playbackController!!.pause(); it.playbackController!!.seekTo(3000) }
+                await { var inside = false; scenario.onActivity {
+                    val position = it.playbackController!!.currentPosition
+                    inside = it.playbackController!!.playbackState == androidx.media3.common.Player.STATE_READY &&
+                        it.playbackUiState.segments.any { segment -> segment.kind == IntroSegmentKind.OUTRO && position in segment.startMs until segment.endMs }
+                }; inside }
                 for ((name, orientation) in listOf("portrait" to ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, "landscape" to ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)) {
                     scenario.onActivity { it.requestedOrientation = orientation }
                     try { await { node("Watch credits") != null && node("Next episode") != null } }
