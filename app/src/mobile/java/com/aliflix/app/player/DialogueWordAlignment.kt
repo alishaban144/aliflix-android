@@ -23,7 +23,7 @@ internal object DialogueWordAlignment {
         if (word.length > 5 && word.endsWith("s") && !word.endsWith("ss")) word.dropLast(1) else word
     }.toList()
     private data class Word(val text: String, val start: Double, val end: Double)
-    private data class Anchor(val cue: Int, val time: Double, val offset: Double, val weight: Int, val coverage: Double)
+    private data class Anchor(val cue: Int, val time: Double, val end: Double, val offset: Double, val weight: Int, val coverage: Double)
 
     fun match(cues: List<SubtitleCue>, heard: List<HeardWord>, speech: List<SpeechWindow> = emptyList(),
         diagnostic: (String) -> Unit = {}, cancelled: () -> Unit = {}): AudioSubtitleCorrection? {
@@ -83,12 +83,15 @@ internal object DialogueWordAlignment {
                     finalReliable -> endOffset
                     else -> continue
                 }
-                if (abs(offset) <= 600) anchors.add(Anchor(index, firstWord.start, offset, distinctiveMatched, coverage))
+                if (abs(offset) <= 600) anchors.add(Anchor(index, firstWord.start, finalWord.end, offset, distinctiveMatched, coverage))
             }
         }
         val candidates = anchors.map { seed ->
             anchors.filter { abs(it.offset - seed.offset) <= .55 }.distinctBy { it.cue }.sortedBy { it.time }
-        }.filter { it.size >= 3 && it.last().time - it.first().time >= 8 }
+        // Measure the complete matched dialogue, including the held-out phrase.
+        // Three consecutive phrases may span eight seconds even when their
+        // onsets are closer together. No unmatched trailing audio supplies span.
+        }.filter { it.size >= 3 && it.last().end - it.first().time >= 8 }
             .distinctBy { group -> group.map { it.cue } }
         diagnostic("word_anchors=$anchors") // Numeric timing and coverage only.
         data class Verified(val offset: Double, val weight: Int, val count: Int, val coverage: Double)

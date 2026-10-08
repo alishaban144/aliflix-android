@@ -20,6 +20,24 @@ class DialogueWordAlignmentTest {
     @Test fun laterIndependentPhraseMustAgree() {
         assertNull(DialogueWordAlignment.match(cues(8.0).take(3) + SubtitleCue(140.0, 144.0, "Other words are unrelated"), heard(listOf(.1, -.1, 1.5, 3.0))))
     }
+    @Test fun completeHeldOutPhraseCountsTowardTheMatchedDialogueSpan() {
+        val texts = listOf("Someone painted purple windows beside gardens", "Bright lanterns cover mountains above quiet rivers", "Several foxes crossed snowy fields beside silver boats")
+        val starts = listOf(100.0, 101.86, 105.52)
+        val offsets = listOf(.52, .21, -.05)
+        val originals = texts.mapIndexed { i, text -> SubtitleCue(starts[i], starts[i] + 4, text) } + SubtitleCue(140.0,144.0,"Other words are unrelated")
+        fun observed(lastOffset: Double = offsets.last()) = texts.flatMapIndexed { i, text ->
+            text.split(" ").mapIndexed { j, word ->
+                val offset = if (i == 2) lastOffset else offsets[i]
+                HeardWord(word,starts[i]+offset+j*.5,starts[i]+offset+j*.5+.4)
+            }
+        }
+        val result = requireNotNull(DialogueWordAlignment.match(originals, observed()))
+        assertEquals(.365,result.offset,.001)
+        assertNull(DialogueWordAlignment.match(originals, observed(1.2)))
+        // Unmatched trailing words cannot extend three insufficient phrases.
+        val shortened = observed().filterIndexed { index, _ -> index < 16 }
+        assertNull(DialogueWordAlignment.match(originals, shortened + HeardWord("Unrelated",120.0,120.4)))
+    }
     @Test fun pairedTrainingPhrasesUseTheMidpointAndAnIndependentLaterPhrase() {
         val actual = cues().take(3) + SubtitleCue(140.0, 144.0, "Other words are unrelated")
         val result = requireNotNull(DialogueWordAlignment.match(actual, heard(listOf(-.13, .72, .23, 0.0))))

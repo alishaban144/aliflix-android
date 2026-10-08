@@ -50,7 +50,9 @@ The action analyses existing played evidence, with a 1.8-second worker budget an
 200 ms presentation headroom. It does not wait for future dialogue, subtitle
 downloads or a whole-file scan. An optional installed Android on-device English
 recognizer supplies actual PCM word timestamps; native VAD/FFT remains available.
-Word fitting requires earlier phrases and independent later verification. Seek
+Word fitting requires earlier phrases and independent later verification. The
+matched duration includes the completed held-out phrase, rather than only phrase
+onsets; unrelated trailing audio cannot provide duration. Seek
 gaps, decode-ahead frames, stale identity/account revisions and competing clocks
 cannot commit. The automatic correction compensates the current manual delay;
 the slider stays unchanged and Reset preserves it.
@@ -64,12 +66,12 @@ original cues, running playback, persisted correction and Reset behavior.
 
 | Physical check | Injected offsets | Manual delay | Largest error | Tap to result |
 | --- | --- | --- | ---: | --- |
-| Native app, three scenes | +6.75 / âˆ’9.25 / +14.5 s | +9 s | 229 ms | 230â€“300 ms |
-| Native app, three scenes | âˆ’6.75 / +9.25 / âˆ’14.5 s | âˆ’9 s | 229 ms | 222â€“334 ms |
-| Final fully minified UI, three scenes | âˆ’9.25 / +6.75 / âˆ’14.5 s | âˆ’9 s | 229 ms | 219â€“271 ms |
+| Native app, three scenes | +6.75 / -9.25 / +14.5 s | +9 s | 229 ms | 230-300 ms |
+| Native app, three scenes | -6.75 / +9.25 / -14.5 s | -9 s | 229 ms | 222-334 ms |
+| Final fully minified UI, three scenes repeated twice | -9.25 / +6.75 / -14.5 s | -9 s | 259 ms | 240-276 ms |
 
 The separate fully minified Tears of Steel UI test corrected deliberately shifted
-official captions with 70 ms error in 382 ms. Native real-film checks cover Tears
+official captions with 70 ms error in 229 ms. Native real-film checks cover Tears
 of Steel and Elephants Dream, with no correction-induced seeks or rebuffer events.
 Silence, wrong-title captions and repeated patterns return actionable rejection;
 unit coverage separately enforces cancellation and the two-second deadline.
@@ -77,7 +79,7 @@ The fully minified annotated normal-speed speech fixture also verified a 25/24
 framerate mismatch through a fitted rate of 1.041216351 in 562 ms; every corrected
 cue must meet the 600 ms timestamp tolerance. A separate minified lifecycle check
 selected English / French / English audio, sought forward and backward, retained
-playing state and manual delay, and rejected unavailable dialogue in 82 ms.
+playing state and manual delay, and rejected unavailable dialogue in 123 ms.
 
 These measurements prove the tested audio/caption pairs and windows. They do not
 promise that every third-party subtitle edition or language can be matched. A
@@ -101,11 +103,12 @@ advancement retain focused instrumentation coverage.
 ## Release gates
 
 Mobile unit tests, lint, debug/test assembly and full R8 benchmark assembly run
-locally: 465 unit cases, zero failures/errors, three optional host cases skipped;
-lint has zero errors, 103 warnings and four hints. The final ten download UI cases
-passed on the Pixel, alongside three offline, Skip/IntroDB and Up Next checks.
-The additional episode Retry regression and final 11-case download suite plus
-Up Next passed on the local API 35 emulator. The rotation test invalidates the
+locally: 466 unit cases, zero failures/errors, three optional host cases skipped;
+lint has zero errors, 103 warnings and four hints. All 16 focused physical checks
+passed on the Pixel: 11 download UI cases, three offline cases, Skip/IntroDB and
+Up Next. This includes episode Retry without anchor rediscovery. The 11-case
+download suite plus Up Next also passed on the local API 35 emulator.
+The rotation test invalidates the
 Android accessibility cache before reading the current rendered Compose tree;
 its geometry and interaction assertions remain enforced.
 Focused physical checks are separate from compilation evidence. GitHub
