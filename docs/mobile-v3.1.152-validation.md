@@ -151,7 +151,12 @@ Retry without anchor rediscovery. The same 18-case suite passed on the local API
 emulator.
 The rotation test invalidates the
 Android accessibility cache before reading the current rendered Compose tree;
-its geometry and interaction assertions remain enforced.
+its geometry and interaction assertions remain enforced. On a fresh CI image,
+Android's first-fullscreen education overlay initially owned the accessibility
+window ("Viewing full screen" / "Got it"). The fixture now acknowledges that
+system prompt before reading app controls; no app assertion is waived. Clearing
+that setting on the temporary read-only emulator reproduces the CI condition, and
+the complete 18-case suite then passes with normal tutorial acknowledgement.
 Focused physical checks are separate from compilation evidence. GitHub
 runs mobile unit/lint and focused emulator regressions without test waivers,
 checks the production signer, ZIP integrity and mobile version consistency, and

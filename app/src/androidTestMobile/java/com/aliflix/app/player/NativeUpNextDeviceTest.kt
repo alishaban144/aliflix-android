@@ -67,7 +67,17 @@ class NativeUpNextDeviceTest {
                 }; inside }
                 for ((name, orientation) in listOf("portrait" to ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, "landscape" to ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)) {
                     scenario.onActivity { it.requestedOrientation = orientation }
-                    try { await { node("Watch credits") != null && node("Next episode") != null } }
+                    try { await {
+                        // A fresh Android image places first-fullscreen education above the
+                        // app. Acknowledge the system prompt just as a person would.
+                        node("Got it")?.let { prompt ->
+                            var action = prompt
+                            while (!action.isClickable && action.parent != null) action = action.parent
+                            assertTrue("Android fullscreen tutorial could not be dismissed",
+                                action.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                        }
+                        node("Watch credits") != null && node("Next episode") != null
+                    } }
                     catch (error: AssertionError) { diagnostics(scenario, name); throw error }
                     Thread.sleep(500)
                     val bounds = android.graphics.Rect().also { node("Watch credits")!!.getBoundsInScreen(it) }
