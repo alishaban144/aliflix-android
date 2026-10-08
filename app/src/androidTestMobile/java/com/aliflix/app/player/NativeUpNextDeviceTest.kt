@@ -18,7 +18,9 @@ class NativeUpNextDeviceTest {
     @Test fun floatingActionsStayBelowPortraitCaptionsAndAboveLandscapeControls() = checkFloatingActions(true)
     @Test fun everyEpisodeOffersNextWithoutAnOutroMarkerAndAtTheEnd() = checkFloatingActions(false)
 
-    private fun checkFloatingActions(withMarker: Boolean) {
+    @Test fun validOutroStartSurvivesADatabaseEndLaterThanTheStream() = checkFloatingActions(true, true)
+
+    private fun checkFloatingActions(withMarker: Boolean, overshootEnd: Boolean = false) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         grantNativeFixtureNetworkPermission()
@@ -30,7 +32,7 @@ class NativeUpNextDeviceTest {
             1, 1, "First episode", availableEpisodes = listOf(Episode(1, 1, "First episode"), Episode(1, 2, "The next chapter")))
         val marker = File(context.cacheDir, "introdb-v1/tt999999999-1-1.json").apply {
             parentFile!!.mkdirs()
-            writeText(if (withMarker) """{"imdb_id":"tt999999999","season":1,"episode":1,"outro":{"start_ms":1000,"end_ms":9000}}"""
+            writeText(if (withMarker) """{"imdb_id":"tt999999999","season":1,"episode":1,"outro":{"start_ms":1000,"end_ms":${if (overshootEnd) 120000 else 9000}}}"""
                 else """{"imdb_id":"tt999999999","season":1,"episode":1,"outro":null}""")
         }
         val server = NativeBackgroundPlaybackTest.FixtureServer(instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() })

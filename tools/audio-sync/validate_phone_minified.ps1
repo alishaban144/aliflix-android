@@ -7,6 +7,7 @@ param(
     [switch]$FramerateMismatch,
     [switch]$RealFilm,
     [switch]$Terminator,
+    [switch]$AutomaticTerminator,
     [switch]$BuildDriverOnly,
     [switch]$PlaybackLifecycle,
     [ValidateRange(0,2)][int]$SceneIndex = 0
@@ -40,7 +41,9 @@ $adb = if ($AdbPath) { $AdbPath } else { Join-Path $SdkPath 'platform-tools/adb.
 Confirm-Command
 & $adb -s $Serial shell pm grant com.aliflix.app android.permission.ACCESS_LOCAL_NETWORK
 if ($BuildDriverOnly) { return }
-if ($PlaybackLifecycle) {
+if ($AutomaticTerminator) {
+    & $adb -s $Serial shell am instrument -w -e automaticTerminator true com.aliflix.validation/com.aliflix.validation.MinifiedDriver
+} elseif ($PlaybackLifecycle) {
     & $adb -s $Serial shell am instrument -w -e lifecycle true com.aliflix.validation/com.aliflix.validation.MinifiedDriver
 } elseif ($Terminator) {
     & $adb -s $Serial shell am instrument -w -e terminator true -e sceneIndex $SceneIndex com.aliflix.validation/com.aliflix.validation.MinifiedDriver

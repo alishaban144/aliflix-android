@@ -18,9 +18,10 @@ public final class MinifiedDriver extends Instrumentation {
     private boolean real;
     private boolean terminator;
     private boolean lifecycle;
+    private boolean automatic;
     private int scene;
     private String restoreManual;
-    public void onCreate(Bundle args) { super.onCreate(args); fps=args!=null&&"true".equals(args.getString("fps")); real=args!=null&&"true".equals(args.getString("real")); terminator=args!=null&&"true".equals(args.getString("terminator")); lifecycle=args!=null&&"true".equals(args.getString("lifecycle")); scene=args==null?0:Integer.parseInt(args.getString("sceneIndex","0")); restoreManual=args==null?null:args.getString("restoreManual"); if(scene<0||scene>2)throw new IllegalArgumentException("Invalid scene"); start(); }
+    public void onCreate(Bundle args) { super.onCreate(args); automatic=args!=null&&"true".equals(args.getString("automaticTerminator")); fps=args!=null&&"true".equals(args.getString("fps")); real=args!=null&&"true".equals(args.getString("real")); terminator=args!=null&&"true".equals(args.getString("terminator")); lifecycle=args!=null&&"true".equals(args.getString("lifecycle")); scene=args==null?0:Integer.parseInt(args.getString("sceneIndex","0")); restoreManual=args==null?null:args.getString("restoreManual"); if(scene<0||scene>2)throw new IllegalArgumentException("Invalid scene"); start(); }
     public void onStart() {
         Bundle result = new Bundle(); Activity activity = null; ServerSocket server = null; SharedPreferences settings = null; Integer originalManual = null;
         try {
@@ -33,6 +34,46 @@ public final class MinifiedDriver extends Instrumentation {
             originalManual=manualTenths;
             double manualDelay=manualTenths/10.0;
             File root = context.getExternalFilesDir(null);
+            if(automatic) {
+                activity=startActivitySync(new Intent().setClassName(context,"com.aliflix.app.player.NativePlayerActivity")
+                    .putExtra("selection",Files.readString(new File(root,"automatic-terminator-private/selection.json").toPath()))
+                    .putExtra("autoSubtitles",true).putExtra("subtitleLanguage","en").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                waitFor("Audio & Subtitles",30000,true);
+                waitFor("Audio & subtitles",5000,false);
+                if(find(getUiAutomation().getRootInActiveWindow(),"Synced")!=null)waitFor("Reset",5000,true);
+                waitFor("Sync with Audio",90000,false);
+                getUiAutomation().adoptShellPermissionIdentity("android.permission.MEDIA_CONTENT_CONTROL");
+                android.media.session.MediaController controller;
+                try { controller=context.getSystemService(android.media.session.MediaSessionManager.class).getActiveSessions(null).stream().filter(it->context.getPackageName().equals(it.getPackageName())).findFirst().orElseThrow(); }
+                finally { getUiAutomation().dropShellPermissionIdentity(); }
+                // No stream requests, replacement captions, expected offsets or
+                // detector evidence are supplied to the fully optimized app.
+                for(long start:new long[]{1275619,3196058}) {
+                    controller.getTransportControls().seekTo(start); controller.getTransportControls().play();
+                    awaitPlayback(controller,start);
+                    long until=SystemClock.elapsedRealtime()+90000;
+                    while(SystemClock.elapsedRealtime()<until && controller.getPlaybackState().getPosition()<start+48000)Thread.sleep(100);
+                    if(controller.getPlaybackState().getPosition()<start+48000)throw new AssertionError("Normal played dialogue did not arrive");
+                }
+                if(find(getUiAutomation().getRootInActiveWindow(),"Synced")!=null)waitFor("Reset",5000,true);
+                previousValues=new HashMap<>(corrections.getAll());
+                waitFor("Sync with Audio",5000,true); long began=SystemClock.elapsedRealtime();
+                waitFor("Synced",2000,false); long elapsed=SystemClock.elapsedRealtime()-began;
+                JSONObject verified=null;String key=null;
+                for(String item:corrections.getAll().keySet()) if(!Objects.equals(previousValues.get(item),corrections.getString(item,"{}"))) {
+                    JSONObject candidate=new JSONObject(corrections.getString(item,"{}"));
+                    if(candidate.has("offset")&&!candidate.optBoolean("reset")){verified=candidate;key=item;}
+                }
+                if(verified==null||elapsed>=2000)throw new AssertionError("No applied timely correction");
+                if(settings.getInt("subtitle_delay_tenths",0)!=manualTenths)throw new AssertionError("Manual delay changed");
+                JSONObject receipt=new JSONObject().put("state","Synced").put("elapsedMs",elapsed).put("correction",verified)
+                    .put("manualDelay",manualDelay).put("version",context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionName);
+                Files.writeString(new File(root,"automatic-terminator-private/minified-receipt.json").toPath(),receipt.toString());
+                waitFor("Reset",5000,true);waitFor("Sync with Audio",5000,false);
+                if(!new JSONObject(corrections.getString(key,"{}")).optBoolean("reset"))throw new AssertionError("Reset did not clear correction");
+                result.putString("result","PASS: normal automatic English captions, minified app, applied correction, Reset, manual preserved; "+receipt);
+                finish(Activity.RESULT_OK,result);return;
+            }
             byte[] bytes = real || terminator ? new byte[0] : Files.readAllBytes(new File(root, lifecycle ? "minified-audio-tracks.mp4" : "audio-sync-validation.wav").toPath());
             JSONArray cues = terminator ? new JSONArray(new JSONObject(Files.readString(new File(root,"terminator-scene-"+scene+".json").toPath())).getString("truth")) : real ? new JSONArray(new JSONObject(Files.readString(new File(root,"quick-sync-real-film-evidence.json").toPath())).getString("truth")) : new JSONArray(Files.readString(new File(root, "audio-sync-validation.json").toPath()));
             double expectedRate = fps ? 25.0/24.0 : 1.0;

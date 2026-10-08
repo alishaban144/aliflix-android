@@ -250,6 +250,17 @@ Original cue ownership, independent manual delay, stable signed-URL-free identit
 and Firebase confidence schema 4 remain intact. Arabic paragraph direction and
 the dedicated Japanese anime source routing below are retained from v3.1.147.
 
+## v3.1.153 normal automatic-caption recovery
+
+The normal automatically selected English Terminator edition differs from the
+matching NTSC edition used by earlier offset fixtures. Played phrase history now
+permits independently verified rate correction across scenes. Transient Android
+recognition disconnections retry in the background; unlabeled audio can try the
+English decoder when English captions are selected. This selects a candidate
+decoder, and never proves the soundtrack language or accepts a correction on its
+own. Independent word matches, held dialogue and contradictory-scene rejection
+still determine acceptance. See [normal-route evidence](mobile-v3.1.153-validation.md).
+
 ## Japanese anime startup
 
 Japanese animated series race the two dedicated native sources, Miruro and

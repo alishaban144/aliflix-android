@@ -23,9 +23,9 @@ internal object DialogueWordAlignment {
         if (word.length > 5 && word.endsWith("s") && !word.endsWith("ss")) word.dropLast(1) else word
     }.toList()
     private data class Word(val text: String, val start: Double, val end: Double)
-    private data class Anchor(val cue: Int, val time: Double, val end: Double, val offset: Double, val weight: Int, val coverage: Double)
+    private data class Anchor(val cue: Int, val time: Double, val end: Double, val offset: Double, val captionTime: Double, val weight: Int, val coverage: Double)
 
-    fun match(cues: List<SubtitleCue>, heard: List<HeardWord>, speech: List<SpeechWindow> = emptyList(),
+    fun match(cues: List<SubtitleCue>, heard: List<HeardWord>, speech: List<SpeechWindow> = emptyList(), recentAfter: Double? = null,
         diagnostic: (String) -> Unit = {}, cancelled: () -> Unit = {}): AudioSubtitleCorrection? {
         if (heard.size < 9 || cues.size !in 4..20000) return null
         val words = heard.flatMap { word -> tokens(word.text).map { Word(it, word.start, word.end) } }
@@ -55,7 +55,7 @@ internal object DialogueWordAlignment {
                 val matchedTokens = mutableSetOf<String>()
                 for (reference in prefix until expected.size) {
                     val wanted = expected[reference]
-                    if (at >= words.size) break
+                    if (at >= words.size || (at > begin && words[at].start - words[at - 1].end > 3.0)) break
                     if (words[at].text != wanted && at + 1 < words.size && words[at + 1].text == wanted && skipped < 2) { at++; skipped++ }
                     if (words[at].text == wanted) {
                         matched++; matchedIndices.add(reference); matchedTokens.add(wanted); at++
@@ -83,30 +83,40 @@ internal object DialogueWordAlignment {
                     finalReliable -> endOffset
                     else -> continue
                 }
-                if (abs(offset) <= 600) anchors.add(Anchor(index, firstWord.start, finalWord.end, offset, distinctiveMatched, coverage))
+                if (abs(offset) <= 600) anchors.add(Anchor(index, firstWord.start, finalWord.end, offset, if (firstReliable) cue.startSeconds else cue.endSeconds, distinctiveMatched, coverage))
             }
         }
-        val candidates = anchors.map { seed ->
-            anchors.filter { abs(it.offset - seed.offset) <= .55 }.distinctBy { it.cue }.sortedBy { it.time }
-        // Measure the complete matched dialogue, including the held-out phrase.
-        // Three consecutive phrases may span eight seconds even when their
-        // onsets are closer together. No unmatched trailing audio supplies span.
-        }.filter { it.size >= 3 && it.last().end - it.first().time >= 8 }
-            .distinctBy { group -> group.map { it.cue } }
         diagnostic("word_anchors=$anchors") // Numeric timing and coverage only.
-        data class Verified(val offset: Double, val weight: Int, val count: Int, val coverage: Double)
-        val verified = candidates.mapNotNull { group ->
-            val training = group.dropLast(1)
-            val held = group.last()
-            val offsets = training.map { it.offset }.sorted()
-            val offset = (offsets[(offsets.size - 1) / 2] + offsets[offsets.size / 2]) / 2
-            if (training.count { it.coverage >= .85 } < 2 || training.maxOf { abs(it.offset - offset) } > .55 || abs(held.offset - offset) > .55) null
-            else Verified(offset, group.sumOf { it.weight }, group.size, group.minOf { it.coverage })
+        data class Verified(val offset: Double, val rate: Double, val weight: Int, val count: Int, val coverage: Double)
+        // Recognized framerates require widely separated observed phrases.
+        // A single short dialogue window continues to fit constant offset only.
+        val supportedRates = if (anchors.size >= 3 &&
+            anchors.maxOf { it.time } - anchors.minOf { it.time } >= 45)
+            AdaptiveSubtitleSynchronizer.rates else listOf(1.0)
+        val verified = supportedRates.flatMap { rate ->
+            val adjusted = anchors.map { it.copy(offset = it.offset + (1 - rate) * it.captionTime) }
+            val candidates = adjusted.map { seed ->
+                adjusted.filter { abs(it.offset - seed.offset) <= .55 }.distinctBy { it.cue }.sortedBy { it.time }
+            }.filter { it.size >= 3 && it.last().end - it.first().time >= 8 &&
+                (recentAfter == null || it.last().end >= recentAfter) }
+                .distinctBy { group -> group.map { it.cue } }
+            candidates.mapNotNull { group ->
+                val training = group.dropLast(1)
+                val held = group.last()
+                val offsets = training.map { it.offset }.sorted()
+                val offset = (offsets[(offsets.size - 1) / 2] + offsets[offsets.size / 2]) / 2
+                if (training.count { it.coverage >= .85 } < 2 || training.maxOf { abs(it.offset - offset) } > .55 || abs(held.offset - offset) > .55) null
+                else Verified(offset, rate, group.sumOf { it.weight }, group.size, group.minOf { it.coverage })
+            }
         }.sortedByDescending { it.weight }
         val best = verified.firstOrNull() ?: run { diagnostic("word_no_independent_clock"); return null }
-        if (best.weight < 7 || verified.any { abs(it.offset - best.offset) > .6 && it.weight >= best.weight - 2 }) return null
+        if (best.weight < 7 || verified.any {
+            val from = cues.first().startSeconds; val until = cues.last().endSeconds
+            (abs((it.rate - best.rate) * from + it.offset - best.offset) > .6 ||
+                abs((it.rate - best.rate) * until + it.offset - best.offset) > .6) && it.weight >= best.weight - 2
+        }) return null
         // Independently matched phrases must not support a steadily changing clock.
-        val supporting = anchors.filter { abs(it.offset - best.offset) <= 1.5 }.distinctBy { it.cue }.sortedBy { it.time }
+        val supporting = anchors.map { it.copy(offset = it.offset + (1 - best.rate) * it.captionTime) }.filter { abs(it.offset - best.offset) <= 1.5 }.distinctBy { it.cue }.sortedBy { it.time }
         if (supporting.size >= 3) {
             val x = supporting.map { it.time }; val y = supporting.map { it.offset }
             val xm = x.average(); val ym = y.average(); val variance = x.sumOf { (it - xm) * (it - xm) }
@@ -114,6 +124,6 @@ internal object DialogueWordAlignment {
             val residual = x.indices.maxOf { abs(y[it] - ym - slope * (x[it] - xm)) }
             if (abs(slope) * (x.last() - x.first()) > .65 && residual < .15) return null
         }
-        return AudioSubtitleCorrection(best.offset, 1.0, best.coverage)
+        return AudioSubtitleCorrection(best.offset, best.rate, best.coverage)
     }
 }

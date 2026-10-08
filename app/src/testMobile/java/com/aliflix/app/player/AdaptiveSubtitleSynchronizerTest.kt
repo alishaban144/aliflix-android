@@ -34,6 +34,14 @@ class AdaptiveSubtitleSynchronizerTest {
         assertTrue(AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, correction,
             previous + windows(originals, 18.0, starts = listOf(710.0)), 740.0))
     }
+    @Test fun anUninformativePresenceDetectorCannotVetoIndependentlyRecognizedPhrases() {
+        val random = Random(72834)
+        val noise = SpeechWindow(90.0, DoubleArray(20 * SPEECH_HZ) { if (random.nextBoolean()) 1.0 else 0.0 })
+        assertTrue(AdaptiveSubtitleSynchronizer.verifyEarlierClock(cues(), AudioSubtitleCorrection(7.25, 1.0, .9), listOf(noise), 740.0))
+        // The same route must still reject a distinctive contradictory scene.
+        assertFalse(AdaptiveSubtitleSynchronizer.verifyEarlierClock(cues(), AudioSubtitleCorrection(7.25, 1.0, .9),
+            listOf(noise) + windows(cues(), 18.0, starts = listOf(300.0)), 740.0))
+    }
     @Test fun currentWindowDoesNotExtrapolateAContradictoryDriftingClock() {
         val originals = cues()
         val current = SpeechWindow(700.0, DoubleArray(30 * SPEECH_HZ) { i ->

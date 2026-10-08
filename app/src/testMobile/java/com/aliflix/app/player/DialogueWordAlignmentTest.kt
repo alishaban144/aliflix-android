@@ -91,6 +91,23 @@ class DialogueWordAlignmentTest {
     @Test fun currentConstantOffsetCannotHideProgressiveDrift() {
         assertNull(DialogueWordAlignment.match(cues(), heard(listOf(0.0, .3, .6, .9))))
     }
+    @Test fun independentlyHeardScenesResolveSupportedCaptionFrameratesWithoutTheExpectedAnswer() {
+        val starts = listOf(100.0, 106.0, 3_220.0, 3_226.0)
+        for (rate in listOf(25.0/24.0, 24.0/25.0)) {
+            val target = phrases.mapIndexed { i, text -> SubtitleCue((starts[i] - 9.3)/rate, (starts[i] + 3 - 9.3)/rate, text) }
+            val actual = phrases.flatMapIndexed { i, text -> text.split(" ").mapIndexed { j, word ->
+                HeardWord(word,starts[i] + j*.5,starts[i] + j*.5+.4)
+            } }
+            val result = requireNotNull(DialogueWordAlignment.match(target, actual, recentAfter=3_210.0))
+            assertEquals(rate,result.rate,.00001)
+            assertEquals(9.3,result.offset,.01)
+            assertNull(DialogueWordAlignment.match(target,actual,recentAfter=3_300.0))
+        }
+    }
+    @Test fun independentPhrasesCannotBeFabricatedByJoiningWordsAcrossASeekGap() {
+        val observed = heard().mapIndexed { i, word -> if (i % 4 >= 2) word.copy(start=word.start+45,end=word.end+45) else word }
+        assertNull(DialogueWordAlignment.match(cues(),observed.sortedBy { it.start }))
+    }
     @Test fun rejectsInvalidAudioTimesAndHonoursCancellation() {
         assertNull(DialogueWordAlignment.match(cues(), heard().map { it.copy(start = Double.NaN) }))
         var calls = 0

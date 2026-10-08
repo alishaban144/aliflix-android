@@ -16,6 +16,12 @@ class UpNextWindowTest {
         assertTrue(1_190_000 >= start)
         assertTrue(1_200_000 >= start)
     }
+    @Test fun validCreditStartIsRetainedWhenTheStreamsEndDiffersFromTheDatabase() {
+        // Real IntroDB Breaking Bad S1E1: 3431..3500 seconds.
+        val outro = IntroSegment(IntroSegmentKind.OUTRO, 3_431_000, 3_500_000)
+        assertEquals(3_431_000L, upNextWindowStart(3_492_000, listOf(outro)))
+        assertEquals(3_430_000L, upNextWindowStart(3_460_000, listOf(outro)))
+    }
     @Test fun invalidOrIntroOnlyMetadataCannotHideTheOffer() {
         assertEquals(1_170_000L, upNextWindowStart(1_200_000, listOf(
             IntroSegment(IntroSegmentKind.INTRO, 0, 20_000),

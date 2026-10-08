@@ -450,10 +450,31 @@ internal object AdaptiveSubtitleSynchronizer {
      * informative windows are checked here, using the already proposed clock.
      */
     fun verifyEarlierClock(cues: List<SubtitleCue>, correction: AudioSubtitleCorrection,
-                           audio: List<SpeechWindow>, position: Double, cancelled: () -> Unit = {}): Boolean =
-        verifyAdditional(cues, correction, usable(audio, true).filter {
+                           audio: List<SpeechWindow>, position: Double, cancelled: () -> Unit = {}, diagnostic: (String) -> Unit = {}): Boolean {
+        val windows = usable(audio, true).filter {
             it.start + it.speech.size.toDouble() / SPEECH_HZ <= position - 30
-        }, cancelled, quick = true)
+        }
+        val corrected = correction.apply(cues).filter(::dialogue)
+        return windows.all { window ->
+            val local = curve(corrected, window, 1.0, cancelled, radiusSeconds = 1.6)
+            diagnostic("word_clock_check:start=${window.start},score=${local.at(0.0)},peak=${local.scores[local.peak]},offset=${local.offset(local.peak)},unique=${local.unique(local.offset(local.peak))},captioned=${local.captioned(0.0)}")
+            if (!local.captioned(0.0) || (local.at(0.0) >= .35 && abs(local.offset(local.peak)) <= .65)) true
+            else {
+                // This route already requires unique recognized phrases and a
+                // separately withheld phrase. Music or caption hangover can make
+                // a presence detector anticorrelate with real spoken words; a
+                // weak envelope cannot contradict that lexical timing evidence.
+                // Search for a genuinely distinctive alternative on this earlier
+                // scene instead. This check only vetoes; it never supplies a clock.
+                val alternative = curve(corrected, window, 1.0, cancelled)
+                val peak = alternative.offset(alternative.peak)
+                val contradictory = abs(peak) > .65 && alternative.scores[alternative.peak] >= .55 &&
+                    alternative.unique(peak) >= .065 && alternative.at(peak) - alternative.at(0.0) >= .12
+                diagnostic("word_clock_contradiction:start=${window.start},score=${alternative.at(0.0)},peak=${alternative.scores[alternative.peak]},offset=$peak,unique=${alternative.unique(peak)},rejected=$contradictory")
+                !contradictory
+            }
+        }
+    }
 
     /** Provider/catalogue affiliation alone is never evidence of correct timing. */
     fun verifyReference(reference: List<SubtitleCue>, audio: List<SpeechWindow>, cancelled: () -> Unit = {}): Boolean {

@@ -27,9 +27,14 @@ internal class RecentDialogueRecognition(private val context: Context, private v
     private val main = Handler(Looper.getMainLooper())
     private val queue = ArrayBlockingQueue<Frame>(256)
     private val words = mutableListOf<HeardWord>()
+    private val history = mutableListOf<HeardWord>()
+    private var historyGeneration = -1L
+    private var recordedWord: HeardWord? = null
+    private var recordedBoundary = -1L
     @Volatile private var running = true
     @Volatile private var failed = false
-    @Volatile private var token = 0L
+    private val sessionTokens = java.util.concurrent.atomic.AtomicLong()
+    private val token get() = sessionTokens.get()
     private var recognizer: SpeechRecognizer? = null
     @Volatile private var pipe: Array<ParcelFileDescriptor>? = null
     @Volatile private var generation = -1L
@@ -38,6 +43,18 @@ internal class RecentDialogueRecognition(private val context: Context, private v
     @Volatile private var decodedWindows = 0
     @Volatile private var errorCode = 0
     @Volatile private var restart = false
+    @Volatile private var retryAfter = 0L
+    @Volatile private var retryCount = 0
+
+    private fun recover(error: Int) {
+        errorCode = error
+        retryCount = (retryCount + 1).coerceAtMost(4)
+        retryAfter = android.os.SystemClock.elapsedRealtime() + dialogueRecognitionRetryDelay(error, retryCount)
+        restart = true
+        val recoveryToken = sessionTokens.incrementAndGet() // Fence all callbacks from the failed session.
+        android.util.Log.i("AliflixAudioSync", "local_recognition_retry:error=$error,attempt=$retryCount")
+        main.post { if (recoveryToken == token) stopSession() }
+    }
     private val thread = Thread({ collectFrames() }, "aliflix-local-dialogue").apply { isDaemon = true; start() }
 
     fun offer(start: Double, pcm: ShortArray, generation: Long, boundary: Long, voiced: Boolean) {
@@ -45,9 +62,11 @@ internal class RecentDialogueRecognition(private val context: Context, private v
         if (!lastOffered.isFinite() && queue.isEmpty() && !voiced) return
         lastOffered = start
         if (!queue.offer(Frame(start, pcm.copyOf(), generation, boundary, voiced))) {
-            failed = true // Never bridge dropped audio.
+            // A decoder burst must not disable sync for the rest of the film.
+            // Discard the incomplete session instead of bridging dropped audio.
+            queue.clear()
             synchronized(this) { words.clear() }
-            main.post { stopSession() }
+            recover(-2)
         }
     }
     @Synchronized fun current(position: Double, expectedGeneration: Long, expectedBoundary: Long): List<HeardWord> {
@@ -56,7 +75,21 @@ internal class RecentDialogueRecognition(private val context: Context, private v
         return words.filter { it.start >= position - 30 && it.end <= position &&
             it.start.isFinite() && it.end > it.start }.takeLast(160)
     }
-    @Synchronized fun diagnostics(): String = "words=${words.size},localFailed=$failed,localError=$errorCode,localGeneration=$generation,localBoundary=$boundary,localEnd=$lastOffered,localWindows=$decodedWindows"
+    @Synchronized fun recordPlayed(position: Double, expectedGeneration: Long, expectedBoundary: Long) {
+        if (generation != expectedGeneration || boundary != expectedBoundary) return
+        if (historyGeneration != expectedGeneration) { history.clear(); historyGeneration = expectedGeneration }
+        val played = words.filter { it.end <= position }
+        if (played.lastOrNull() == recordedWord && expectedBoundary == recordedBoundary) return
+        recordedWord = played.lastOrNull(); recordedBoundary = expectedBoundary
+        history.addAll(played)
+        val retained = history.distinctBy { it.text to it.start }.sortedBy { it.start }.takeLast(1_500)
+        history.clear(); history.addAll(retained)
+    }
+
+    @Synchronized fun observedHistory(position: Double, expectedGeneration: Long): List<HeardWord> =
+        if (historyGeneration != expectedGeneration) emptyList() else history.filter { it.end <= position }.takeLast(1_500)
+
+    @Synchronized fun diagnostics(): String = "words=${words.size},localFailed=$failed,localError=$errorCode,localGeneration=$generation,localBoundary=$boundary,localEnd=$lastOffered,localWindows=$decodedWindows,localRetries=$retryCount"
 
     private fun collectFrames() {
         var last = Double.NaN
@@ -70,40 +103,44 @@ internal class RecentDialogueRecognition(private val context: Context, private v
                 val discontinuity = frame.generation != generation || frame.boundary != boundary ||
                     !last.isFinite() || abs(frame.start - last - .02) > .003
                 last = frame.start
-                if (restart && !frame.voiced) {
-                    ++token
+                if (restart && (!frame.voiced || android.os.SystemClock.elapsedRealtime() < retryAfter)) {
+                    sessionTokens.incrementAndGet()
                     runCatching { output?.close() }; output = null
                     continue
                 }
                 if (output == null && !frame.voiced) continue
                 if (output == null || restart || discontinuity || frame.start - start >= 45) {
                     // Fence the old listener before closing its descriptor.
-                    session = ++token
+                    session = sessionTokens.incrementAndGet()
                     runCatching { output?.close() }
                     val descriptors = ParcelFileDescriptor.createPipe()
                     pipe?.forEach { runCatching { it.close() } }
                     pipe = descriptors
                     restart = false
                     generation = frame.generation; boundary = frame.boundary
-                    if (discontinuity) synchronized(this) { words.clear() }
+                    if (discontinuity) synchronized(this) {
+                        words.clear()
+                        if (historyGeneration != frame.generation) { history.clear(); historyGeneration = frame.generation }
+                    }
                     start = frame.start
                     val activeSession = session
                     val activeStart = start
                     val ready = CountDownLatch(1)
                     main.post { if (running && activeSession == token) startSession(descriptors[0], activeSession, activeStart, ready) else ready.countDown() }
-                    if (!ready.await(4, TimeUnit.SECONDS)) { failed = true; errorCode = -1; break }
+                    if (!ready.await(4, TimeUnit.SECONDS)) { recover(-1); continue }
+                    if (failed || restart || activeSession != token) continue
                     output = ParcelFileDescriptor.AutoCloseOutputStream(descriptors[1])
                     decodedWindows++
                 }
                 frame.pcm.forEachIndexed { index, value -> bytes[index * 2] = value.toByte(); bytes[index * 2 + 1] = (value.toInt() shr 8).toByte() }
                 try { output?.write(bytes) } catch (error: java.io.IOException) {
                     if (!running) break
-                    if (!restart) throw error
+                    if (!restart) recover(-2)
                     runCatching { output?.close() }; output = null
                 }
             }
         } catch (_: InterruptedException) { }
-        catch (_: Exception) { if (running) failed = true }
+        catch (_: Exception) { if (running) { failed = true; errorCode = -3 } }
         finally { runCatching { output?.close() }; main.post { stopSession() } }
     }
     private fun startSession(source: ParcelFileDescriptor, session: Long, start: Double, completed: CountDownLatch) {
@@ -122,9 +159,8 @@ internal class RecentDialogueRecognition(private val context: Context, private v
                             errorCode = error
                             // Silence may finish a local session. A later voiced
                             // frame starts another without waiting in the UI.
-                            if (error in listOf(SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) restart = true
-                            else failed = true
-                            stopSession()
+                            if (dialogueRecognitionCanRetry(error)) recover(error)
+                            else { failed = true; stopSession() }
                         }
                         completed.countDown()
                     }
@@ -144,6 +180,7 @@ internal class RecentDialogueRecognition(private val context: Context, private v
                                 HeardWord(a.rawText, first, until) else null
                         }
                         if (added.isEmpty()) return
+                        retryCount = 0; errorCode = 0
                         synchronized(this@RecentDialogueRecognition) {
                             // Prefer a fresh completed interior, retaining words
                             // outside it, including clipped edges from overlap.
@@ -151,6 +188,7 @@ internal class RecentDialogueRecognition(private val context: Context, private v
                             words.addAll(added)
                             val unique = words.filter { it.end >= lastOffered - 32 }.distinctBy { it.text to it.start }.sortedBy { it.start }.takeLast(180)
                             words.clear(); words.addAll(unique)
+
                         }
                     }
                 })
@@ -171,10 +209,10 @@ internal class RecentDialogueRecognition(private val context: Context, private v
     private fun stopRecognizer() { runCatching { recognizer?.cancel() }; runCatching { recognizer?.destroy() }; recognizer = null }
     private fun stopSession() { stopRecognizer(); pipe?.forEach { runCatching { it.close() } }; pipe = null }
     override fun close() {
-        running = false; ++token
+        running = false; sessionTokens.incrementAndGet()
         pipe?.forEach { runCatching { it.close() } }
         thread.interrupt(); queue.clear()
-        synchronized(this) { words.clear() }
+        synchronized(this) { words.clear(); history.clear() }
         if (Looper.myLooper() == Looper.getMainLooper()) stopSession() else main.post { stopSession() }
     }
 }

@@ -97,6 +97,9 @@ class NativePlaybackService : MediaSessionService() {
             cineJoyRecovery.tick()
             if (player.deviceInfo.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE)
                 playedUntil = maxOf(playedUntil, player.currentPosition / 1000.0)
+            if (android.os.Build.VERSION.SDK_INT >= 34 && player.isPlaying &&
+                player.deviceInfo.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE)
+                dialogueRecognition?.recordPlayed(player.currentPosition / 1000.0, speechCapture.generation, speechCapture.continuityEpoch())
             val cues = currentCaptionCues()
             presentationPlayerView?.subtitleView?.setCues(cues)
             NativeCastActivity.renderCaptions(cues)
@@ -653,17 +656,17 @@ class NativePlaybackService : MediaSessionService() {
         internal fun speechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.windows(it.playedUntil) }.orEmpty()
         internal fun quickSpeechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.quickWindows(it.playedUntil) }.orEmpty()
         internal fun recentSpeechWindow(positionSeconds: Double): SpeechWindow? = activeService?.speechCapture?.recentWindow(positionSeconds)
-        internal fun configureDialogueRecognition(identity: String?) {
+        internal fun configureDialogueRecognition(identity: String?, captionLanguage: String) {
             val service = activeService ?: return
             if (android.os.Build.VERSION.SDK_INT < 34) return
-            val language = selectedAudioLanguage().lowercase()
-            val enabledIdentity = identity?.takeIf { language == "en" || language == "eng" || language.startsWith("en-") }
+            val language = dialogueRecognitionLanguage(selectedAudioLanguage(), captionLanguage)
+            val enabledIdentity = identity?.takeIf { language != null }
             if (enabledIdentity == service.dialogueRecognitionIdentity) return
             service.speechCapture.dialogueFrameObserver = null
             service.dialogueRecognition?.close(); service.dialogueRecognition = null
             service.dialogueRecognitionIdentity = enabledIdentity
             if (enabledIdentity != null && android.speech.SpeechRecognizer.isOnDeviceRecognitionAvailable(service)) {
-                val recognition = RecentDialogueRecognition(service.applicationContext, "en-US")
+                val recognition = RecentDialogueRecognition(service.applicationContext, requireNotNull(language))
                 service.dialogueRecognition = recognition
                 service.speechCapture.dialogueFrameObserver = recognition::offer
             }
@@ -673,6 +676,11 @@ class NativePlaybackService : MediaSessionService() {
             if (android.os.Build.VERSION.SDK_INT < 34) return emptyList()
             return service.dialogueRecognition?.current(position, service.speechCapture.generation,
                 service.speechCapture.continuityEpoch()).orEmpty()
+        }
+        internal fun dialogueWordHistory(position: Double): List<HeardWord> {
+            val service = activeService ?: return emptyList()
+            if (android.os.Build.VERSION.SDK_INT < 34) return emptyList()
+            return service.dialogueRecognition?.observedHistory(position, service.speechCapture.generation).orEmpty()
         }
         internal fun speechDiagnostics(): String = activeService?.let { it.speechCapture.diagnostics() +
             if (android.os.Build.VERSION.SDK_INT >= 34) ";${it.dialogueRecognition?.diagnostics()}" else "" } ?: "service_absent"

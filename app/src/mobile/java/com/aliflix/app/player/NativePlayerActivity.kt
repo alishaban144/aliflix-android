@@ -1064,7 +1064,8 @@ class NativePlayerActivity : FragmentActivity() {
         }
         val available = key != null && json != null && activeSubtitleCues.size >= 4 && controller != null &&
             !NativePlaybackService.embeddedSubtitlesActive && controller?.deviceInfo?.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE
-        NativePlaybackService.configureDialogueRecognition(key.takeIf { available })
+        NativePlaybackService.configureDialogueRecognition(key.takeIf { available },
+            ui.activeSubtitleTrack?.languageCode ?: request?.subtitleLanguage.orEmpty())
         if (ui.audioSyncAvailable != available) ui = ui.copy(audioSyncAvailable = available)
     }
 
@@ -1085,6 +1086,7 @@ class NativePlayerActivity : FragmentActivity() {
         val continuity = NativePlaybackService.speechContinuity
         val position = (controller?.currentPosition ?: 0L) / 1000.0
         val heard = NativePlaybackService.recentDialogueWords(position)
+        val heardHistory = NativePlaybackService.dialogueWordHistory(position)
         val playing = controller?.isPlaying == true
         val speed = controller?.playbackParameters?.speed ?: 1f
         val manualDelay = settingsStore.settings.value.subtitleDelaySeconds
@@ -1112,7 +1114,15 @@ class NativePlayerActivity : FragmentActivity() {
                             android.util.Log.i("AliflixAudioSync", "instant:verified_local_words,count=${heard.size},score=${wordCorrection.confidence}")
                             return@withContext wordCorrection
                         }
+                        // Earlier independently heard phrases can prove a supported
+                        // subtitle rate; a short current exchange cannot invent drift.
+                        val historicalClock = if (heard.isNotEmpty()) DialogueWordAlignment.match(originals, heardHistory, observed, recentAfter = position - 30,
+                            diagnostic = { android.util.Log.i("AliflixAudioSync", "history:$it") }, cancelled = check) else null
+                        if (historicalClock != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, historicalClock, observed, position, check,
+                            diagnostic = { android.util.Log.i("AliflixAudioSync", it) }))
+                            return@withContext historicalClock
                         val recent = NativePlaybackService.recentSpeechWindow(position)
+                        android.util.Log.i("AliflixAudioSync", "instant_context:position=$position,heard=${heard.size},heardStart=${heard.firstOrNull()?.start},heardEnd=${heard.lastOrNull()?.end},recentStart=${recent?.start},recentFrames=${recent?.speech?.size};${NativePlaybackService.speechDiagnostics()}")
                         hadDialogue = hadDialogue || (recent != null && recent.speech.average() in .04.. .96)
                         val local = recent?.let { AdaptiveSubtitleSynchronizer.matchCurrent(originals, it, check) }
                         val correction = local?.correction
