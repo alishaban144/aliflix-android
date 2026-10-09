@@ -69,7 +69,7 @@ internal class PlaybackSpeechBuffer(
         private set
 
     @Synchronized fun playedDialoguePcm(position: Double): PlayedDialoguePcm? {
-        val rows = playedPcm.filter { it.first >= position - 30 && it.first + .02 <= position }
+        val rows = playedPcm.filter { it.first >= position - 120 && it.first + .02 <= position }
         if (rows.size < 400 || rows.last().first < position - 1 || rows.zipWithNext().any {
             kotlin.math.abs(it.second.first - it.first.first - .02) > .003
         }) return null
@@ -240,7 +240,9 @@ internal class PlaybackSpeechBuffer(
                 val x = mono / if (format.channelCount <= 2) format.channelCount else 1
                 // Word decoding retains the original signal's 16 kHz bandwidth;
                 // the existing 8 kHz speech detectors and audible PCM are unchanged.
-                if (dialogueFrameObserver != null) {
+                // Retain PCM independently of Android's optional recognizer.
+                // Groq recovery must also work on phones without its local model.
+                run {
                     dialogueSum += x; dialogueAveraged++; dialoguePhase += 16000
                     if (dialoguePhase >= format.sampleRate) {
                         val sample = (dialogueSum / dialogueAveraged * 32767).toInt().coerceIn(-32768, 32767).toShort()
@@ -271,7 +273,10 @@ internal class PlaybackSpeechBuffer(
                         catch (error: LinkageError) { detectorFailure(error.javaClass.simpleName) }
                         if (dialogueCount == dialogueFrame.size) {
                             playedPcm.addLast(dialogueStart to dialogueFrame.copyOf())
-                            while (playedPcm.size > 1600) playedPcm.removeFirst()
+                            // A user can tap during music immediately after a
+                            // conversation. Retain bounded, already played context
+                            // for recovery; a seek still clears this ring.
+                            while (playedPcm.size > 6050) playedPcm.removeFirst()
                             dialogueFrameObserver?.invoke(dialogueStart, dialogueFrame, generation, boundaryCount, bits[head] == 1.toByte())
                         }
                         dialogueCount = 0; dialoguePhase = 0; dialogueSum = 0.0; dialogueAveraged = 0

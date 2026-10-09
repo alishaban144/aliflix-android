@@ -51,6 +51,41 @@ class MobileResumeDeviceTest {
             routes.invalidateStream(selection); app.playbackProgressStore.removeMedia(selection.media); app.libraryStore.removeRecent(selection.media)
         }
     }
+    @Test fun audioOnlyResumeKeepsSavingProgressWithoutVideoFrames() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        grantNativeFixtureNetworkPermission()
+        val selection = PlaybackSelection(Media(2147482990, MediaType.MOVIE, "Audio resume validation"))
+        val rate = 8000
+        val count = rate * 30
+        val wave = java.nio.ByteBuffer.allocate(44 + count * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .put("RIFF".toByteArray()).putInt(36 + count * 2).put("WAVEfmt ".toByteArray())
+            .putInt(16).putShort(1).putShort(1).putInt(rate).putInt(rate * 2).putShort(2).putShort(16)
+            .put("data".toByteArray()).putInt(count * 2)
+        repeat(count) { wave.putShort(0) }
+        val server = NativeBackgroundPlaybackTest.FixtureServer(wave.array())
+        val request = NativePlaybackRequest(server.url, "audio/wav", "https://fixture.aliflix.test/", "Aliflix test", "",
+            selection.media.title, 10_000, true, selectionJson = selection.nativeJson())
+        val file = File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json").apply { writeText(request.toJson()) }
+        val app = context.applicationContext as AliflixApplication
+        try {
+            ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java)
+                .putExtra("requestFile", file.name), nativePhoneLaunchOptions()).use { scenario ->
+                await { var ready = false; scenario.onActivity {
+                    ready = it.playbackUiState.ready && it.playbackController!!.isPlaying && NativePlaybackService.canRecordProgress
+                }; ready }
+                scenario.onActivity {
+                    assertEquals(10.0, it.playbackController!!.currentPosition / 1000.0, 2.0)
+                    it.pauseAndLeavePlayer()
+                }
+            }
+            assertEquals(10.0, requireNotNull(app.playbackProgressStore.progressFor(selection)).positionSeconds, 2.0)
+        } finally {
+            context.stopService(Intent(context, NativePlaybackService::class.java)); server.close(); file.delete()
+            app.playbackProgressStore.removeMedia(selection.media); app.libraryStore.removeRecent(selection.media)
+        }
+    }
+
     private fun await(condition: () -> Boolean) {
         val deadline = android.os.SystemClock.elapsedRealtime() + 15_000
         while (!condition() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(100)

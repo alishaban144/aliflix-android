@@ -215,8 +215,14 @@ class NativePlaybackService : MediaSessionService() {
                 }
                 playbackFailure = player.playerError
                 hasSelectedAudio = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
-                if (playbackReady && hasSelectedAudio && player.currentTracks.groups.none { it.type == C.TRACK_TYPE_VIDEO }) {
-                    releaseStartupMute() // Audio-only media has no first-frame callback.
+                val audioOnly = playbackReady && hasSelectedAudio && player.currentTracks.groups.none { it.type == C.TRACK_TYPE_VIDEO }
+                // Cast receivers and audio-only media do not emit a local first
+                // video frame. Confirm their resumed media clock before saving.
+                if (playbackReady && (audioOnly || player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) && restorePendingResume()) {
+                    if (audioOnly) {
+                        renderedStreamUrl = activeStreamUrl
+                        releaseStartupMute()
+                    }
                 }
                 updateWifiLock()
                 updateDisplay()

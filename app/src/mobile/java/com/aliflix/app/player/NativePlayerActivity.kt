@@ -1121,8 +1121,12 @@ class NativePlayerActivity : FragmentActivity() {
                     // Catalogue diversity avoids spending the whole background budget
                     // comparing near-identical copies of one mistimed release.
                     val catalogues = coroutineScope {
-                        val originals = async { FlixerSubtitleRepository.tracks(current) }
-                        val external = async { normalizeMobileSubtitleTracks(repository.search(current, language).getOrNull().orEmpty()) }
+                        val originals = async { withTimeoutOrNull(6_000) {
+                            runCatching { FlixerSubtitleRepository.tracks(current) }.getOrDefault(emptyList())
+                        }.orEmpty() }
+                        val external = async { withTimeoutOrNull(6_000) {
+                            normalizeMobileSubtitleTracks(repository.search(current, language).getOrNull().orEmpty())
+                        }.orEmpty() }
                         originals.await() to external.await()
                     }
                     val originalCandidates = mobileSubtitleCandidates(catalogues.first, language, current.seasonNumber, current.episodeNumber, current.media.title)
@@ -1212,45 +1216,71 @@ class NativePlayerActivity : FragmentActivity() {
                     var solution: AudioSubtitleCorrection? = null
                     var finiteWords: List<HeardWord> = emptyList()
                     var finiteRequested = false
+                    var finiteJob: Job? = null
+                    var cloudTranscripts: List<List<HeardWord>> = emptyList()
+                    var cloudJob: Job? = null
+                    try {
                     while (solution == null && android.os.SystemClock.elapsedRealtime() - began < 9_000) {
                         deadlineCheck()
                         val observedPosition = withContext(Dispatchers.Main.immediate) {
                             (controller?.currentPosition ?: 0L) / 1000.0
                         }
-                        val latestHeard = (NativePlaybackService.recentDialogueWords(observedPosition) +
-                            finiteWords.filter { it.start >= observedPosition - 30 && it.end <= observedPosition })
+                        val localHeard = (NativePlaybackService.recentDialogueWords(observedPosition) +
+                            playedRecognitionWords(finiteWords, observedPosition))
+                            .filter { it.start >= observedPosition - CURRENT_DIALOGUE_SECONDS }
                             .distinctBy { it.text to it.start }.sortedBy { it.start }
-                        val latestHistory = (initialHistory + NativePlaybackService.dialogueWordHistory(observedPosition) + finiteWords)
+                        val localHistory = (initialHistory + NativePlaybackService.dialogueWordHistory(observedPosition) +
+                            playedRecognitionWords(finiteWords, observedPosition))
                             .distinctBy { it.text to it.start }.sortedBy { it.start }
+                        val cloudCandidates = cloudTranscripts.map { playedRecognitionWords(it, observedPosition) }.filter { it.size >= 9 }
+                        val candidates = cloudCandidates + listOf(localHeard)
                         val latestReferences = syncReferences.toList()
                         solution = withContext(Dispatchers.Default) {
                             val context = currentCoroutineContext()
                             val check = { context.ensureActive(); deadlineCheck() }
-                            hadDialogue = hadDialogue || latestHeard.size >= 9
                             val observed = NativePlaybackService.quickSpeechEvidence()
-                            for (reference in latestReferences.sortedByDescending { kotlin.math.abs(it.targetToReference.rate - 1.0) }) {
+                            for (latestHeard in candidates) {
+                            val cloudCandidate = latestHeard !== localHeard
+                            val recentAfter = observedPosition - if (cloudCandidate) 120.0 else CURRENT_DIALOGUE_SECONDS
+                            val latestHistory = if (cloudCandidate) latestHeard else localHistory
+                            // Recovery may analyze dialogue before the current music
+                            // tail. Its own scene is already verified by withheld
+                            // words; do not reclassify it as an unverified older scene.
+                            val verificationPosition = if (cloudCandidate) latestHeard.maxOfOrNull { it.end }?.coerceAtMost(observedPosition)
+                                ?: observedPosition else observedPosition
+                            hadDialogue = hadDialogue || latestHeard.size >= 9
+                            val requireWideClock = latestReferences.any { it.verifiedEditionClock && kotlin.math.abs(it.targetToReference.rate - 1.0) > .0003 }
+                            val editionRates = latestReferences.filter { it.verifiedEditionClock }.flatMap {
+                                listOf(it.targetToReference.rate, 1.0 / it.targetToReference.rate)
+                            } + 1.0
+                            for (reference in latestReferences.sortedBy { kotlin.math.abs(it.targetToReference.rate - 1.0) }) {
                                 check()
-                                TranslatedSubtitleSync.match(reference, latestHeard, latestHistory, observed, observedPosition, check)?.let {
+                                if (requireWideClock && kotlin.math.abs(reference.targetToReference.rate - 1.0) <= .0003) continue
+                                TranslatedSubtitleSync.match(reference, latestHeard, latestHistory, observed, verificationPosition, recentAfter, check,
+                                    if (cloudCandidate) cloudCandidates else emptyList())?.let {
                                     android.util.Log.i("AliflixAudioSync", "instant:verified_translation")
                                     return@withContext it
                                 }
                             }
-                            val wordCorrection = DialogueWordAlignment.match(originals, latestHeard, observed, recentAfter = observedPosition - 18,
-                                diagnostic = { android.util.Log.i("AliflixAudioSync", it) }, cancelled = check)
-                            if (wordCorrection != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, wordCorrection, observed, observedPosition, check)) {
+                            val wordCorrection = DialogueWordAlignment.matchClips(originals, if (cloudCandidate) cloudCandidates else listOf(latestHeard), observed, recentAfter = recentAfter,
+                                diagnostic = { android.util.Log.i("AliflixAudioSync", it) }, cancelled = check, requireWideClock = requireWideClock,
+                                candidateRates = if (requireWideClock) editionRates else null)
+                            if (wordCorrection != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, wordCorrection, observed, verificationPosition, check)) {
                                 android.util.Log.i("AliflixAudioSync", "instant:verified_local_words,count=${latestHeard.size},score=${wordCorrection.confidence}")
                                 return@withContext wordCorrection
                             }
                             // Earlier independently heard phrases can prove a supported
                             // subtitle rate; a short current exchange cannot invent drift.
-                            val historicalClock = if (latestHistory.any { it.end >= observedPosition - 30 }) DialogueWordAlignment.match(originals, latestHistory, observed, recentAfter = observedPosition - 18,
+                            val historicalClock = if (!requireWideClock && latestHistory.any { it.end >= recentAfter }) DialogueWordAlignment.match(originals, latestHistory, observed, recentAfter = recentAfter,
                                 diagnostic = { android.util.Log.i("AliflixAudioSync", "history:$it") }, cancelled = check) else null
-                            if (historicalClock != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, historicalClock, observed, observedPosition, check,
+                            if (historicalClock != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, historicalClock, observed, verificationPosition, check,
                                 diagnostic = { android.util.Log.i("AliflixAudioSync", it) }))
                                 return@withContext historicalClock
 
+                            }
+
                             val recent = NativePlaybackService.recentSpeechWindow(observedPosition)
-                            android.util.Log.i("AliflixAudioSync", "instant_context:position=$position,latestHeard=${latestHeard.size},latestHeardStart=${latestHeard.firstOrNull()?.start},latestHeardEnd=${latestHeard.lastOrNull()?.end},recentStart=${recent?.start},recentFrames=${recent?.speech?.size};${NativePlaybackService.speechDiagnostics()}")
+                            android.util.Log.i("AliflixAudioSync", "instant_context:position=$position,localWords=${localHeard.size},cloudCandidates=${cloudCandidates.size},recentStart=${recent?.start},recentFrames=${recent?.speech?.size};${NativePlaybackService.speechDiagnostics()}")
                             hadDialogue = hadDialogue || (recent != null && recent.speech.average() in .04.. .96)
                             val local = recent?.let { AdaptiveSubtitleSynchronizer.matchCurrent(originals, it, check) }
                             val correction = local?.correction
@@ -1262,20 +1292,37 @@ class NativePlayerActivity : FragmentActivity() {
                             android.util.Log.i("AliflixAudioSync", "instant:${attempt.reason},windows=${attempt.windows},score=${attempt.score},margin=${attempt.margin};${NativePlaybackService.speechDiagnostics()}")
                             attempt.correction
                         }
-                        if (solution == null && !finiteRequested && android.os.Build.VERSION.SDK_INT >= 34) {
-                            finiteRequested = true
+                        if (solution == null && cloudJob == null) {
+                            NativePlaybackService.playedDialoguePcm(observedPosition)?.let { pcm ->
+                                cloudJob = launch { GroqDialogueRecognition.recognize(pcm, NativePlaybackService.quickSpeechEvidence()) { cloudTranscripts = it } }
+                            }
+                        }
+                        // Let a completed live segment reach the actual playhead
+                        // before releasing that recognizer. Keep matching while
+                        // finite recognition delivers independently timed phrases.
+                        if (solution == null && !finiteRequested && android.os.Build.VERSION.SDK_INT >= 34 &&
+                            android.os.SystemClock.elapsedRealtime() - began >= 1_000) {
                             val pcm = NativePlaybackService.playedDialoguePcm(observedPosition)
                             val language = dialogueRecognitionLanguage(NativePlaybackService.selectedAudioLanguage(),
                                 ui.activeSubtitleTrack?.languageCode.orEmpty(), selection?.media?.originalLanguage.orEmpty())
                             if (pcm != null && language != null) {
-                                NativePlaybackService.pauseContinuousRecognition(true)
-                                try {
-                                    finiteWords = PlayedDialogueRecognition.recognize(this@NativePlayerActivity, language, pcm)
-                                    android.util.Log.i("AliflixAudioSync", "finite_dialogue:words=${finiteWords.size},start=${pcm.start}")
-                                } finally { NativePlaybackService.pauseContinuousRecognition(false) }
+                                finiteRequested = true
+                                finiteJob = launch {
+                                    NativePlaybackService.pauseContinuousRecognition(true)
+                                    try {
+                                        PlayedDialogueRecognition.recognize(this@NativePlayerActivity, language, pcm) { words ->
+                                            finiteWords = (finiteWords + words).distinctBy { it.text to it.start }.sortedBy { it.start }
+                                        }
+                                        android.util.Log.i("AliflixAudioSync", "finite_dialogue:words=${finiteWords.size},start=${pcm.start}")
+                                    } finally { NativePlaybackService.pauseContinuousRecognition(false) }
+                                }
                             }
                         }
                         if (solution == null) delay(250)
+                    }
+                    } finally {
+                        cloudJob?.cancel(); finiteJob?.cancel()
+                        cloudJob?.join(); finiteJob?.join()
                     }
                     solution
                 }

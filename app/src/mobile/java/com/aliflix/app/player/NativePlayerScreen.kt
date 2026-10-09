@@ -968,6 +968,9 @@ internal fun NativePlayerScreen(
                             Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
                         }
                         }
+                        Text("Online recovery sends short audio clips to Aliflix and Groq when needed.",
+                            color = Color.White.copy(alpha = .5f), fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp))
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = Color.White.copy(alpha = 0.05f),

@@ -15,7 +15,27 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
-internal data class HeardWord(val text: String, val start: Double, val end: Double)
+internal data class HeardWord(val text: String, val start: Double, val end: Double, val endReliable: Boolean = true,
+                              val playedThrough: Double = end, val measuredEnd: Boolean = false, val startReliable: Boolean = true)
+
+/** A terminal token cannot expose decode-ahead: wait until the actual PCM
+ * supplied for its completed recognition segment has passed the playhead. */
+internal fun playedRecognitionWords(words: List<HeardWord>, position: Double): List<HeardWord> =
+    words.filter { it.playedThrough <= position }
+
+/** Android reports word onsets, not word durations. Keep a terminal token for
+ * lexical matching, explicitly marking its unknown end; never manufacture an
+ * ending that could certify a subtitle offset. */
+@androidx.annotation.RequiresApi(34)
+internal fun recognizedDialogueWords(parts: List<RecognitionPart>, start: Double, playedEnd: Double): List<HeardWord> =
+    parts.mapIndexedNotNull { index, part ->
+        val from = start + part.timestampMillis / 1000.0
+        val next = parts.getOrNull(index + 1)?.let { start + it.timestampMillis / 1000.0 }
+        if (from < start + .4 || from > playedEnd) return@mapIndexedNotNull null
+        val known = next != null && next > from && next <= playedEnd && next - from <= 3
+        HeardWord(part.rawText, from, if (known) next else from, endReliable = known,
+            playedThrough = if (known) next else playedEnd)
+    }
 
 /** Optional Android 14+ local decoder of selected audio, never the microphone.
  * Bounded continuous sessions retain quiet phrase context. Completed
@@ -85,13 +105,13 @@ internal class RecentDialogueRecognition(private val context: Context, private v
     @Synchronized fun current(position: Double, expectedGeneration: Long, expectedBoundary: Long): List<HeardWord> {
         if (!running || failed || generation != expectedGeneration || boundary != expectedBoundary ||
             !lastOffered.isFinite() || position - lastOffered > 1.0) return emptyList()
-        return words.filter { it.start >= position - 30 && it.end <= position &&
-            it.start.isFinite() && it.end > it.start }.takeLast(160)
+        return words.filter { it.start >= position - 30 && it.playedThrough <= position &&
+            it.start.isFinite() && (it.end > it.start || !it.endReliable && it.end == it.start) }.takeLast(160)
     }
     @Synchronized fun recordPlayed(position: Double, expectedGeneration: Long, expectedBoundary: Long) {
         if (generation != expectedGeneration || boundary != expectedBoundary) return
         if (historyGeneration != expectedGeneration) { history.clear(); historyGeneration = expectedGeneration }
-        val played = words.filter { it.end <= position }
+        val played = playedRecognitionWords(words, position)
         if (played.lastOrNull() == recordedWord && expectedBoundary == recordedBoundary) return
         recordedWord = played.lastOrNull(); recordedBoundary = expectedBoundary
         history.addAll(played)
@@ -100,7 +120,7 @@ internal class RecentDialogueRecognition(private val context: Context, private v
     }
 
     @Synchronized fun observedHistory(position: Double, expectedGeneration: Long): List<HeardWord> =
-        if (historyGeneration != expectedGeneration) emptyList() else history.filter { it.end <= position }.takeLast(1_500)
+        if (historyGeneration != expectedGeneration) emptyList() else playedRecognitionWords(history, position).takeLast(1_500)
 
     @Synchronized fun diagnostics(): String = "words=${words.size},localFailed=$failed,localError=$errorCode,localGeneration=$generation,localBoundary=$boundary,localEnd=$lastOffered,localWindows=$decodedWindows,localRetries=$retryCount"
 
@@ -186,12 +206,7 @@ internal class RecentDialogueRecognition(private val context: Context, private v
                     private fun accept(bundle: Bundle) {
                         if (!running || failed || session != token) return
                         val parts = bundle.getParcelableArrayList(SpeechRecognizer.RECOGNITION_PARTS, RecognitionPart::class.java).orEmpty()
-                        val added = parts.zipWithNext().mapNotNull { (a, b) ->
-                            val first = start + a.timestampMillis / 1000.0
-                            val until = start + b.timestampMillis / 1000.0
-                            if (until > first && until <= lastOffered + .02 && until - first <= 3 && first > start + .4)
-                                HeardWord(a.rawText, first, until) else null
-                        }
+                        val added = recognizedDialogueWords(parts, start, lastOffered + .02)
                         if (added.isEmpty()) return
                         retryCount = 0; errorCode = 0
                         synchronized(this@RecentDialogueRecognition) {

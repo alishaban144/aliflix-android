@@ -9,6 +9,22 @@ import java.nio.ByteOrder
 import kotlin.math.sin
 
 class PlaybackSpeechBufferTest {
+    @Test fun recentMusicDoesNotEraseEarlierPlayedConversationAndRetentionIsBounded() {
+        val capture = capture()
+        val format = Format.Builder().setSampleRate(16000).setChannelCount(1).setPcmEncoding(C.ENCODING_PCM_16BIT).build()
+        repeat(140) { second ->
+            val buffer=ByteBuffer.allocate(32_000).order(ByteOrder.LITTLE_ENDIAN)
+            repeat(16_000) { buffer.putShort(if(second < 90) 1200 else 0) };buffer.flip()
+            capture.pcm(buffer,format,(100+second)*1_000_000L,0)
+        }
+        val played=requireNotNull(capture.playedDialoguePcm(239.0))
+        assertEquals(119.0,played.start,.03)
+        assertTrue(played.frames.size <= 6_000)
+        assertTrue(played.frames.first().any { it != 0.toShort() })
+        assertTrue(played.frames.last().all { it == 0.toShort() })
+        assertTrue(played.start+played.frames.size*.02 <= 239.001)
+        capture.discontinuity();assertNull(capture.playedDialoguePcm(239.0))
+    }
     @Test fun finiteDialogueContainsOnlyPlayedContiguousPcmAndClearsOnSeek() {
         val capture = capture()
         capture.dialogueFrameObserver = { _, _, _, _, _ -> }

@@ -1,105 +1,144 @@
 # Mobile v3.1.154 validation
 
-Baseline: published mobile v3.1.153, following the v3.1.151 worktree baseline.
-Target: 3.1.154 / 244. TV sources/version and recommendation Worker are unchanged.
-The authorized Pixel 7a runs Android 17. Installations retain its data and local
-development certificate; the production signer is verified separately.
+Baseline: published mobile v3.1.153, following the isolated v3.1.151 baseline.
+Target: 3.1.154 / 244. No TV sources, version, builds or releases change.
+Physical checks use the authorized Pixel 7a on Android 17. Installations preserve
+app data and its development certificate; the public production signer is checked separately.
 
 ## Resume and preparation
 
-An unfinished position survives the library's watched/completed flag. Progress
-belongs to the movie/episode, independently of provider or server. The player
-records the actually active selection and fences initial frames before restoring
-a requested resume position. A physical test watched a fixture past 80%, left,
-stopped the service, selected another saved server route and resumed within two
-seconds of the saved position. It did not clear the application's data.
+Unfinished progress belongs to the movie/episode independently of provider/server
+and survives a library watched flag. Save the actually active selection before a
+new intent and fence first frames before applying the resume position. Audio-only
+media and Cast use their ready media clock. Five physical resume/Up Next checks
+passed, including a server change after 80 percent, audio-only resume, large text,
+portrait/landscape bounds, credits dismissal and single episode advancement.
+No Cast-receiver hardware result is claimed.
 
-Details preload now fetches playable media bytes for every resolved route. Up Next
-preparation starts ahead of the actual outro and buffers three seconds through
-the existing media cache, muted, with the selected route's own headers and audio
-settings. A stale preparation cannot replace the current selection.
+Details preparation fetches playable media bytes for every resolved route, muted.
+Up Next warms the pinned working route 15 seconds before the measured outro and
+buffers three seconds through the existing media cache, preserving headers and
+audio choice. Stale warmup cannot replace the current selection. Downloads,
+subtitles, alternate audio, background progress and pause/resume keep the existing
+v3.1.152/v3.1.153 implementations and their validation records.
 
 ## Sync with Audio
 
-The interaction has a 9.5-second watchdog and displays Syncing without a numerical
-countdown. It analyzes contiguous, already-played PCM; a finite on-device decoder
-can recover when continuous recognition misses a phrase. It does not open the
-microphone, seek the video, scan the entire media file or download captions on tap.
+The interaction has a 9.5-second watchdog and shows Syncing without a countdown.
+Timestamped decoded PCM is retained independently of optional Android recognition;
+a missing on-device recognizer no longer silently disables audio recovery.
+Only contiguous already-played audio is eligible. Seeks, decode-ahead, gaps,
+source/audio/caption changes, Reset, cancellation and stale account/revision state
+cannot apply a late result. Manual delay remains separate and original cues stay intact.
 
-Complete caption references prepare in the background. Both original Flixer
-catalogues get an early opportunity, alongside external caption releases. Slow
-or duplicate files cannot monopolize the bounded two-slot search. Automatic
-selection rejects obviously incomplete split movie files and retains manually
-chosen original cues.
+A finite on-device decoder supplies progressive results. When necessary, the
+user-requested recovery sends audio through the existing Aliflix backend and Groq
+Whisper: two network slots, at most six clips, at most 20 seconds each and 120 seconds
+total including overlap. No model, API key or speech SDK is added to the APK. Clips
+retain their own media clocks; captions, stream URLs, cookies and account credentials
+are not sent. The audio sheet explains online recovery. Nothing downloads subtitles
+or scans the whole movie during the Sync interaction.
 
-Unique same-language sentences or long pause boundaries establish a complete
-caption-to-caption clock. Pause fitting balances cue onsets and endings, checks
-withheld boundaries across the release, rejects competing clocks and checks
-dialogue occupancy in independent timeline blocks. Spoken-language words still
-have to verify the reference against actual played audio before a translation's
-clock can be applied. Original captions, manual delay, Reset, account/audio
-identity and target-owned region indexes are preserved.
+Clip selection favors complete speech exchanges over music and uses shifted
+windows to recover cropped words. Transcripts remain independent: extract phrases
+inside each response rather than concatenating inconsistent recognition. Preserve
+measured word endings and mark regressed/padded onsets unknown. Fit earlier phrases
+and verify held-out phrases; silence, repeated text, wrong captions and conflicting
+clocks do not produce success. Missing function words may corroborate two rich
+independent phrases only when the content words and measured ending survive;
+that weaker phrase cannot train the offset or invent an onset. A four-second
+compact exchange needs two independent measurements of both complete phrases;
+one response still requires six seconds. Translated recovery needs two responses
+to agree on two distinct phrases. Return the median of independently measured
+boundaries, giving each response one vote.
 
-Stronger testing caught and rejected an early implementation that displayed
-Synced while the final phrase was over a second out. A later independently heard
-phrase cannot be discarded as an outlier, and an old phrase group cannot stand
-in for recent dialogue. After independent verification, the applied offset
-centers all accepted boundaries to minimize its worst timing error.
+Caption references prepare separately in the background. Full-file exact text
+establishes edition correspondence using at least nine unique phrases spanning
+180 seconds. This relationship alone cannot identify the stream's frame rate.
+When edition rates differ, require measured phrases separated by at least 45
+seconds to choose among the text-proven rate candidates. Native correlation still
+checks other earlier evidence. A local match must not silently transfer an
+incorrect movie-wide PAL clock. Translations keep their own cue/region indexes and
+verify their own uniquely corresponding measured boundaries, including clause
+pauses. Original English or Arabic text is never replaced.
 
-Normal catalogue Terminator playback uses automatically selected captions and
-provides no expected timing answer or replacement edition to the app. A separate
-host Whisper decoder analyzes privately captured played PCM. The final debug
-English two-scene check completed in 533 ms, with 356 ms maximum error at five
-independently checked phrase endings; withheld phrases independently verified
-the playback-rate difference. Arabic single-scene playback completed in 504 ms,
-with 493 ms maximum error at three separately checked phrase endings.
+The backend repair retains words overlapping confident speech segments; the old
+containment filter discarded genuine boundary words. Confidence, no-speech,
+timestamp and upload limits remain enforced, and the cache version invalidates
+old filtered responses. All 116 Worker tests and typecheck pass. Backend-only
+[run 37938281922](https://github.com/alishaban144/aliflix-android/actions/runs/37938281922)
+validated and deployed this repair without publishing an APK.
 
-The fully optimized mobile benchmark app passed normal English Terminator
-playback twice (442 ms and 471 ms), and Arabic playback in 456 ms. Its final English
-correction has 361 ms maximum independently checked error; Arabic has 493 ms.
-These minified corrections were checked against separately captured, same-provider
-played PCM and the exact same original caption editions (550 English / 780 Arabic
-cues); the independent decoder and expected timings never enter the app.
-Reset and the original manual delay passed in both languages.
+## Physical timing acceptance
 
-A second real title, Tears of Steel, used official captions deliberately shifted
-7.25 seconds. The minified app corrected every checked cue boundary to within
-70 ms in 279 ms, without being told the offset. English/French/English audio
-changes and forward/backward seeks preserved playing state and manual delay.
-Unsuitable captions produced an actionable rejection after 9,201 ms without a
-false success or playback discontinuity. The phone's automatic English preference
-was restored. These are measured checks, not certification of every authored cue
-or every possible media/subtitle combination.
+Normal Terminator checks use automatic original captions and ordinary provider
+resolution. The app receives no expected offset, replacement edition or decoded
+timing answer. A separate host small.en decoder checks privately captured played
+PCM, with no caption prompt. The exact stream fingerprint must match before any
+independent receipt is accepted. A correction fitted near 30 minutes is also
+checked unchanged near 54 minutes to catch global rate errors.
+
+The final R8 benchmark APK installed on the Pixel has SHA-256
+`99e874b30997e95451e7c8445886407876afc093e1fc5e63232e9ef76b46ec3a`.
+Its bytes match the local build; it uses the existing development signer and is
+not debuggable. The following physical results use this exact build:
+
+| Check | Sync time | Worst independently checked error |
+| --- | ---: | ---: |
+| Terminator, automatic original English, CineJoy, around 30 minutes | 2,501 ms | 521 ms |
+| Same English correction unchanged around 54 minutes | — | 506 ms |
+| Terminator, selected Flixer route, automatic original English | 2,486 ms | 541 ms |
+| Same Flixer correction unchanged around 54 minutes | — | 493 ms |
+| Terminator, automatic original Arabic over English speech, CineJoy | 1,831 ms | 365 ms |
+| Same Arabic correction unchanged around 54 minutes | — | 599 ms |
+| Tears of Steel, original captions deliberately delayed 7.25 seconds | 356 ms | 70 ms |
+| Tears of Steel, original captions deliberately early 7.25 seconds | 352 ms | 10 ms |
+
+Terminator checks provide no expected timing to the app. Tears of Steel supplies
+deliberately shifted original captions, not a correction or matcher answer; its
+independent receipt checks the applied correction against the original timing.
+The fully minified lifecycle fixture separately passed English/French/English
+audio changes, forward/backward seeks, continued playback, wrong-caption rejection
+without false success, Reset and preservation of manual delay. This dual-audio
+fixture is separate from the actual Tears of Steel film.
+
+An earlier Arabic boundary measured 604.5 ms and held publication. Independent
+response voting and median measured boundaries then passed the unchanged 600 ms
+limit. Earlier intermediate local-only rate passes and recognition rejections do
+not authorize publication. These are measured phrase checks, not certification
+of every authored caption boundary or every possible media/subtitle combination.
+
+The Flixer repeat selects that existing provider before normal resolution and
+automatic caption selection. Its later PCM is captured separately from CineJoy;
+neither route borrows the other's audio clock. The final minified build is restored
+after diagnostic capture, retaining app data. An earlier route-pinning helper lacked
+a subtitle track and failed setup; it is not a sync acceptance result.
 
 ## Timing metadata and Up Next
 
-IntroDB, AniSkip and IntroHater use small HTTP/JSON adapters; no CLI or additional
-media SDK ships in the APK. Exact mapped AniList/MAL episodes are used for AniSkip,
-and exact IMDb/season/episode identities for IntroHater. Different cuts are never
-averaged or joined. IntroDB has priority, while another service can fill a missing
-kind. Requests and negative caches are bounded; unavailable services fail quietly.
-Live AniList POST and Naruto AniSkip metadata returned successfully. IntroHater's
-public metadata route returned HTTP 403 from the validation host, so live service
-availability is not claimed; its documented response parser and fallback pass.
+IntroDB, AniSkip and IntroHater use small HTTP/JSON adapters, with exact episode
+identity. IntroDB retains priority; another service can fill a missing marker kind.
+Different cuts are never averaged. Bounded requests and negative caches fail quietly.
+Live AniList and Naruto AniSkip metadata succeeded. IntroHater returned HTTP 403
+from the validation host; its live availability is unverified, while parser/fallback
+checks pass. Valid outro starts remain usable when an end exceeds stream duration.
 
-The compact floating card adapts the action hierarchy in the original designer's
-[Hulu mobile end-card case study](https://www.oorjac.com/project/huluendcard).
-It keeps the soft ring, 48 dp Play target, Watch credits, measured caption/video
-separation, safe areas and landscape control clearance. Its transition uses a
-short fade/scale/slide with spring positioning. Four physical resume/Up Next tests
-pass, including large captions, portrait/landscape screenshots, missing markers,
-an outro end beyond the stream duration and credits dismissal without advancement.
+The compact floating card adapts the action hierarchy in the designer's
+[Hulu end-card case study](https://www.oorjac.com/project/huluendcard): soft ring,
+48 dp Play target, Watch credits, measured video/caption separation, safe insets,
+landscape control clearance and a short fade/scale/slide with spring positioning.
 
-## Final gates
+## Build and release gates
 
-The final local gate passed 498 mobile unit tests (zero failures/errors; three
-intentional live OMDb skips), mobile lint, debug assembly, Android-test assembly,
-and fully minified benchmark assembly. No TV tasks were run. Four focused
-physical resume/Up Next tests pass in addition to the live sync checks above.
-Private media, captions, source URLs and authentication are excluded from Git.
+528 mobile unit cases completed with zero failures/errors and three intentional
+live OMDb skips. Debug and Android-test APK assembly pass. Final mobile lint and
+full R8 benchmark assembly pass after the last production change. Private
+recordings, captions, requests, tokens, diagnostic files and validation drivers
+are excluded from Git. Only the explicitly approved small speech backend repair
+and backend-only workflow input extend beyond mobile Android paths.
 
-Publication uses the connected mobile workflow with unit/lint/signing gates and
-its focused API-35 instrumentation suite. CI/emulator results remain separate
-from physical Pixel evidence. After publication, independently downloaded public
-APK and manifest checks must verify 3.1.154 / 244, production signer, ZIP integrity,
-size and SHA-256 against update-mobile.json.
+Publication retains unit/lint/signing gates and focused API-35 instrumentation.
+CI/emulator results are separate from physical Pixel evidence. Independently
+verify the downloaded public APK and update-mobile.json for version 3.1.154 / 244,
+production signer, ZIP integrity, byte size and SHA-256. Production and development
+certificates differ; do not erase phone data to install the public-signed artifact.

@@ -15,20 +15,39 @@ internal data class PlayedDialoguePcm(val start: Double, val frames: List<ShortA
  */
 @androidx.annotation.RequiresApi(34)
 internal object PlayedDialogueRecognition {
-    suspend fun recognize(context: Context, language: String, pcm: PlayedDialoguePcm): List<HeardWord> =
+    suspend fun recognize(context: Context, language: String, pcm: PlayedDialoguePcm,
+                          onWords: (List<HeardWord>) -> Unit = {}): List<HeardWord> {
+        val heard = mutableListOf<HeardWord>()
         withTimeoutOrNull(7_500) {
             // The local service needs to finish releasing the continuous session.
             delay(180)
-            var retryable = false
-            var words = attempt(context, language, pcm) { retryable = dialogueRecognitionCanRetry(it) }
-            if (words.isEmpty() && retryable) {
-                delay(350)
-                words = attempt(context, language, pcm) { }
+            // Some local decoders finish the first utterance of a long input.
+            // Decode latest dialogue first, then overlapping earlier context.
+            // Original media times survive slicing; no seek gaps are joined.
+            val newestStart = (pcm.frames.size - 700).coerceAtLeast(0)
+            val earlierEnd = (pcm.frames.size - 600).coerceAtLeast(0)
+            val ranges = listOf(newestStart until pcm.frames.size) +
+                if (earlierEnd >= 400) listOf((earlierEnd - 700).coerceAtLeast(0) until earlierEnd) else emptyList()
+            for ((index, range) in ranges.withIndex()) {
+                if (index > 0) delay(180)
+                val sample = PlayedDialoguePcm(pcm.start + range.first * .02, pcm.frames.slice(range))
+                var retryable = false
+                var words = attempt(context, language, sample, onWords) { retryable = dialogueRecognitionCanRetry(it) }
+                if (words.isEmpty() && retryable) {
+                    delay(350)
+                    words = attempt(context, language, sample, onWords) { }
+                }
+                heard.addAll(words)
+                onWords(heard.distinctBy { it.text to it.start }.sortedBy { it.start })
             }
-            words
-        }.orEmpty()
+        }
+        // An earlier sample timing out cannot erase an already completed latest
+        // sample. User cancellation still propagates; the owning sync deadline
+        // and identity fences decide whether any result may apply.
+        return heard.sortedByDescending { it.endReliable }.distinctBy { it.text to it.start }.sortedBy { it.start }
+    }
 
-    private suspend fun attempt(context: Context, language: String, pcm: PlayedDialoguePcm,
+    private suspend fun attempt(context: Context, language: String, pcm: PlayedDialoguePcm, onWords: (List<HeardWord>) -> Unit,
         onFailure: (Int) -> Unit): List<HeardWord> = withContext(Dispatchers.Main.immediate) {
             if (pcm.frames.size < 400 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) return@withContext emptyList()
             val pipe = ParcelFileDescriptor.createPipe()
@@ -38,12 +57,8 @@ internal object PlayedDialogueRecognition {
             val ready = CompletableDeferred<Boolean>()
             fun accept(bundle: Bundle) {
                 val parts = bundle.getParcelableArrayList(SpeechRecognizer.RECOGNITION_PARTS, RecognitionPart::class.java).orEmpty()
-                heard.addAll(parts.zipWithNext().mapNotNull { (a, b) ->
-                    val start = pcm.start + a.timestampMillis / 1000.0
-                    val end = pcm.start + b.timestampMillis / 1000.0
-                    if (start >= pcm.start + .4 && end > start && end - start <= 3 &&
-                        end <= pcm.start + pcm.frames.size * .02) HeardWord(a.rawText, start, end) else null
-                })
+                heard.addAll(recognizedDialogueWords(parts, pcm.start, pcm.start + pcm.frames.size * .02))
+                onWords(heard.distinctBy { it.text to it.start }.sortedBy { it.start })
             }
             recognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) { ready.complete(true) }
