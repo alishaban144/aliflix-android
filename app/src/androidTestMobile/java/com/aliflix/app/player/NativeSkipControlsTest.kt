@@ -63,18 +63,18 @@ class NativeSkipControlsTest {
             compose.runOnIdle { assertEquals(34000L, position) }
             compose.onNodeWithText("Skip intro").assertDoesNotExist()
             compose.runOnIdle { position = 69_999; revision.intValue++ }
-            compose.onNodeWithText("UP NEXT").assertDoesNotExist()
+            compose.onNodeWithText("Next episode").assertDoesNotExist()
             compose.runOnIdle { position = 70_000; revision.intValue++ }
             compose.onNodeWithText("Skip outro").assertDoesNotExist()
-            compose.onNodeWithText("UP NEXT").assertIsDisplayed()
+            compose.onNodeWithText("Next episode").assertIsDisplayed()
             compose.runOnIdle { position = 80_000; revision.intValue++ }
-            compose.onNodeWithText("UP NEXT").assertIsDisplayed()
+            compose.onNodeWithText("Next episode").assertIsDisplayed()
             compose.runOnIdle { position = 90_000; playbackState = Player.STATE_ENDED; revision.intValue++ }
-            compose.onNodeWithText("UP NEXT").assertIsDisplayed()
+            compose.onNodeWithText("Next episode").assertIsDisplayed()
             compose.onNodeWithText("Watch credits").performClick()
-            compose.onNodeWithText("UP NEXT").assertDoesNotExist()
+            compose.onNodeWithText("Next episode").assertDoesNotExist()
             compose.runOnIdle { episode.intValue = 2; revision.intValue++ }
-            compose.onNodeWithText("UP NEXT").assertDoesNotExist() // The last episode has no successor.
+            compose.onNodeWithText("Next episode").assertDoesNotExist() // The last episode has no successor.
         } finally { compose.runOnUiThread { engine.release() } }
     }
 }

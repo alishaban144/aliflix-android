@@ -45,7 +45,7 @@ internal object GroqDialogueRecognition {
         val task = executor.submit {
             try {
                 if (!continuation.isActive) return@submit
-                val body = dialogueWav(sample)
+                val body = dialogueWav(sample, normalizeQuietAudio = sample.frames.size < 1_000)
                 connection.setFixedLengthStreamingMode(body.size)
                 connection.outputStream.use { it.write(body) }
                 check(connection.responseCode == 200)
@@ -116,21 +116,63 @@ internal fun dialogueRecoverySamples(pcm: PlayedDialoguePcm, speech: List<Speech
     val best = kotlin.math.round((first.start - pcm.start) / .02).toInt().coerceIn(0, latest)
     // Look both before and after the best detector window. Moving only
     // forward can repeatedly crop the same opening words from a sentence.
-    val starts = listOf(best, (best - 100).coerceAtLeast(0), (best + 100).coerceAtMost(latest), latest, 0) +
-        (latest downTo 0 step length).toList()
-    return starts.distinct().take(6).map { start ->
+    val broad = listOf(best, (best - 100).coerceAtLeast(0), (best + 100).coerceAtMost(latest)).distinct().map { start ->
         PlayedDialoguePcm(pcm.start + start * .02, pcm.frames.subList(start, start + length))
     }
+    // Short earlier dialogue may be swallowed by a long musical ASR segment.
+    // Bound a separate clip around measured speech, rather than spending the
+    // remaining requests on the quiet tail. Only actual PCM supplies its clock.
+    val decisions = DoubleArray(pcm.frames.size) { -1.0 }
+    for (window in speech) for (i in window.speech.indices) {
+        val at = kotlin.math.round((window.start + i.toDouble() / SPEECH_HZ - pcm.start) / .02).toInt()
+        if (at in decisions.indices) decisions[at] = window.speech[i]
+    }
+    val phrases = mutableListOf<IntRange>()
+    var begin = -1
+    for (i in 0..decisions.size) {
+        if (i < decisions.size && decisions[i] >= .5) { if (begin < 0) begin = i }
+        else if (begin >= 0) {
+            if (i - begin in 20..450) {
+                val previous = phrases.lastOrNull()
+                if (previous != null && begin - previous.last <= 100 && i - previous.first <= 850)
+                    phrases[phrases.lastIndex] = previous.first until i
+                else phrases.add(begin until i)
+            }
+            begin = -1
+        }
+    }
+    val separate = phrases.filter { range ->
+        range.count { decisions[it] >= .5 } >= 75 && kotlin.math.abs((range.first + range.last) / 2 - best - length / 2) >= 1_500
+    }.maxByOrNull { range ->
+        // Favor separation for independently checking an edition rate, while
+        // retaining enough actual speech to prevent a music-only request.
+        kotlin.math.abs((range.first + range.last) / 2 - best - length / 2)
+    }
+    val focused = separate?.let { range ->
+        val from = (range.first - 75).coerceIn(0, pcm.frames.size - 200)
+        val until = maxOf(range.last + 76, from + 200).coerceAtMost(pcm.frames.size)
+        listOf(from, (from - 30).coerceAtLeast(0), (from + 30).coerceAtMost(until - 200)).distinct().map { start ->
+            PlayedDialoguePcm(pcm.start + start * .02, pcm.frames.subList(start, minOf(until, start + 1_000)))
+        }
+    }.orEmpty()
+    val fallback = (listOf(latest, 0) + (latest downTo 0 step length).toList()).map { start ->
+        PlayedDialoguePcm(pcm.start + start * .02, pcm.frames.subList(start, start + length))
+    }
+    return (broad + focused + fallback).distinctBy { it.start }.take(6)
 }
 
-internal fun dialogueWav(sample: PlayedDialoguePcm): ByteArray {
+internal fun dialogueWav(sample: PlayedDialoguePcm, normalizeQuietAudio: Boolean = false): ByteArray {
     require(sample.start.isFinite() && sample.frames.size in 200..1_000 && sample.frames.all { it.size == 320 })
     val dataSize = sample.frames.size * 640
+    val peak = if (normalizeQuietAudio) sample.frames.maxOf { frame -> frame.maxOf { kotlin.math.abs(it.toInt()) } } else 0
+    // A bounded gain on a private recognition copy helps quiet dialogue; never
+    // amplify beyond four times, clip, or change the actual playback samples.
+    val gain = if (peak > 0) (.85 * Short.MAX_VALUE / peak).coerceIn(1.0, 4.0) else 1.0
     return ByteBuffer.allocate(44 + dataSize).order(ByteOrder.LITTLE_ENDIAN).apply {
         put("RIFF".toByteArray()); putInt(36 + dataSize); put("WAVEfmt ".toByteArray()); putInt(16)
         putShort(1); putShort(1); putInt(16_000); putInt(32_000); putShort(2); putShort(16)
         put("data".toByteArray()); putInt(dataSize)
-        sample.frames.forEach { frame -> frame.forEach { putShort(it) } }
+        sample.frames.forEach { frame -> frame.forEach { putShort((it * gain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()) } }
     }.array()
 }
 
@@ -142,8 +184,16 @@ internal fun parseGroqDialogue(json: JSONObject, sample: PlayedDialoguePcm): Lis
         val text = word.optString("text").trim()
         val start = word.optDouble("start", Double.NaN); val end = word.optDouble("end", Double.NaN)
         if (text.isBlank() || text.length > 80 || !start.isFinite() || !end.isFinite() ||
-            start < .4 || end <= start || end - start > 2 || end > duration - .4) null
-        else HeardWord(text, sample.start + start, sample.start + end, measuredEnd = true)
+            start < 0 || end <= start || end > duration || end - start > 2 && start >= .4) null
+        else {
+            // Keep a cropped/padded opening word as lexical context only. Its
+            // unknown onset cannot certify a clock, but dropping it can hide a
+            // complete phrase whose later word endings were actually measured.
+            val ending = end <= duration - .4 && end - start <= 2
+            HeardWord(text, sample.start + start, sample.start + end,
+                startReliable = start >= .4 && end - start <= 2,
+                endReliable = ending, measuredEnd = ending)
+        }
     }
     // Whisper sometimes pads a word ending beyond the next measured onset.
     // Bound that overlap by the onset already measured in this same sample;
@@ -158,8 +208,8 @@ internal fun parseGroqDialogue(json: JSONObject, sample: PlayedDialoguePcm): Lis
         // Keep lexical order. An overlapping backward onset is not measured
         // evidence: only a later reliable phrase ending may certify its clock.
         normalized.add(word.copy(start = start, end = maxOf(start, end),
-            playedThrough = end, startReliable = !regressed,
-            endReliable = end > start, measuredEnd = end > start))
+            playedThrough = end, startReliable = word.startReliable && !regressed,
+            endReliable = word.endReliable && end > start, measuredEnd = word.measuredEnd && end > start))
     }
     return normalized
 }

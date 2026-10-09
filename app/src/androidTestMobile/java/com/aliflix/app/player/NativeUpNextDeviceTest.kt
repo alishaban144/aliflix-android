@@ -42,7 +42,8 @@ class NativeUpNextDeviceTest {
         val output = File(context.getExternalFilesDir(null), "up-next-validation").apply { mkdirs() }
         fun diagnostics(scenario: ActivityScenario<NativePlayerActivity>, phase: String) {
             scenario.onActivity {
-                val state = "${it.playbackUiState}\nposition=${it.playbackController?.currentPosition},duration=${it.playbackController?.duration}\n"
+                val player = it.playbackController
+                val state = "${it.playbackUiState}\nposition=${player?.currentPosition},duration=${player?.duration},state=${player?.playbackState},playing=${player?.isPlaying},playWhenReady=${player?.playWhenReady},suppression=${player?.playbackSuppressionReason},repeat=${player?.repeatMode},buffered=${player?.bufferedPosition}\n"
                 File(output, "state-$phase.txt").writeText(state)
                 android.util.Log.i("UpNextGeometryTest", "$phase:$state")
             }
@@ -99,7 +100,9 @@ class NativeUpNextDeviceTest {
                 }
                 if (!withMarker) {
                     scenario.onActivity { it.playbackController!!.seekTo(it.playbackController!!.duration); it.playbackController!!.play() }
-                    await { var ended = false; scenario.onActivity { ended = it.playbackController!!.playbackState == androidx.media3.common.Player.STATE_ENDED }; ended }
+                    try {
+                        await { var ended = false; scenario.onActivity { ended = it.playbackController!!.playbackState == androidx.media3.common.Player.STATE_ENDED }; ended }
+                    } catch (error: AssertionError) { diagnostics(scenario, "ended"); throw error }
                     await { node("Next episode") != null }
                 }
                 var action = requireNotNull(node("Watch credits"))

@@ -8,6 +8,47 @@ import java.nio.ByteOrder
 
 class GroqDialogueRecognitionTest {
     private val sample = PlayedDialoguePcm(120.0, List(1_000) { ShortArray(320) { 512 } })
+    @Test fun quietFocusedRecognitionCopyUsesBoundedGainWithoutChangingPlaybackPcm() {
+        val quiet=sample.copy(frames=sample.frames.take(500))
+        val normalized=ByteBuffer.wrap(dialogueWav(quiet,normalizeQuietAudio=true)).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(2048,normalized.getShort(44).toInt())
+        assertEquals(512,quiet.frames.first().first().toInt())
+        val loud=quiet.copy(frames=List(500) { ShortArray(320) { 30_000 } })
+        assertEquals(30_000,ByteBuffer.wrap(dialogueWav(loud,true)).order(ByteOrder.LITTLE_ENDIAN).getShort(44).toInt())
+    }
+    @Test fun cropEdgeWordsRemainLexicalContextWithoutCertifyingInventedBoundaries() {
+        val words=parseGroqDialogue(JSONObject("""{"words":[
+          {"text":"Hey,","start":0,"end":2.72},
+          {"text":"you","start":2.72,"end":2.74},
+          {"text":"got","start":2.74,"end":2.86},
+          {"text":"phone?","start":3.1,"end":3.56}]}"""),sample)
+        assertEquals(listOf("Hey,","you","got","phone?"),words.map { it.text })
+        assertFalse(words.first().startReliable)
+        assertFalse(words.first().endReliable)
+        assertFalse(words.first().measuredEnd)
+        assertTrue(words.last().startReliable && words.last().measuredEnd)
+    }
+    @Test fun earlierShortSpeechGetsFocusedClipsInsteadOfSpendingEverySlotOnMusic() {
+        val retained=sample.copy(frames=List(6_000) { ShortArray(320) })
+        val bits=DoubleArray(6_000)
+        for(start in listOf(310,420)) for(i in start until start+60) bits[i]=1.0
+        for(start in listOf(2_010,2_210,2_450)) for(i in start until start+120) bits[i]=1.0
+        for(i in 5_000 until 6_000) bits[i]=1.0
+        val clips=dialogueRecoverySamples(retained,listOf(SpeechWindow(120.0,bits)))
+        val focused=clips.filter { it.start < 130 && it.frames.size < 1_000 }
+        assertTrue(focused.size >= 2)
+        assertTrue(focused.all { it.start <= 126.2 && it.start+it.frames.size*.02 >= 129.6 })
+        assertTrue(clips.size <= 6 && clips.sumOf { it.frames.size } <= 6_000)
+    }
+    @Test fun focusedSpeechAtThePlayedBoundaryStillUsesFourSecondsOfRealPcm() {
+        val retained=sample.copy(frames=List(6_000) { ShortArray(320) })
+        val bits=DoubleArray(6_000)
+        for(start in listOf(2_010,2_210,2_450)) for(i in start until start+120) bits[i]=1.0
+        for(i in 5_890 until 5_980) bits[i]=1.0
+        val clips=dialogueRecoverySamples(retained,listOf(SpeechWindow(120.0,bits)))
+        assertTrue(clips.all { it.frames.size in 200..1_000 && it.start+it.frames.size*.02 <= 240.0 })
+        assertTrue(clips.any { it.start > 230 && it.frames.size < 1_000 })
+    }
     @Test fun boundedWavPreservesTheDecodedSampleRateAndContainsOnlyAudio() {
         val bytes = dialogueWav(sample)
         val header = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)

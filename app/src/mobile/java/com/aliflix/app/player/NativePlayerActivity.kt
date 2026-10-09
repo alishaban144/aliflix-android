@@ -1232,7 +1232,10 @@ class NativePlayerActivity : FragmentActivity() {
                         val localHistory = (initialHistory + NativePlaybackService.dialogueWordHistory(observedPosition) +
                             playedRecognitionWords(finiteWords, observedPosition))
                             .distinctBy { it.text to it.start }.sortedBy { it.start }
-                        val cloudCandidates = cloudTranscripts.map { playedRecognitionWords(it, observedPosition) }.filter { it.size >= 9 }
+                        // A focused earlier phrase can corroborate longer later
+                        // clips. The matcher still requires nine words in total
+                        // and independently verified phrases; keep clips separate.
+                        val cloudCandidates = cloudTranscripts.map { playedRecognitionWords(it, observedPosition) }.filter { it.size >= 3 }
                         val candidates = cloudCandidates + listOf(localHeard)
                         val latestReferences = syncReferences.toList()
                         solution = withContext(Dispatchers.Default) {

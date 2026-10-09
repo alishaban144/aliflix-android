@@ -389,7 +389,7 @@ class NativePlaybackService : MediaSessionService() {
         // Even direct/offline requests cannot emit local sound ahead of the first video frame.
         startupVolume = startupVolume ?: localPlayer.volume
         localPlayer.volume = 0f
-        player.setMediaItem(checkNotNull(originalItem), next.positionMs)
+        player.setMediaItem(localCaptionItem(checkNotNull(originalItem)), next.positionMs)
         PlaybackStartupTiming.mark("media3_prepare")
         player.prepare()
         player.playWhenReady = next.playing
@@ -448,7 +448,7 @@ class NativePlaybackService : MediaSessionService() {
 
     private fun relayConverter(): MediaItemConverter = object : MediaItemConverter {
         private val delegate = DefaultMediaItemConverter()
-        override fun toMediaItem(item: MediaQueueItem): MediaItem = originalItem ?: delegate.toMediaItem(item)
+        override fun toMediaItem(item: MediaQueueItem): MediaItem = localCaptionItem(originalItem ?: delegate.toMediaItem(item))
         override fun toMediaQueueItem(item: MediaItem): MediaQueueItem {
             val current = checkNotNull(request)
             val currentRelay = relay ?: CastStreamRelay(current, lanAddress()).also { relay = it }
@@ -459,6 +459,16 @@ class NativePlaybackService : MediaSessionService() {
             val queueItem = delegate.toMediaQueueItem(builder.build())
             return withCastSubtitles(queueItem, current, currentRelay.subtitleUrl)
         }
+    }
+
+    private fun localCaptionItem(item: MediaItem): MediaItem {
+        // Local external captions already render from the owned cue timeline.
+        // Keep their configuration in originalItem and the Cast converter, but
+        // do not merge a redundant text source into local audio/video: its
+        // renderer can prevent EOS after seeking past its final short cue.
+        val configs = item.localConfiguration?.subtitleConfigurations ?: return item
+        return if (configs.none { it.id == "aliflix-external" }) item else item.buildUpon()
+            .setSubtitleConfigurations(configs.filterNot { it.id == "aliflix-external" }).build()
     }
 
     private fun lanAddress(): String {

@@ -4,6 +4,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DialogueWordAlignmentTest {
+    @Test fun paddedOpeningTokenCannotInventAnOnsetButMeasuredLaterWordsCanVerifyTheEdition() {
+        val texts=listOf("Hey you got a phone", "Quiet purple lanterns shine above snowy mountains",
+            "Several silver boats crossed bright rivers beside gardens", "Other unrelated distant words")
+        val starts=listOf(100.0,155.0,161.0,300.0)
+        val source=texts.mapIndexed { i,t -> SubtitleCue(starts[i],starts[i]+if(i==0)2.25 else 3.5,t) }
+        val strong=texts.slice(1..2).flatMapIndexed { i,t -> t.split(" ").mapIndexed { j,w ->
+            HeardWord(w,155.0+i*6+j*.4,155.3+i*6+j*.4,measuredEnd=true)
+        } }
+        val phone=listOf(HeardWord("Hey",90.0,101.05,startReliable=false,endReliable=false),
+            HeardWord("you",101.05,101.2,measuredEnd=true),HeardWord("got",101.2,101.4,measuredEnd=true),
+            HeardWord("a",101.4,101.65,measuredEnd=true),HeardWord("phone",101.65,102.25,measuredEnd=true))
+        var boundaries=emptyList<VerifiedDialogueBoundary>()
+        val result=requireNotNull(DialogueWordAlignment.matchClips(source,listOf(phone,strong),requireWideClock=true,
+            candidateRates=listOf(1.0),boundaries={boundaries=it}))
+        assertEquals(0.0,result.offset,.001)
+        assertFalse(boundaries.any { it.cue==0 && !it.ending })
+        assertEquals(101.05,boundaries.first { it.cue==0 && it.ending }.phraseStart,.001)
+        assertNull(DialogueWordAlignment.matchClips(source,listOf(phone.map { it.copy(start=it.start+2,end=it.end+2) },strong),
+            requireWideClock=true,candidateRates=listOf(1.0)))
+    }
     @Test fun compactExchangeNeedsTwoIndependentMeasuredResponsesForBothPhrases() {
         val texts = listOf("Quiet purple lanterns cover snowy mountains", "Several silver boats cross bright rivers")
         val source = texts.mapIndexed { i, text -> SubtitleCue(100.0+i*2.6,102.1+i*2.6,text) } +

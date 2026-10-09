@@ -35,7 +35,11 @@ A finite on-device decoder supplies progressive results. When necessary, the
 user-requested recovery sends audio through the existing Aliflix backend and Groq
 Whisper: two network slots, at most six clips, at most 20 seconds each and 120 seconds
 total including overlap. No model, API key or speech SDK is added to the APK. Clips
-retain their own media clocks; captions, stream URLs, cookies and account credentials
+retain their own media clocks. Short, separate speech clips avoid musical ASR
+segments; quiet focused clips use at most four-times gain on the recognition copy.
+Padded crop-edge words can retain lexical context but cannot certify a timing
+boundary. Focused clips always contain four to twenty seconds of actual played PCM.
+Captions, stream URLs, cookies and account credentials
 are not sent. The audio sheet explains online recovery. Nothing downloads subtitles
 or scans the whole movie during the Sync interaction.
 
@@ -79,38 +83,42 @@ independent receipt is accepted. A correction fitted near 30 minutes is also
 checked unchanged near 54 minutes to catch global rate errors.
 
 The final R8 benchmark APK installed on the Pixel has SHA-256
-`99e874b30997e95451e7c8445886407876afc093e1fc5e63232e9ef76b46ec3a`.
+`87405e203d4ade123ce5a79b75023fbb302a51f596222720447e9f5e12fa9b43`.
 Its bytes match the local build; it uses the existing development signer and is
 not debuggable. The following physical results use this exact build:
 
 | Check | Sync time | Worst independently checked error |
 | --- | ---: | ---: |
-| Terminator, automatic original English, CineJoy, around 30 minutes | 2,501 ms | 521 ms |
-| Same English correction unchanged around 54 minutes | — | 506 ms |
-| Terminator, selected Flixer route, automatic original English | 2,486 ms | 541 ms |
-| Same Flixer correction unchanged around 54 minutes | — | 493 ms |
-| Terminator, automatic original Arabic over English speech, CineJoy | 1,831 ms | 365 ms |
-| Same Arabic correction unchanged around 54 minutes | — | 599 ms |
-| Tears of Steel, original captions deliberately delayed 7.25 seconds | 356 ms | 70 ms |
-| Tears of Steel, original captions deliberately early 7.25 seconds | 352 ms | 10 ms |
+| Terminator, automatic original English, CineJoy, around 30 minutes | 3,095 ms | 341 ms |
+| Same English correction unchanged around 54 minutes | — | 326 ms |
+| Terminator, automatic original Arabic over English speech, Flixer | 1,239 ms | 355 ms |
+| Same Arabic correction unchanged around 54 minutes | — | 602.6 ms, explicitly accepted by user |
+| Tears of Steel, original captions deliberately delayed 7.25 seconds | 373 ms | 70 ms |
+| Tears of Steel, original captions deliberately early 7.25 seconds | 401 ms | 50 ms |
 
 Terminator checks provide no expected timing to the app. Tears of Steel supplies
 deliberately shifted original captions, not a correction or matcher answer; its
 independent receipt checks the applied correction against the original timing.
-The fully minified lifecycle fixture separately passed English/French/English
+The fully minified lifecycle fixture separately passed in 9,234 ms overall: English/French/English
 audio changes, forward/backward seeks, continued playback, wrong-caption rejection
 without false success, Reset and preservation of manual delay. This dual-audio
 fixture is separate from the actual Tears of Steel film.
 
-An earlier Arabic boundary measured 604.5 ms and held publication. Independent
-response voting and median measured boundaries then passed the unchanged 600 ms
-limit. Earlier intermediate local-only rate passes and recognition rejections do
-not authorize publication. These are measured phrase checks, not certification
+The final later Arabic boundary measured 602.587999982461 ms. The original strict
+600 ms checker correctly rejected it; the user explicitly accepted this negligible
+2.6 ms variance and requested no repeated testing or implementation changes for it.
+The recorded result is not rounded into a strict pass. Earlier intermediate
+local-only rate passes and recognition rejections do not authorize publication.
+These are measured phrase checks, not certification
 of every authored caption boundary or every possible media/subtitle combination.
 
-The Flixer repeat selects that existing provider before normal resolution and
-automatic caption selection. Its later PCM is captured separately from CineJoy;
-neither route borrows the other's audio clock. The final minified build is restored
+An earlier intermediate minified Flixer English check passed in 2,486 ms with
+541 ms first-scene and 493 ms later-scene errors. A subsequent normal-resolution
+Flixer selection recovered through CineJoy and exposed short quiet speech omitted
+by ASR; focused recognition clips then recovered and independently verified it.
+The final Arabic check above resolved through Flixer. Its played PCM and later
+speech ends were captured separately from CineJoy; no route borrows another
+source's audio clock. The final minified build is restored
 after diagnostic capture, retaining app data. An earlier route-pinning helper lacked
 a subtitle track and failed setup; it is not a sync acceptance result.
 
@@ -123,6 +131,14 @@ Live AniList and Naruto AniSkip metadata succeeded. IntroHater returned HTTP 403
 from the validation host; its live availability is unverified, while parser/fallback
 checks pass. Valid outro starts remain usable when an end exceeds stream duration.
 
+A physical exact-end seek also exposed a redundant external subtitle renderer
+keeping the Android 17 player ready beyond the video duration. Local external
+captions now use their existing owned cue timeline without merging that redundant
+text source. Original source metadata and the Cast caption configuration remain
+intact; embedded subtitles are unchanged. All 21 focused regressions pass on the
+Pixel, including exact-end completion, offline captions, alternate audio, pause/
+resume, restart persistence, large text, Up Next and saved progress.
+
 The compact floating card adapts the action hierarchy in the designer's
 [Hulu end-card case study](https://www.oorjac.com/project/huluendcard): soft ring,
 48 dp Play target, Watch credits, measured video/caption separation, safe insets,
@@ -130,7 +146,7 @@ landscape control clearance and a short fade/scale/slide with spring positioning
 
 ## Build and release gates
 
-528 mobile unit cases completed with zero failures/errors and three intentional
+533 mobile unit cases completed with zero failures/errors and three intentional
 live OMDb skips. Debug and Android-test APK assembly pass. Final mobile lint and
 full R8 benchmark assembly pass after the last production change. Private
 recordings, captions, requests, tokens, diagnostic files and validation drivers
@@ -138,6 +154,10 @@ are excluded from Git. Only the explicitly approved small speech backend repair
 and backend-only workflow input extend beyond mobile Android paths.
 
 Publication retains unit/lint/signing gates and focused API-35 instrumentation.
+The first CI gate passed 20 of 21 regressions; the remaining skip-control test
+still asserted the old UP NEXT heading. It now asserts Next episode while retaining
+every timing, credits-dismissal and last-episode assertion. The dedicated real-player
+portrait/landscape, actual-outro and missing-marker checks already passed.
 CI/emulator results are separate from physical Pixel evidence. Independently
 verify the downloaded public APK and update-mobile.json for version 3.1.154 / 244,
 production signer, ZIP integrity, byte size and SHA-256. Production and development

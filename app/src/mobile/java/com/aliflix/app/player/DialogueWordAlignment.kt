@@ -105,8 +105,9 @@ internal object DialogueWordAlignment {
                     (partialPrefix && !commonOmissions && (matched < 6 || coverage < .75 ||
                         !(expected.size - 3 until expected.size).all { it in matchedIndices }))) continue
                 val firstWord = words[begin]; val finalWord = words[at - 1]
+                val phraseStart = words.subList(begin, at).firstOrNull { it.startReliable && it.endReliable }?.start ?: continue
                 val duration = cue.endSeconds - cue.startSeconds
-                if (finalWord.end - firstWord.start > duration + 4) continue
+                if (finalWord.end - phraseStart > duration + 4) continue
                 // Android supplies the next onset as an ending proxy; a long
                 // gap there is silence padding. Whisper supplies a measured
                 // word ending, so a naturally elongated word remains usable.
@@ -115,8 +116,8 @@ internal object DialogueWordAlignment {
                 val finalReliable = finalWord.endReliable && matchedIndices.lastOrNull() == expected.lastIndex &&
                     (finalWord.measuredEnd || finalWord.end - finalWord.start <= .65)
                 if (corroborationOnly && (!finalReliable || !finalWord.measuredEnd)) continue
-                if (firstReliable) phraseBoundaries.add(Triple(VerifiedDialogueBoundary(index, cue.startSeconds, firstWord.start, false, firstWord.start, distinctiveMatched), coverage, clipIndex))
-                if (finalReliable) phraseBoundaries.add(Triple(VerifiedDialogueBoundary(index, cue.endSeconds, finalWord.end, true, firstWord.start, distinctiveMatched), coverage, clipIndex))
+                if (firstReliable) phraseBoundaries.add(Triple(VerifiedDialogueBoundary(index, cue.startSeconds, firstWord.start, false, phraseStart, distinctiveMatched), coverage, clipIndex))
+                if (finalReliable) phraseBoundaries.add(Triple(VerifiedDialogueBoundary(index, cue.endSeconds, finalWord.end, true, phraseStart, distinctiveMatched), coverage, clipIndex))
                 val startOffset = firstWord.start - cue.startSeconds
                 val endOffset = finalWord.end - cue.endSeconds
                 // A recognizer can pad a first word with preceding silence.
@@ -127,7 +128,7 @@ internal object DialogueWordAlignment {
                     finalReliable -> endOffset
                     else -> continue
                 }
-                if (abs(offset) <= 600) anchors.add(Anchor(index, firstWord.start, finalWord.end, offset, if (firstReliable) cue.startSeconds else cue.endSeconds, distinctiveMatched, coverage, finalReliable && finalWord.measuredEnd, corroborationOnly, clipIndex))
+                if (abs(offset) <= 600) anchors.add(Anchor(index, phraseStart, finalWord.end, offset, if (firstReliable) cue.startSeconds else cue.endSeconds, distinctiveMatched, coverage, finalReliable && finalWord.measuredEnd, corroborationOnly, clipIndex))
             }
         }
         }
