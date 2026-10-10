@@ -4,6 +4,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DialogueWordAlignmentTest {
+    @Test fun alternateEditionRatesDoNotInvalidateVerifiedCurrentSelectedCaptionClock() {
+        val selected = cues(7.25)
+        val clips = listOf(heard())
+        val rates = listOf(1.0, 25.0 / 23.976, 23.976 / 25.0)
+        // The same words have enough evidence for a constant correction but
+        // cannot independently certify a different movie-wide frame rate.
+        assertNull(DialogueWordAlignment.matchClips(selected, clips, requireWideClock = true, candidateRates = rates))
+        val correction = requireNotNull(DialogueWordAlignment.matchClips(selected, clips, candidateRates = rates))
+        assertEquals(1.0, correction.rate, .000001)
+        assertEquals(-7.25, correction.offset, .001)
+        assertNull(DialogueWordAlignment.matchClips(selected.map { it.copy(text = "Unrelated missing dialogue") }, clips, candidateRates = rates))
+    }
     @Test fun paddedOpeningTokenCannotInventAnOnsetButMeasuredLaterWordsCanVerifyTheEdition() {
         val texts=listOf("Hey you got a phone", "Quiet purple lanterns shine above snowy mountains",
             "Several silver boats crossed bright rivers beside gardens", "Other unrelated distant words")

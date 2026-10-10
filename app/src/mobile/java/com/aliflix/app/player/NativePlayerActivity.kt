@@ -1258,7 +1258,6 @@ class NativePlayerActivity : FragmentActivity() {
                             } + 1.0
                             for (reference in latestReferences.sortedBy { kotlin.math.abs(it.targetToReference.rate - 1.0) }) {
                                 check()
-                                if (requireWideClock && kotlin.math.abs(reference.targetToReference.rate - 1.0) <= .0003) continue
                                 TranslatedSubtitleSync.match(reference, latestHeard, latestHistory, observed, verificationPosition, recentAfter, check,
                                     if (cloudCandidate) cloudCandidates else emptyList())?.let {
                                     android.util.Log.i("AliflixAudioSync", "instant:verified_translation")
@@ -1266,7 +1265,10 @@ class NativePlayerActivity : FragmentActivity() {
                                 }
                             }
                             val wordCorrection = DialogueWordAlignment.matchClips(originals, if (cloudCandidate) cloudCandidates else listOf(latestHeard), observed, recentAfter = recentAfter,
-                                diagnostic = { android.util.Log.i("AliflixAudioSync", it) }, cancelled = check, requireWideClock = requireWideClock,
+                                // An alternate caption edition is not evidence that
+                                // the selected captions need its rate. The chosen
+                                // words and earlier audio must decide that clock.
+                                diagnostic = { android.util.Log.i("AliflixAudioSync", it) }, cancelled = check,
                                 candidateRates = if (requireWideClock) editionRates else null)
                             if (wordCorrection != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, wordCorrection, observed, verificationPosition, check)) {
                                 android.util.Log.i("AliflixAudioSync", "instant:verified_local_words,count=${latestHeard.size},score=${wordCorrection.confidence}")
@@ -1274,7 +1276,7 @@ class NativePlayerActivity : FragmentActivity() {
                             }
                             // Earlier independently heard phrases can prove a supported
                             // subtitle rate; a short current exchange cannot invent drift.
-                            val historicalClock = if (!requireWideClock && latestHistory.any { it.end >= recentAfter }) DialogueWordAlignment.match(originals, latestHistory, observed, recentAfter = recentAfter,
+                            val historicalClock = if (latestHistory.any { it.end >= recentAfter }) DialogueWordAlignment.match(originals, latestHistory, observed, recentAfter = recentAfter,
                                 diagnostic = { android.util.Log.i("AliflixAudioSync", "history:$it") }, cancelled = check) else null
                             if (historicalClock != null && AdaptiveSubtitleSynchronizer.verifyEarlierClock(originals, historicalClock, observed, verificationPosition, check,
                                 diagnostic = { android.util.Log.i("AliflixAudioSync", it) }))

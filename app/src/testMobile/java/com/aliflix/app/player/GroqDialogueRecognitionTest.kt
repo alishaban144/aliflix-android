@@ -8,6 +8,17 @@ import java.nio.ByteOrder
 
 class GroqDialogueRecognitionTest {
     private val sample = PlayedDialoguePcm(120.0, List(1_000) { ShortArray(320) { 512 } })
+    @Test fun firstTwoRequestsCoverSeparateConversationsBeforeRepeatingTheBestOne() {
+        val retained = sample.copy(frames = List(6_000) { ShortArray(320) })
+        val bits = DoubleArray(6_000)
+        for (start in listOf(400, 600, 800, 4_400, 4_580, 4_760, 4_930))
+            for (i in start until start + 100) bits[i] = 1.0
+        val clips = dialogueRecoverySamples(retained, listOf(SpeechWindow(120.0, bits)))
+        assertTrue(clips.first().start > 190)
+        assertTrue(clips[1].start < 135)
+        assertTrue(clips[1].start + clips[1].frames.size * .02 <= clips.first().start)
+        assertTrue(clips.size <= 6 && clips.sumOf { it.frames.size } <= 6_000)
+    }
     @Test fun quietFocusedRecognitionCopyUsesBoundedGainWithoutChangingPlaybackPcm() {
         val quiet=sample.copy(frames=sample.frames.take(500))
         val normalized=ByteBuffer.wrap(dialogueWav(quiet,normalizeQuietAudio=true)).order(ByteOrder.LITTLE_ENDIAN)

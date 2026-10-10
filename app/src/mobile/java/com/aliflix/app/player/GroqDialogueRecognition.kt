@@ -155,10 +155,19 @@ internal fun dialogueRecoverySamples(pcm: PlayedDialoguePcm, speech: List<Speech
             PlayedDialoguePcm(pcm.start + start * .02, pcm.frames.subList(start, minOf(until, start + 1_000)))
         }
     }.orEmpty()
-    val fallback = (listOf(latest, 0) + (latest downTo 0 step length).toList()).map { start ->
+    // Spend the first two network slots on different conversations. Three
+    // overlapping versions of the strongest exchange plus three versions of a
+    // short isolated line can consume the entire budget without observing the
+    // intervening dialogue needed to distinguish subtitle editions.
+    val separated = listOf(0 until best, (best + length) until pcm.frames.size)
+        .filter { it.count() >= 200 }
+        .mapNotNull { range -> dialogueRecoverySample(
+            PlayedDialoguePcm(pcm.start + range.first * .02, pcm.frames.subList(range.first, range.last + 1)), speech) }
+    val fallback = (listOf(0, latest) + (latest downTo 0 step length).toList()).map { start ->
         PlayedDialoguePcm(pcm.start + start * .02, pcm.frames.subList(start, start + length))
     }
-    return (broad + focused + fallback).distinctBy { it.start }.take(6)
+    return (listOf(first) + separated.take(1) + focused.take(2) + broad.drop(1) + fallback + separated)
+        .distinctBy { it.start }.take(6)
 }
 
 internal fun dialogueWav(sample: PlayedDialoguePcm, normalizeQuietAudio: Boolean = false): ByteArray {

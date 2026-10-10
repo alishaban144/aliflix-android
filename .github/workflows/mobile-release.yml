@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "244"
-  RELEASE_VERSION_NAME: "3.1.154"
+  RELEASE_VERSION_CODE: "245"
+  RELEASE_VERSION_NAME: "3.1.155"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -87,7 +87,7 @@ jobs:
           chmod +x gradlew
       - name: Verify phone playback
         env:
-          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.153' || github.ref_name == 'release/v3.1.154' || github.ref_name == 'v3.1.154' || github.ref_name == 'v3.1.153' || github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest,com.aliflix.app.player.NativeResolverSilenceTest,com.aliflix.app.player.MobileResumeDeviceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
+          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.155' || github.ref_name == 'v3.1.155' || github.ref_name == 'release/v3.1.153' || github.ref_name == 'release/v3.1.154' || github.ref_name == 'v3.1.154' || github.ref_name == 'v3.1.153' || github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest,com.aliflix.app.player.NativeResolverSilenceTest,com.aliflix.app.player.MobileResumeDeviceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
         run: bash .github/scripts/test-phone-casting.sh '${{ matrix.api-level }}'
       - name: Upload playback test reports
         if: always()
@@ -358,7 +358,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Unfinished progress resumes across sources and servers. Sync with Audio recovers earlier played dialogue with Groq Whisper within ten seconds and verifies references across subtitle languages. Smaller animated Up Next controls silently buffer the next episode. IntroDB, AniSkip and IntroHater timing metadata are supported. Mobile only."
+          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: Fixes Sync with Audio rejecting clear dialogue when an alternate subtitle edition is found. Online recovery checks separate conversations before repeating clips. Existing downloads, resume and Up Next improvements are retained. Mobile only."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -387,6 +387,8 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
+            Fixes a reproduced Sync with Audio failure: finding another subtitle edition no longer vetoes independently verified timing for the selected captions. Groq recovery prioritizes separate conversations before spending requests on overlapping clips. Wrong-caption, ambiguity, independent phrase and earlier-audio contradiction checks remain active.
+
             Mobile downloads discover up to three genuinely distinct resolutions concurrently. Progressive quality cards show Best, Balanced and Smaller file with actual heights and estimated sizes. Seasons share one quality choice, pin their source and server, and automatically recover individual unavailable episodes. Japanese anime downloads now use their dedicated native sources.
 
             Sync with Audio uses Groq Whisper recovery when local matching fails, checking short samples of already-played dialogue within a ten-second interaction budget. Earlier conversation remains available after music or silence, and capture works independently of Android speech-model availability. Every correction still requires independent phrase timing checks. Background subtitle references support translations and edition differences; selected captions, manual delay and Reset are preserved.
