@@ -16,4 +16,19 @@ The implementation follows [Android's Compose Slider customization guidance](htt
 
 ## Evidence limits
 
-No emulator or physical-device testing was performed, as requested. Rendered UI and physical interaction are unverified. Public release, updater and signature verification will be recorded after publication.
+No emulator or physical-device testing was performed, as requested. Rendered UI and physical interaction are unverified.
+
+## Published release
+
+Released mobile v3.1.157 / versionCode 247 from `b29ba93389a84e58a18ddc9b7c8b9521d1db1553`.
+
+- [Release](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.157)
+- [Successful workflow 38083904134](https://github.com/alishaban144/aliflix-android/actions/runs/38083904134)
+- [APK](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.157/aliflix-mobile.apk)
+- [Updater manifest](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.157/update-mobile.json)
+
+CI passed the full mobile unit-test/lint/release build step, signing, integrity and publication. Device testing and Worker checks/deployment were skipped. The public tag points to the validated release commit.
+
+The independently downloaded APK is 66,171,961 bytes, SHA-256 `85886c8d4d0a929ab2922ec56cb1f6f9e83e507c715e4dfacde52afdb217fbc7`. APK v2 signature and ZIP integrity pass; the production signer remains `a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47`. Package `com.aliflix.app` reports versionCode 247 and versionName 3.1.157. GitHub asset size/digest agree with the downloaded file. Release and latest updater manifests are byte-identical, match its hash/size and point to v3.1.157.
+
+All four supported ABIs, all 20 native libraries and every functional asset are byte-identical to the previous public v3.1.156 APK. The 74 verified-unused schema exclusions remain intact. Raw evidence is in ignored `.validation/release-v157/`.
