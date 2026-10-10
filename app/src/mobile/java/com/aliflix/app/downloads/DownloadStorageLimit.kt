@@ -1,28 +1,41 @@
 package com.aliflix.app.downloads
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.clickable
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.ui.common.*
 import com.aliflix.app.ui.theme.*
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 internal fun storageLimitInput(value: String): Int? = value.toIntOrNull()?.takeIf { it in 1..200 }
 internal fun storageLimitBelowUsage(limitGb: Int, used: Long): Boolean = used > limitGb * DOWNLOAD_GB
+internal fun storageLimitSliderValue(value: Float): Int = value.roundToInt().coerceIn(1, 200)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable internal fun DownloadStorageLimit(store: OfflineDownloads, usedBytes: Long) {
@@ -36,24 +49,12 @@ internal fun storageLimitBelowUsage(limitGb: Int, used: Long): Boolean = used > 
     }
     var sheet by rememberSaveable { mutableStateOf(false) }
     var input by rememberSaveable { mutableStateOf(limit.toString()) }
-    val usage by animateFloatAsState(
-        (usedBytes.toDouble() / (limit * DOWNLOAD_GB)).toFloat().coerceIn(0f, 1f), label = "download-storage-usage",
+    DownloadStorageSlider(
+        limit = limit,
+        usedBytes = usedBytes,
+        onCommit = { store.preferences.edit().putInt("limitGb", it).apply() },
+        onEdit = { input = limit.toString(); sheet = true },
     )
-    Column(Modifier.fillMaxWidth().clickable { input = limit.toString(); sheet = true }
-        .testTag("download-storage-limit").padding(vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
-            Icon(Icons.Rounded.Storage, null, Modifier.size(22.dp), tint = AliflixContentSecondary)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("Storage limit", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Text("${downloadSize(usedBytes)} used", fontSize = 11.sp, color = AliflixContentSecondary)
-            }
-            Text("$limit GB", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AliflixAccentSecondary)
-            Icon(Icons.Rounded.ChevronRight, null, Modifier.size(18.dp), tint = AliflixContentTertiary)
-        }
-        LinearProgressIndicator(progress = { usage }, modifier = Modifier.fillMaxWidth().padding(start = 33.dp, top = 9.dp).height(3.dp),
-            color = if (storageLimitBelowUsage(limit, usedBytes)) AliflixError else AliflixAccentSecondary,
-            trackColor = AliflixSurfaceSecondary, drawStopIndicator = {})
-    }
     if (sheet) {
         val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val scope = rememberCoroutineScope()
@@ -94,5 +95,68 @@ internal fun storageLimitBelowUsage(limitGb: Int, used: Long): Boolean = used > 
             }
         }
     }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable internal fun DownloadStorageSlider(
+    limit: Int,
+    usedBytes: Long,
+    onCommit: (Int) -> Unit,
+    onEdit: () -> Unit,
+) {
+    var value by remember(limit) { mutableFloatStateOf(limit.coerceIn(1, 200).toFloat()) }
+    val selected = storageLimitSliderValue(value)
+    val interactions = remember { MutableInteractionSource() }
+    val dragged by interactions.collectIsDraggedAsState()
+    val pressed by interactions.collectIsPressedAsState()
+    val thumbSize by animateDpAsState(if (dragged || pressed) 20.dp else 16.dp, label = "storage-limit-thumb")
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val belowUsage = storageLimitBelowUsage(selected, usedBytes)
+    Column(Modifier.fillMaxWidth().testTag("download-storage-limit")) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Rounded.Storage, null, Modifier.size(20.dp), tint = AliflixContentSecondary)
+            Text("Storage limit", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            TextButton(onClick = onEdit, shape = AliflixCorners.Small,
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                colors = ButtonDefaults.textButtonColors(contentColor = AliflixAccentSecondary,
+                    containerColor = AliflixAccentPrimary.copy(alpha = .12f)),
+                modifier = Modifier.testTag("download-storage-value").semantics {
+                    contentDescription = "Storage limit"
+                    stateDescription = "$selected GB"
+                }) {
+                Text("$selected GB", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Slider(value = value, onValueChange = { value = storageLimitSliderValue(it).toFloat() },
+            onValueChangeFinished = { onCommit(storageLimitSliderValue(value)) },
+            valueRange = 1f..200f, steps = 198, interactionSource = interactions,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("download-storage-slider")
+                .semantics { contentDescription = "Storage limit"; stateDescription = "$selected GB" },
+            thumb = {
+                Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(thumbSize).background(AliflixAccentSecondary, CircleShape))
+                }
+            },
+            track = { state ->
+                Canvas(Modifier.fillMaxWidth().height(4.dp)) {
+                    val start = Offset(if (rtl) size.width else 0f, center.y)
+                    val end = Offset(if (rtl) 0f else size.width, center.y)
+                    val fraction = ((state.value - 1f) / 199f).coerceIn(0f, 1f)
+                    val activeEnd = Offset(start.x + (end.x - start.x) * fraction, center.y)
+                    drawLine(AliflixBorderSubtle, start, end, size.height, StrokeCap.Round)
+                    if (fraction > 0f) drawLine(AliflixAccentSecondary, start, activeEnd, size.height, StrokeCap.Round)
+                }
+            })
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("1 GB", fontSize = 10.sp, color = AliflixContentTertiary)
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Text("${downloadSize(usedBytes)} used", fontSize = 11.sp,
+                    color = if (belowUsage) AliflixError else AliflixContentSecondary)
+            }
+            Text("200 GB", fontSize = 10.sp, color = AliflixContentTertiary)
+        }
+        if (belowUsage) Text("Limit below usage", color = AliflixError,
+            style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
     }
 }
