@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 245
-val mobileVersionName = "3.1.155"
+val mobileVersionCode = 246
+val mobileVersionName = "3.1.156"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
@@ -133,6 +133,9 @@ android {
 androidComponents.onVariants(androidComponents.selector().withFlavor("formFactor" to "mobile")) { variant ->
     variant.packaging.jniLibs.useLegacyPackaging.set(true)
     variant.packaging.jniLibs.useLegacyPackagingFromBundle.set(true)
+    file("mobile-unused-protobuf-resources.txt").readLines().filter { it.isNotBlank() }.forEach { resource ->
+        variant.packaging.resources.excludes.add(resource)
+    }
 }
 
 val validateReleaseSigning by tasks.registering {

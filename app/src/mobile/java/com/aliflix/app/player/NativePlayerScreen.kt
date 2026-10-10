@@ -754,8 +754,12 @@ internal fun NativePlayerScreen(
                 exit = fadeOut(),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-                    .padding(end = 20.dp, bottom = if (controls) 140.dp else 24.dp)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                    .padding(end = 20.dp, bottom = if (isLandscape) {
+                        if (controls) 140.dp else 24.dp
+                    } else with(density) {
+                        (viewportHeight - state.videoBottomPx.coerceIn(0, viewportHeight)).toDp() + 12.dp
+                    })
             ) {
                 skipSegment?.let { marker ->
                     Button(

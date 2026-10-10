@@ -24,13 +24,36 @@ class RecommendationAiClientException(
 class RecommendationAiClient(
     private val baseUrl: String,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val metadataCacheDir: java.io.File? = null,
 ) {
+    private val detailsLocks = Array(32) { kotlinx.coroutines.sync.Mutex() }
     suspend fun getRecommendations(request: V3RecommendationRequest): V3RecommendationResponse = withContext(ioDispatcher) {
         V3RecommendationResponse.fromJson(JSONObject(postJson("$baseUrl/v3/recommendations", request.toJson())))
     }
 
     suspend fun getTitleDetails(mediaType: String, tmdbId: Int): V3TitleDetails = withContext(ioDispatcher) {
-        V3TitleDetails.fromJson(JSONObject(getJson("$baseUrl/v3/titles/$mediaType/$tmdbId")))
+        if (metadataCacheDir == null) return@withContext V3TitleDetails.fromJson(JSONObject(getJson("$baseUrl/v3/titles/$mediaType/$tmdbId")))
+        require(mediaType in setOf("movie", "tv") && tmdbId > 0)
+        val detailsLock = detailsLocks[(31 * mediaType.hashCode() + tmdbId) and 31]
+        detailsLock.lock()
+        try {
+            val file = metadataCacheDir?.let { java.io.File(it, "$mediaType-$tmdbId.json") }
+            fun parse(raw: String) = V3TitleDetails.fromJson(JSONObject(raw)).also {
+                check(it.media.tmdbId == tmdbId && it.media.mediaType == mediaType)
+            }
+            val cached = file?.takeIf { it.isFile && System.currentTimeMillis() - it.lastModified() < 7L * 86_400_000 }
+                ?.let { runCatching { parse(it.readText()) }.getOrNull() }
+            if (cached != null) cached else {
+                val raw = getJson("$baseUrl/v3/titles/$mediaType/$tmdbId")
+                val parsed = parse(raw)
+                if (file != null) runCatching {
+                    file.parentFile?.mkdirs()
+                    file.writeText(raw)
+                    metadataCacheDir?.listFiles()?.sortedByDescending { it.lastModified() }?.drop(256)?.forEach { it.delete() }
+                }
+                parsed
+            }
+        } finally { detailsLock.unlock() }
     }
 
     suspend fun getSeasonDocument(tmdbId: Int, season: Int? = null): JSONObject = withContext(ioDispatcher) {

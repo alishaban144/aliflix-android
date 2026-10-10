@@ -5,84 +5,45 @@ import java.util.Locale
 
 internal data class MyListGenreGroup(val key: String, val value: List<Media>)
 
-/**
- * Library-only, deterministic set-cover grouping. A title is assigned exactly once.
- * Prefer a well-supported, specific shared main genre instead of showing every TMDB tag.
- * Preserve a compact tab strip even when the collection spans many unrelated genres.
- */
-internal fun groupMyListByMainGenre(items: List<Media>): List<MyListGenreGroup> {
-    val remaining = items.distinctBy { it.key }.toMutableList()
-    if (remaining.isEmpty()) return emptyList()
+internal val libraryGenreOrder = listOf(
+    "Action & Adventure", "Sci-Fi & Fantasy", "Crime & Mystery", "Horror & Thriller",
+    "Comedy", "Romance", "Drama & History", "Animation & Family", "Documentary & Reality", "Music",
+)
 
-    val genresByKey = remaining.associate { item ->
-        item.key to item.genres.ifEmpty { item.omdbGenres }
-            .flatMap { it.split(',', '/', '|') }
-            .map(::canonicalLibraryGenre)
-            .filter(String::isNotBlank)
-            .distinct()
-            .ifEmpty { listOf("Other discoveries") }
+/** Classify only this title's metadata. The collection never enters the decision. */
+internal fun representativeLibraryGenre(item: Media): String {
+    val genres = item.genres.ifEmpty { item.omdbGenres }.flatMap { it.split(',', '/', '|') }
+        .map { it.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), " ").trim() }.toSet()
+    fun has(vararg names: String) = genres.any { it in names }
+    return when {
+        has("documentary", "reality", "news", "talk") -> "Documentary & Reality"
+        has("animation", "family", "kids") -> "Animation & Family"
+        has("horror") -> "Horror & Thriller"
+        has("science fiction", "sci fi", "fantasy", "sci fi fantasy") -> "Sci-Fi & Fantasy"
+        has("crime", "mystery") -> "Crime & Mystery"
+        has("music", "musical") -> "Music"
+        has("romance") -> "Romance"
+        has("comedy") -> "Comedy"
+        has("action", "adventure", "action adventure", "western") -> "Action & Adventure"
+        has("thriller") -> "Horror & Thriller"
+        has("drama", "history", "war", "war politics", "soap") -> "Drama & History"
+        // Keep missing metadata visible while enrichment runs; never invent a genre.
+        else -> ""
     }
-    val broadFamilies = setOf("Drama", "Action & Adventure", "Sci-Fi & Fantasy", "Family", "Other discoveries")
-    val result = mutableListOf<MyListGenreGroup>()
-    while (remaining.isNotEmpty() && result.size < 5) {
-        val counts = remaining.flatMap { genresByKey.getValue(it.key) }
-            .distinct()
-            .associateWith { genre -> remaining.count { genre in genresByKey.getValue(it.key) } }
-        val shared = counts.filterValues { it > 1 }
-        val chosen = if (shared.isNotEmpty()) {
-            shared.entries.sortedWith(
-                compareByDescending<Map.Entry<String, Int>> { it.value }
-                    .thenBy { it.key in broadFamilies }
-                    .thenByDescending { entry ->
-                        remaining.count { genresByKey.getValue(it.key).first() == entry.key }
-                    }
-                    .thenBy { it.key },
-            ).first().key
-        } else {
-            // Unrelated singletons retain their original main-genre order.
-            genresByKey.getValue(remaining.first().key).first()
-        }
-        val assigned = remaining.filter { chosen in genresByKey.getValue(it.key) }
-        result += MyListGenreGroup(chosen, assigned)
-        val assignedKeys = assigned.mapTo(hashSetOf()) { it.key }
-        remaining.removeAll { it.key in assignedKeys }
-    }
-    if (remaining.isNotEmpty()) result += MyListGenreGroup("More", remaining.toList())
-    return result
 }
 
-/** Treat TMDB's movie and TV genre variants as one display family, never subgenre tabs. */
-private fun canonicalLibraryGenre(raw: String): String {
-    val normalized = raw.lowercase(Locale.ROOT)
-        .replace(Regex("[^a-z0-9]+"), " ")
-        .trim()
-    if (normalized.isEmpty()) return ""
-    val words = normalized.split(' ').toSet()
-    return when {
-        "mystery" in words -> "Mystery"
-        "scifi" in words || ("sci" in words && "fi" in words) ||
-            ("science" in words && "fiction" in words) || "fantasy" in words -> "Sci-Fi & Fantasy"
-        "documentary" in words || "documentaries" in words -> "Documentary"
-        "animation" in words || "animated" in words -> "Animation"
-        "crime" in words -> "Crime"
-        "horror" in words -> "Horror"
-        "thriller" in words || "thrillers" in words -> "Thriller"
-        "romance" in words || "romantic" in words -> "Romance"
-        "comedy" in words || "comedies" in words -> "Comedy"
-        "action" in words || "adventure" in words -> "Action & Adventure"
-        "family" in words || "kids" in words || "children" in words -> "Family"
-        "drama" in words -> "Drama"
-        "history" in words || "historical" in words -> "History"
-        "war" in words -> "War"
-        "western" in words -> "Western"
-        "reality" in words -> "Reality"
-        "news" in words -> "News"
-        "music" in words || "musical" in words -> "Music"
-        "soap" in words -> "Soap"
-        "talk" in words -> "Talk"
-        normalized == "tv movie" -> "TV Movie"
-        else -> normalized.split(' ').joinToString(" ") { word ->
-            word.replaceFirstChar { it.titlecase(Locale.ROOT) }
-        }
+internal fun groupMyListByMainGenre(items: List<Media>): List<MyListGenreGroup> {
+    val groups = items.distinctBy(Media::key).groupBy(::representativeLibraryGenre)
+    return (libraryGenreOrder + "").mapNotNull { genre ->
+        groups[genre]?.takeIf { it.isNotEmpty() }?.let { MyListGenreGroup(genre, it) }
+    }
+}
+
+internal fun libraryGenreSectionIndices(groups: List<MyListGenreGroup>): Map<String, Int> {
+    var index = 0
+    return groups.associate { group ->
+        val section = group.key to index
+        index += group.value.size + if (group.key.isNotEmpty()) 1 else 0
+        section
     }
 }

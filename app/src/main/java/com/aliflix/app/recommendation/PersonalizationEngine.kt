@@ -7,7 +7,17 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /** A bounded content-affinity index, not a calibrated probability of enjoyment. */
-data class PersonalMatch(val score: Int)
+enum class PersonalMatchTier(val label: String) {
+    LIKED("Liked"), STRONG("Strong match"), GOOD("Good match"), RELATED("Related"),
+}
+
+data class PersonalMatch(
+    val score: Int,
+    val tier: PersonalMatchTier? = null,
+    val evidence: Set<String> = emptySet(),
+) {
+    val label: String get() = tier?.label.orEmpty()
+}
 
 /**
  * Multi-interest, item-neighborhood content matching for the explicit Likes library.
@@ -73,6 +83,11 @@ object PersonalizationEngine {
     }
 
     fun match(item: Media, likes: List<Media>): PersonalMatch? {
+        if (!com.aliflix.app.BuildConfig.IS_TV) return MobileTasteModel.match(item, likes, MobileTasteModel.history())
+        return legacyMatch(item, likes)
+    }
+
+    internal fun legacyMatch(item: Media, likes: List<Media>): PersonalMatch? {
         if (likes.any { it.key == item.key }) return PersonalMatch(98)
         if (likes.isEmpty()) return null
         val candidate = features(item)

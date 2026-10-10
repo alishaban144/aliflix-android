@@ -194,7 +194,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     )
     private val aiClient = com.aliflix.app.recommendation.RecommendationAiClient(
         baseUrl = BuildConfig.RECOMMENDATION_AI_BASE_URL,
-        ioDispatcher = recommendationDispatchers.io
+        ioDispatcher = recommendationDispatchers.io,
+        metadataCacheDir = if (BuildConfig.IS_TV) null else java.io.File(application.cacheDir, "mobile-taste-metadata"),
     )
     private val homeSnapshotStore: HomeSnapshotStore = AndroidHomeSnapshotStore(
         context = application,
@@ -235,6 +236,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     val accountSyncState = accountServices.syncRepository.state
     private val _pickedForYou = MutableStateFlow<List<Media>>(emptyList())
     val pickedForYou: StateFlow<List<Media>> = _pickedForYou.asStateFlow()
+    val personalizationMetadata = com.aliflix.app.recommendation.MobileTasteModel.metadata
 
     private val _askUiState = MutableStateFlow<com.aliflix.app.ui.discover.AskAliflixUiState>(com.aliflix.app.ui.discover.AskAliflixUiState.Editing)
     val askUiState: StateFlow<com.aliflix.app.ui.discover.AskAliflixUiState> = _askUiState.asStateFlow()
@@ -715,33 +717,52 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             // Starts before the launch overlay finishes; Firebase already owns startup retry.
             accountServices.syncRepository.retry()
             viewModelScope.launch {
-                val detailsCache = object : LinkedHashMap<String, V3TitleDetails>(16, .75f, true) {
-                    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V3TitleDetails>?) = size > 24
-                }
-                var previousUid: String? = null
                 combine(likes, recent, playbackProgressStore.entries, accountState) { liked, history, progress, account ->
-                    val watched = progress.values.sortedByDescending { it.updatedAtMillis }.map { it.media }
-                    val anchors = (liked.take(3) + watched.take(3) + history.take(2) + liked.drop(3))
-                        .distinctBy(Media::key).take(8)
-                    Triple(account.uid, anchors, (liked + watched + history).map(Media::key).toSet())
-                }.distinctUntilChanged().collectLatest { (uid, seeds, excluded) ->
-                    if (uid != previousUid) { detailsCache.clear(); previousUid = uid }
-                    _pickedForYou.value = emptyList()
-                    if (seeds.isEmpty()) return@collectLatest
-                    val enriched = mutableListOf<Media>()
-                    val candidates = mutableListOf<Media>()
-                    // Bounded, cached TMDB detail/recommendation documents; no AI calls.
-                    seeds.take(6).forEach { seed ->
+                    val watched = (progress.values.sortedByDescending { it.updatedAtMillis }.map { it.media } + history)
+                        .distinctBy(Media::key).take(20)
+                    Triple(account.uid, liked.distinctBy(Media::key), watched)
+                }.distinctUntilChanged().collectLatest { (_, explicit, history) ->
+                    com.aliflix.app.recommendation.MobileTasteModel.setHistory(history)
+                    if (explicit.isEmpty() && history.isEmpty()) { _pickedForYou.value = emptyList(); return@collectLatest }
+                    val seeds = (com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(explicit, 10) +
+                        com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(history, if (explicit.size < 3) 4 else 2)).distinctBy(Media::key)
+                    val candidates = linkedMapOf<String, Media>()
+                    val excluded = (explicit + history).map(Media::key).toSet()
+                    _pickedForYou.value = com.aliflix.app.recommendation.TastePicks.rankMobile(
+                        _pickedForYou.value, explicit, excluded, history)
+                    val creatorsFetched = hashSetOf<Int>()
+                    for (seed in seeds) {
                         ensureActive()
-                        val details = detailsCache[seed.key] ?: try {
-                            aiClient.getTitleDetails(seed.type.routeName, seed.id).also { detailsCache[seed.key] = it }
-                        } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { null }
-                        enriched += details?.toMedia(seed) ?: seed
-                        candidates += details?.recommendations?.map { it.toMedia() }.orEmpty()
-                        _pickedForYou.value = withContext(Dispatchers.Default) {
-                            com.aliflix.app.recommendation.TastePicks.rank(candidates.toList(), enriched.toList(), excluded)
+                        val details = try { aiClient.getTitleDetails(seed.type.routeName, seed.id) }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { null }
+                        val enriched = details?.toStableMobileMedia(seed) ?: seed
+                        com.aliflix.app.recommendation.MobileTasteModel.remember(listOf(enriched))
+                        details?.recommendations?.map { it.toMedia() }?.forEach { candidates[it.key] = it }
+                        // Director/creator filmographies add distinct interests outside Home rails.
+                        val creator = enriched.creators.firstOrNull { it.tmdbId > 0 }
+                        if (creator != null && creatorsFetched.size < 3 && creatorsFetched.add(creator.tmdbId)) {
+                            try {
+                                aiClient.getPersonCredits(creator.tmdbId).results.map { it.toMedia() }
+                                    .take(20).forEach { candidates[it.key] = it }
+                            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
                         }
+                    }
+                    // Hydrate bounded candidates before assessing rich anchors against sparse cards.
+                    val hydrated = mutableListOf<Media>()
+                    val pool = com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(
+                        candidates.values.filter { it.key !in excluded && it.posterPath != null }, 48)
+                    for (candidate in pool) {
+                        ensureActive()
+                        val item = try { aiClient.getTitleDetails(candidate.type.routeName, candidate.id).toStableMobileMedia(candidate) }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { candidate }
+                        hydrated += item
+                        com.aliflix.app.recommendation.MobileTasteModel.remember(listOf(item))
+                        _pickedForYou.value = withContext(Dispatchers.Default) {
+                            com.aliflix.app.recommendation.TastePicks.rankMobile(hydrated.toList(), explicit, excluded, history)
+                        }
+                        delay(30)
                     }
                 }
             }
@@ -1037,11 +1058,17 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    internal val discoverCatalogue = com.aliflix.app.ui.discover.DiscoverCatalogueStore(aiClient)
+    private val titleSearch = com.aliflix.app.data.TypoTolerantTitleSearch(knownTitles = {
+        _home.value.content?.let { listOf(it.hero) + it.rails.flatMap { rail -> rail.items } }.orEmpty() +
+            myList.value + likes.value + recent.value + personalizationMetadata.value.values
+    }) { query ->
+        aiClient.searchTitles(query).map { it.toMedia() }
+    }
+    internal val discoverCatalogue = com.aliflix.app.ui.discover.DiscoverCatalogueStore(aiClient, titleSearch)
 
-    suspend fun searchTitles(query: String): List<Media> = aiClient.searchTitles(query.trim())
-        .map { it.toMedia() }
-        .distinctBy(Media::key)
+    suspend fun searchTitles(query: String): List<Media> =
+        if (BuildConfig.IS_TV) aiClient.searchTitles(query.trim()).map { it.toMedia() }.distinctBy(Media::key)
+        else titleSearch.search(query).items
 
     suspend fun searchCompanies(query: String): List<com.aliflix.app.recommendation.ProductionCompanyFilter> =
         aiClient.searchCompanies(query.trim())
@@ -1391,12 +1418,16 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         val context = getApplication<android.app.Application>()
         if (!context.hasInternetConnection()) return
         val missing = (myList.value + recent.value + likes.value).distinctBy { it.key }
-            .filter { (it.runtime.isBlank() || it.rating <= 0 || (it.key in likes.value.map { liked -> liked.key } && it.keywords.isEmpty())) && libraryMetadataRequested.add(it.key) }
+            .filter { ((!BuildConfig.IS_TV && it.genres.isEmpty()) || it.runtime.isBlank() || it.rating <= 0 ||
+                    (it.key in likes.value.map { liked -> liked.key } &&
+                        (it.keywords.isEmpty() || (!BuildConfig.IS_TV && it.creators.isEmpty())))) && libraryMetadataRequested.add(it.key) }
         viewModelScope.launch {
             for (item in missing) {
                 try {
                     val details = aiClient.getTitleDetails(item.type.routeName, item.id)
-                    library.refreshMetadata(details.toStableMobileMedia(item))
+                    val enriched = details.toStableMobileMedia(item)
+                    if (!BuildConfig.IS_TV) com.aliflix.app.recommendation.MobileTasteModel.remember(listOf(enriched))
+                    library.refreshMetadata(enriched)
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { libraryMetadataRequested.remove(item.key) }
             }

@@ -8,6 +8,7 @@ import kotlin.math.ln
 object TastePicks {
     private val broadGenres = setOf("drama", "comedy", "action")
     fun rank(candidates: List<Media>, anchors: List<Media>, excluded: Set<String>): List<Media> {
+        if (!com.aliflix.app.BuildConfig.IS_TV) return rankMobile(candidates, anchors, excluded)
         if (anchors.isEmpty()) return emptyList()
         return candidates.distinctBy(Media::key).filter { item ->
             item.key !in excluded && item.posterPath != null && item.rating >= 6.0 &&
@@ -24,4 +25,11 @@ object TastePicks {
                 ln(1.0 + (item.tmdbVoteCount ?: 0)) * 2.5 + item.rating
         }.take(20)
     }
+
+    fun rankMobile(candidates: List<Media>, likes: List<Media>, excluded: Set<String>, history: List<Media> = emptyList()): List<Media> =
+        candidates.distinctBy(Media::key).filter { it.key !in excluded && it.posterPath != null }
+            .mapNotNull { item -> MobileTasteModel.match(item, likes, history)?.let { item to it } }
+            .sortedWith(compareByDescending<Pair<Media, PersonalMatch>> { it.second.score }
+                .thenBy { it.first.key })
+            .take(20).map { it.first }
 }

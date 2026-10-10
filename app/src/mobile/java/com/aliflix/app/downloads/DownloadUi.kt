@@ -544,7 +544,6 @@ internal interface DownloadUiDependencies {
 @Composable internal fun DownloadSettings() {
     val store = rememberDownloads()
     val entries by store.entries.collectAsState()
-    var limit by remember { mutableFloatStateOf((store.limitBytes / DOWNLOAD_GB).toFloat()) }
     var preferred by remember { mutableIntStateOf(store.preferredHeight) }
     var menu by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
@@ -569,10 +568,8 @@ internal interface DownloadUiDependencies {
                         } }
                     }
                 }
-                Text("Storage limit · ${limit.toInt()} GB")
-                Slider(value = limit, onValueChange = { limit = it }, valueRange = 1f..200f, steps = 198,
-                    onValueChangeFinished = { store.preferences.edit().putInt("limitGb", limit.toInt()).apply() })
-                Text("${downloadSize(entries.sumOf { it.downloadedBytes })} used", color = AliflixContentSecondary)
+                HorizontalDivider(color = AliflixBorderSubtle)
+                DownloadStorageLimit(store, remember(entries) { store.cache.cacheSpace })
             }
         }
     }

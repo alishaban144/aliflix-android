@@ -4,6 +4,7 @@ import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.model.SubtitleLanguage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -56,7 +57,8 @@ internal fun preferredSubtitleTrack(
     .firstOrNull()
 
 internal fun canonicalSubtitleLanguageCode(value: String): String {
-    val normalized = value.trim().substringBefore('-').uppercase()
+    val normalized = if (BuildConfig.IS_TV) value.trim().substringBefore('-').uppercase()
+        else value.trim().replace('_', '-').substringBefore('-').uppercase(java.util.Locale.ROOT)
     SubtitleLanguage.entries.firstOrNull { it.displayName.equals(value.trim(), true) }?.let { return it.code }
     return SUBTITLE_LANGUAGE_ALIASES[normalized] ?: normalized
 }
@@ -129,7 +131,7 @@ class SubdlSubtitleRepository(
                  }.thenBy { it.languageName }
              )
         }
-    }
+    }.onFailure { if (!BuildConfig.IS_TV && it is CancellationException) throw it }
 
     suspend fun download(track: SubtitleTrack, selection: PlaybackSelection? = null): Result<List<SubtitleCue>> = runCatching {
         withContext(Dispatchers.IO) {
@@ -138,17 +140,20 @@ class SubdlSubtitleRepository(
             val response = if (directUrl != null && !directUrl.contains("dl.subdl.com")) {
                 try {
                     readBytes(directUrl)
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    if (!BuildConfig.IS_TV && error is CancellationException) throw error
                     readBytes(workerUrl)
                 }
             } else {
                 try {
                     readBytes(workerUrl)
                 } catch (e: Exception) {
+                    if (!BuildConfig.IS_TV && e is CancellationException) throw e
                     if (directUrl != null) {
                         try {
                             readBytes(directUrl)
-                        } catch (_: Exception) {
+                        } catch (error: Exception) {
+                            if (!BuildConfig.IS_TV && error is CancellationException) throw error
                             throw e
                         }
                     } else throw e
@@ -176,11 +181,14 @@ class SubdlSubtitleRepository(
             if (!BuildConfig.IS_TV && track.id.startsWith("flixer:"))
                 cues.filterNot { it.text.contains("hoofoot.ru", ignoreCase = true) } else cues
         }
-    }
+    }.onFailure { if (!BuildConfig.IS_TV && it is CancellationException) throw it }
 
-    private fun readText(url: String): String = decodeSubtitleText(readBytes(url))
+    private suspend fun readText(url: String): String = decodeSubtitleText(readBytes(url))
 
-    private fun readBytes(url: String, redirectCount: Int = 0): ByteArray {
+    private suspend fun readBytes(url: String): ByteArray =
+        if (BuildConfig.IS_TV) readLegacyBytes(url) else readMobileSubtitleBytes(url)
+
+    private fun readLegacyBytes(url: String, redirectCount: Int = 0): ByteArray {
         if (redirectCount > 5) throw SubtitleException("Too many redirects downloading subtitle")
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -197,7 +205,7 @@ class SubdlSubtitleRepository(
                 val redirectUrl = connection.getHeaderField("Location")
                 if (!redirectUrl.isNullOrBlank()) {
                     val target = URL(URL(url), redirectUrl).toString()
-                    return readBytes(target, redirectCount + 1)
+                    return readLegacyBytes(target, redirectCount + 1)
                 }
             }
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream

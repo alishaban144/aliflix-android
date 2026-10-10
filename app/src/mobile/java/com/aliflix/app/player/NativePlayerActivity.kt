@@ -56,6 +56,30 @@ class NativePlayerActivity : FragmentActivity() {
     private var selection: PlaybackSelection? = null
     private var preparation: Job? = null
     private var subtitleJob: Job? = null
+    private var subtitleGeneration = 0L
+    private var automaticAttemptKey: String? = null
+    private fun automaticSubtitlesEnabled(): Boolean =
+        getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES, true)
+    private fun selectedSubtitleLanguage(): String = canonicalSubtitleLanguageCode(
+        getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME, MODE_PRIVATE)
+            .getString(com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE, "EN").orEmpty())
+    private fun hasManualSubtitleChoice(): Boolean = scopedManualSubtitleChoice(
+        subtitleChoices.getString("manual-owner", null), subtitleChoices.getString("manual-content", null),
+        if (subtitleChoices.contains("enabled")) subtitleChoices.getBoolean("enabled", false) else null, selection) != null
+    private fun allowAutomaticSubtitles(): Boolean = automaticSubtitlesEnabled() && !hasManualSubtitleChoice()
+    private fun invalidateSubtitleWork() {
+        subtitleGeneration++
+        subtitleJob?.cancel()
+        subtitleJob = null
+    }
+    private fun rememberManualSubtitle(enabled: Boolean, language: String? = null) {
+        invalidateSubtitleWork()
+        val editor = subtitleChoices.edit().putString("manual-owner", selection?.media?.key)
+            .putString("manual-content", selection?.let(::subtitleContentKey)).putBoolean("enabled", enabled)
+        if (language != null) editor.putString("language", canonicalSubtitleLanguageCode(language))
+        editor.apply()
+    }
     private var subtitleSyncDebounceJob: Job? = null
     private var audioSyncJob: Job? = null
     private var referencePreparation: Job? = null
@@ -104,19 +128,19 @@ class NativePlayerActivity : FragmentActivity() {
     private fun reconcileSyncedCaptions() {
         val current = selection ?: return
         if (ui.stage != null || !ui.ready || controller == null) return
-        val enabled = subtitleChoices.getBoolean("enabled", intent.getBooleanExtra("autoSubtitles", true))
+        val enabled = if (hasManualSubtitleChoice()) subtitleChoices.getBoolean("enabled", false) else automaticSubtitlesEnabled()
         if (!enabled) {
-            if (activeSubtitleCuesJson != null) disableSubtitles()
+            if (activeSubtitleCuesJson != null) clearSubtitles()
             return
         }
         // The initial Flixer catalogue wins over a previously saved external search result.
         if (current.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER &&
             (ui.activeSubtitleTrack == null || subtitleJob?.isActive == true)) return
-        val language = subtitleChoices.getString("language", null) ?: intent.getStringExtra("subtitleLanguage") ?: "EN"
+        val language = if (hasManualSubtitleChoice()) subtitleChoices.getString("language", null) ?: selectedSubtitleLanguage() else selectedSubtitleLanguage()
         val raw = captionPreferences.getString(captionKey(current), null) ?: return
         val saved = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return
         if (saved.optString("cues") == activeSubtitleCuesJson) return
-        if (restoreCaption(current, language)) subtitleJob?.cancel()
+        if (restoreCaption(current, language, manual = hasManualSubtitleChoice())) subtitleJob?.cancel()
     }
 
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
@@ -284,6 +308,24 @@ class NativePlayerActivity : FragmentActivity() {
         }, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
         acceptRequest(intent)
+        lifecycleScope.launch {
+            var previous = automaticSubtitlesEnabled() to selectedSubtitleLanguage()
+            while (isActive) {
+                val current = automaticSubtitlesEnabled() to selectedSubtitleLanguage()
+                if (current != previous) {
+                    previous = current
+                    if (!hasManualSubtitleChoice()) {
+                        clearSubtitles()
+                        automaticAttemptKey = null
+                        NativePlaybackService.refreshAutomaticSubtitlePreferences()
+                        if (current.first && ui.ready) selection?.let { selected ->
+                            NativePlaybackService.activeStreamUrl?.let { url -> loadAutomaticSubtitles(selected, current.second, url) }
+                        }
+                    }
+                }
+                delay(300)
+            }
+        }
         lifecycleScope.launch {
             while (isActive) {
                 updateOutput()
@@ -548,6 +590,8 @@ class NativePlayerActivity : FragmentActivity() {
     private fun prepareSelection(positionMs: Long? = null, preferredServer: String? = null,
         strictPreferredServer: Boolean = false) {
         val current = selection ?: return
+        invalidateSubtitleWork()
+        automaticAttemptKey = null
         // Server lists are per title and per episode, so never reuse a stale browse result.
         discoveryJob?.cancel()
         discoveredServers.clear()
@@ -620,8 +664,8 @@ class NativePlayerActivity : FragmentActivity() {
         updateSelectionUi()
         preparation = lifecycleScope.launch {
             val choices = getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
-            val auto = choices.getBoolean("enabled", intent.getBooleanExtra("autoSubtitles", true))
-            val language = canonicalSubtitleLanguageCode(choices.getString("language", null) ?: intent.getStringExtra("subtitleLanguage") ?: "EN")
+            val auto = allowAutomaticSubtitles()
+            val language = selectedSubtitleLanguage()
             val originalCaptions = if (current.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER)
                 launch { FlixerSubtitleRepository.tracks(current) } else null
             try {
@@ -750,7 +794,9 @@ class NativePlayerActivity : FragmentActivity() {
                             history.edit().putString("$seriesKey:provider", candidate.source.identity.name)
                                 .putString("$seriesKey:server", server).apply()
                         }
-                        if (auto) loadAutomaticSubtitles(candidate, language, resolved.url)
+                        if (hasManualSubtitleChoice() && subtitleChoices.getBoolean("enabled", false)) {
+                            restoreCaption(candidate, subtitleChoices.getString("language", language) ?: language, manual = true)
+                        } else if (auto) loadAutomaticSubtitles(candidate, language, resolved.url)
                         else if (candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER) {
                             subtitleJob = lifecycleScope.launch {
                                 val tracks = FlixerSubtitleRepository.tracks(candidate)
@@ -842,7 +888,7 @@ class NativePlayerActivity : FragmentActivity() {
         getSharedPreferences("account-caption-files", MODE_PRIVATE).edit().putString(captionKey(current), raw).apply()
     }
 
-    private fun restoreCaption(current: PlaybackSelection, language: String): Boolean = runCatching {
+    private fun restoreCaption(current: PlaybackSelection, language: String, manual: Boolean = false): Boolean = runCatching {
         val raw = getSharedPreferences("account-caption-files", MODE_PRIVATE).getString(captionKey(current), null) ?: return false
         val saved = org.json.JSONObject(raw)
         if (canonicalSubtitleLanguageCode(saved.getString("language")) != canonicalSubtitleLanguageCode(language)) return false
@@ -852,7 +898,7 @@ class NativePlayerActivity : FragmentActivity() {
         val vtt = renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
         activeSubtitleCuesJson = json
         activeSubtitleCues = restoredCues
-        NativePlaybackService.updateSubtitles(vtt, saved.getString("language"), saved.getString("label"))
+        NativePlaybackService.updateSubtitles(vtt, saved.getString("language"), saved.getString("label"), automatic = !manual)
         val track = SubtitleTrack("account-cache", saved.getString("language"), saved.getString("label"),
             "Saved selection", "", false, "vtt", null, "")
         ui = ui.copy(subtitleLoading = false, subtitleError = null, activeSubtitleTrack = track,
@@ -862,47 +908,48 @@ class NativePlayerActivity : FragmentActivity() {
     }.getOrDefault(false)
 
     private fun loadAutomaticSubtitles(current: PlaybackSelection, language: String, streamUrl: String) {
-        subtitleJob?.cancel()
-        if (current.source.identity != com.aliflix.app.model.MobilePlaybackProvider.FLIXER && restoreCaption(current, language)) return
+        invalidateSubtitleWork()
+        if (!allowAutomaticSubtitles()) return
         if (NativePlaybackService.embeddedSubtitlesActive) return
+        automaticAttemptKey = "${subtitleContentKey(current)}:${NativePlaybackService.activeRequestId}:$language"
+        if (current.source.identity != MobilePlaybackProvider.FLIXER && restoreCaption(current, language)) return
+        val generation = subtitleGeneration
+        val requestId = NativePlaybackService.activeRequestId
+        fun stillCurrent() = generation == subtitleGeneration && selection?.key == current.key &&
+            NativePlaybackService.activeRequestId == requestId && NativePlaybackService.activeStreamUrl == streamUrl &&
+            allowAutomaticSubtitles() && selectedSubtitleLanguage() == canonicalSubtitleLanguageCode(language) &&
+            !NativePlaybackService.embeddedSubtitlesActive
+        if (!stillCurrent()) return
         subtitleJob = lifecycleScope.launch {
-            ui = ui.copy(subtitleLoading = true)
+            ui = ui.copy(subtitleLoading = true, subtitleError = null)
             try {
-                withTimeout(20_000) {
-                    val repository = SubdlSubtitleRepository()
-                    suspend fun chooseFrom(tracks: List<SubtitleTrack>): Boolean {
-                        ui = ui.copy(subtitleTracks = (ui.subtitleTracks + tracks).distinctBy { it.downloadToken })
-                        val candidates = mobileSubtitleCandidates(tracks, language, current.seasonNumber, current.episodeNumber, current.media.title)
-                        for (track in rankCompleteSubtitleCandidates(candidates, NativePlaybackService.selectedVideoFrameRate()).take(8)) {
-                            ensureActive()
-                            if (selection?.key != current.key || NativePlaybackService.activeStreamUrl != streamUrl || NativePlaybackService.embeddedSubtitlesActive) return true
-                            val cues = withTimeoutOrNull(5_000) { repository.download(track, current).getOrNull() }.orEmpty()
-                            if (cues.isEmpty() || !subtitleLanguageIsPlausible(cues, language) || !automaticCaptionCoversMovie(cues, current, controller?.duration ?: 0)) continue
-                            if (NativePlaybackService.embeddedSubtitlesActive) return true
-                            activeSubtitleCues = cues
-                            val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
-                            activeSubtitleCuesJson = json
-                            saveCaption(current, track, json, automatic = true)
-                            NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds), track.languageCode.lowercase(), track.languageName, automatic = true)
-                            ui = ui.copy(activeSubtitleTrack = track, subtitleError = null)
-                            updateSubtitleCues()
-                            return true
-                        }
-                        return false
-                    }
-                    val tracks = if (current.source.identity == MobilePlaybackProvider.FLIXER) FlixerSubtitleRepository.tracks(current)
-                        else normalizeMobileSubtitleTracks(repository.search(current, language).getOrThrow())
-                    if (chooseFrom(tracks)) return@withTimeout
-                    if (current.source.identity == MobilePlaybackProvider.FLIXER) {
-                        val fallback = normalizeMobileSubtitleTracks(repository.search(current, language).getOrNull().orEmpty())
-                        if (chooseFrom(fallback)) return@withTimeout
-                    }
-                    ui = ui.copy(subtitleError = "No complete subtitles found. Choose another subtitle file.")
+                val repository = SubdlSubtitleRepository()
+                val result = withTimeoutOrNull(28_000) {
+                    AutomaticSubtitleLoader(
+                        sourceTracks = { if (current.source.identity == MobilePlaybackProvider.FLIXER)
+                            FlixerSubtitleRepository.tracks(current) else emptyList() },
+                        searchTracks = { repository.search(current, language).getOrThrow() },
+                        download = { repository.download(it, current).getOrThrow() },
+                    ).load(current, language, controller?.duration ?: 0, NativePlaybackService.selectedVideoFrameRate(),
+                        ::stillCurrent, { tracks ->
+                            if (stillCurrent()) ui = ui.copy(subtitleTracks = (ui.subtitleTracks + tracks).distinctBy { it.downloadToken })
+                        })
                 }
-            } catch (error: Exception) {
                 ensureActive()
-                ui = ui.copy(subtitleError = "Subtitles unavailable. Refresh to retry.")
-            } finally { ui = ui.copy(subtitleLoading = false) }
+                if (!stillCurrent()) return@launch
+                if (result != null) {
+                    activeSubtitleCues = result.cues
+                    val json = subtitleCuesJson(result.cues)
+                    activeSubtitleCuesJson = json
+                    saveCaption(current, result.track, json, automatic = true)
+                    NativePlaybackService.updateSubtitles(renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds),
+                        canonicalSubtitleLanguageCode(language).lowercase(), result.track.languageName, automatic = true)
+                    ui = ui.copy(activeSubtitleTrack = result.track, subtitleError = null)
+                    updateSubtitleCues()
+                } else ui = ui.copy(subtitleError = "Subtitles unavailable")
+            } finally {
+                if (generation == subtitleGeneration) ui = ui.copy(subtitleLoading = false)
+            }
         }
     }
 
@@ -922,14 +969,26 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun startNative(request: NativePlaybackRequest): String {
+        invalidateSubtitleWork()
+        automaticAttemptKey = null
         selection = runCatching { nativeSelection(request.selectionJson) }.getOrNull() ?: selection
         updateSelectionUi()
         if (request.offlineDownloadId.isNotBlank()) ui = ui.copy(server = "", availableServers = emptyList())
-        val playbackRequest = if (request.subtitlesVtt.isNotBlank()) {
-            activeSubtitleCues = parseTimedTextSubtitleCues(request.subtitlesVtt)
+        val language = selectedSubtitleLanguage()
+        val canAuto = allowAutomaticSubtitles()
+        val validated = request.copy(
+            preferEmbeddedSubtitles = canAuto,
+            subtitleLanguage = language.lowercase(),
+            offlineAutoSubtitles = canAuto,
+            subtitlesVtt = request.subtitlesVtt.takeIf { canAuto &&
+                canonicalSubtitleLanguageCode(request.subtitleLanguage) == language &&
+                subtitleLanguageIsPlausible(parseTimedTextSubtitleCues(it), language) }.orEmpty(),
+        )
+        val playbackRequest = if (validated.subtitlesVtt.isNotBlank()) {
+            activeSubtitleCues = parseTimedTextSubtitleCues(validated.subtitlesVtt)
             activeSubtitleCuesJson = JSONArray().apply { activeSubtitleCues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
-            request
-        } else request
+            validated
+        } else validated
         val name = "native-request-${java.util.UUID.randomUUID()}.json"
         java.io.File(cacheDir, name).writeText(playbackRequest.toJson())
         val service = Intent(this, NativePlaybackService::class.java).putExtra("requestFile", name)
@@ -970,20 +1029,23 @@ class NativePlayerActivity : FragmentActivity() {
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
             ui = ui.copy(subtitleLoading = true)
-            val result = SubdlSubtitleRepository().search(current, intent.getStringExtra("subtitleLanguage") ?: "EN")
+            val result = SubdlSubtitleRepository().search(current, selectedSubtitleLanguage())
             ensureActive()
             ui = ui.copy(subtitleLoading = false, subtitleTracks = normalizeMobileSubtitleTracks(ui.subtitleTracks + result.getOrDefault(emptyList())),
                 subtitleError = result.exceptionOrNull()?.let { "Subtitles couldn't load. Tap Refresh to retry." })
             if (auto) {
-                val code = intent.getStringExtra("subtitleLanguage") ?: "EN"
+                val code = selectedSubtitleLanguage()
                 ui.subtitleTracks.firstOrNull { it.languageCode.equals(code, true) }?.let(::applySubtitle)
             }
         }
     }
 
     private fun applySubtitle(track: SubtitleTrack) {
+        val chosenSelection = selection ?: return
+        rememberManualSubtitle(true, track.languageCode)
+        val generation = subtitleGeneration
         if (track.id == "account-cache") {
-            selection?.let { restoreCaption(it, track.languageCode) }
+            selection?.let { restoreCaption(it, track.languageCode, manual = true) }
             getSharedPreferences("native-subtitle-choice", MODE_PRIVATE).edit().putBoolean("enabled", true).putString("language", track.languageCode).apply()
             return
         }
@@ -1004,13 +1066,20 @@ class NativePlayerActivity : FragmentActivity() {
         subtitleJob?.cancel()
         subtitleJob = lifecycleScope.launch {
             ui = ui.copy(subtitleLoading = true, subtitleError = null)
-            val result = SubdlSubtitleRepository().download(track, selection)
+            val result = SubdlSubtitleRepository().download(track, chosenSelection)
             ensureActive()
+            if (generation != subtitleGeneration || selection?.key != chosenSelection.key || !hasManualSubtitleChoice() ||
+                canonicalSubtitleLanguageCode(subtitleChoices.getString("language", "").orEmpty()) !=
+                    canonicalSubtitleLanguageCode(track.languageCode)) return@launch
             result.onSuccess { cues ->
-                        activeSubtitleCues = cues
+                if (!subtitleLanguageIsPlausible(cues, track.languageCode)) {
+                    ui = ui.copy(subtitleLoading = false, subtitleError = "Language mismatch")
+                    return@onSuccess
+                }
+                activeSubtitleCues = cues
                 val json = JSONArray().apply { cues.forEach { put(JSONArray().put(it.startSeconds).put(it.endSeconds).put(it.text)) } }.toString()
                 activeSubtitleCuesJson = json
-                selection?.let { saveCaption(it, track, json) }
+                saveCaption(chosenSelection, track, json)
                 val vtt = renderSubtitleVtt(json, settingsStore.settings.value.subtitleDelaySeconds)
                 NativePlaybackService.updateSubtitles(vtt, track.languageCode.lowercase(), track.languageName)
                 controller?.sendCustomCommand(
@@ -1028,14 +1097,19 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun disableSubtitles() {
-        getSharedPreferences("native-subtitle-choice", MODE_PRIVATE).edit().putBoolean("enabled", false).apply()
+        rememberManualSubtitle(false)
+        clearSubtitles()
+    }
+
+    private fun clearSubtitles() {
+        invalidateSubtitleWork()
         subtitleJob?.cancel()
         subtitleTimingEvidence = null
         activeSubtitleCues = emptyList()
         activeSubtitleCuesJson = null
         NativePlaybackService.rememberOriginalSubtitles(null)
         renderCaptions(emptyList())
-        ui = ui.copy(activeSubtitleTrack = null)
+        ui = ui.copy(activeSubtitleTrack = null, subtitleLoading = false)
         NativePlaybackService.updateSubtitles("")
         controller?.sendCustomCommand(
             SessionCommand(NativePlaybackService.ACTION_SET_CAST_SUBTITLES, Bundle.EMPTY),
@@ -1535,6 +1609,14 @@ class NativePlayerActivity : FragmentActivity() {
         ui = ui.copy(external = external, revision = ui.revision + 1,
             ready = ui.ready || (ui.stage == null && current.playbackState == Player.STATE_READY),
             title = selection?.media?.title ?: current.mediaMetadata.title?.toString().orEmpty().ifBlank { "Aliflix" })
+        if (ui.ready && preparation?.isActive != true && allowAutomaticSubtitles()) {
+            val selected = selection
+            val language = selectedSubtitleLanguage()
+            val key = selected?.let { "${subtitleContentKey(it)}:${NativePlaybackService.activeRequestId}:$language" }
+            if (selected != null && key != automaticAttemptKey) NativePlaybackService.activeStreamUrl?.let { url ->
+                loadAutomaticSubtitles(selected, language, url)
+            }
+        }
         if (NativePlaybackService.handlesCineJoyRecovery) {
             NativePlaybackService.cineJoyRecoveryMessage?.let { if (ui.message != it) ui = ui.copy(message = it) }
         }

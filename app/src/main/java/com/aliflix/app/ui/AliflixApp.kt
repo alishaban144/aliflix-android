@@ -2,6 +2,9 @@
 
 package com.aliflix.app.ui
 
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+
 import com.aliflix.app.BuildConfig
 import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Tab
@@ -514,7 +517,9 @@ fun AliflixApp(
     val myList by viewModel.myList.collectAsState()
     val recent by viewModel.recent.collectAsState()
     LaunchedEffect(recent.take(3).map { it.key }) { viewModel.preloadRecentlyWatchedEpisodes() }
-    val likes by viewModel.likes.collectAsState()
+    val savedLikes by viewModel.likes.collectAsState()
+    val matchMetadata by viewModel.personalizationMetadata.collectAsState()
+    val likes = if (BuildConfig.IS_TV) savedLikes else savedLikes.map { matchMetadata[it.key] ?: it }
     LaunchedEffect(myList.map { it.key }, recent.map { it.key }, likes.map { it.key }) { viewModel.refreshLibraryMetadata() }
     val aiRecommendationsEnabled by viewModel.aiRecommendationsEnabled.collectAsState()
     val recommendationAiModel by viewModel.recommendationAiModel.collectAsState()
@@ -2067,7 +2072,7 @@ private fun HeroBanner(
                             .padding(horizontal = AliflixSpacing.Small, vertical = AliflixSpacing.Tiny),
                     ) {
                         Text(
-                            text = "${personalMatch.score}% match",
+                            text = if (BuildConfig.IS_TV) "${personalMatch.score}% match" else personalMatch.label,
                             color = MaterialTheme.colorScheme.secondary,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
@@ -3153,12 +3158,12 @@ internal fun MySpaceScreen(
         AlertDialog(
             onDismissRequest = { showClearConfirmation = false },
             title = { Text("Clear viewing history?") },
-            text = {
+            text = if (BuildConfig.IS_TV) ({
                 Text(
                     "This removes every title from History and resets the history part " +
                         "of your personalized match scores. My List is not affected.",
                 )
-            },
+            }) else null,
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -3330,7 +3335,7 @@ internal fun MySpaceScreen(
                     items = myList,
                     onOpen = onOpen,
                     gridState = listGridState,
-                    useGenreTabs = !BuildConfig.IS_TV,
+                    useGenreSections = !BuildConfig.IS_TV,
                 )
             } else if (targetPage == 1) {
                 GenreOrganizedList(
@@ -3362,80 +3367,57 @@ private fun GenreOrganizedList(
     gridState: LazyGridState,
     emptyTitle: String = "Nothing saved yet",
     emptyMessage: String = "",
-    useGenreTabs: Boolean = false,
+    useGenreSections: Boolean = false,
 ) {
-    if (!useGenreTabs || items.isEmpty()) {
+    if (!useGenreSections || items.isEmpty()) {
         GroupedGenreList(items, onOpen, gridState, emptyTitle, emptyMessage)
         return
     }
-    // A saved title appears once, under its strongest shared canonical main genre.
     val groups = remember(items) { groupMyListByMainGenre(items) }
-    val tabs = groups.map { it.key }
-    var selectedGenre by rememberSaveable { mutableStateOf(tabs.first()) }
-    val activeGenre = selectedGenre.takeIf { it in tabs } ?: tabs.first()
-    LaunchedEffect(activeGenre) {
-        if (selectedGenre != activeGenre) selectedGenre = activeGenre
+    val sectionIndices = remember(groups) { libraryGenreSectionIndices(groups) }
+    val scope = rememberCoroutineScope()
+    val activeGenre by remember(groups, gridState) {
+        derivedStateOf {
+            sectionIndices.entries.lastOrNull { it.value <= gridState.firstVisibleItemIndex }?.key
+        }
     }
-    val selectedIndex = tabs.indexOf(activeGenre)
-    val states = rememberSaveableStateHolder()
-    val firstGenre = tabs.first()
     Column(Modifier.fillMaxSize()) {
-        PrimaryScrollableTabRow(
-            selectedTabIndex = selectedIndex,
-            edgePadding = 13.dp,
-            containerColor = Color.Transparent,
-            contentColor = AliflixAccentSecondary,
-            divider = {},
-            indicator = {
-                Box(Modifier.tabIndicatorOffset(selectedIndex, matchContentSize = false)
-                    .height(52.dp).padding(horizontal = 3.dp, vertical = 6.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Brush.horizontalGradient(listOf(AliflixAccentPrimary.copy(alpha = .25f), AliflixAccentSecondary.copy(alpha = .12f))))
-                    .border(1.dp, AliflixAccentSecondary.copy(alpha = .19f), RoundedCornerShape(14.dp)))
-            },
+        // Fixed within the library's scroll container, beneath My Space's existing header.
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth().background(AliflixBackgroundBase),
         ) {
-            groups.forEach { (genre, titles) ->
-                val selected = activeGenre == genre
-                val ink by animateColorAsState(if (selected) Color.White else AliflixContentSecondary, AliflixMotion.selection(), label = "genre-ink")
-                Tab(
-                    selected = selected,
-                    onClick = { if (!selected) selectedGenre = genre },
-                    modifier = Modifier.height(52.dp).zIndex(1f),
-                    selectedContentColor = Color.White,
-                    unselectedContentColor = AliflixContentSecondary,
-                ) {
-                    Row(Modifier.padding(horizontal = 15.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Text(genre, color = ink, fontSize = 13.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
-                        Text(titles.size.toString(), color = if (selected) AliflixAccentSecondary else AliflixContentTertiary,
-                            fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
+            items(groups.filter { it.key.isNotEmpty() }, key = { it.key }) { group ->
+                FilterChip(
+                    selected = activeGenre == group.key,
+                    onClick = { scope.launch { gridState.animateScrollToItem(sectionIndices.getValue(group.key)) } },
+                    label = { Text(group.key, fontSize = 12.sp, maxLines = 1) },
+                    shape = AliflixCorners.Small,
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = AliflixAccentPrimary.copy(alpha = .22f),
+                        selectedLabelColor = AliflixAccentSecondary,
+                        labelColor = AliflixContentSecondary,
+                    ),
+                )
             }
         }
-        AnimatedContent(
-            targetState = activeGenre,
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Adaptive(132.dp),
+            contentPadding = PaddingValues(start = AliflixSpacing.Content, end = AliflixSpacing.Content, top = 8.dp, bottom = 28.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Panel),
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            transitionSpec = {
-                val direction = if (tabs.indexOf(targetState) >= tabs.indexOf(initialState)) 1 else -1
-                (fadeIn(AliflixMotion.content()) + slideInHorizontally(AliflixMotion.content()) { direction * it / 12 }) togetherWith
-                    (fadeOut(tween(150)) + slideOutHorizontally(tween(200)) { -direction * it / 12 })
-            },
-            label = "my-list-main-genre",
-        ) { genre ->
-            states.SaveableStateProvider(genre) {
-                val tabGridState = if (genre == firstGenre) gridState else rememberLazyGridState()
-                val visible = groups.firstOrNull { it.key == genre }?.value.orEmpty()
-                LazyVerticalGrid(
-                    state = tabGridState,
-                    columns = GridCells.Adaptive(132.dp),
-                    contentPadding = PaddingValues(start = AliflixSpacing.Content, end = AliflixSpacing.Content, top = 12.dp, bottom = 28.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Panel),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(visible, key = { "saved:${it.key}" }) { item ->
-                        MediaPoster(item = item, width = 132.dp, showLibraryMetadata = true, onClick = { onOpen(item) })
-                    }
+        ) {
+            groups.forEach { group ->
+                if (group.key.isNotEmpty()) item(key = "genre:${group.key}", span = { GridItemSpan(maxLineSpan) }) {
+                    Text(group.key, color = AliflixContentPrimary, fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp, bottom = 2.dp))
+                }
+                items(group.value, key = { "saved:${it.key}" }) { item ->
+                    MediaPoster(item = item, width = 132.dp, showLibraryMetadata = true,
+                        onClick = { onOpen(item) })
                 }
             }
         }
@@ -4348,7 +4330,7 @@ internal fun DetailScreen(
                     ) {
                         personalMatch?.let { match ->
                             DetailMetadataPill(
-                                label = "${match.score}% match",
+                                label = if (BuildConfig.IS_TV) "${match.score}% match" else match.label,
                                 contentColor = AliflixGreen,
                             )
                         }

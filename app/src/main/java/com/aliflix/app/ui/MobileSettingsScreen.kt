@@ -50,6 +50,7 @@ internal fun MobileSettingsDialog(
 ) {
     val store = (LocalContext.current.applicationContext as AliflixApplication).playerSettingsStore
     val playerSettings by store.settings.collectAsState()
+    val boostAvailability by com.aliflix.app.player.AudioBoostStatus.availability.collectAsState()
     var clearConfirmation by remember { mutableStateOf(false) }
     if (clearConfirmation) AlertDialog(
         onDismissRequest = { clearConfirmation = false },
@@ -112,7 +113,7 @@ internal fun MobileSettingsDialog(
                             }
                         }
                         SettingsDivider()
-                        SettingsRow(Icons.Rounded.HighQuality, "Preferred quality", if (playerSettings.preferredVideoQuality == PreferredVideoQuality.LOW) "Lowest available on every server" else "Adapts to your connection") {
+                        SettingsRow(Icons.Rounded.HighQuality, "Preferred quality", "") {
                             AliflixSegmentedControl(contentPadding = PaddingValues(3.dp), horizontalArrangement = Arrangement.Start) {
                                 PreferredVideoQuality.entries.forEach { quality ->
                                     val selected = playerSettings.preferredVideoQuality == quality
@@ -125,7 +126,11 @@ internal fun MobileSettingsDialog(
                             }
                         }
                         SettingsDivider()
-                        SettingsToggle(Icons.Rounded.SkipNext, "Play Next Episode", "Automatically start the next episode", playerSettings.playNextEpisode, "settings-next-episode-switch", store::updatePlayNextEpisode)
+                        SettingsToggle(Icons.Rounded.SkipNext, "Play Next Episode", "", playerSettings.playNextEpisode, "settings-next-episode-switch", store::updatePlayNextEpisode)
+                        SettingsDivider()
+                        SettingsToggle(Icons.Rounded.GraphicEq, "Boost Audio",
+                            if (playerSettings.boostAudio && boostAvailability == com.aliflix.app.player.AudioBoostAvailability.UNAVAILABLE) "Unavailable" else "",
+                            playerSettings.boostAudio, "settings-boost-audio-switch", store::updateBoostAudio)
                     }
                     com.aliflix.app.downloads.DownloadSettings()
                     SettingsGroup("SUBTITLES") {
@@ -139,7 +144,7 @@ internal fun MobileSettingsDialog(
                             }
                         }
                         SettingsDivider()
-                        SettingsToggle(Icons.Rounded.Subtitles, "Auto display", "Embedded first, then external subtitles", autoDisplaySubtitles, "settings-auto-subtitles-switch", onSetAutoDisplaySubtitles)
+                        SettingsToggle(Icons.Rounded.Subtitles, "Auto display", "", autoDisplaySubtitles, "settings-auto-subtitles-switch", onSetAutoDisplaySubtitles)
                     }
                     SettingsGroup("DISCOVER") {
                         SettingsToggle(Icons.Rounded.AutoAwesome, "Ask Aliflix", "Personal recommendations in Discover", aiRecommendationsEnabled, "settings-ask-aliflix-switch", onSetAiRecommendationsEnabled)
@@ -188,7 +193,7 @@ internal fun MobileSettingsDialog(
         Icon(icon, null, Modifier.size(22.dp), tint = AliflixContentSecondary)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AliflixContentPrimary)
-            Text(detail, fontSize = 11.sp, lineHeight = 14.sp, color = AliflixContentSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (detail.isNotBlank()) Text(detail, fontSize = 11.sp, lineHeight = 14.sp, color = AliflixContentSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         trailing()
     }

@@ -73,13 +73,44 @@ internal fun subtitleLanguageIsPlausible(cues: List<SubtitleCue>, language: Stri
     if (sample.isBlank() || '\uFFFD' in sample || mojibakeCount(sample) > 2) return false
     val letters = sample.filter(Char::isLetter)
     if (letters.isEmpty()) return false
-    return when (canonicalSubtitleLanguageCode(language)) {
+    val code = canonicalSubtitleLanguageCode(language)
+    val detected = detectedLatinSubtitleLanguage(sample)
+    if (detected != null && detected != code) return false
+    fun fraction(predicate: (Char) -> Boolean) = letters.count(predicate).toDouble() / letters.length
+    return when (code) {
         "EN" -> letters.count { it in 'A'..'Z' || it in 'a'..'z' }.toDouble() / letters.length > 0.85
         "AR" -> letters.count { it.isArabicLetter() }.toDouble() / letters.length > 0.5 &&
             !looksPersianOrUrdu(sample)
         "FA", "UR" -> letters.count { it.isArabicLetter() }.toDouble() / letters.length > 0.5
+        "RU", "UK" -> fraction { it in '\u0400'..'\u052f' } > .5
+        "EL" -> fraction { it in '\u0370'..'\u03ff' } > .5
+        "HE" -> fraction { it in '\u0590'..'\u05ff' } > .5
+        "HI" -> fraction { it in '\u0900'..'\u097f' } > .5
+        "BN" -> fraction { it in '\u0980'..'\u09ff' } > .5
+        "TH" -> fraction { it in '\u0e00'..'\u0e7f' } > .5
+        "JA" -> fraction { it in '\u3040'..'\u30ff' || it in '\u4e00'..'\u9fff' } > .5
+        "ZH" -> fraction { it in '\u4e00'..'\u9fff' } > .5 && sample.none { it in '\u3040'..'\u30ff' }
+        "KO" -> fraction { it in '\uac00'..'\ud7af' || it in '\u1100'..'\u11ff' } > .5
+        "DE", "ES", "FR", "IT", "PT", "TR", "NL", "PL", "SV", "DA", "NO", "FI", "RO", "CS", "HU", "VI", "ID" ->
+            fraction { it.code < 0x0250 } > .8
         else -> true
     }
+}
+
+private fun detectedLatinSubtitleLanguage(sample: String): String? {
+    val words = sample.lowercase(java.util.Locale.ROOT).split(Regex("[^\\p{L}]+")).toSet()
+    val markers = mapOf(
+        "EN" to setOf("the", "you", "your", "are", "what", "with", "have", "this", "that", "we"),
+        "ES" to setOf("estás", "estoy", "quiero", "tienes", "pero", "aquí", "gracias", "usted", "nosotros", "nosotras", "tenemos", "ellos", "ellas", "puedes", "porque", "volver"),
+        "FR" to setOf("vous", "nous", "avec", "pour", "cette", "être", "suis", "mais", "bonjour", "merci"),
+        "DE" to setOf("ich", "nicht", "dich", "wir", "ist", "sind", "haben", "hier", "aber", "danke"),
+        "IT" to setOf("sono", "siamo", "questo", "voglio", "grazie", "perché", "cosa", "della", "anche"),
+        "PT" to setOf("você", "vocês", "não", "estou", "obrigado", "obrigada", "isso", "então"),
+        "TR" to setOf("ben", "sen", "için", "değil", "evet", "hayır", "neden", "teşekkür"),
+        "NL" to setOf("jij", "jouw", "niet", "zijn", "hebben", "maar", "dank", "waarom"),
+    )
+    val scores = markers.mapValues { (_, values) -> values.count { it in words } }.entries.sortedByDescending { it.value }
+    return scores.firstOrNull()?.takeIf { it.value >= 3 && it.value - (scores.getOrNull(1)?.value ?: 0) >= 2 }?.key
 }
 
 private fun looksPersianOrUrdu(text: String): Boolean {
@@ -97,7 +128,7 @@ private fun looksPersianOrUrdu(text: String): Boolean {
 internal fun mobileSubtitleCandidates(
     tracks: List<SubtitleTrack>, language: String, season: Int?, episode: Int?, releaseHint: String = "",
 ): List<SubtitleTrack> {
-    val episodePattern = Regex("(?i)s(\\d{1,2})[ ._-]*e(\\d{1,3})")
+    val episodePattern = Regex("(?i)(?:s(\\d{1,2})[ ._-]*e(\\d{1,3})|(\\d{1,2})x(\\d{1,3}))")
     val hint = releaseHint.lowercase().split(Regex("[^a-z0-9]+"))
         .filter { it.length >= 3 && it !in setOf("https", "com", "m3u8", "mp4", "video", "stream") }.toSet()
     fun score(track: SubtitleTrack) = (track.releaseName + " " + track.fileName).lowercase()
@@ -109,7 +140,8 @@ internal fun mobileSubtitleCandidates(
         .filter { track ->
             val identity = episodePattern.find(track.fileName) ?: episodePattern.find(track.releaseName)
             season == null || episode == null || identity == null ||
-                (identity.groupValues[1].toInt() == season && identity.groupValues[2].toInt() == episode)
+                (identity.groupValues[1].ifEmpty { identity.groupValues[3] }.toInt() == season &&
+                    identity.groupValues[2].ifEmpty { identity.groupValues[4] }.toInt() == episode)
         }.sortedWith(compareByDescending<SubtitleTrack> { it.hashMatched }.thenByDescending(::score).thenBy { it.hearingImpaired }
             .thenBy { it.format.lowercase() !in setOf("srt", "vtt") })
 }
@@ -118,8 +150,11 @@ internal fun normalizeMobileSubtitleTracks(tracks: List<SubtitleTrack>): List<Su
     val code = canonicalSubtitleLanguageCode(track.languageCode).let { raw ->
         if (raw in setOf("SUB", "UNKNOWN", "UND")) canonicalSubtitleLanguageCode(track.languageName) else raw
     }
+    val namedCode = canonicalSubtitleLanguageCode(track.languageName)
+    val knownCodes = com.aliflix.app.model.SubtitleLanguage.entries.map { it.code }
+    val safeCode = if (code in knownCodes && namedCode in knownCodes && code != namedCode) "UND" else code
     val name = com.aliflix.app.model.SubtitleLanguage.entries.firstOrNull { it.code == code }?.displayName
         ?: java.util.Locale.forLanguageTag(code.lowercase()).getDisplayLanguage(java.util.Locale.ENGLISH).takeIf { it.isNotBlank() }
         ?: track.languageName
-    track.copy(languageCode = code, languageName = name)
+    track.copy(languageCode = safeCode, languageName = if (safeCode == "UND") track.languageName else name)
 }.groupBy { it.downloadToken }.values.map { copies -> copies.firstOrNull { it.hashMatched } ?: copies.first() }

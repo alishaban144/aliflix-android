@@ -99,27 +99,30 @@ class PlaybackProviderRepository(private val context: Context) {
     }
 
     fun selectPreferredSubtitleLanguage(language: SubtitleLanguage) {
-        if (!BuildConfig.IS_TV) {
-            context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE).edit {
-                remove("language")
-            }
-        }
+        if (!BuildConfig.IS_TV) clearLegacySubtitleChoice()
         prefs.edit { putString(KEY_PREFERRED_SUBTITLE_LANGUAGE, language.code) }
         _preferences.value = _preferences.value.copy(preferredSubtitleLanguage = language)
         recordLocalChange()
     }
 
     fun setAutoDisplaySubtitles(enabled: Boolean) {
-        if (!BuildConfig.IS_TV) context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE).edit { remove("enabled") }
+        if (!BuildConfig.IS_TV) clearLegacySubtitleChoice()
         prefs.edit { putBoolean(KEY_AUTO_DISPLAY_SUBTITLES, enabled) }
         _preferences.value = _preferences.value.copy(autoDisplaySubtitles = enabled)
         recordLocalChange()
     }
 
+    private fun clearLegacySubtitleChoice() {
+        val choices = context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE)
+        if (choices.getString("manual-owner", null).isNullOrBlank()) choices.edit {
+            remove("language"); remove("enabled")
+        }
+    }
+
     /** Applies cloud/account-scope settings without creating a write-back loop. */
     fun applySyncedPreferences(value: PlaybackPreferences, updatedAtMillis: Long) {
         if (!BuildConfig.IS_TV && value.preferredSubtitleLanguage != _preferences.value.preferredSubtitleLanguage) {
-            context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE).edit { remove("language") }
+            clearLegacySubtitleChoice()
         }
         val provider = value.effectiveGeneralProvider
         _preferences.value = value.copy(generalProvider = provider)
@@ -200,7 +203,7 @@ class PlaybackProviderRepository(private val context: Context) {
         )
     }
 
-    private companion object {
+    internal companion object {
         const val PREFS_NAME = "aliflix_streaming_sources_prefs"
         const val KEY_CUSTOM_RAMOFLIX_URL = "custom_url_ramoflix"
         const val KEY_CUSTOM_MOVIEPIRE_URL = "custom_url_moviepire"

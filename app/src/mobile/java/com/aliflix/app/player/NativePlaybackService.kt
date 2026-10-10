@@ -1,5 +1,8 @@
 package com.aliflix.app.player
 
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+
 import android.app.PendingIntent
 import android.app.Notification
 import android.app.NotificationChannel
@@ -58,6 +61,62 @@ import java.net.Inet4Address
 /** Owns decoding, session, notification and TV surface. No Activity/WebView references. */
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlaybackService : MediaSessionService() {
+    private val boost = LocalAudioBoost()
+    private val embeddedLanguageSample = ArrayDeque<SubtitleCue>()
+    private val subtitlePreferences by lazy {
+        getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME, MODE_PRIVATE)
+    }
+    private val subtitlePreferenceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES ||
+            key == com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE) {
+            handler.post { applyAutomaticSubtitlePreferences() }
+        }
+    }
+    private fun applyAutomaticSubtitlePreferences() {
+        val current = request ?: return
+        val choices = getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
+        val manual = scopedManualSubtitleChoice(choices.getString("manual-owner", null), choices.getString("manual-content", null),
+            if (choices.contains("enabled")) choices.getBoolean("enabled", false) else null, selection) != null
+        if (manual) return
+        val enabled = subtitlePreferences.getBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES, true)
+        val language = canonicalSubtitleLanguageCode(subtitlePreferences.getString(
+            com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE, "EN").orEmpty()).lowercase()
+        externalCaptionCues = emptyList()
+        originalCaptionJson = null
+        embeddedSubtitlesActive = false
+        embeddedLanguageSample.clear()
+        request = current.copy(preferEmbeddedSubtitles = enabled, subtitleLanguage = language, subtitlesVtt = "")
+        activeRequest = request
+        relay?.updateSubtitles("")
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT).setPreferredTextLanguage(language)
+            .setSelectUndeterminedTextLanguage(false).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+        if (enabled) {
+            val match = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { group ->
+                (0 until group.length).map { group to it }
+            }.firstOrNull { (group, index) ->
+                group.isTrackSupported(index) && !group.getTrackFormat(index).id.orEmpty().contains("aliflix-external") &&
+                    canonicalSubtitleLanguageCode(group.getTrackFormat(index).language.orEmpty()) == language.uppercase()
+            }
+            if (match != null) {
+                embeddedSubtitlesActive = true
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second))
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build()
+            }
+        }
+    }
+    private val preferenceScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
+    private val audioRoutes by lazy { getSystemService(android.media.AudioManager::class.java) }
+    private val routeCallback = object : android.media.AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(devices: Array<android.media.AudioDeviceInfo>) = updateBoost(true)
+        override fun onAudioDevicesRemoved(devices: Array<android.media.AudioDeviceInfo>) = updateBoost(true)
+    }
+    private fun updateBoost(routeChanged: Boolean = false) {
+        if (releasing || !::localPlayer.isInitialized || !::player.isInitialized) return
+        boost.update((application as AliflixApplication).playerSettingsStore.settings.value.boostAudio,
+            localPlayer.audioSessionId, player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE, routeChanged)
+    }
     private var session: MediaSession? = null
     private var startupVolume: Float? = null
     private var pendingResumeMs: Long? = null
@@ -165,6 +224,20 @@ class NativePlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         localPlayer.addListener(object : Player.Listener {
+            override fun onAudioSessionIdChanged(audioSessionId: Int) { updateBoost() }
+            override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                if (!embeddedSubtitlesActive || request?.preferEmbeddedSubtitles != true) return
+                val text = cueGroup.cues.mapNotNull { it.text?.toString() }.joinToString(" ").trim()
+                if (text.isEmpty()) return
+                embeddedLanguageSample.addLast(SubtitleCue(0.0, 1.0, text))
+                while (embeddedLanguageSample.size > 80) embeddedLanguageSample.removeFirst()
+                if (!subtitleLanguageIsPlausible(embeddedLanguageSample.toList(), request?.subtitleLanguage.orEmpty())) {
+                    embeddedSubtitlesActive = false
+                    request = request?.copy(preferEmbeddedSubtitles = false)
+                    localPlayer.trackSelectionParameters = localPlayer.trackSelectionParameters.buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+                }
+            }
             override fun onRenderedFirstFrame() {
                 if (!restorePendingResume()) return
                 renderedStreamUrl = activeStreamUrl
@@ -179,6 +252,11 @@ class NativePlaybackService : MediaSessionService() {
         }.onFailure { android.util.Log.e("AliflixCast", "Google Cast initialization failed", it) }
             .getOrDefault(localPlayer)
         cineJoyRecovery = CineJoyPlayerRecovery(player, handler, ::saveAudioChoice)
+        subtitlePreferences.registerOnSharedPreferenceChangeListener(subtitlePreferenceListener)
+        audioRoutes.registerAudioDeviceCallback(routeCallback, handler)
+        preferenceScope.launch {
+            (application as AliflixApplication).playerSettingsStore.settings.collect { updateBoost() }
+        }
         player.addListener(cineJoyRecovery)
         player.addListener(object : Player.Listener {
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -192,7 +270,12 @@ class NativePlaybackService : MediaSessionService() {
                     applyLowestVideoTrack(player, tracks)
                 }
                 applySavedAudioChoice(tracks)
-                if (request?.preferEmbeddedSubtitles != true || embeddedSubtitlesActive) return
+                val preferences = getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME, MODE_PRIVATE)
+                val automaticEnabled = preferences.getBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES, true)
+                val choices = getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
+                val manual = scopedManualSubtitleChoice(choices.getString("manual-owner", null), choices.getString("manual-content", null),
+                    if (choices.contains("enabled")) choices.getBoolean("enabled", false) else null, selection) != null
+                if (request?.preferEmbeddedSubtitles != true || embeddedSubtitlesActive || !automaticEnabled || manual) return
                 val language = canonicalSubtitleLanguageCode(request?.subtitleLanguage.orEmpty())
                 val match = tracks.groups.asSequence().filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { group ->
                     (0 until group.length).asSequence().map { group to it }
@@ -208,6 +291,7 @@ class NativePlaybackService : MediaSessionService() {
             }
             override fun onEvents(player: Player, events: Player.Events) {
                 if (releasing) return
+                updateBoost()
                 playbackReady = player.playbackState == Player.STATE_READY
                 if (playbackReady) {
                     PlaybackStartupTiming.mark("ready")
@@ -342,6 +426,7 @@ class NativePlaybackService : MediaSessionService() {
         request = prepared
         externalCaptionCues = parseTimedTextSubtitleCues(initialVtt)
         embeddedSubtitlesActive = false
+        embeddedLanguageSample.clear()
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setPreferredTextLanguage(next.subtitleLanguage)
@@ -568,6 +653,12 @@ class NativePlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        releasing = true
+        subtitlePreferences.unregisterOnSharedPreferenceChangeListener(subtitlePreferenceListener)
+        preferenceScope.cancel()
+        audioRoutes.unregisterAudioDeviceCallback(routeCallback)
+        boost.close()
+        AudioBoostStatus.update(AudioBoostAvailability.OFF)
         speechCapture.dialogueFrameObserver = null
         if (android.os.Build.VERSION.SDK_INT >= 34) dialogueRecognition?.close()
         dialogueRecognition = null
@@ -756,9 +847,20 @@ class NativePlaybackService : MediaSessionService() {
                 (0 until group.length).filter { group.isTrackSelected(it) }.map { group.getTrackFormat(it).language.orEmpty() }
             }?.firstOrNull().orEmpty()
 
+        internal fun refreshAutomaticSubtitlePreferences() { activeService?.applyAutomaticSubtitlePreferences() }
+
         internal fun updateSubtitles(vtt: String, language: String = "", label: String = "", automatic: Boolean = false) {
             val service = activeService ?: return
-            if (automatic && embeddedSubtitlesActive) return
+            if (automatic) {
+                val preferences = service.subtitlePreferences
+                val choices = service.getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
+                val manual = scopedManualSubtitleChoice(choices.getString("manual-owner", null), choices.getString("manual-content", null),
+                    if (choices.contains("enabled")) choices.getBoolean("enabled", false) else null, service.selection) != null
+                if (!automaticSubtitleMayActivate(
+                    preferences.getBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES, true),
+                    manual, language, preferences.getString(com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE, "EN").orEmpty(),
+                    embeddedSubtitlesActive)) return
+            }
             if (!automatic) {
                 embeddedSubtitlesActive = false
                 service.request = service.request?.copy(preferEmbeddedSubtitles = false)
@@ -784,8 +886,8 @@ class NativePlaybackService : MediaSessionService() {
             }
             service.player.trackSelectionParameters = service.player.trackSelectionParameters.buildUpon()
                 .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                .setPreferredTextLanguage(lang).setSelectUndeterminedTextLanguage(true)
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !automatic || vtt.isBlank()).build()
+                .setPreferredTextLanguage(lang).setSelectUndeterminedTextLanguage(false)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
             val item = service.originalItem?.buildUpon()?.setSubtitleConfigurations(configs)?.build() ?: return
             service.originalItem = item
             // The Activity renders local external cues against currentPosition. Keep

@@ -44,6 +44,7 @@ internal val discoveryCategories = linkedMapOf(
 )
 
 internal class CatalogueSession {
+    var correctedTitle by mutableStateOf<String?>(null)
     var items by mutableStateOf<List<Media>>(emptyList())
     var people by mutableStateOf<List<MediaCreator>>(emptyList())
     var loading by mutableStateOf(false)
@@ -55,7 +56,10 @@ internal class CatalogueSession {
 }
 
 /** ViewModel-owned results survive tab/destination changes; bounded cache and one request per session. */
-internal class DiscoverCatalogueStore(private val client: RecommendationAiClient) {
+internal class DiscoverCatalogueStore(
+    private val client: RecommendationAiClient,
+    private val titleSearch: com.aliflix.app.data.TypoTolerantTitleSearch? = null,
+) {
     suspend fun categories() = client.categories()
     private val requests = Semaphore(3)
     private val sessions = linkedMapOf<String, CatalogueSession>()
@@ -105,13 +109,24 @@ internal class DiscoverCatalogueStore(private val client: RecommendationAiClient
                     )
                 }
             }
+            val recovered = if (!com.aliflix.app.BuildConfig.IS_TV && category == null &&
+                filter != "People" && !more && titleSearch != null) titleSearch.search(query, items,
+                    cacheScope = if (filter in setOf("Movies", "Series")) filter else "") else null
+            val visible = recovered?.items?.filter { item ->
+                item.id !in excludedTmdbIds && when (filter) {
+                    "Movies" -> item.type == MediaType.MOVIE
+                    "Series" -> item.type == MediaType.TV
+                    else -> true
+                }
+            } ?: items
             session.items = if (more)
-                (session.items + items).distinctBy(Media::key) else items
+                (session.items + visible).distinctBy(Media::key) else visible
+            if (!more) session.correctedTitle = recovered?.correctedTitle?.takeIf { visible.isNotEmpty() }
             session.people = if (more)
                 (session.people + people).distinctBy(MediaCreator::tmdbId) else people
             if (true) {
                 session.nextPage = json.getInt("page") + 1
-                session.hasMore = json.optBoolean("hasMore")
+                session.hasMore = json.optBoolean("hasMore") && session.correctedTitle == null
             }
             session.updatedAt = System.currentTimeMillis()
         } catch (cancelled: CancellationException) {
@@ -149,6 +164,12 @@ internal fun DiscoverCatalogueContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item("header", span = { GridItemSpan(maxLineSpan) }) { header() }
+        session.correctedTitle?.let { title ->
+            item("correction", span = { GridItemSpan(maxLineSpan) }) {
+                Text("Showing results for $title", style = MaterialTheme.typography.labelSmall,
+                    color = AliflixContentTertiary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            }
+        }
         if (query.isBlank()) {
             item("explore", span = { GridItemSpan(maxLineSpan) }) {
                 Row(
