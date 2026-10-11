@@ -7,6 +7,10 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 class GroqDialogueRecognitionTest {
+    @Test fun measuredSilenceIsNotUploaded() {
+        val pcm = PlayedDialoguePcm(0.0, List(1_000) { ShortArray(320) })
+        assertTrue(dialogueRecoverySamples(pcm, listOf(SpeechWindow(0.0, DoubleArray(1_000)))).isEmpty())
+    }
     private val sample = PlayedDialoguePcm(120.0, List(1_000) { ShortArray(320) { 512 } })
     @Test fun firstTwoRequestsCoverSeparateConversationsBeforeRepeatingTheBestOne() {
         val retained = sample.copy(frames = List(6_000) { ShortArray(320) })

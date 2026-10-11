@@ -5,6 +5,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AutomaticCaptionSelectionTest {
+    @Test fun cacheMigrationPreservesManualChoicesAndOfflineCaptions() {
+        assertTrue(refreshAutomaticCaptionCache(true, 0, true, false))
+        assertFalse(refreshAutomaticCaptionCache(false, 0, true, false))
+        assertFalse(refreshAutomaticCaptionCache(true, 0, false, false))
+        assertFalse(refreshAutomaticCaptionCache(true, 0, true, true))
+        assertFalse(refreshAutomaticCaptionCache(true, AUTOMATIC_CAPTION_SELECTION_POLICY, true, false))
+    }
+    @Test fun filmFrameRatePrefersACompleteModernEditionOverAnUnlabelledLegacyFile() {
+        val legacy = SubtitleTrack("legacy", "en", "English", "The Terminator", "anglais.srt", false, "srt", null, "legacy")
+        val modern = legacy.copy(id = "modern", fileName = "The.Terminator.1984.BDRip.srt", downloadToken = "modern")
+        val pal = legacy.copy(id = "pal", fileName = "The.Terminator.PAL.srt", downloadToken = "pal")
+        assertEquals(listOf(modern, pal, legacy), rankCompleteSubtitleCandidates(listOf(legacy, pal, modern), 23.976f))
+        assertEquals(listOf(legacy, pal, modern), rankCompleteSubtitleCandidates(listOf(legacy, pal, modern), 0f))
+        assertEquals(legacy.copy(hashMatched = true), rankCompleteSubtitleCandidates(listOf(modern, legacy.copy(hashMatched = true)), 23.976f).first())
+    }
     private val movie = PlaybackSelection(Media(218, MediaType.MOVIE, "Movie"))
     @Test fun aSplitHalfCannotBecomeTheAutomaticFullMovieCaptionFile() {
         fun cues(end: Double) = listOf(SubtitleCue(20.0,24.0,"Someone painted purple windows"),

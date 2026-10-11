@@ -19,25 +19,25 @@ internal object GroqDialogueRecognition {
         Thread(it, "aliflix-dialogue-recovery").apply { isDaemon = true }
     }
 
-    suspend fun recognize(pcm: PlayedDialoguePcm, speech: List<SpeechWindow>, onWords: (List<List<HeardWord>>) -> Unit) = supervisorScope {
-        val collected = mutableListOf<List<HeardWord>>()
-        dialogueRecoverySamples(pcm, speech).map { sample -> launch {
+    suspend fun recognize(pcm: PlayedDialoguePcm, speech: List<SpeechWindow>, onWords: (List<List<HeardWord>>) -> Unit) =
+        withTimeoutOrNull(18_000) { recover({ dialogueRecoverySamples(pcm, speech) }, onWords) }
+
+    suspend fun recover(samples: suspend () -> List<PlayedDialoguePcm>, onWords: (List<List<HeardWord>>) -> Unit) =
+        DialogueRecoveryCoordinator.run(samples, { sample ->
             try {
-                val result = withTimeoutOrNull(7_000) { read(sample) }.orEmpty()
-                if (result.isNotEmpty()) { collected.add(result); onWords(collected.toList()) }
-                android.util.Log.i("AliflixAudioSync", "groq_dialogue:words=${result.size},start=${sample.start}")
+                read(sample).also { android.util.Log.i("AliflixAudioSync", "groq_dialogue:words=${it.size},start=${sample.start}") }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 android.util.Log.i("AliflixAudioSync", "groq_dialogue_unavailable:${error.javaClass.simpleName}")
+                throw error
             }
-        } }.joinAll()
-    }
+        }, onWords)
 
     private suspend fun read(sample: PlayedDialoguePcm): List<HeardWord> = suspendCancellableCoroutine { continuation ->
         val connection = (URL(BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/') + "/v3/subtitles/audio-timing")
             .openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; doOutput = true
-            connectTimeout = 3_000; readTimeout = 6_500
+            connectTimeout = 3_000; readTimeout = 9_500
             setRequestProperty("Content-Type", "audio/wav")
             setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", "Aliflix/${BuildConfig.VERSION_NAME}")
@@ -82,6 +82,9 @@ internal fun dialogueRecoverySample(pcm: PlayedDialoguePcm, speech: List<SpeechW
         val frame = kotlin.math.round((window.start + i.toDouble() / SPEECH_HZ - pcm.start) / .02).toInt()
         if (frame in decisions.indices) decisions[frame] = window.speech[i]
     }
+    // Known silence cannot become a useful transcript. Unknown detector evidence
+    // keeps the existing bounded recognition fallback available.
+    if (decisions.count { it >= 0 } >= decisions.size * .8 && decisions.count { it >= .5 } < 50) return null
     fun score(start: Int): Double {
         var spoken = 0; var known = 0; var run = 0; var phrases = 0
         var first = -1; var last = -1

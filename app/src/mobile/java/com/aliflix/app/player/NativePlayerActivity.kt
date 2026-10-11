@@ -279,6 +279,7 @@ class NativePlayerActivity : FragmentActivity() {
                     onSubtitleDelayChange = ::updateSubtitleDelay,
                     onSyncWithAudio = ::syncWithAudio,
                     onResetSubtitleSync = ::resetSubtitleSync,
+                    onAudioBoostChange = settingsStore::updateBoostAudio,
                     onSubtitleVerticalOffsetChange = { offsetDp ->
                         settingsStore.updateSubtitleVerticalOffsetDp(offsetDp)
                         updateSubtitlePadding(lastControlsVisible)
@@ -884,7 +885,8 @@ class NativePlayerActivity : FragmentActivity() {
 
     private fun saveCaption(current: PlaybackSelection, track: SubtitleTrack, json: String, automatic: Boolean = false) {
         val raw = org.json.JSONObject().put("cues", json).put("language", track.languageCode)
-            .put("label", track.languageName).put("id", track.id).put("automatic", automatic).toString()
+            .put("label", track.languageName).put("id", track.id).put("automatic", automatic)
+            .put("selectionPolicy", AUTOMATIC_CAPTION_SELECTION_POLICY).toString()
         getSharedPreferences("account-caption-files", MODE_PRIVATE).edit().putString(captionKey(current), raw).apply()
     }
 
@@ -912,7 +914,14 @@ class NativePlayerActivity : FragmentActivity() {
         if (!allowAutomaticSubtitles()) return
         if (NativePlaybackService.embeddedSubtitlesActive) return
         automaticAttemptKey = "${subtitleContentKey(current)}:${NativePlaybackService.activeRequestId}:$language"
-        if (current.source.identity != MobilePlaybackProvider.FLIXER && restoreCaption(current, language)) return
+        if (current.source.identity != MobilePlaybackProvider.FLIXER && restoreCaption(current, language)) {
+            val saved = runCatching { org.json.JSONObject(captionPreferences.getString(captionKey(current), null).orEmpty()) }.getOrNull()
+            // Keep the restored captions visible while refreshing an old automatic
+            // choice. Manual choices and offline playback never require migration.
+            if (!refreshAutomaticCaptionCache(saved?.optBoolean("automatic", true) != false,
+                    saved?.optInt("selectionPolicy", 0) ?: 0, hasInternetConnection(),
+                    NativePlaybackService.activeRequest?.offlineDownloadId?.isNotBlank() == true)) return
+        }
         val generation = subtitleGeneration
         val requestId = NativePlaybackService.activeRequestId
         fun stillCurrent() = generation == subtitleGeneration && selection?.key == current.key &&
@@ -933,7 +942,8 @@ class NativePlayerActivity : FragmentActivity() {
                     ).load(current, language, controller?.duration ?: 0, NativePlaybackService.selectedVideoFrameRate(),
                         ::stillCurrent, { tracks ->
                             if (stillCurrent()) ui = ui.copy(subtitleTracks = (ui.subtitleTracks + tracks).distinctBy { it.downloadToken })
-                        })
+                        }, latestFrameRate = NativePlaybackService::selectedVideoFrameRate,
+                        latestDurationMs = { controller?.duration ?: 0 })
                 }
                 ensureActive()
                 if (!stillCurrent()) return@launch
@@ -946,7 +956,7 @@ class NativePlayerActivity : FragmentActivity() {
                         canonicalSubtitleLanguageCode(language).lowercase(), result.track.languageName, automatic = true)
                     ui = ui.copy(activeSubtitleTrack = result.track, subtitleError = null)
                     updateSubtitleCues()
-                } else ui = ui.copy(subtitleError = "Subtitles unavailable")
+                } else if (activeSubtitleCues.isEmpty()) ui = ui.copy(subtitleError = "Subtitles unavailable")
             } finally {
                 if (generation == subtitleGeneration) ui = ui.copy(subtitleLoading = false)
             }
@@ -1285,7 +1295,7 @@ class NativePlayerActivity : FragmentActivity() {
                     onExpired = { if (audioSyncJob === owner) {
                         audioSyncJob = null
                         ui = ui.copy(audioSyncState = "Couldn't match this dialogue", audioSyncRemainingSeconds = null)
-                    } }, budgetMs = 9_500,
+                    } }, budgetMs = 19_000,
                 ) { deadlineCheck ->
                     var solution: AudioSubtitleCorrection? = null
                     var finiteWords: List<HeardWord> = emptyList()
@@ -1294,8 +1304,14 @@ class NativePlayerActivity : FragmentActivity() {
                     var cloudTranscripts: List<List<HeardWord>> = emptyList()
                     var cloudJob: Job? = null
                     try {
-                    while (solution == null && android.os.SystemClock.elapsedRealtime() - began < 9_000) {
+                    while (solution == null && android.os.SystemClock.elapsedRealtime() - began < 18_500) {
                         deadlineCheck()
+                        if (audioSyncJob !== owner || key != audioCorrectionKey ||
+                            generation != NativePlaybackService.speechGeneration || continuity != NativePlaybackService.speechContinuity ||
+                            correctionStore.preferences.getString(key, null) != originalRevision ||
+                            scopes.getString("active", "guest") != account || settingsStore.settings.value.subtitleDelaySeconds != manualDelay ||
+                            controller?.deviceInfo?.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE)
+                            throw CancellationException("audio_sync_identity")
                         val observedPosition = withContext(Dispatchers.Main.immediate) {
                             (controller?.currentPosition ?: 0L) / 1000.0
                         }
@@ -1372,8 +1388,18 @@ class NativePlayerActivity : FragmentActivity() {
                             attempt.correction
                         }
                         if (solution == null && cloudJob == null) {
-                            NativePlaybackService.playedDialoguePcm(observedPosition)?.let { pcm ->
-                                cloudJob = launch { GroqDialogueRecognition.recognize(pcm, NativePlaybackService.quickSpeechEvidence()) { cloudTranscripts = it } }
+                            // Local evidence gets the first chance. Recovery then
+                            // overlaps matching and follows fresh played dialogue.
+                            cloudJob = launch {
+                                GroqDialogueRecognition.recover(samples = {
+                                    if (audioSyncJob !== owner || generation != NativePlaybackService.speechGeneration ||
+                                        continuity != NativePlaybackService.speechContinuity || key != audioCorrectionKey)
+                                        throw CancellationException("audio_sync_identity")
+                                    val playedPosition = (controller?.currentPosition ?: 0L) / 1000.0
+                                    NativePlaybackService.playedDialoguePcm(playedPosition)?.let { pcm ->
+                                        dialogueRecoverySamples(pcm, NativePlaybackService.quickSpeechEvidence())
+                                    }.orEmpty()
+                                }) { cloudTranscripts = it }
                             }
                         }
                         // Let a completed live segment reach the actual playhead

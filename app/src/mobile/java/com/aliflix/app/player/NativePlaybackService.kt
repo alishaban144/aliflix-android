@@ -132,6 +132,7 @@ class NativePlaybackService : MediaSessionService() {
     private var externalCaptionCues: List<SubtitleCue> = emptyList()
     private var originalCaptionJson: String? = null
     private val speechCapture = PlaybackSpeechBuffer()
+    private val videoClock = PlaybackVideoClock()
     private var dialogueRecognition: RecentDialogueRecognition? = null
     private var dialogueRecognitionIdentity: String? = null
     private val embeddedSyncReference = EmbeddedSyncReference()
@@ -223,6 +224,7 @@ class NativePlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
+        localPlayer.setVideoFrameMetadataListener { timeUs, _, _, _ -> videoClock.frame(timeUs) }
         localPlayer.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) { updateBoost() }
             override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
@@ -474,6 +476,7 @@ class NativePlaybackService : MediaSessionService() {
         // Even direct/offline requests cannot emit local sound ahead of the first video frame.
         startupVolume = startupVolume ?: localPlayer.volume
         localPlayer.volume = 0f
+        videoClock.reset()
         player.setMediaItem(localCaptionItem(checkNotNull(originalItem)), next.positionMs)
         PlaybackStartupTiming.mark("media3_prepare")
         player.prepare()
@@ -840,7 +843,9 @@ class NativePlaybackService : MediaSessionService() {
             return selected.ifBlank { service.lastAudioFingerprint }
         }
 
-        internal fun selectedVideoFrameRate(): Float = activeService?.localPlayer?.videoFormat?.frameRate ?: -1f
+        internal fun selectedVideoFrameRate(): Float = activeService?.let { service ->
+            service.videoClock.frameRate.takeIf { it > 0 } ?: service.localPlayer.videoFormat?.frameRate
+        } ?: -1f
 
         internal fun selectedAudioLanguage(): String = activeService?.localPlayer?.currentTracks?.groups
             ?.filter { it.type == C.TRACK_TYPE_AUDIO }?.flatMap { group ->

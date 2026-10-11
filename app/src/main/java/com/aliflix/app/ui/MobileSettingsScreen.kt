@@ -50,7 +50,6 @@ internal fun MobileSettingsDialog(
 ) {
     val store = (LocalContext.current.applicationContext as AliflixApplication).playerSettingsStore
     val playerSettings by store.settings.collectAsState()
-    val boostAvailability by com.aliflix.app.player.AudioBoostStatus.availability.collectAsState()
     var clearConfirmation by remember { mutableStateOf(false) }
     if (clearConfirmation) AlertDialog(
         onDismissRequest = { clearConfirmation = false },
@@ -127,10 +126,6 @@ internal fun MobileSettingsDialog(
                         }
                         SettingsDivider()
                         SettingsToggle(Icons.Rounded.SkipNext, "Play Next Episode", "", playerSettings.playNextEpisode, "settings-next-episode-switch", store::updatePlayNextEpisode)
-                        SettingsDivider()
-                        SettingsToggle(Icons.Rounded.GraphicEq, "Boost Audio",
-                            if (playerSettings.boostAudio && boostAvailability == com.aliflix.app.player.AudioBoostAvailability.UNAVAILABLE) "Unavailable" else "",
-                            playerSettings.boostAudio, "settings-boost-audio-switch", store::updateBoostAudio)
                     }
                     com.aliflix.app.downloads.DownloadSettings()
                     SettingsGroup("SUBTITLES") {

@@ -5,14 +5,28 @@ import com.aliflix.app.model.PlaybackSelection
 import kotlin.math.abs
 
 internal class ReferenceAlignmentTimeout : RuntimeException()
+internal const val AUTOMATIC_CAPTION_SELECTION_POLICY = 3
+
+internal fun refreshAutomaticCaptionCache(automatic: Boolean, policy: Int, online: Boolean, offlineDownload: Boolean): Boolean =
+    automatic && policy < AUTOMATIC_CAPTION_SELECTION_POLICY && online && !offlineDownload
 
 /** Metadata ranks candidates only. Actual dialogue independently verifies timing. */
 internal fun rankCompleteSubtitleCandidates(tracks: List<SubtitleTrack>, frameRate: Float): List<SubtitleTrack> {
     val split = Regex("(?i)(?:^|[ ._()\\[\\]-])(?:cd|disc|disk|part)[ ._-]*[12](?:$|[ ._()\\[\\]-])")
+    val modernEdition = Regex("(?i)(?:blu[ ._-]?ray|bd[ ._-]?rip|br[ ._-]?rip|web[ ._-]?(?:dl|rip))")
+    val palEdition = Regex("(?i)(?:^|[ ._()\\[\\]-])(?:pal|25r)(?:$|[ ._()\\[\\]-])")
     return tracks.sortedWith(compareByDescending<SubtitleTrack> { it.hashMatched }
         .thenBy { split.containsMatchIn(it.fileName + " " + it.releaseName) }
         .thenBy { track ->
-            val rate = track.fps?.toDoubleOrNull()
+            val name = track.fileName + " " + track.releaseName
+            // A release hint ranks an automatic candidate; it never certifies
+            // its clock or changes a viewer's manually selected subtitle file.
+            val rate = track.fps?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+                ?: when {
+                    palEdition.containsMatchIn(name) -> 25.0
+                    frameRate in 23.9f..24.1f && modernEdition.containsMatchIn(name) -> 23.976
+                    else -> null
+                }
             if (frameRate > 0 && rate != null && rate > 0) abs(rate - frameRate) else Double.MAX_VALUE
         })
 }

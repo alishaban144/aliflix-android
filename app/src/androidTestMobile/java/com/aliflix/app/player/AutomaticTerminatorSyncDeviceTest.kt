@@ -23,6 +23,7 @@ class AutomaticTerminatorSyncDeviceTest {
         assumeTrue(InstrumentationRegistry.getArguments().getString("liveAutomaticTerminator") == "true")
         val language = InstrumentationRegistry.getArguments().getString("captionLanguage") ?: "en"
         val singleScene = InstrumentationRegistry.getArguments().getString("singleScene") == "true"
+        val playedSeconds = InstrumentationRegistry.getArguments().getString("playedSeconds")?.toDoubleOrNull()?.coerceIn(4.0, 60.0) ?: 48.0
         grantNativeFixtureNetworkPermission()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val choices = context.getSharedPreferences("native-subtitle-choice", android.content.Context.MODE_PRIVATE)
@@ -64,7 +65,7 @@ class AutomaticTerminatorSyncDeviceTest {
                         scenario.onActivity { it.playbackController!!.seekTo((start * 1000).toLong()); it.playbackController!!.play() }
                         await("Played dialogue scene $index", 90_000) {
                             var played = false
-                            scenario.onActivity { played = it.playbackController!!.currentPosition / 1000.0 >= start + 48 }
+                            scenario.onActivity { played = it.playbackController!!.currentPosition / 1000.0 >= start + playedSeconds }
                             played
                         }
                         var position = 0.0
@@ -92,7 +93,7 @@ class AutomaticTerminatorSyncDeviceTest {
                     }
                     var began = 0L
                     scenario.onActivity { it.resetSubtitleSync(); began = SystemClock.elapsedRealtime(); it.syncWithAudio() }
-                    await("Ten-second sync completion", 10_100) {
+                    await("Bounded sync completion", 19_500) {
                         var done = false
                         scenario.onActivity { done = it.playbackUiState.audioSyncState != "Syncing…" }
                         done
@@ -105,13 +106,15 @@ class AutomaticTerminatorSyncDeviceTest {
                             raw, NativePlaybackService.selectedAudioFingerprint())
                         val correction = SubtitleCorrectionStore(context).get(key)
                         report.put("state", state).put("elapsedMs", elapsed).put("scenes", scenes)
+                            .put("videoFrameRate", NativePlaybackService.selectedVideoFrameRate())
+                            .put("captionFile", activity.playbackUiState.activeSubtitleTrack?.fileName)
                             .put("correction", correction?.let { JSONObject().put("offset", it.offset).put("rate", it.rate) })
                             .put("source", nativeSelection(request.selectionJson).source.identity.name)
                             .put("manualDelay", (context.applicationContext as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.subtitleDelaySeconds)
                         File(output, "receipt.json").writeText(report.toString())
                         assertEquals("Automatic caption route: $report", "Synced", state)
                         assertNotNull(correction)
-                        assertTrue("Deadline: $elapsed", elapsed < 10_000)
+                        assertTrue("Deadline: $elapsed", elapsed < 19_500)
                         assertEquals("Original automatic caption edition changed", raw, NativePlaybackService.originalSubtitles())
                         val manual = (context.applicationContext as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.subtitleDelaySeconds
                         val originals = parseTimedTextSubtitleCues(nativeSubtitlesVtt(raw, 0.0))

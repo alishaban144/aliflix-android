@@ -80,14 +80,16 @@ internal fun MobilePlayerTopBar(
             }
         }
         val actions: @Composable () -> Unit = {
-            Row(Modifier.clip(RoundedCornerShape(28.dp)).background(Color.White.copy(alpha = 0.07f)), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.clip(RoundedCornerShape(24.dp)).background(Color(0xD912141B))
+                .border(.5.dp, Color.White.copy(alpha = .10f), RoundedCornerShape(24.dp)), verticalAlignment = Alignment.CenterVertically) {
                 if (isTv) CompactTopButton(Icons.AutoMirrored.Rounded.ViewList, "Episodes", onEpisodes)
                 CompactTopButton(Icons.Rounded.Subtitles, "Audio & Subtitles", onSubtitles)
                 onQuality?.let { CompactTopButton(Icons.Rounded.HighQuality, "Quality", it) }
                 CompactTopButton(Icons.Rounded.ScreenRotation, "Rotate", onRotate)
-                CompactTopButton(Icons.Rounded.MoreVert, "More", onMore)
+                if (!compact) CompactTopButton(Icons.Rounded.MoreVert, "More", onMore)
             }
         }
+        androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             identity()
             androidx.compose.foundation.layout.Column(
@@ -101,7 +103,9 @@ internal fun MobilePlayerTopBar(
                 if (detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp,
                     lineHeight = 16.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
-            actions()
+            if (compact) CompactTopButton(Icons.Rounded.MoreVert, "More", onMore) else actions()
+        }
+        if (compact) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { actions() }
         }
     }
 }
@@ -112,7 +116,7 @@ private fun CompactTopButton(icon: ImageVector, contentDescription: String, onCl
     val pressed by interactions.collectIsPressedAsState()
     val scale by androidx.compose.animation.core.animateFloatAsState(
         if (pressed) .86f else 1f,
-        androidx.compose.animation.core.spring(dampingRatio = .65f, stiffness = 650f), label = "player-action")
+        tween(140), label = "player-action")
     androidx.compose.material3.IconButton(onClick = onClick, interactionSource = interactions,
         modifier = Modifier.size(48.dp).graphicsLayer { scaleX = scale; scaleY = scale }) {
         Icon(icon, contentDescription, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(20.dp))
@@ -148,7 +152,7 @@ internal fun MobilePlayerCenterControls(
 ) {
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(56.dp),
+        horizontalArrangement = Arrangement.spacedBy(48.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Seek Back 15s
@@ -179,7 +183,7 @@ internal fun MobilePlayerCenterControls(
         // Play / Pause 64dp outlined circle
         Box(
             modifier = Modifier
-                .size(72.dp)
+                .size(80.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -189,10 +193,10 @@ internal fun MobilePlayerCenterControls(
         ) {
             Box(
                 modifier = Modifier
-                    .size(64.dp)
+                    .size(72.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.28f))
-                    .border(BorderStroke(1.5.dp, Color.White), CircleShape),
+                    .background(Color(0xFFF4F1FA))
+                    .border(BorderStroke(.5.dp, Color.White.copy(alpha = .55f)), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 AnimatedContent(targetState = isPlaying, transitionSpec = {
@@ -202,8 +206,8 @@ internal fun MobilePlayerCenterControls(
                 Icon(
                     imageVector = if (active) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     contentDescription = if (active) "Pause" else "Play",
-                    tint = Color.White,
-                    modifier = Modifier.size(30.dp),
+                    tint = Color(0xFF18151F),
+                    modifier = Modifier.size(32.dp),
                 )
                 }
             }

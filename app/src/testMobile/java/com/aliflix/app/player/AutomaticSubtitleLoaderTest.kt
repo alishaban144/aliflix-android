@@ -3,10 +3,45 @@ package com.aliflix.app.player
 import com.aliflix.app.model.*
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.junit.Assert.*
 import org.junit.Test
 
 class AutomaticSubtitleLoaderTest {
+    @Test fun decodedCadenceCanArriveAfterAFastCatalogueResponse() = runTest {
+        var fps = -1f
+        launch { delay(250); fps = 23.976f }
+        val legacy = track("legacy")
+        val modern = track("modern", name = "Movie.BDRip")
+        val result = AutomaticSubtitleLoader({ listOf(legacy, modern) }, { emptyList() }, { english })
+            .load(movie, "EN", 0, -1f, { true }, latestFrameRate = { fps })
+        assertEquals(modern.id, result?.track?.id)
+        assertTrue(testScheduler.currentTime in 250..1_000)
+    }
+    @Test fun pausedOrUnsupportedVideoCannotKeepCaptionsWaitingForMetadata() = runTest {
+        val legacy = track("legacy")
+        val result = AutomaticSubtitleLoader({ listOf(legacy) }, { emptyList() }, { english })
+            .load(movie, "EN", 0, -1f, { true })
+        assertEquals(legacy.id, result?.track?.id)
+        assertTrue(testScheduler.currentTime <= 1_000)
+    }
+    @Test fun identityChangeDuringMetadataWarmupCannotDownloadAStaleCaption() = runTest {
+        var current = true
+        var downloads = 0
+        launch { delay(200); current = false }
+        val result = AutomaticSubtitleLoader({ listOf(track("stale")) }, { emptyList() }, { downloads++; english })
+            .load(movie, "EN", 0, -1f, { current })
+        assertNull(result)
+        assertEquals(0, downloads)
+    }
+    @Test fun candidateRankingUsesVideoMetadataThatArrivesDuringCatalogueLookup() = runTest {
+        var fps = -1f
+        val legacy = track("legacy")
+        val modern = track("modern", name = "Movie.BDRip")
+        val result = AutomaticSubtitleLoader({ fps = 23.976f; listOf(legacy, modern) }, { emptyList() }, { english })
+            .load(movie, "EN", 0, -1f, { true }, latestFrameRate = { fps })
+        assertEquals(modern.id, result?.track?.id)
+    }
     private val movie = PlaybackSelection(Media(100, MediaType.MOVIE, "The Shining"),
         source = PlaybackSource(MobilePlaybackProvider.FLIXER, "https://example.com"))
     private val episode = movie.copy(media = Media(200, MediaType.TV, "Dark"), seasonNumber = 2, episodeNumber = 4)

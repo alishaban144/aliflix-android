@@ -39,11 +39,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.semantics
 import kotlin.math.roundToInt
 
-private val AliflixPurple = Color(0xFF6E59D9)
-private val UnplayedTrackColor = Color.White.copy(alpha = 0.32f)
-private val BufferedTrackColor = Color.White.copy(alpha = 0.22f)
+private val AliflixPurple = Color(0xFFC6B6FF)
+private val UnplayedTrackColor = Color.White.copy(alpha = 0.14f)
+private val BufferedTrackColor = Color.White.copy(alpha = 0.30f)
 private val TimeTextColor = Color.White.copy(alpha = 0.82f)
 private val BubbleBackground = Color(0xFF141722)
 
@@ -135,7 +140,7 @@ internal fun MobilePlayerTimeline(
                 label = "trackHeight",
             )
             val thumbSize by animateDpAsState(
-                targetValue = if (isDragging) 18.dp else 16.dp,
+                targetValue = if (isDragging) 18.dp else 10.dp,
                 label = "thumbSize",
             )
 
@@ -144,6 +149,16 @@ internal fun MobilePlayerTimeline(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
+                    .semantics {
+                        contentDescription = "Playback position"
+                        progressBarRangeInfo = ProgressBarRangeInfo(progressFraction, 0f..1f)
+                        setProgress { fraction ->
+                            if (latestDuration <= 0L) false else {
+                                seek((fraction.coerceIn(0f, 1f) * latestDuration).toLong())
+                                true
+                            }
+                        }
+                    }
                     .pointerInput(Unit) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = true)
@@ -223,7 +238,7 @@ internal fun MobilePlayerTimeline(
                         .offset {
                             val halfThumb = (thumbSize.toPx() / 2f).roundToInt()
                             IntOffset(
-                                x = (thumbOffsetPx - halfThumb).roundToInt().coerceAtLeast(0),
+                                x = (thumbOffsetPx - halfThumb).roundToInt().coerceIn(0, (widthPx - thumbSize.toPx()).roundToInt().coerceAtLeast(0)),
                                 y = 0,
                             )
                         }

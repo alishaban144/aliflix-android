@@ -92,12 +92,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -227,6 +229,7 @@ internal fun NativePlayerScreen(
     onSubtitleDelayChange: (Int) -> Unit = {},
     onSyncWithAudio: () -> Unit = {},
     onResetSubtitleSync: () -> Unit = {},
+    onAudioBoostChange: (Boolean) -> Unit = {},
     onSubtitleVerticalOffsetChange: (Int) -> Unit = {},
     onSubtitleFontSizeChange: (Float) -> Unit = {},
     onSubtitleOpacityChange: (Float) -> Unit = {},
@@ -541,7 +544,6 @@ internal fun NativePlayerScreen(
                     Icon(Icons.Default.CastConnected, null, tint = AliflixAccentSecondary, modifier = Modifier.size(22.dp))
                     Column {
                         Text("Playing on your TV", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                        Text("Use other apps. Control playback from this screen.", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
                     }
                 }
             }
@@ -831,6 +833,7 @@ internal fun NativePlayerScreen(
     )
 
     // Redesigned playback settings (More) menu
+    val boostAvailability by AudioBoostStatus.availability.collectAsState()
     val playbackSelection = state.playbackSelection
     if (playbackSelection != null) {
         val serverOptions = remember(state.availableServers, state.server) {
@@ -849,6 +852,9 @@ internal fun NativePlayerScreen(
         }
         MobilePlayerMoreSheet(
             visible = moreVisible,
+            audioBoost = settings.boostAudio,
+            audioBoostAvailability = boostAvailability,
+            onAudioBoostChange = onAudioBoostChange,
             selection = playbackSelection,
             servers = serverOptions,
             providers = providerOptions,
@@ -904,33 +910,38 @@ internal fun NativePlayerScreen(
     if (sheet != null) {
         ModalBottomSheet(
             onDismissRequest = { sheet = null; interaction++ },
-            containerColor = Color(0xFF141620),
+            containerColor = Color(0xFF12141B),
             contentColor = Color.White,
-            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = 0.3f)) }
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            sheetMaxWidth = 560.dp,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            scrimColor = Color.Black.copy(alpha = .48f),
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = .20f)) }
         ) {
+            Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(if (sheet == "CastOptions") "Cast" else sheet!!, Modifier.weight(1f),
+                    fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                IconButton(onClick = { sheet = null; interaction++ }, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Default.Close, "Close player options", tint = Color.White.copy(alpha = .65f))
+                }
+            }
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .weight(1f, fill = false)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 36.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = sheet!!,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
-
                 when (sheet) {
                     "CastOptions" -> {
-                        SheetOption("Stop Casting", "Disconnect TV and return playback to phone") {
+                        SheetOption("Stop casting") {
                             sheet = null
                             onStopCast()
                         }
-                        SheetOption("Switch Device", "Connect to another Google Cast receiver") {
+                        SheetOption("Switch device") {
                             sheet = null
                             onReceiver()
                         }
@@ -972,9 +983,6 @@ internal fun NativePlayerScreen(
                             Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
                         }
                         }
-                        Text("Online recovery sends short audio clips to Aliflix and Groq when needed.",
-                            color = Color.White.copy(alpha = .5f), fontSize = 11.sp,
-                            modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp))
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = Color.White.copy(alpha = 0.05f),
@@ -994,7 +1002,7 @@ internal fun NativePlayerScreen(
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     FilledTonalIconButton(
                                         onClick = { onSubtitleDelayChange(settings.subtitleDelayTenths - 1) },
-                                        modifier = Modifier.size(38.dp),
+                                        modifier = Modifier.size(48.dp),
                                         colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
                                     ) {
                                         Text("\u22120.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
@@ -1006,7 +1014,7 @@ internal fun NativePlayerScreen(
                                     }
                                     FilledTonalIconButton(
                                         onClick = { onSubtitleDelayChange(settings.subtitleDelayTenths + 1) },
-                                        modifier = Modifier.size(38.dp),
+                                        modifier = Modifier.size(48.dp),
                                         colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
                                     ) {
                                         Text("+0.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
@@ -1017,7 +1025,7 @@ internal fun NativePlayerScreen(
 
                         // Subtitle Size Selection
                         Text("SUBTITLE SIZE", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(13f to "Small", 16f to "Normal", 19f to "Medium", 23f to "Large").forEach { (size, label) ->
                                 FilterChip(
                                     selected = kotlin.math.abs(settings.subtitleFontSizeSp - size) < 1.5f,
@@ -1034,7 +1042,7 @@ internal fun NativePlayerScreen(
 
                         // Subtitle Background Opacity
                         Text("BACKGROUND OPACITY", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(0f to "0%", 0.25f to "25%", 0.5f to "50%", 0.75f to "75%", 1f to "100%").forEach { (op, label) ->
                                 FilterChip(
                                     selected = kotlin.math.abs(settings.subtitleBackgroundOpacity - op) < 0.1f,
@@ -1083,7 +1091,7 @@ internal fun NativePlayerScreen(
                         if (state.subtitleLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = AliflixAccentPrimary)
                         state.subtitleError?.let { Text(it, color = AliflixError, fontSize = 13.sp) }
                         if (!state.subtitleLoading && subtitleTracks.isEmpty()) {
-                            Text("No external subtitles found for this title.", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                            Text("No subtitles", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                         }
                         var language by remember { mutableStateOf<String?>(null) }
                         val languages = remember(subtitleTracks) {
@@ -1150,8 +1158,9 @@ private fun SheetOption(
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) AliflixAccentPrimaryContainer else Color.Transparent)
+            .heightIn(min = 56.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) AliflixAccentPrimaryContainer.copy(alpha = .55f) else Color.White.copy(alpha = .035f))
             .clickable(onClick = onClick)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
