@@ -101,3 +101,29 @@ No physical silent/ambiguous-film rejection or audible Audio Boost measurement
 was performed in this release; silence/ambiguity guards have host regressions.
 Public APK signing/hash/size/updater checks follow GitHub publication.
 Final normal gate: 611 tests, 608 passed, three intentional skips, zero failures/errors.
+
+## Published artifact verification
+
+GitHub workflow [38186327447](https://github.com/alishaban144/aliflix-android/actions/runs/38186327447)
+succeeded for source commit 86a32aa. Mobile unit tests and lint were enabled.
+The emulator job was skipped after physical Pixel 7a validation; Worker jobs
+were skipped because their sources did not change.
+
+[Aliflix v3.1.158](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.158)
+is a public, non-draft, non-prerelease release with aliflix-mobile.apk and
+update-mobile.json. A fresh independent download verified:
+
+- Package com.aliflix.app, versionCode 248, versionName 3.1.158, minimum SDK 29.
+- APK size 66,182,121 bytes, matching release metadata and updater metadata.
+- SHA-256 6e75e37cdd67329daeaac035351eda6491ef34aaba26e526de2d0bbdd57d6d0c.
+- APK signature verification passed with the existing production signer:
+  a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47.
+- Every ZIP entry passed its integrity check. All four supported ABIs and 20
+  native libraries are present; native library/model hashes match v3.1.157.
+- The latest-release updater manifest exactly matches the tagged manifest.
+- APK growth from v3.1.157 is 10,160 bytes. No size-reduction claim is made.
+
+The public byte artifact was not installed over the user's production app.
+QA app/test packages were removed and the original rotation settings restored;
+production app data was preserved. Public-artifact integrity is separate from
+physical debug accuracy and minified QA UI evidence.
