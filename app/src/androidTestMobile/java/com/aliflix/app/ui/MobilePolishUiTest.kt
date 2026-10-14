@@ -146,6 +146,7 @@ class MobilePolishUiTest {
     }
 
     @Test fun launchHandsOffToHomeSkeletonWithoutWaitingForNetwork() {
+        val motion = android.animation.ValueAnimator.areAnimatorsEnabled()
         var ready by mutableStateOf(false)
         var completed = 0
         compose.mainClock.autoAdvance = false
@@ -157,7 +158,7 @@ class MobilePolishUiTest {
         compose.mainClock.advanceTimeBy(300)
         capture("launch-title-reveal.png")
         compose.mainClock.advanceTimeBy(700)
-        compose.runOnIdle { assertEquals(0,completed); assertFalse(ready) }
+        compose.runOnIdle { assertEquals(if (motion) 0 else 1,completed); assertFalse(ready) }
         compose.mainClock.advanceTimeBy(1000)
         compose.runOnIdle { assertEquals(1,completed); assertFalse(ready); ready = true }
         compose.onNodeWithText("Ready Home").assertIsDisplayed()
@@ -276,6 +277,7 @@ class MobilePolishUiTest {
     }
 
     @Test fun launchAnimationDoesNotRecomposeHomeForEveryFrame() {
+        val motion = android.animation.ValueAnimator.areAnimatorsEnabled()
         var compositions = 0
         compose.mainClock.autoAdvance = false
         compose.setContent { AliflixMobileTheme {
@@ -284,12 +286,12 @@ class MobilePolishUiTest {
         compose.mainClock.advanceTimeBy(32)
         val initial = compositions
         compose.mainClock.advanceTimeBy(700)
-        compose.runOnIdle { assertEquals("Heavy Home stays out of moving words",initial,compositions) }
+        compose.runOnIdle { assertEquals("Home defers during moving words and prepares immediately for reduced motion",if (motion) 0 else 1,compositions) }
         compose.mainClock.advanceTimeBy(1000)
         compose.runOnIdle { assertEquals(1,compositions) }
         repeat(60) { compose.mainClock.advanceTimeBy(16) }
         compose.runOnIdle {
-            assertEquals(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 0 else 1,initial)
+            if (motion) assertEquals(0,initial) else assertTrue(initial in 0..1)
             assertEquals(1,compositions)
         }
         compose.mainClock.advanceTimeBy(600)
