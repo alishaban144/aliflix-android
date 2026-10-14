@@ -1,4 +1,5 @@
 @file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.aliflix.app.downloads
 
 import com.aliflix.app.ui.common.*
@@ -298,6 +299,20 @@ internal interface DownloadUiDependencies {
     val anchorEstimate = option?.let { estimate(it.source, it.quality) }
     val batch = selected.size > 1
     val tracks = option?.source?.audioTracksFor(option.quality).orEmpty()
+    var queuedVerification by remember(media.key) { mutableStateOf<Pair<PlaybackSelection, com.aliflix.app.player.SerienstreamVerificationRequired>?>(null) }
+    val verification = queuedVerification ?: anchor?.let { session.verifications[it.first] }
+    var showVerification by remember(anchor?.first) { mutableStateOf(false) }
+    if (showVerification && verification != null) {
+        val (verifiedSelection, gate) = verification
+        com.aliflix.app.player.SerienstreamVerificationDialog(gate.episodeUrl, gate.language, gate.playUrl, { embed ->
+            com.aliflix.app.player.SerienstreamNativeCatalog.recordVerifiedEmbed(activity, verifiedSelection, gate.language, embed)
+            showVerification = false
+            queuedVerification = null
+            error = null
+            anchor?.let { session.verifications.remove(it.first) }
+            session.cancelTierWork(media.key); discoveryRetry++
+        }, { showVerification = false })
+    }
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
         AliflixSheet(Modifier.fillMaxWidth().windowInsetsPadding(AliflixInsets.Safe)
             .padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Large).heightIn(max = 700.dp), contentColor = AliflixContentPrimary) {
@@ -327,6 +342,11 @@ internal interface DownloadUiDependencies {
                     TextButton(onClick = { expanded = !expanded }, enabled = !saving) { Text("Episodes"); Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null) }
                 }
                 if (picker.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                if (verification != null) FilledTonalButton(onClick = { showVerification = true }, enabled = !saving,
+                    shape = AliflixCorners.Card, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Icon(Icons.Rounded.VerifiedUser, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                    Text("Verify Serienstream")
+                }
                 if (anchor != null && discovery?.finished != true) Text("Finding download options…", color = AliflixContentSecondary,
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -423,7 +443,9 @@ internal interface DownloadUiDependencies {
                                         "All tracks" -> -1
                                         else -> audioTracks.firstOrNull { it.label == audioLabel }?.index ?: error("Selected audio is unavailable.")
                                     }
-                                    item.downloadRequest(quality, requestedLanguage, prefs.autoDisplaySubtitles, index)
+                                    item.downloadRequest(quality, requestedLanguage, prefs.autoDisplaySubtitles, index) { gate ->
+                                        com.aliflix.app.player.SerienstreamBrowserSession.approve(activity, session.host, gate)
+                                    }
                                 } } }.awaitAll()
                             }
                             val latestBlocked = store.blockedIds()
@@ -431,6 +453,10 @@ internal interface DownloadUiDependencies {
                             if (requestsToQueue.isNotEmpty()) store.enqueue(requestsToQueue)
                             dismiss()
                         } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (gate: com.aliflix.app.player.SerienstreamVerificationRequired) {
+                            queuedVerification = gate.selection to gate
+                            error = "Verify Serienstream, then retry this download."
+                        }
                         catch (_: Exception) { error = "Download could not start. Check audio/subtitles and try again." }
                         finally { saving = false }
                     }
@@ -605,13 +631,28 @@ internal fun Modifier.downloadAtmosphere(): Modifier = background(
             shape = AliflixCorners.Card, border = null, colors = ButtonDefaults.outlinedButtonColors(disabledContentColor = AliflixContentSecondary), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
             Icon(Icons.Rounded.Audiotrack, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
             Text("Audio: ${if (tracks.size == 1) tracks.single().label else name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (tracks.size == 1 && tracks.single().original) {
+                Spacer(Modifier.width(8.dp))
+                Text("Original", fontSize = 10.sp, color = AliflixAccentSecondary,
+                    modifier = Modifier.background(AliflixAccentPrimary.copy(alpha = .16f), AliflixCorners.Small).padding(horizontal = 7.dp, vertical = 3.dp))
+            }
             if (tracks.size > 1) Icon(Icons.Rounded.ExpandMore, "Audio tracks", Modifier.size(18.dp))
         }
-        DropdownMenu(menu, { menu = false }, shape = AliflixCorners.Chrome,
-            containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated), tonalElevation = AliflixElevation.None, shadowElevation = AliflixElevation.None) {
-            (listOf("Default", "All tracks") + tracks.map { it.label }).distinct().forEach { label ->
-                DropdownMenuItem(text = { Text(label) }, trailingIcon = { if (name == label) Icon(Icons.Rounded.Check, null) },
-                    onClick = { onChoice(label); menu = false })
+        if (menu) ModalBottomSheet(onDismissRequest = { menu = false }, shape = AliflixCorners.Chrome,
+            containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated).copy(alpha = 1f), contentColor = AliflixContentPrimary) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Audio language", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(12.dp))
+            (listOf("Default") + (if (tracks.none { it.groupId == "serienstream-source" }) listOf("All tracks") else emptyList()) + tracks.map { it.label }).distinct().forEach { label ->
+                Row(Modifier.fillMaxWidth().aliflixSelection(name == label, AliflixCorners.Card)
+                    .clickable { onChoice(label); menu = false }.heightIn(min = 54.dp).padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(label)
+                    if (tracks.any { it.label == label && it.original }) Text("Original", fontSize = 10.sp,
+                        color = AliflixAccentSecondary, modifier = Modifier.background(AliflixAccentPrimary.copy(alpha = .16f), AliflixCorners.Small).padding(horizontal = 7.dp, vertical = 3.dp))
+                    Spacer(Modifier.weight(1f))
+                    if (name == label) Icon(Icons.Rounded.CheckCircle, null, tint = AliflixAccentSecondary)
+                }
+            }
             }
         }
     }

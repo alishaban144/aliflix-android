@@ -406,7 +406,8 @@ class NativePlaybackService : MediaSessionService() {
         request = next
         preferredQualityApplied = false
         preferredAudioLabelApplied = false
-        val preferredAudio = getSharedPreferences("native-audio-choice", MODE_PRIVATE).getString("language", null)
+        val preferredAudio = next.sourceAudioLanguage.takeIf { it.isNotBlank() }
+            ?: getSharedPreferences("native-audio-choice", MODE_PRIVATE).getString("language", null)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .setPreferredAudioLanguage(preferredAudio)

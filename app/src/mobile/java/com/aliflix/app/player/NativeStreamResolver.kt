@@ -58,9 +58,19 @@ internal class NativeStreamResolver(
         validateSingle: Boolean = true,
         parallelism: Int = 2,
         forceLowQuality: Boolean = false,
+        audioLanguage: String? = null,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
         reportServers = onServers
+        if (selection.source.identity == MobilePlaybackProvider.SERIENSTREAM) {
+            SerienstreamNativeCatalog.restoreSession(activity)
+            suspend fun resolveCatalogue() = SerienstreamNativeCatalog.resolve(selection, positionMs, excluded, preferredServer,
+                strictPreferredServer, onServers, onServer, audioLanguage)
+            return try { resolveCatalogue() } catch (gate: SerienstreamVerificationRequired) {
+                if (!SerienstreamBrowserSession.approve(activity, host, gate)) throw gate
+                resolveCatalogue()
+            }
+        }
         if (strictPreferredServer) require(!preferredServer.isNullOrBlank()) { "A server is required for pinned preparation." }
         if (selection.source.identity == PlaybackProviderId.MIRURO) {
             val adapter = MiruroNativeCatalog(activity).also { miruro = it }

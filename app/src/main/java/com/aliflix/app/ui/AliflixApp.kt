@@ -57,6 +57,8 @@ import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
@@ -1452,7 +1454,7 @@ fun AliflixApp(
 
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
-                MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> provider.defaultBaseUrl
+                MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> provider.defaultBaseUrl
                 PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
                 PlaybackProviderId.ANIKURO -> provider.defaultBaseUrl
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
@@ -1466,7 +1468,7 @@ fun AliflixApp(
                 defaultUrl = provider.defaultBaseUrl,
                 onSave = { newUrl ->
                     when (provider) {
-                        MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
+                        MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
@@ -1477,7 +1479,7 @@ fun AliflixApp(
                 },
                 onReset = {
                     when (provider) {
-                        MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
+                        MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
@@ -3414,9 +3416,27 @@ private fun GenreOrganizedList(
             sectionIndices.entries.lastOrNull { it.value <= gridState.firstVisibleItemIndex }?.key
         }
     }
+    val genreTabs = rememberLazyListState()
+    val motionEnabled = rememberMobileMotionEnabled()
+    LaunchedEffect(activeGenre, groups) {
+        val index = groups.filter { it.key.isNotEmpty() }.indexOfFirst { it.key == activeGenre }
+        if (index >= 0) {
+            if (genreTabs.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+                if (motionEnabled) genreTabs.animateScrollToItem(index) else genreTabs.scrollToItem(index)
+            }
+            androidx.compose.runtime.withFrameNanos { }
+            val layout = genreTabs.layoutInfo
+            layout.visibleItemsInfo.firstOrNull { it.index == index }?.let { tab ->
+                val delta = tab.offset + tab.size / 2f - (layout.viewportStartOffset + layout.viewportEndOffset) / 2f
+                if (motionEnabled) genreTabs.animateScrollBy(delta, spring(dampingRatio = .82f, stiffness = 320f))
+                else genreTabs.scrollBy(delta)
+            }
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         // Fixed within the library's scroll container, beneath My Space's existing header.
         LazyRow(
+            state = genreTabs,
             contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             modifier = Modifier.fillMaxWidth().selectableGroup(),

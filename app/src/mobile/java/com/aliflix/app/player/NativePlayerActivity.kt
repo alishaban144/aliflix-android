@@ -50,7 +50,10 @@ class NativePlayerActivity : FragmentActivity() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller by mutableStateOf<MediaController?>(null)
     private var ui by mutableStateOf(NativePlayerUi())
+    private var providerVerification by mutableStateOf<SerienstreamVerificationRequired?>(null)
+    private var showProviderVerification by mutableStateOf(false)
     internal val playbackUiState get() = ui
+    internal fun openProviderVerification() { showProviderVerification = true }
     internal val playbackController get() = controller
     internal val resolverViewCount get() = if (::resolverHost.isInitialized) resolverHost.childCount else 0
     private var selection: PlaybackSelection? = null
@@ -224,6 +227,13 @@ class NativePlayerActivity : FragmentActivity() {
         root.addView(ComposeView(this).apply {
             setContent { AliflixMobileTheme {
                 val playerSettings by settingsStore.settings.collectAsState()
+                if (showProviderVerification) providerVerification?.let { verification ->
+                    SerienstreamVerificationDialog(verification.episodeUrl, verification.language, verification.playUrl, { embed ->
+                        selection?.let { SerienstreamNativeCatalog.recordVerifiedEmbed(this@NativePlayerActivity, it, verification.language, embed) }
+                        showProviderVerification = false; providerVerification = null
+                        prepareSelection(preferredServer = "${formatAudioTrackLabel(verification.language, null)} · VOE", strictPreferredServer = true)
+                    }, { showProviderVerification = false })
+                }
                 NativePlayerScreen(
                     state = ui,
                     player = controller,
@@ -238,6 +248,7 @@ class NativePlayerActivity : FragmentActivity() {
                         exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0
                         prepareSelection()
                     },
+                    onVerifyProvider = { showProviderVerification = true },
                     onServer = { prepareSelection() },
                     onSelectServer = ::selectServer,
                     onBrowseProvider = ::browseProvider,
@@ -262,6 +273,7 @@ class NativePlayerActivity : FragmentActivity() {
                     },
                     onSubtitleSearch = { searchSubtitles() },
                     onSubtitle = ::applySubtitle,
+                    onSourceAudioSelected = ::selectSourceAudio,
                     onAudioSelected = { group, index ->
                         if (selection?.source?.identity == PlaybackProviderId.CINEJOY && !ui.external) {
                             NativePlaybackService.selectAudio(group, index)
@@ -517,6 +529,7 @@ class NativePlayerActivity : FragmentActivity() {
         val preferences = com.aliflix.app.data.PlaybackProviderRepository(this).preferences.value
         val probe = current.copy(source = preferences.sourceFor(current.media, provider))
         return when (provider) {
+            com.aliflix.app.model.MobilePlaybackProvider.SERIENSTREAM -> SerienstreamNativeCatalog.links(probe).map { it.label }
             com.aliflix.app.model.PlaybackProviderId.CINEJOY ->
                 CineJoyNativeCatalog.fetchServers().map(CineJoyNativeCatalog::serverLabel)
             com.aliflix.app.model.MobilePlaybackProvider.MOVY,
@@ -559,7 +572,12 @@ class NativePlayerActivity : FragmentActivity() {
             } }
         }
         selection?.let {
+            val active = NativePlaybackService.activeRequest?.takeIf { request ->
+                runCatching { nativeSelection(request.selectionJson).key == it.key }.getOrDefault(false)
+            }
             val servers = resolvedServerNames[it.key] ?: when {
+                it.source.identity == MobilePlaybackProvider.SERIENSTREAM && active != null ->
+                    active.sourceAudioChoices().map { audio -> "${audio.label} · VOE" }
                 it.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY ->
                     CineJoyNativeCatalog.FALLBACK_SERVERS.map(CineJoyNativeCatalog::serverLabel)
                 it.source.identity.usesMoviepire -> listOf("Vid", "Mist", "Mistify", "Flix", "Peach")
@@ -575,6 +593,10 @@ class NativePlayerActivity : FragmentActivity() {
                 availableServers = servers,
                 availableProviders = availableProvidersFor(it),
                 playbackSelection = it,
+                sourceAudioOptions = if (it.source.identity == MobilePlaybackProvider.SERIENSTREAM)
+                    active?.sourceAudioChoices() ?: ui.sourceAudioOptions else emptyList(),
+                sourceAudioLanguage = if (it.source.identity == MobilePlaybackProvider.SERIENSTREAM)
+                    active?.sourceAudioLanguage ?: ui.sourceAudioLanguage else "",
             )
         }
     }
@@ -584,6 +606,16 @@ class NativePlayerActivity : FragmentActivity() {
         recordCurrentProgress(urgent = true)
         ui = ui.copy(server = serverName, message = "Switching to $serverName…")
         prepareSelection(preferredServer = serverName, strictPreferredServer = true)
+    }
+
+    internal fun selectSourceAudio(language: String) {
+        val current = selection ?: return
+        if (current.source.identity != com.aliflix.app.model.MobilePlaybackProvider.SERIENSTREAM || ui.external) return
+        if (NativePlaybackService.activeRequest?.offlineDownloadId?.isNotBlank() == true) return
+        val label = formatAudioTrackLabel(language, null)
+        val server = ui.availableServers.firstOrNull { it.startsWith("$label · ") } ?: return
+        getSharedPreferences("serienstream-audio", MODE_PRIVATE).edit().putString(current.media.key, language).apply()
+        selectServer(server)
     }
 
     private val routeStore by lazy { PlaybackRouteStore(java.io.File(noBackupFilesDir, "playback-routes")) }
@@ -661,6 +693,7 @@ class NativePlayerActivity : FragmentActivity() {
             subtitleTracks = emptyList(),
             activeSubtitleTrack = null,
             message = null,
+            verificationRequired = false,
         )
         updateSelectionUi()
         preparation = lifecycleScope.launch {
@@ -754,6 +787,8 @@ class NativePlayerActivity : FragmentActivity() {
                                 }) {
                                     adapter.resolve(candidate, resume, excluded, strictPreferredServer = (strictPreferredServer && candidate.source == startingSource) || (candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY && cineJoyRetryServer != null),
                                         validateSingle = true,
+                                        audioLanguage = if (candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.SERIENSTREAM && preferredServer == null)
+                                            getSharedPreferences("serienstream-audio", MODE_PRIVATE).getString(candidate.media.key, null) else null,
                                         forceLowQuality = candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY && cineJoyLowQuality,
                                         preferredServer = (if (candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY) cineJoyRetryServer else null) ?: (if (candidate.source == startingSource) preferredServer?.takeUnless { it in excluded } else null) ?: savedServer?.takeUnless { it in excluded },
                                         onServers = { names -> if (names.isNotEmpty()) resolvedServerNames[candidate.key] = (resolvedServerNames[candidate.key].orEmpty() + names).distinct() }) { server = it }
@@ -761,6 +796,10 @@ class NativePlayerActivity : FragmentActivity() {
                                 Triple(candidate, server, request)
                             } catch (error: Exception) {
                                 ensureActive()
+                                if (error is SerienstreamVerificationRequired) {
+                                    providerVerification = error
+                                    throw error
+                                }
                                 if (candidate.source.identity.isAnimeNative) android.util.Log.d("AliflixAnime",
                                     "source_failed:${candidate.source.identity.name}:${error.javaClass.simpleName}")
                                 if (server.isNotBlank() && !strictPreferredServer) excluded.add(server)
@@ -776,7 +815,15 @@ class NativePlayerActivity : FragmentActivity() {
                                 adapter.close()
                             }
                         } }, parallelism = 4)
-                    } catch (error: Exception) { ensureActive(); return@repeat }
+                    } catch (error: Exception) {
+                        ensureActive()
+                        if (error is SerienstreamVerificationRequired && current.source.identity == MobilePlaybackProvider.SERIENSTREAM) {
+                            providerVerification = error
+                            ui = ui.copy(stage = null, ready = false, error = error.message, verificationRequired = true)
+                            return@launch
+                        }
+                        return@repeat
+                    }
                     val (candidate, server, resolved) = winner
                     selection = candidate.copy(availableEpisodes = selection?.availableEpisodes?.takeUnless { it.isEmpty() } ?: candidate.availableEpisodes)
                     triedServers.clear()
@@ -798,7 +845,9 @@ class NativePlayerActivity : FragmentActivity() {
                         if (hasManualSubtitleChoice() && subtitleChoices.getBoolean("enabled", false)) {
                             restoreCaption(candidate, subtitleChoices.getString("language", language) ?: language, manual = true)
                         } else if (auto) loadAutomaticSubtitles(candidate, language, resolved.url)
-                        else if (candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER) {
+                        else if (candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.SERIENSTREAM) {
+                            ui = ui.copy(subtitleTracks = resolved.sourceCaptionTracks())
+                        } else if (candidate.source.identity == com.aliflix.app.model.MobilePlaybackProvider.FLIXER) {
                             subtitleJob = lifecycleScope.launch {
                                 val tracks = FlixerSubtitleRepository.tracks(candidate)
                                 if (selection?.key == candidate.key) ui = ui.copy(subtitleTracks = tracks)
@@ -935,8 +984,11 @@ class NativePlayerActivity : FragmentActivity() {
                 val repository = SubdlSubtitleRepository()
                 val result = withTimeoutOrNull(28_000) {
                     AutomaticSubtitleLoader(
-                        sourceTracks = { if (current.source.identity == MobilePlaybackProvider.FLIXER)
-                            FlixerSubtitleRepository.tracks(current) else emptyList() },
+                        sourceTracks = { when (current.source.identity) {
+                            MobilePlaybackProvider.FLIXER -> FlixerSubtitleRepository.tracks(current)
+                            MobilePlaybackProvider.SERIENSTREAM -> NativePlaybackService.activeRequest?.sourceCaptionTracks().orEmpty()
+                            else -> emptyList()
+                        } },
                         searchTracks = { repository.search(current, language).getOrThrow() },
                         download = { repository.download(it, current).getOrThrow() },
                     ).load(current, language, controller?.duration ?: 0, NativePlaybackService.selectedVideoFrameRate(),
@@ -982,6 +1034,9 @@ class NativePlayerActivity : FragmentActivity() {
         invalidateSubtitleWork()
         automaticAttemptKey = null
         selection = runCatching { nativeSelection(request.selectionJson) }.getOrNull() ?: selection
+        ui = ui.copy(sourceAudioOptions = if (request.offlineDownloadId.isBlank()) request.sourceAudioChoices()
+            else request.sourceAudioChoices().filter { it.language == request.sourceAudioLanguage },
+            sourceAudioLanguage = request.sourceAudioLanguage)
         updateSelectionUi()
         if (request.offlineDownloadId.isNotBlank()) ui = ui.copy(server = "", availableServers = emptyList())
         val language = selectedSubtitleLanguage()

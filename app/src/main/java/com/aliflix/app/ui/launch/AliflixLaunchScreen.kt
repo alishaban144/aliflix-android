@@ -85,17 +85,17 @@ internal const val LAUNCH_TITLE_START_SECONDS = 0.08f
 internal const val LAUNCH_TITLE_REVEAL_SECONDS = 0.34f
 internal const val LAUNCH_ROTATOR_START_SECONDS = 0.4f
 internal const val LAUNCH_ROTATOR_REVEAL_SECONDS = 0.12f
-internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 0.52f
-internal const val LAUNCH_WORD_SLOT_SECONDS = 0.5f
+internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 0.48f
+internal const val LAUNCH_WORD_SLOT_SECONDS = 0.42f
 internal const val LAUNCH_WORD_COUNT = 3
-internal const val LAUNCH_FINAL_WORD_SLOT_SECONDS = 0.36f
+internal const val LAUNCH_FINAL_WORD_SLOT_SECONDS = 0.18f
 internal const val LAUNCH_BRAND_REVEAL_SECONDS = 0.42f
 internal const val LAUNCH_WORD_FADE_SECONDS = 0.1f
 internal const val LAUNCH_SEQUENCE_SECONDS = LAUNCH_WORD_SEQUENCE_START_SECONDS +
     LAUNCH_WORD_SLOT_SECONDS * (LAUNCH_WORD_COUNT - 1) + LAUNCH_FINAL_WORD_SLOT_SECONDS
 internal const val LAUNCH_HOME_PREPARE_SECONDS = LAUNCH_WORD_SEQUENCE_START_SECONDS +
     LAUNCH_WORD_SLOT_SECONDS * (LAUNCH_WORD_COUNT - 1) + LAUNCH_WORD_FADE_SECONDS
-internal const val LAUNCH_NETWORK_LIMIT_SECONDS = 2.0f
+internal const val LAUNCH_NETWORK_LIMIT_SECONDS = LAUNCH_SEQUENCE_SECONDS
 internal const val LAUNCH_REDUCED_NETWORK_LIMIT_SECONDS = 0.3f
 
 internal fun launchBrandProgress(seconds: Float, reducedMotion: Boolean): Float =
@@ -104,7 +104,7 @@ internal fun launchBrandProgress(seconds: Float, reducedMotion: Boolean): Float 
 internal fun isLaunchContentPreparationReady(seconds: Float, reducedMotion: Boolean): Boolean =
     reducedMotion || seconds >= LAUNCH_HOME_PREPARE_SECONDS
 internal const val LAUNCH_REDUCED_MOTION_MIN_SECONDS = 0.15f
-internal const val LAUNCH_EXIT_DURATION_SECONDS = 0.16f
+internal const val LAUNCH_EXIT_DURATION_SECONDS = 0.30f
 internal const val LAUNCH_LOGO_MOTION_RATE = 1.15f
 internal const val ALIFLIX_WORDMARK = "ALIFLIX"
 internal val ALIFLIX_WORDMARK_HEIGHT_SCALES = listOf(1.055f, 1.035f, 1.017f, 1f, 1.017f, 1.035f, 1.055f)
@@ -239,8 +239,8 @@ fun AliflixLaunchOverlay(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    alpha = if (isDismissed) 1f else if (exitStartSeconds >= 0f) exit() else 0f
-                    val scale = if (isDismissed || isReducedMotion) 1f else 1.025f - .025f * exit()
+                    alpha = if (isDismissed) 1f else if (exitStartSeconds >= 0f) kotlin.math.sqrt(exit()) else 0f
+                    val scale = if (isDismissed || isReducedMotion) 1f else 1.018f - .018f * exit()
                     scaleX = scale
                     scaleY = scale
                 },
@@ -254,8 +254,8 @@ fun AliflixLaunchOverlay(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        alpha = 1f - exit()
-                        val scale = if (isReducedMotion) 1f else 1f + .035f * exit()
+                        alpha = (1f - exit()).pow(2)
+                        val scale = if (isReducedMotion) 1f else 1f + .025f * exit()
                         scaleX = scale
                         scaleY = scale
                     },
@@ -294,10 +294,8 @@ private fun AliflixLaunchStage(
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // The original vector colors are never covered by the former heat/glow animation.
-        AliflixLogoMark(Modifier.size(logoSize).graphicsLayer {
-            alpha = launchBrandProgress(clock.value,isReducedMotion)
-        })
+        // Three staggered poster panels assemble the canonical artwork on one shared clock.
+        PosterRevealLogo(clock, isReducedMotion, Modifier.size(logoSize))
 
         Spacer(Modifier.height(0.dp))
 
@@ -339,9 +337,36 @@ private fun AliflixLaunchStage(
                             val (wordOpacity, wordY) = calculateWordState(clock.value, index, isReducedMotion)
                             alpha = wordOpacity
                             translationY = wordY.dp.toPx()
+                            val p = if (isReducedMotion) 1f else launchLayerEase.transform(
+                                ((clock.value - LAUNCH_WORD_SEQUENCE_START_SECONDS - index * LAUNCH_WORD_SLOT_SECONDS) / LAUNCH_WORD_FADE_SECONDS).coerceIn(0f, 1f))
+                            scaleX = .94f + .06f * p; scaleY = scaleX
+                            rotationX = if (isReducedMotion) 0f else 12f * (1f - p)
+                            cameraDistance = 16f * density
                             translationX = (0.16f * 12.sp.value).dp.toPx()
                         },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PosterRevealLogo(clock: State<Float>, reducedMotion: Boolean, modifier: Modifier) {
+    val resources = LocalContext.current.resources
+    val geometry = remember(resources) { AliflixLogoGeometry.load(resources) }
+    Canvas(modifier) {
+        val unit = minOf(size.width, size.height)
+        val left = (size.width - unit) / 2
+        val top = (size.height - unit) / 2
+        repeat(3) { panel ->
+            val progress = if (reducedMotion) 1f else launchLayerEase.transform(
+                ((clock.value - panel * .045f) / .30f).coerceIn(0f, 1f))
+            val x = left + unit * panel / 3f
+            clipRect(left = x, right = x + unit / 3f + .5f, top = top + unit * (1f - progress), bottom = top + unit) {
+                withTransform({
+                    translate(top = unit * .10f * (1f - progress))
+                    scale(1.08f - .08f * progress, 1.08f - .08f * progress, pivot = center)
+                }) { geometry.draw(this, unit, left, top) }
             }
         }
     }

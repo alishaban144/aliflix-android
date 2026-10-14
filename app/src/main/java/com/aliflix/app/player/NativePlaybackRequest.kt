@@ -23,8 +23,13 @@ internal data class NativePlaybackRequest(
     val streamUrlRules: String = "",
     val preferredVideoWidth: Int = 0,
     val preferredVideoHeight: Int = 0,
+    val sourceAudioLanguage: String = "",
+    val sourceAudioOptions: String = "",
+    val sourceSubtitleOptions: String = "",
 ) {
     fun toJson(): String = JSONObject().apply {
+        put("sourceAudioLanguage", sourceAudioLanguage); put("sourceAudioOptions", sourceAudioOptions)
+        put("sourceSubtitleOptions", sourceSubtitleOptions)
         put("streamUrlRules", streamUrlRules)
         put("preferredVideoWidth", preferredVideoWidth); put("preferredVideoHeight", preferredVideoHeight)
         put("offlineDownloadId", offlineDownloadId); put("offlineAutoSubtitles", offlineAutoSubtitles)
@@ -55,10 +60,32 @@ internal data class NativePlaybackRequest(
                 json.optString("streamUrlRules"),
                 json.optInt("preferredVideoWidth"),
                 json.optInt("preferredVideoHeight"),
+                json.optString("sourceAudioLanguage"), json.optString("sourceAudioOptions"), json.optString("sourceSubtitleOptions"),
             )
         }
     }
 }
+
+internal data class SourceAudioOption(val language: String, val label: String)
+internal fun NativePlaybackRequest.sourceAudioChoices(): List<SourceAudioOption> = runCatching {
+    val options = org.json.JSONArray(sourceAudioOptions)
+    (0 until options.length()).map { options.getJSONObject(it) }.map {
+        SourceAudioOption(it.getString("language"), it.getString("label"))
+    }.distinctBy { it.language }.filter { offlineDownloadId.isBlank() || it.language == sourceAudioLanguage }
+}.getOrDefault(emptyList())
+
+internal fun NativePlaybackRequest.sourceCaptionTracks(): List<SubtitleTrack> = runCatching {
+    val captions = org.json.JSONArray(sourceSubtitleOptions)
+    (0 until captions.length()).mapNotNull { index ->
+        val caption = captions.getJSONObject(index)
+        val code = canonicalSubtitleLanguageCode(caption.optString("language").ifBlank { caption.optString("label") })
+        val language = com.aliflix.app.model.SubtitleLanguage.entries.firstOrNull { it.code == code } ?: return@mapNotNull null
+        val uri = URI(referer).resolve(caption.optString("file"))
+        if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) return@mapNotNull null
+        SubtitleTrack("serienstream:$index:${uri.host}", language.code, language.displayName, title,
+            uri.path.substringAfterLast('/'), false, if (uri.path.endsWith(".srt")) "srt" else "vtt", null, uri.toString(), hashMatched = true)
+    }
+}.getOrDefault(emptyList())
 
 /** A variant/media playlist is playable but can omit every alternate audio rendition in its master. */
 internal fun shouldAwaitHlsMaster(stream: JSONObject, ageMs: Long): Boolean =

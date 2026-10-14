@@ -22,7 +22,7 @@ class PlaybackSourceFallbackTest {
         assertEquals(MobilePlaybackProvider.FLIXER, preferences.sourceFor(anime.copy(genres = listOf("Drama"))).identity)
     }
     @Test fun otherSourcesFallBackWithoutChangingEpisodeIdentity() {
-        val generalProviders = listOf(MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY)
+        val generalProviders = listOf(MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY)
         for (provider in (PlaybackProviderId.entries + MobilePlaybackProvider.entries)) {
             val preferences = PlaybackPreferences(dorabyBaseUrl = "https://doraby.example", moviepireBaseUrl = "https://moviepire.example")
             val episode = PlaybackSelection(Media(1396, MediaType.TV, "Breaking Bad"), 2, 3, "Bit by a Dead Bee",

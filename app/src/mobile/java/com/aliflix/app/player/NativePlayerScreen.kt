@@ -60,6 +60,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.BrightnessHigh
@@ -178,6 +179,9 @@ internal data class NativePlayerUi(
     val message: String? = null,
     val segments: List<IntroSegment> = emptyList(),
     val playbackSelection: PlaybackSelection? = null,
+    val sourceAudioOptions: List<SourceAudioOption> = emptyList(),
+    val sourceAudioLanguage: String = "",
+    val verificationRequired: Boolean = false,
 )
 
 private val PlayerInk = Color(0xFF07080C)
@@ -212,6 +216,7 @@ internal fun NativePlayerScreen(
     onBack: () -> Unit = {},
     onResumeClicked: () -> Unit = {},
     onRetry: () -> Unit = {},
+    onVerifyProvider: () -> Unit = {},
     onServer: () -> Unit = {},
     onSelectServer: (String) -> Unit = {},
     onBrowseProvider: (PlaybackProvider) -> Unit = {},
@@ -225,6 +230,7 @@ internal fun NativePlayerScreen(
     onSubtitleSearch: () -> Unit = {},
     onSubtitle: (SubtitleTrack) -> Unit = {},
     onAudioSelected: (androidx.media3.common.TrackGroup, Int) -> Unit = { _, _ -> },
+    onSourceAudioSelected: (String) -> Unit = {},
     onSubtitleDisable: () -> Unit = {},
     onSubtitleDelayChange: (Int) -> Unit = {},
     onSyncWithAudio: () -> Unit = {},
@@ -502,8 +508,9 @@ internal fun NativePlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Icon(Icons.Default.CloudOff, contentDescription = null, tint = AliflixError, modifier = Modifier.size(42.dp))
-                    Text("Playback Problem", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Icon(if (state.verificationRequired) Icons.Rounded.VerifiedUser else Icons.Default.CloudOff, contentDescription = null,
+                        tint = if (state.verificationRequired) AliflixAccentSecondary else AliflixError, modifier = Modifier.size(42.dp))
+                    Text(if (state.verificationRequired) "Verify streaming source" else "Playback Problem", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     Text(state.error, color = Color.White.copy(alpha = 0.75f), textAlign = TextAlign.Center, fontSize = 13.sp)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -519,13 +526,13 @@ internal fun NativePlayerScreen(
                             Text("Switch Server", color = Color.White, fontSize = 13.sp)
                         }
                         Button(
-                            onClick = onRetry,
+                            onClick = if (state.verificationRequired) onVerifyProvider else onRetry,
                             colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp), tint = Color.White)
                             Spacer(Modifier.width(6.dp))
-                            Text("Retry", color = Color.White, fontSize = 13.sp)
+                            Text(if (state.verificationRequired) "Verify" else "Retry", color = Color.White, fontSize = 13.sp)
                         }
                     }
                 }
@@ -578,7 +585,7 @@ internal fun NativePlayerScreen(
                         interaction++
                     },
                     onSubtitles = {
-                        sheet = "Subtitles"
+                        sheet = if (state.sourceAudioOptions.isNotEmpty()) "Languages & subtitles" else "Subtitles"
                         interaction++
                     },
                     onQuality = {
@@ -936,11 +943,23 @@ internal fun NativePlayerScreen(
                         TrackOptions(player, C.TRACK_TYPE_VIDEO, trackRevision) { _, _ -> sheet = null }
                     }
 
-                    "Audio & subtitles", "Subtitles" -> {
-                        if (sheet == "Audio & subtitles") {
+                    "Audio & subtitles", "Languages & subtitles", "Subtitles" -> {
+                        if (sheet != "Subtitles") {
                         Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, onTrackSelected = onAudioSelected) { _, _ -> }
+                        if (state.sourceAudioOptions.isNotEmpty()) {
+                            state.sourceAudioOptions.forEach { audio ->
+                                SheetOption(audio.label,
+                                    if (audio.language.equals(state.playbackSelection?.media?.originalLanguage, true)) "Original" else "",
+                                    selected = audio.language == state.sourceAudioLanguage) {
+                                    onSourceAudioSelected(audio.language)
+                                }
+                            }
+                            if (player?.currentTracks?.groups.orEmpty().filter { it.type == C.TRACK_TYPE_AUDIO }.sumOf { it.length } > 1)
+                                TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, onTrackSelected = onAudioSelected) { _, _ -> }
+                        } else TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, onTrackSelected = onAudioSelected) { _, _ -> }
                         Spacer(Modifier.height(4.dp))
+                        }
+                        if (sheet == "Audio & subtitles") {
                         // Subtitle Sync / Delay
                         Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         val syncing = state.audioSyncState in setOf("Syncing…")

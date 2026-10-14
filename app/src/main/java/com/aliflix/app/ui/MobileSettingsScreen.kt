@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.aliflix.app.ui
 
 import com.aliflix.app.ui.common.*
@@ -50,6 +51,8 @@ internal fun MobileSettingsDialog(
 ) {
     val store = (LocalContext.current.applicationContext as AliflixApplication).playerSettingsStore
     val playerSettings by store.settings.collectAsState()
+    val context = LocalContext.current
+    var contactCard by remember { mutableStateOf(false) }
     var clearConfirmation by remember { mutableStateOf(false) }
     if (clearConfirmation) AlertDialog(
         onDismissRequest = { clearConfirmation = false },
@@ -131,7 +134,7 @@ internal fun MobileSettingsDialog(
                     SettingsGroup("SUBTITLES") {
                         var languageMenu by remember { mutableStateOf(false) }
                         Box {
-                            SettingsRow(Icons.Rounded.Translate, "Language", preferredSubtitleLanguage.displayName, onClick = { languageMenu = true }) {
+                            SettingsRow(Icons.Rounded.Translate, "Preferred language", preferredSubtitleLanguage.displayName, onClick = { languageMenu = true }) {
                                 Icon(Icons.Rounded.ExpandMore, "Choose subtitle language", tint = AliflixAccentSecondary)
                             }
                             SettingsMenu(languageMenu, { languageMenu = false }, SubtitleLanguage.entries, { it.displayName }, preferredSubtitleLanguage) {
@@ -160,6 +163,34 @@ internal fun MobileSettingsDialog(
 
                         SettingsRow(Icons.Rounded.DeleteSweep, "Clear watch history", "Reset watched titles and recommendations", onClick = { clearConfirmation = true }) {
                             Icon(Icons.Rounded.ChevronRight, null, tint = AliflixContentTertiary)
+                        }
+                    }
+                    AliflixSurface(shape = AliflixCorners.Card, level = AliflixSurfaceLevel.Content) {
+                        SettingsRow(Icons.Rounded.AlternateEmail, "Get in touch", "Questions, ideas or feedback", onClick = { contactCard = true }) {
+                            Icon(Icons.Rounded.ChevronRight, null, tint = AliflixAccentSecondary)
+                        }
+                    }
+                    if (contactCard) ModalBottomSheet(onDismissRequest = { contactCard = false },
+                        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated).copy(alpha = 1f),
+                        contentColor = AliflixContentPrimary, shape = AliflixCorners.Chrome,
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 28.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Icon(Icons.Rounded.MarkEmailRead, null, Modifier.size(38.dp), tint = AliflixAccentSecondary)
+                            Text("Get in touch", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            Text("Have questions about Aliflix, want to suggest a feature, report a bug, or share feedback? We're here to help.",
+                                style = MaterialTheme.typography.bodyMedium, color = AliflixContentSecondary)
+                            FilledTonalButton(onClick = {
+                                val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO,
+                                    android.net.Uri.parse("mailto:Aliflixapp@proton.me?subject=Aliflix%20feedback"))
+                                try { context.startActivity(intent) }
+                                catch (_: android.content.ActivityNotFoundException) {
+                                    android.widget.Toast.makeText(context, "No email app is installed. Email Aliflixapp@proton.me", android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            }, shape = androidx.compose.foundation.shape.RoundedCornerShape(50), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                                Icon(Icons.Rounded.Email, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp))
+                                Text("Aliflixapp@proton.me", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                     Text("ALIFLIX  ·  ${BuildConfig.VERSION_NAME}", Modifier.fillMaxWidth().padding(bottom = AliflixSpacing.Panel), color = AliflixContentTertiary,
@@ -201,13 +232,25 @@ internal fun MobileSettingsDialog(
     }
 }
 @Composable private fun <T> SettingsMenu(expanded: Boolean, dismiss: () -> Unit, items: List<T>, label: (T) -> String, selected: T, onSelect: (T) -> Unit) {
-    DropdownMenu(expanded, dismiss, modifier = Modifier.heightIn(max = 340.dp),
-        shape = AliflixCorners.Chrome,
-        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
-        tonalElevation = AliflixElevation.None,
-        shadowElevation = AliflixElevation.None,
+    if (!expanded) return
+    ModalBottomSheet(onDismissRequest = dismiss,
+        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated).copy(alpha = 1f),
+        contentColor = AliflixContentPrimary, shape = AliflixCorners.Chrome,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
-        items.forEach { item -> DropdownMenuItem(text = { Text(label(item), fontSize = 13.sp, color = AliflixContentPrimary) }, onClick = { onSelect(item) },
-            trailingIcon = { if (item == selected) Icon(Icons.Rounded.Check, null, Modifier.size(17.dp), tint = AliflixAccentSecondary) }) }
+        Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            items.forEach { item ->
+                val active = item == selected
+                Row(Modifier.fillMaxWidth().aliflixSelection(active, AliflixCorners.Card)
+                    .selectable(active, role = Role.RadioButton, onClick = { onSelect(item) })
+                    .heightIn(min = 54.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(label(item), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
+                    Icon(if (active) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, null,
+                        Modifier.size(20.dp), tint = if (active) AliflixAccentSecondary else AliflixContentTertiary)
+                }
+            }
+        }
     }
 }

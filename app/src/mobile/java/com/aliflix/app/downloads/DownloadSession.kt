@@ -66,6 +66,7 @@ internal class DownloadSession private constructor(private val activity: Compone
     private val timestamps = mutableMapOf<String, Long>()
     private val jobs = mutableMapOf<String, Job>()
     val discoveries = mutableStateMapOf<String, DownloadDiscovery>()
+    val verifications = mutableStateMapOf<String, Pair<PlaybackSelection, com.aliflix.app.player.SerienstreamVerificationRequired>>()
     private val tierSignatures = mutableMapOf<String, String>()
     private val validatedTiers = mutableMapOf<String, String>()
     private fun route(option: DownloadOption, language: String, audio: String, tier: DownloadQualityTier?) =

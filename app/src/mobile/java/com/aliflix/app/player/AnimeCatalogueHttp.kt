@@ -15,7 +15,7 @@ import kotlin.coroutines.resumeWithException
  * startup never waits for a blocked mirror's read timeout. No cookies/accounts.
  */
 internal object AnimeCatalogueHttp {
-    data class Response(val bytes: ByteArray, val contentType: String)
+    data class Response(val bytes: ByteArray, val contentType: String, val finalUrl: String = "")
     private val executor = Executors.newFixedThreadPool(4) { task ->
         Thread(task, "aliflix-anime-catalogue").apply { isDaemon = true }
     }
@@ -52,7 +52,7 @@ internal object AnimeCatalogueHttp {
                         output.write(chunk, 0, count)
                     }
                 }
-                continuation.resume(Response(output.toByteArray(), connection.contentType.orEmpty()))
+                continuation.resume(Response(output.toByteArray(), connection.contentType.orEmpty(), connection.url.toString()))
             } catch (error: Exception) { if (continuation.isActive) continuation.resumeWithException(error) }
             finally { connection.disconnect() }
         }

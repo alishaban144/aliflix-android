@@ -130,6 +130,7 @@ class MediaTest {
         assertEquals(
             listOf(
                 MobilePlaybackProvider.FLIXER,
+                MobilePlaybackProvider.SERIENSTREAM,
                 PlaybackProviderId.CINEJOY,
                 PlaybackProviderId.MOVIEPIRE,
                 PlaybackProviderId.RAMOFLIX,

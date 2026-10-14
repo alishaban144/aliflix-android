@@ -1927,7 +1927,7 @@ class WebPlayerController(
         if (nativePreparation && nativeEmbedUrl != null) return
         when (selection.source.identity) {
             PlaybackProviderId.CINEJOY -> Unit // Exact TMDB movie/episode route, native HLS discovery.
-            MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Exact mobile TMDB routes.
+            MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Native mobile catalogues and exact TMDB routes.
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.MOVIEPIRE -> {
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)

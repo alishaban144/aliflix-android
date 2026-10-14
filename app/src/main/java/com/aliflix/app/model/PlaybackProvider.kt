@@ -29,6 +29,7 @@ enum class MobilePlaybackProvider(
     override val defaultBaseUrl: String,
 ) : PlaybackProvider {
     FLIXER("Flixer", "https://flixer.gd/"),
+    SERIENSTREAM("Serienstream", "https://serienstream.to/"),
     SEVEN_MOVIES("7Movies", "https://7movies.ac/"),
     MOVY("Movy", "https://www.movy.sx/");
 
@@ -36,7 +37,7 @@ enum class MobilePlaybackProvider(
     override val isBeta: Boolean = false
     override val usesMoviepire: Boolean = false
     override val isAnimeNative: Boolean = false
-    override fun isAvailableFor(media: Media): Boolean = supportsGeneralPlayback
+    override fun isAvailableFor(media: Media): Boolean = supportsGeneralPlayback && (this != SERIENSTREAM || media.type == MediaType.TV)
 }
 
 enum class PlaybackProviderId(
@@ -117,6 +118,7 @@ internal fun defaultGeneralPlaybackProvider(isTv: Boolean): PlaybackProvider =
 
 internal fun mobileGeneralPlaybackProviders(): List<PlaybackProvider> = buildList {
     add(MobilePlaybackProvider.FLIXER)
+    add(MobilePlaybackProvider.SERIENSTREAM)
     add(PlaybackProviderId.CINEJOY)
     add(PlaybackProviderId.MOVIEPIRE)
     addAll(
@@ -124,7 +126,7 @@ internal fun mobileGeneralPlaybackProviders(): List<PlaybackProvider> = buildLis
             provider.supportsGeneralPlayback && !provider.usesMoviepire && provider != PlaybackProviderId.CINEJOY
         },
     )
-    addAll(MobilePlaybackProvider.entries.filter { it.supportsGeneralPlayback && it != MobilePlaybackProvider.FLIXER })
+    addAll(MobilePlaybackProvider.entries.filter { it.supportsGeneralPlayback && it !in setOf(MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.SERIENSTREAM) })
 }
 
 enum class SubtitleLanguage(
@@ -194,6 +196,7 @@ data class PlaybackSource(
         seasonNumber: Int? = null,
         episodeNumber: Int? = null,
     ): String? = when (identity) {
+        MobilePlaybackProvider.SERIENSTREAM -> baseUrl.trimEnd('/') + "/suche?term=" + java.net.URLEncoder.encode(media.title, "UTF-8")
         PlaybackProviderId.CINEJOY -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
             "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
         } else "/watch/movie/${media.id}"
@@ -270,11 +273,16 @@ data class PlaybackPreferences(
     ): PlaybackSource {
         val provider = requestedProvider
             ?.takeIf { candidate -> candidate.isAvailableFor(media) }
-            ?: if (!com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV && media.isJapaneseAnime)
-                PlaybackProviderId.MIRURO else effectiveGeneralProvider
+            ?: when {
+                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV && media.isJapaneseAnime -> PlaybackProviderId.MIRURO
+                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV && media.originalLanguage.equals("de", true) -> MobilePlaybackProvider.SERIENSTREAM
+                effectiveGeneralProvider.isAvailableFor(media) -> effectiveGeneralProvider
+                else -> defaultGeneralPlaybackProvider(com.aliflix.app.BuildConfig.IS_TV)
+            }
         return when (provider) {
             PlaybackProviderId.CINEJOY -> PlaybackSource(PlaybackProviderId.CINEJOY)
             MobilePlaybackProvider.FLIXER -> PlaybackSource(MobilePlaybackProvider.FLIXER)
+            MobilePlaybackProvider.SERIENSTREAM -> PlaybackSource(MobilePlaybackProvider.SERIENSTREAM)
             MobilePlaybackProvider.SEVEN_MOVIES -> PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES)
             MobilePlaybackProvider.MOVY -> PlaybackSource(MobilePlaybackProvider.MOVY)
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)

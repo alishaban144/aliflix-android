@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "252"
-  RELEASE_VERSION_NAME: "3.1.162"
+  RELEASE_VERSION_CODE: "253"
+  RELEASE_VERSION_NAME: "3.1.163"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -359,7 +359,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Shorter, coordinated launch with a brief Stories hold and a fast Home handoff. Slow networking opens Home's loading state instead of extending the branded screen. Ask bookmarks move to the card corner. Player actions align right in portrait and reveal together. The subtitle shortcut opens only subtitles; More retains advanced settings."
+          RELEASE_NOTES="Serienstream joins mobile playback and downloads with original-language routing for German series and language editions in the subtitle shortcut. Download audio choices mark the original language. A coordinated poster-style launch dissolves into Home. My List genres follow scrolling with elastic motion. Settings gain modern selection cards, Preferred language, and Get in touch."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -388,17 +388,17 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile motion and interaction refinements based on the latest GitHub release, v3.1.161.
+            Native Serienstream integration and coordinated mobile launch, library, and settings refinements, based on v3.1.162.
 
-            - Coordinates the logo and wordmark on a 420ms settle. Movies and Series each get 500ms; Stories has a brief 260ms still hold. The animation budget is about two seconds. Home prepares during the final still phase to protect word transitions; slow networking opens the existing Home loading state instead of holding the branded screen.
-            - Moves Ask Aliflix bookmarks to the upper right of each result card, clear of the poster.
-            - Keeps the custom player icons and landscape placement. Portrait aligns back and the right-hand action group on one top baseline, with full-width title and episode details below. More stays beside the other actions.
-            - Adapts the inspected Floating Action Button reveal into a shared 180ms player transition without a plus button, action cards or delayed controls.
-            - Removes the play button's circular outline and hard plate. The slim morphing glyph has softened corners and a rounded tip over a feathered shadow.
-            - The subtitle shortcut opens tracks, Off, More Subtitles, Search and results only. Advanced audio, sync and subtitle settings remain available through More.
-            - Keeps the restored My Space collection tabs and redesigned My List genre navigation.
+            - Adds direct Serienstream/VOE resolution for series, with verified title identity, exact season and episode routes, language metadata, original German routing, saved routes and fallback. The site lists language editions as separate video sources; audio switching retains the episode and playback position.
+            - Adds Serienstream download preparation, language selection and Original badges. Existing movie providers remain available; Serienstream exposes a series catalogue.
+            - Shares and persists the provider session across playback and downloads. Ordinary automatic provider checks run during preparation, with an interactive verification card only when needed and a direct return to native playback.
+            - Adapts the GTA VI poster reference into staggered reveals of Aliflix's original logo, coordinated typography and a shadowed Home dissolve. The complete motion budget is about 1.8 seconds, with reduced-motion support and bounded network waiting.
+            - Keeps the active My List genre visible through elastic automatic tab scrolling.
+            - Renames subtitle Language to Preferred language and replaces settings selections with modern cards.
+            - Adds a Get in touch card and email shortcut to Aliflixapp@proton.me.
 
-            Regression coverage and physical-device visual evidence are documented in docs/mobile-162-motion-refinement.md. TV behavior, resources and version are unchanged. No new runtime dependencies.
+            Validation and provider limitations are documented in docs/mobile-163-serienstream.md. TV behavior, resources and version are unchanged. No new runtime dependencies.
           files: |
             aliflix-mobile.apk
             update-mobile.json

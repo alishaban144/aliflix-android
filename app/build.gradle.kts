@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 252
-val mobileVersionName = "3.1.162"
+val mobileVersionCode = 253
+val mobileVersionName = "3.1.163"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
@@ -101,6 +101,10 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // Install device validation alongside the user's signed production app without clearing its data.
+            providers.gradleProperty("aliflix.testApplicationIdSuffix").orNull?.let { applicationIdSuffix = it }
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
