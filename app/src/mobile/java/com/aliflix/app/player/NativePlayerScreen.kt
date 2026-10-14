@@ -973,7 +973,8 @@ internal fun NativePlayerScreen(
                             if (syncing) com.aliflix.app.ui.common.AliflixSyncBars(Modifier.size(22.dp, 28.dp))
                             else Icon(Icons.Rounded.GraphicEq, null, Modifier.size(20.dp))
                             Spacer(Modifier.width(10.dp))
-                            Text(state.audioSyncState ?: "Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(state.audioSyncState ?: "Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Spacer(Modifier.width(6.dp))
                             Text("BETA", color = AliflixAccentSecondary, fontSize = 8.sp, lineHeight = 10.sp,
                                 fontWeight = FontWeight.Bold, letterSpacing = .5.sp, maxLines = 1,

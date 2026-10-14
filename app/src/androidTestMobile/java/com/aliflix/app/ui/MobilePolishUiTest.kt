@@ -9,6 +9,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.graphics.toArgb
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import androidx.compose.ui.platform.LocalDensity
@@ -111,12 +113,13 @@ class MobilePolishUiTest {
             state = rememberLazyListState()
             MobilePinnedFilterLayout(state,{60f},
                 bar = { _ -> Box(Modifier.fillMaxWidth().height(68.dp).testTag("filters")) },
-                feed = { barHeight -> LazyColumn(state = state,modifier = Modifier.fillMaxSize()) {
+                feed = { barHeight -> LazyColumn(state = state,modifier = Modifier.fillMaxSize().background(Color.Blue)) {
                     item { Box(Modifier.fillMaxWidth().height(300.dp)) }
                     item { Spacer(Modifier.height(barHeight)) }
                     items(20) { Text("Rail $it",Modifier.height(100.dp)) }
-                } },modifier = Modifier.size(320.dp,600.dp))
+                } },modifier = Modifier.size(320.dp,600.dp).testTag("pinned-layout"))
         }
+        assertEquals(Color.Blue.toArgb(),compose.onNodeWithTag("pinned-layout").captureToImage().toPixelMap()[20,20].toArgb())
         var lastY = Float.POSITIVE_INFINITY
         val stop = with(compose.density) { 300.dp.toPx() }.toInt()+90
         for (scroll in 0..stop step 30) {
@@ -131,6 +134,8 @@ class MobilePolishUiTest {
         compose.runOnIdle { runBlocking { state.scrollToItem(4,20) } }
         compose.onNodeWithTag("filters").assertTopPositionInRootIsEqualTo(with(compose.density) { 60f.toDp() })
         compose.runOnIdle { assertEquals(4,state.firstVisibleItemIndex); assertEquals(20,state.firstVisibleItemScrollOffset) }
+        assertEquals(com.aliflix.app.ui.theme.AliflixBackgroundBase.toArgb(),
+            compose.onNodeWithTag("pinned-layout").captureToImage().toPixelMap()[20,20].toArgb())
         capture("home-pinned.png")
     }
 
@@ -186,20 +191,27 @@ class MobilePolishUiTest {
 
     @Test fun betaBadgeRemainsVisibleDuringSyncAndDoesNotChangeTheButtonHeight() {
         var status by mutableStateOf<String?>(null)
+        var fontScale by mutableFloatStateOf(1f)
         compose.setContent { AliflixMobileTheme {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density,fontScale)) {
             NativePlayerScreen(NativePlayerUi(title = "Fixture",ready = true,
                 audioSyncAvailable = true,audioSyncApplied = true,audioSyncState = status),null)
+            }
         } }
         compose.onNodeWithContentDescription("Audio & Subtitles").performClick()
-        compose.onNodeWithText("BETA").assertIsDisplayed()
-        val idle = compose.onNodeWithText("Sync with Audio").fetchSemanticsNode().boundsInRoot.height
-        capture("sync-beta-idle.png")
-        compose.runOnIdle { status = "Syncing…" }
-        compose.onNodeWithText("BETA").assertIsDisplayed()
-        compose.onNodeWithText("Cancel").assertIsDisplayed()
-        val processing = compose.onNodeWithText("Syncing…").fetchSemanticsNode().boundsInRoot.height
-        assertEquals(idle,processing,.5f)
-        capture("sync-beta-processing.png")
+        for (scale in listOf(1f,2f)) {
+            compose.runOnIdle { fontScale = scale; status = null }
+            compose.onNodeWithText("BETA",useUnmergedTree = true).assertIsDisplayed()
+            val idle = compose.onNodeWithText("Sync with Audio").fetchSemanticsNode().boundsInRoot.height
+            capture("sync-beta-idle-$scale.png")
+            compose.runOnIdle { status = "Syncing…" }
+            compose.onNodeWithText("BETA",useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("Cancel").assertIsDisplayed()
+            val processing = compose.onNodeWithText("Syncing…").fetchSemanticsNode().boundsInRoot.height
+            assertEquals(idle,processing,.5f)
+            capture("sync-beta-processing-$scale.png")
+        }
     }
 
     @Test fun downloadTierMenuMigratesAndPersistsWithoutChangingStreamingQuality() {

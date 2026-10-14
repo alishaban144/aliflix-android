@@ -1919,6 +1919,7 @@ internal fun HomeFeed(
         headerBottom = { (if (controlsOutside) pinnedHeaderBottom() else insideHeaderBottom-feedTop).coerceAtLeast(0f) },
         bar = { opacity -> MobileFilterBar(selectedFilter, onSelectFilter, opacity, showFilters) },
         feed = feed,
+        showChrome = showFilters,
         modifier = modifier.fillMaxSize().background(AliflixBackgroundBase)
             .onGloballyPositioned { feedTop = it.positionInRoot().y })
 }

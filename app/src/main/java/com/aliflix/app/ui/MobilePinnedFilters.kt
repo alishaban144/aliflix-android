@@ -1,12 +1,15 @@
 package com.aliflix.app.ui
 
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.unit.Dp
 import kotlin.math.max
 import kotlin.math.roundToInt
+import com.aliflix.app.ui.theme.AliflixBackgroundBase
 
 internal fun homeFilterY(naturalTop: Float, headerBottom: Float): Float = max(naturalTop, headerBottom)
 internal fun homeFilterOpacity(naturalTop: Float, headerBottom: Float, barHeight: Float): Float {
@@ -42,6 +45,7 @@ internal fun MobilePinnedFilterLayout(
     bar: @Composable (opacity: () -> Float) -> Unit,
     feed: @Composable (barHeight: Dp) -> Unit,
     modifier: Modifier = Modifier,
+    showChrome: Boolean = true,
 ) {
     SubcomposeLayout(modifier) { constraints ->
         fun naturalY(): Float {
@@ -56,8 +60,16 @@ internal fun MobilePinnedFilterLayout(
         }.single().measure(constraints.copy(minHeight = 0))
         barHeightPx = barPlaceable.height.toFloat()
         val listPlaceable = subcompose("feed") { feed(barPlaceable.height.toDp()) }.single().measure(constraints)
+        val headerHeight = headerBottom().roundToInt().coerceIn(0, constraints.maxHeight)
+        val headerScrim = subcompose("header-scrim") {
+            Canvas(Modifier.fillMaxSize()) {
+                drawRect(AliflixBackgroundBase.copy(alpha = if (showChrome)
+                    homeFilterOpacity(naturalY(), headerBottom(), barHeightPx) else 0f))
+            }
+        }.single().measure(constraints.copy(minHeight = headerHeight, maxHeight = headerHeight))
         layout(constraints.maxWidth, constraints.maxHeight) {
             listPlaceable.placeRelative(0,0)
+            headerScrim.placeRelative(0,0,zIndex = .5f)
             barPlaceable.placeRelative(0, homeFilterY(naturalY(),headerBottom()).roundToInt(), zIndex = 1f)
         }
     }

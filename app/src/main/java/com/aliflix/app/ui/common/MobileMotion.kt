@@ -49,7 +49,7 @@ internal fun rememberMobileAnimationTime(active: Boolean, infinite: Boolean = tr
                 val now = if (infinite) withInfiniteAnimationFrameNanos { it } else withFrameNanos { it }
                 if (previous != 0L) {
                     val delta = (now-previous)/1_000_000_000f
-                    seconds += if (infinite) delta.coerceAtMost(.05f) else delta
+                    seconds += delta.coerceAtLeast(0f)
                 }
                 previous = now
             }
