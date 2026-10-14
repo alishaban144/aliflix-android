@@ -4,7 +4,7 @@ Base: latest GitHub mobile release v3.1.161, commit 4902005.
 
 ## Launch
 
-The logo and wordmark share a single 1.08-to-1 camera settle and upward 8dp movement, finishing at 420ms. The wordmark retains a masked reveal over 80ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“420ms, with matching easing; its former independent 3.306-to-1 zoom is removed.
+The logo and wordmark share a single 1.08-to-1 camera settle and upward 8dp movement, finishing at 420ms. The wordmark retains a masked reveal over 80ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ420ms, with matching easing; its former independent 3.306-to-1 zoom is removed.
 
 Movies starts at 520ms and Series at 1020ms, each with 100ms entry, 300ms hold and 100ms exit. Stories starts at 1520ms with a 100ms entry and 260ms still hold. The sequence finishes at 1880ms and hands off through a 160ms crossfade, for a nominal branded path of 2040ms. This gives each short word reading time without adding a separate wait after Stories.
 
@@ -24,7 +24,7 @@ Launch frame state is still read in drawing/graphics layers and milestone observ
 The exact Component.tsx and interactive preview were inspected through the normal source view:
 https://21st.dev/@serafimcloud/components/floating-action-button
 
-Serafim's MIT-licensed component animates icon scale from 0.9 to 1, rotation from 45 to 0 degrees and blur from 2px to 0 over 400ms. Its moving cover and plus-button rotation use 500ms. This implementation adapts only the icon reveal, shortened to 180ms, with a 120ms dismissal. It adds no cover, plus button, action cards or dependencies. Header glyphs use the reference geometry; transport glyphs keep their orientation. Identity, scrim, actions, transport and timeline share one visibility transition with no child delays. Android 29ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“30 use scale/rotation/fade without GPU blur; reduced motion is immediate.
+Serafim's MIT-licensed component animates icon scale from 0.9 to 1, rotation from 45 to 0 degrees and blur from 2px to 0 over 400ms. Its moving cover and plus-button rotation use 500ms. This implementation adapts only the icon reveal, shortened to 180ms, with a 120ms dismissal. It adds no cover, plus button, action cards or dependencies. Header glyphs use the reference geometry; transport glyphs keep their orientation. Identity, scrim, actions, transport and timeline share one visibility transition with no child delays. Android 29ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ30 use scale/rotation/fade without GPU blur; reduced motion is immediate.
 
 ## Validation
 
@@ -34,13 +34,13 @@ Final local gate: mobile assembly, Android-test assembly, 623 unit tests (620 pa
 
 Physical Pixel 7a: 31 focused instrumentation tests passed in 53.512s; two additional premium-control tests passed in 5.316s, including the advanced sheet at 200% font in RTL (33 distinct test cases). Eight full-player renders cover both orientations, movie/long series identities and 100%/200% fonts. The rendered video is a local diagnostic asset decoded by Media3 under the production overlay. Enlarged play/pause captures and pixel checks verify curved corners and a solid joined silhouette. The final real cold-launch recording was inspected separately from the clock-controlled launch tests. The 31-test suite was also run with Android animations disabled (two motion-only checks skipped); both launch regressions then passed again after restoring the phone's original animation setting. Reduced-motion assertions allow the two preparation frame boundaries and check the faster static handoff. Legacy audio-sheet tests now enter through More; the premium-control test is included in the regular CI phone gate. The opt-in live CineJoy test was compiled with the updated route, but external-provider playback was not rerun for this UI change. All 14 download-batch tests also passed on the Pixel in 13.657s (47 distinct physical test cases overall). The progressive discovery fixture uses a local provider identity consistently, avoiding an unrelated Flixer subtitle lookup while retaining the exact quality-selection/enqueue assertions.
 
-Three cold AOT-compiled validation launches returned frame p95 values of 5.65, 8.15 and 6.86ms in the diagnostic 0.2ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ1.88s sampling window. The largest samples were 99.78ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ272.9ms, including first Home composition during the final still phase. These measurements use the debug validation APK.
+Three cold AOT-compiled validation launches returned frame p95 values of 5.65, 8.15 and 6.86ms in the diagnostic 0.2ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“1.88s sampling window. The largest samples were 99.78ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“272.9ms, including first Home composition during the final still phase. These measurements use the debug validation APK.
 
 Device test APKs use `com.aliflix.app.validation`, preserving the installed main app and data. Physical rendering and production signed-artifact verification are separate checks. TV sources/resources/version and runtime dependencies are unchanged.
 
 ## Physical-device captures
 
-[Portrait overview: four title/font combinations](images/mobile-162/portrait-overview.jpg) ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· [Landscape overview](images/mobile-162/landscape-overview.jpg)
+[Portrait overview: four title/font combinations](images/mobile-162/portrait-overview.jpg) ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· [Landscape overview](images/mobile-162/landscape-overview.jpg)
 
 ![Portrait player, normal font](images/mobile-162/full-player-portrait-movie-font1.0.png)
 
@@ -53,3 +53,7 @@ Device test APKs use `com.aliflix.app.validation`, preserving the installed main
 [Advanced settings through More](images/mobile-162/advanced-settings-through-more.png)
 
 ![Real cold-launch sequence on the Pixel, cropped to brand and Home header](images/mobile-162/launch-real-device-storyboard.jpg)
+
+## CI network readiness
+
+The hosted emulator resolves through explicit upstream DNS servers, excluding Linux loopback stubs, with Google DNS as fallback. It must report a validated network before building and before instrumentation. Connectivity diagnostics are retained with the test reports. This prevents emulator DNS failures from masquerading as missing download-picker controls; the app's offline guard remains unchanged. See [Android emulator DNS configuration](https://developer.android.com/studio/run/emulator-networking-dns).

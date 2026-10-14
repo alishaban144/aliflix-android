@@ -13,7 +13,18 @@ echo no | avdmanager create avd --name casting-phone --package "system-images;an
 printf 'hw.cpu.ncore=4\nhw.ramSize=3072M\nhw.heapSize=512M\n' >> "$ANDROID_AVD_HOME/casting-phone.avd/config.ini"
 echo 'disk.dataPartition.size=6G' >> "$ANDROID_AVD_HOME/casting-phone.avd/config.ini"
 adb start-server
-emulator_options=(-memory 3072 -cores 4)
+# Pass upstream resolvers explicitly: the Linux loopback DNS stub is not reachable
+# through the emulator's DNS aliases on every hosted runner.
+resolver_files=()
+for resolver_file in /run/systemd/resolve/resolv.conf /etc/resolv.conf; do
+  if [ -r "$resolver_file" ]; then resolver_files+=("$resolver_file"); fi
+done
+dns_servers="$(awk '$1 == "nameserver" && $2 !~ /^127\./ && $2 != "::1" && !seen[$2]++ && count++ < 4 {
+  printf "%s%s", separator, $2; separator=","
+}' "${resolver_files[@]}")"
+dns_servers="${dns_servers:-8.8.8.8,8.8.4.4}"
+echo "Emulator DNS servers: $dns_servers"
+emulator_options=(-memory 3072 -cores 4 -dns-server "$dns_servers")
 emulator_features=-HardwareDecoder
 if [ "$API" = 37.0 ]; then
   # Linux host DMA readback conflicts with API 37's mapper.ranchu, aborting SurfaceFlinger.
@@ -53,6 +64,18 @@ sleep 5
 for setting in window_animation_scale transition_animation_scale animator_duration_scale; do
   adb -s emulator-5554 shell settings put global "$setting" 0
 done
+
+ensure_network() {
+  for network_attempt in $(seq 1 30); do
+    timeout 10s adb -s emulator-5554 shell dumpsys connectivity > .validation/network-state.txt || true
+    if grep -Eq 'NetworkAgentInfo.*Capabilities:.*[&[:space:]]VALIDATED([&[:space:]]|])' .validation/network-state.txt; then return 0; fi
+    sleep 2
+  done
+  echo 'Emulator has no validated Internet connection; refusing to run online-gated UI fixtures.'
+  cat .validation/network-state.txt
+  return 1
+}
+ensure_network
 echo "Android phone API $API ready; running decoded-frame and notification regressions."
 classes=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.DetailsStabilityTest,com.aliflix.app.data.ExactProgressTest,com.aliflix.app.player.CastSubtitleTracksTest,com.aliflix.app.player.NativeSubtitleRenderingTest,com.aliflix.app.ui.PhonePlayerPolishTest,com.aliflix.app.ui.DiscoverCatalogueUiTest
 classes="$classes,com.aliflix.app.ui.MobilePolishUiTest,com.aliflix.app.downloads.DownloadBatchUiTest"
@@ -68,6 +91,7 @@ adb -s emulator-5554 shell wm density 160
 # phone and API 35 locally. Keep test files available for the exit-trap capture;
 # Gradle's connected-test cleanup uninstalls the app before they can be pulled.
   ./gradlew :app:assembleMobileDebug :app:assembleMobileDebugAndroidTest --no-daemon --console=plain
+  ensure_network
   adb -s emulator-5554 install -r app/build/outputs/apk/mobile/debug/app-mobile-debug.apk
   adb -s emulator-5554 install -r app/build/outputs/apk/androidTest/mobile/debug/app-mobile-debug-androidTest.apk
   adb -s emulator-5554 shell am instrument -w -r -e class "$classes" \
