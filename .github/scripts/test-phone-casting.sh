@@ -57,10 +57,10 @@ echo "Android phone API $API ready; running decoded-frame and notification regre
 classes=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.DetailsStabilityTest,com.aliflix.app.data.ExactProgressTest,com.aliflix.app.player.CastSubtitleTracksTest,com.aliflix.app.player.NativeSubtitleRenderingTest,com.aliflix.app.ui.PhonePlayerPolishTest,com.aliflix.app.ui.DiscoverCatalogueUiTest
 classes="$classes,com.aliflix.app.ui.MobilePolishUiTest,com.aliflix.app.downloads.DownloadBatchUiTest"
 classes="${ALIFLIX_TEST_CLASSES:-$classes}"
-if [ -n "${ALIFLIX_TEST_CLASSES:-}" ]; then
-  adb -s emulator-5554 shell wm size 480x960
-  adb -s emulator-5554 shell wm density 160
-fi
+# Use a deterministic modern phone viewport for full and focused suites alike.
+# The generic AVD's inherited tiny viewport clips nested-sheet/player fixtures.
+adb -s emulator-5554 shell wm size 480x960
+adb -s emulator-5554 shell wm density 160
 # Use the same installation/instrumentation path validated on the physical
 # phone and API 35 locally. Keep test files available for the exit-trap capture;
 # Gradle's connected-test cleanup uninstalls the app before they can be pulled.

@@ -219,6 +219,8 @@ class DownloadBatchUiTest {
         compose.onNodeWithText("Download 3 episodes").assertIsNotEnabled()
         val discoveries = fake.discoveries
         fake.unavailable = { false }
+        // Reveal the nested episode list in the outer sheet before injecting a tap.
+        compose.onNode(hasText("Subtitles:", substring = true)).performScrollTo()
         compose.onNodeWithText("Retry").performScrollTo().performClick()
         compose.waitUntil(5_000) { !compose.onNodeWithText("Download 3 episodes").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) }
         assertEquals(discoveries, fake.discoveries)

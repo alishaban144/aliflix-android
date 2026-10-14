@@ -41,6 +41,8 @@ class NativeSkipControlsTest {
                     state = NativePlayerUi(
                         title = "Aliflix",
                         ready = true,
+                        // This fixture has no video host to publish its measured bounds.
+                        videoBottomPx = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.heightPixels,
                         revision = revision.intValue,
                         episodes = listOf(
                             com.aliflix.app.model.Episode(1, 2, "Episode two"),
