@@ -12,6 +12,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -27,8 +28,12 @@ class DownloadStorageSliderUiTest {
                     onCommit = { limit.intValue = it }, onEdit = { edits++ })
             }
         }
-        compose.onNodeWithTag("download-storage-slider").assertHeightIsAtLeast(48.dp)
-            .performSemanticsAction(SemanticsActions.SetProgress) { it(75f) }
+        // Exercise the expanded input area, rather than measuring Material's thumb semantics.
+        compose.onNodeWithTag("download-storage-slider").performTouchInput {
+            click(androidx.compose.ui.geometry.Offset(width * .75f, centerY - 20.dp.toPx()))
+        }
+        compose.runOnIdle { assertTrue(limit.intValue > 100) }
+        compose.onNodeWithTag("download-storage-slider").performSemanticsAction(SemanticsActions.SetProgress) { it(75f) }
         compose.runOnIdle { assertEquals(75, limit.intValue) }
         compose.onNodeWithTag("download-storage-value").assertTextEquals("75 GB").performClick()
         compose.runOnIdle { assertEquals(1, edits) }

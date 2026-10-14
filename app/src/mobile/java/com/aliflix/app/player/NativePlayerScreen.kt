@@ -974,6 +974,12 @@ internal fun NativePlayerScreen(
                             else Icon(Icons.Rounded.GraphicEq, null, Modifier.size(20.dp))
                             Spacer(Modifier.width(10.dp))
                             Text(state.audioSyncState ?: "Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.width(6.dp))
+                            Text("BETA", color = AliflixAccentSecondary, fontSize = 8.sp, lineHeight = 10.sp,
+                                fontWeight = FontWeight.Bold, letterSpacing = .5.sp, maxLines = 1,
+                                modifier = Modifier.clip(RoundedCornerShape(5.dp))
+                                    .background(AliflixAccentSecondary.copy(alpha = .12f))
+                                    .padding(horizontal = 5.dp, vertical = 2.dp))
                             if (syncing) {
                                 Spacer(Modifier.weight(1f))
                                 Text("Cancel", fontSize = 11.sp)

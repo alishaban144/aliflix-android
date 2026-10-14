@@ -47,6 +47,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -1608,7 +1611,10 @@ private fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     when {
-        state.content != null -> Box(modifier.fillMaxSize().aliflixScreenBackground()) {
+        state.content != null -> MobileHomeSearchFrame(selectedFilter != HomeFilter.NEW,
+            modifier.fillMaxSize().aliflixScreenBackground(),
+            header = { Column { MobileTopSafeArea(extraPadding = 0.dp); HomeHeader(onSearch) } },
+        ) { headerBottom ->
             val movieListState = rememberLazyListState()
             val tvListState = rememberLazyListState()
             AnimatedContent(
@@ -1629,11 +1635,8 @@ private fun HomeScreen(
                     onRetryTvNetworks = onRetryTvNetworks, onOpen = onOpen, onPlay = onPlay, onSearch = onSearch,
                     listState = filterListState, selectedFilter = visibleFilter, previousFilter = previousFilter,
                     onSelectFilter = onSelectFilter, modifier = Modifier.fillMaxSize(), controlsOutside = true,
+                    pinnedHeaderBottom = { headerBottom }, showFilters = visibleFilter == selectedFilter,
                 )
-            }
-            if (selectedFilter != HomeFilter.NEW) Column(Modifier.align(Alignment.TopCenter)) {
-                MobileTopSafeArea(extraPadding = 0.dp)
-                HomeHeader(onSearch)
             }
         }
         state.loading -> HomeSkeleton(modifier = modifier)
@@ -1664,6 +1667,8 @@ internal fun HomeFeed(
     onSelectFilter: (HomeFilter) -> Unit,
     modifier: Modifier,
     controlsOutside: Boolean = false,
+    pinnedHeaderBottom: () -> Float = { 0f },
+    showFilters: Boolean = true,
 ) {
     if (selectedFilter == HomeFilter.NEW && catalogueStore != null) {
         Column(modifier.fillMaxSize().aliflixScreenBackground()) {
@@ -1677,9 +1682,9 @@ internal fun HomeFeed(
         }
         return
     }
-    val filtersPinned by remember(listState) {
-        derivedStateOf { listState.firstVisibleItemIndex > 0 }
-    }
+    var feedTop by remember { mutableFloatStateOf(0f) }
+    var insideHeaderBottom by remember { mutableFloatStateOf(0f) }
+
     val filteredRails = remember(content, selectedFilter, likes, tvNetworks.rails) {
         val matchingRails = when (selectedFilter) {
             HomeFilter.FOR_YOU -> content.rails
@@ -1787,7 +1792,7 @@ internal fun HomeFeed(
 
     // The poster is drawn by the hero item below, so it scrolls away with the hero and the rails
     // underneath it sit on this plain Aliflix background. Only the base colour stays out here.
-    Box(modifier.fillMaxSize().background(AliflixBackgroundBase)) {
+    val feed: @Composable (androidx.compose.ui.unit.Dp) -> Unit = { filterHeight ->
     LazyColumn(
         state = listState,
         modifier = Modifier
@@ -1860,19 +1865,15 @@ internal fun HomeFeed(
                     onSearch = onSearch,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .windowInsetsPadding(AliflixInsets.Top),
+                        .windowInsetsPadding(AliflixInsets.Top)
+                        .onGloballyPositioned { insideHeaderBottom = it.positionInRoot().y + it.size.height },
                 )
             }
         }
 
-        stickyHeader {
-            FilterBar(
-                selected = selectedFilter,
-                onSelect = onSelectFilter,
-                pinned = filtersPinned,
-                headerVisible = controlsOutside,
-            )
-        }
+        if (BuildConfig.IS_TV) stickyHeader {
+            FilterBar(selectedFilter, onSelectFilter, pinned = listState.firstVisibleItemIndex > 0, headerVisible = controlsOutside)
+        } else item { Spacer(Modifier.fillMaxWidth().height(filterHeight)) }
 
         if (recent.isNotEmpty() && selectedFilter == HomeFilter.FOR_YOU) {
             item {
@@ -1913,6 +1914,13 @@ internal fun HomeFeed(
         }
     }
     }
+    if (BuildConfig.IS_TV) Box(modifier.fillMaxSize().background(AliflixBackgroundBase)) { feed(0.dp) }
+    else MobilePinnedFilterLayout(listState,
+        headerBottom = { (if (controlsOutside) pinnedHeaderBottom() else insideHeaderBottom-feedTop).coerceAtLeast(0f) },
+        bar = { opacity -> MobileFilterBar(selectedFilter, onSelectFilter, opacity, showFilters) },
+        feed = feed,
+        modifier = modifier.fillMaxSize().background(AliflixBackgroundBase)
+            .onGloballyPositioned { feedTop = it.positionInRoot().y })
 }
 
 @Composable
@@ -2172,6 +2180,28 @@ private fun HeroBanner(
                     Spacer(Modifier.width(7.dp))
                     Text("More Info", fontWeight = FontWeight.Bold)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileFilterBar(selected: HomeFilter, onSelect: (HomeFilter) -> Unit, opacity: () -> Float, visible: Boolean) {
+    LazyRow(modifier = Modifier.fillMaxWidth()
+        .graphicsLayer { alpha = if (visible) 1f else 0f }
+        .then(if (visible) Modifier.testTag("home-filter-bar") else Modifier.clearAndSetSemantics {})
+        .drawBehind {
+        drawRect(AliflixBackgroundBase.copy(alpha = AliflixAlpha.Chrome * opacity()))
+    }, contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
+        items(HomeFilter.entries) { filter ->
+            val active = filter == selected
+            AliflixChip(selected = active, contentAlignment = Alignment.TopStart,
+                contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = 13.dp),
+                modifier = Modifier.heightIn(min = AliflixSpacing.TouchTarget)
+                    .selectable(selected = active, enabled = visible, onClick = { onSelect(filter) })) {
+                Text(filter.label, color = if (active) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1)
             }
         }
     }

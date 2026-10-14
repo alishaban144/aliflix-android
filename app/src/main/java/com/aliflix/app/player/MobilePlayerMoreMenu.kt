@@ -167,8 +167,7 @@ internal fun MobilePlayerMoreSheet(
                                         Text("Audio Boost", fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                         Text(detail, color = Color.White.copy(alpha = .60f), fontSize = 12.sp)
                                     }
-                                    Switch(checked = audioBoost, onCheckedChange = null,
-                                        colors = SwitchDefaults.colors(checkedTrackColor = AliflixAccentSecondary))
+                                    com.aliflix.app.ui.common.AliflixLiquidToggle(audioBoost, null)
                                 }
                             }
                         }

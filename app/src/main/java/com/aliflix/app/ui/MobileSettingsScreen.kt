@@ -196,9 +196,7 @@ internal fun MobileSettingsDialog(
 @Composable private fun SettingsToggle(icon: ImageVector, title: String, detail: String, checked: Boolean, tag: String, onChange: (Boolean) -> Unit) {
     Box(Modifier.toggleable(checked, role = Role.Switch, onValueChange = onChange)) {
         SettingsRow(icon, title, detail) {
-            Switch(checked, onCheckedChange = null, modifier = Modifier.testTag(tag),
-                colors = SwitchDefaults.colors(checkedTrackColor = AliflixAccentPrimary, checkedThumbColor = Color.White,
-                    uncheckedTrackColor = AliflixSurfaceElevated, uncheckedThumbColor = AliflixContentSecondary, uncheckedBorderColor = AliflixBorderStrong))
+            com.aliflix.app.ui.common.AliflixLiquidToggle(checked, null, Modifier.testTag(tag))
         }
     }
 }

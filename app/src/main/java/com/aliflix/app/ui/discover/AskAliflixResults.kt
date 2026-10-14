@@ -187,11 +187,13 @@ fun AskAliflixResults(
             ) {
                 Text(
                     text = "Hide titles already in My Space",
+                    modifier = Modifier.weight(1f).padding(end = 10.dp),
                     color = AliflixContentSecondary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                 )
-                Switch(
+                if (!com.aliflix.app.BuildConfig.IS_TV) AliflixLiquidToggle(hideMySpaceTitles, null)
+                else Switch(
                     checked = hideMySpaceTitles,
                     onCheckedChange = null,
                     colors = SwitchDefaults.colors(
@@ -426,6 +428,10 @@ private fun ResultCard(
     editorial: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    if (!com.aliflix.app.BuildConfig.IS_TV) {
+        MobileAskResultCard(item, onClick, inMyList, onToggleMyList, editorial, modifier)
+        return
+    }
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
@@ -678,7 +684,7 @@ private fun AskLoadingState() {
     ) {
         Spacer(Modifier.height(24.dp))
         if (com.aliflix.app.BuildConfig.IS_TV) ComposingThinkingOrb(modifier = Modifier.size(148.dp))
-        else AliflixRippleLoader(modifier = Modifier.size(148.dp))
+        else Box(Modifier.size(148.dp), contentAlignment = Alignment.Center) { AliflixLumaSpin(Modifier.size(65.dp)) }
         Spacer(Modifier.height(13.dp))
         Text("Finding matches", color = AliflixContentPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
         Spacer(Modifier.height(20.dp))

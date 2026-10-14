@@ -79,7 +79,7 @@ internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLay
 internal suspend fun prepareDownloadBatch(activity: ComponentActivity, host: FrameLayout,
     selections: List<Pair<String, PlaybackSelection>>, language: String, cached: Map<String, PreparedDownload>,
     onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit,
-    pinnedAnchor: DownloadOption? = null, requiredAudio: String = "Default"): Unit = withContext(Dispatchers.Main.immediate) {
+    pinnedAnchor: DownloadOption? = null, requiredAudio: String = "Default", preferredTier: DownloadQualityTier? = null): Unit = withContext(Dispatchers.Main.immediate) {
     val progress = (activity.application as AliflixApplication).playbackProgressStore
     val prefs = PlaybackProviderRepository(activity).preferences.value
     prepareDownloadBatchInternal(selections, language, cached,
@@ -98,7 +98,7 @@ internal suspend fun prepareDownloadBatch(activity: ComponentActivity, host: Fra
             selection.source == prefs.sourceFor(selection.media, selection.source.identity) ||
                 selections.any { it.second.source == selection.source }
         },
-        onPrepared = onPrepared, onError = onError, pinnedAnchor = pinnedAnchor, requiredAudio = requiredAudio)
+        onPrepared = onPrepared, onError = onError, pinnedAnchor = pinnedAnchor, requiredAudio = requiredAudio, preferredTier = preferredTier)
 }
 
 private val preparationSlots = kotlinx.coroutines.sync.Semaphore(4)
@@ -110,7 +110,7 @@ internal suspend fun prepareDownloadBatchInternal(
     inspect: suspend (PlaybackSelection, NativePlaybackRequest, String) -> PreparedDownload,
     sourceIsCurrent: (PlaybackSelection) -> Boolean = { true },
     onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit,
-    pinnedAnchor: DownloadOption? = null, requiredAudio: String = "Default",
+    pinnedAnchor: DownloadOption? = null, requiredAudio: String = "Default", preferredTier: DownloadQualityTier? = null,
 ) {
     fun group(selection: PlaybackSelection) = selection.media.key to
         if (selection.media.type == MediaType.TV) selection.seasonNumber ?: 1 else null
@@ -126,7 +126,8 @@ internal suspend fun prepareDownloadBatchInternal(
             }) }
             require(available.isNotEmpty()) { "Selected audio unavailable" }
             val height = pinnedAnchor?.quality?.height ?: item.qualities.first().height
-            val quality = closestDownloadQuality(available, height)
+            val quality = if (preferredTier != null) requireNotNull(preferredDownloadQuality(item.copy(qualities = available), preferredTier))
+                else closestDownloadQuality(available, height)
             if (requiredAudio != "Default") require(item.audioTracksFor(quality).let { tracks ->
                 if (requiredAudio == "All tracks") tracks.isNotEmpty() else tracks.any { it.label == requiredAudio }
             }) { "Selected audio unavailable" }

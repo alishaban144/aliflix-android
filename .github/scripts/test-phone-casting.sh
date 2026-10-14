@@ -55,6 +55,7 @@ for setting in window_animation_scale transition_animation_scale animator_durati
 done
 echo "Android phone API $API ready; running decoded-frame and notification regressions."
 classes=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.DetailsStabilityTest,com.aliflix.app.data.ExactProgressTest,com.aliflix.app.player.CastSubtitleTracksTest,com.aliflix.app.player.NativeSubtitleRenderingTest,com.aliflix.app.ui.PhonePlayerPolishTest,com.aliflix.app.ui.DiscoverCatalogueUiTest
+classes="$classes,com.aliflix.app.ui.MobilePolishUiTest,com.aliflix.app.downloads.DownloadBatchUiTest"
 classes="${ALIFLIX_TEST_CLASSES:-$classes}"
 if [ -n "${ALIFLIX_TEST_CLASSES:-}" ]; then
   adb -s emulator-5554 shell wm size 480x960

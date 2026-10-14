@@ -48,7 +48,7 @@ internal class OfflineDownloads private constructor(val context: Context) {
         DefaultDownloaderFactory(cacheFactory(native), executor).createDownloader(request)
     })
     val limitBytes get() = preferences.getInt("limitGb", 50).coerceIn(1, 200) * DOWNLOAD_GB
-    val preferredHeight get() = preferences.getInt("quality", 720)
+    val preferredTier get() = readDownloadQualityTier(preferences)
 
     init {
         manager.maxParallelDownloads = 2

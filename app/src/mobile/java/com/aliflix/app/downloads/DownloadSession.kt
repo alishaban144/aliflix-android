@@ -68,10 +68,10 @@ internal class DownloadSession private constructor(private val activity: Compone
     val discoveries = mutableStateMapOf<String, DownloadDiscovery>()
     private val tierSignatures = mutableMapOf<String, String>()
     private val validatedTiers = mutableMapOf<String, String>()
-    private fun route(option: DownloadOption, language: String, audio: String) =
-        "${option.source.selection.source}:${option.source.server}:${option.quality.height}:$language:$audio"
-    fun validated(key: String, option: DownloadOption, language: String, audio: String) =
-        validatedTiers[key] == route(option, language, audio)
+    private fun route(option: DownloadOption, language: String, audio: String, tier: DownloadQualityTier?) =
+        "${option.source.selection.source}:${option.source.server}:${option.quality.height}:$language:$audio:${tier?.name ?: "explicit"}"
+    fun validated(key: String, option: DownloadOption, language: String, audio: String, tier: DownloadQualityTier? = null) =
+        validatedTiers[key] == route(option, language, audio, tier)
     fun retryEpisode(key: String) { prepared.remove(key); errors.remove(key); validatedTiers.remove(key); timestamps.remove(key) }
     fun cancelTierWork(mediaKey: String) {
         jobs.remove("tier:$mediaKey")?.cancel(); tierSignatures.remove("tier:$mediaKey")
@@ -106,10 +106,10 @@ internal class DownloadSession private constructor(private val activity: Compone
         jobs[jobKey]?.start()
     }
     fun validateTier(store: DownloadUiDependencies, selections: List<Pair<String, PlaybackSelection>>,
-        language: String, option: DownloadOption, retry: Int = 0, audio: String = "Default") {
+        language: String, option: DownloadOption, retry: Int = 0, audio: String = "Default", preferredTier: DownloadQualityTier? = null) {
         if (selections.isEmpty()) return
         val group = "tier:${selections.first().second.media.key}"
-        val route = route(option, language, audio)
+        val route = route(option, language, audio, preferredTier)
         val signature = "$route:${selections.map { it.first }}:$retry"
         if (tierSignatures[group] == signature) return
         jobs.remove(group)?.cancel()
@@ -128,7 +128,7 @@ internal class DownloadSession private constructor(private val activity: Compone
                         prepared[key] = value; pending.remove(key); errors.remove(key)
                         validatedTiers[key] = route; timestamps[key] = android.os.SystemClock.elapsedRealtime()
                     }
-                }, { key, _ -> if (jobs[group] === owner) { pending.remove(key); errors[key] = "Episode unavailable" } })
+                }, { key, _ -> if (jobs[group] === owner) { pending.remove(key); errors[key] = "Episode unavailable" } }, preferredTier)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { if (jobs[group] === owner) selections.filter { it.first in pending }.forEach { errors[it.first] = "Episode unavailable" } }
             finally { if (jobs[group] === owner) { selections.forEach { pending.remove(it.first) }; jobs.remove(group) } }

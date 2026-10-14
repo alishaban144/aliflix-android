@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "248"
-  RELEASE_VERSION_NAME: "3.1.158"
+  RELEASE_VERSION_CODE: "249"
+  RELEASE_VERSION_NAME: "3.1.159"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -358,7 +358,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Player menus, Audio Boost and improved one-tap subtitle sync"
+          RELEASE_NOTES="Live Discover Orb, liquid switches, Luma loading, layered launch, compact match cards, fluid Home filters, subtitle sync Beta and download quality tiers"
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -387,11 +387,11 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            The mobile player has quieter controls, a refined timeline, a compact More menu and a dedicated Streaming source menu. Audio Boost is available in More using the existing saved preference.
+            Mobile UI polish built from Aliflix v3.1.158: Discover's Live Orb follows touches, binary switches use a liquid morph, Ask Aliflix uses the Luma loader, and launch reveals the original logo and wordmark in layers.
 
-            Sync with Audio manages up to two recovery requests at once, uses fresh already-played dialogue and gives queued work its own processing time. One bounded attempt can recover for up to 19 seconds; verified results finish immediately. Subtitle accuracy, cancellation, Reset and source identity checks remain in place. No descriptive paragraphs were added to the player.
+            Match cards constrain long titles and genres while keeping scores on one line. Home filters move continuously into their pinned position. Sync with Audio carries a small Beta badge. Download Settings now offers Low, Medium and High tiers that select relative qualities per video, migrate old settings, and preserve explicit choices and batch downloads.
 
-            Mobile unit tests, lint, physical Pixel 7a checks and production signing/integrity validation are recorded in docs/validation/mobile-v3.1.158-player.md. TV, Worker, dependencies and native libraries are unchanged. Optional runtime-size work remains a separate measured project.
+            Mobile tests, lint, physical Pixel 7a validation, reference inspection and artifact verification are documented in docs/mobile-158-polish.md. TV source, resources and version remain unchanged.
           files: |
             aliflix-mobile.apk
             update-mobile.json

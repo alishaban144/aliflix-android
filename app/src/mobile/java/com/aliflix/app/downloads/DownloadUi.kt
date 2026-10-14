@@ -74,7 +74,7 @@ private fun List<DownloadQuality>.totalSizeLabel(): String = when {
 
 internal interface DownloadUiDependencies {
     val entries: StateFlow<List<SavedDownload>>
-    val preferredHeight: Int
+    val preferredTier: DownloadQualityTier
     val requestNotifications: Boolean get() = true
     suspend fun seasons(media: Media): List<Season>
     suspend fun episodes(media: Media, season: Int): List<Episode>
@@ -91,7 +91,7 @@ internal interface DownloadUiDependencies {
     }
     suspend fun prepareTier(activity: ComponentActivity, host: FrameLayout, selections: List<Pair<String, PlaybackSelection>>,
         language: String, cached: Map<String, PreparedDownload>, option: DownloadOption, audio: String,
-        onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit) =
+        onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit, preferredTier: DownloadQualityTier? = null) =
         prepare(activity, host, selections, language, cached, onPrepared, onError)
     fun blockedIds(): Set<String>
     suspend fun enqueue(requests: List<DownloadRequest>)
@@ -106,7 +106,7 @@ internal interface DownloadUiDependencies {
         val repository = MobileEpisodeRepository(context, RecommendationAiClient(BuildConfig.RECOMMENDATION_AI_BASE_URL))
         object : DownloadUiDependencies {
             override val entries = store.entries
-            override val preferredHeight get() = store.preferredHeight
+            override val preferredTier get() = store.preferredTier
             override suspend fun seasons(media: Media) = repository.seasons(media.id)
             override suspend fun episodes(media: Media, season: Int) = repository.episodes(media.id, season)
             override suspend fun prepare(activity: ComponentActivity, host: FrameLayout, selections: List<Pair<String, PlaybackSelection>>,
@@ -117,8 +117,8 @@ internal interface DownloadUiDependencies {
                 language: String, onUpdate: (DownloadDiscovery) -> Unit) = prepareDownload(activity, host, selection, language, onUpdate)
             override suspend fun prepareTier(activity: ComponentActivity, host: FrameLayout, selections: List<Pair<String, PlaybackSelection>>,
                 language: String, cached: Map<String, PreparedDownload>, option: DownloadOption, audio: String,
-                onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit) =
-                prepareDownloadBatch(activity, host, selections, language, cached, onPrepared, onError, option, audio)
+                onPrepared: (String, PreparedDownload) -> Unit, onError: (String, String) -> Unit, preferredTier: DownloadQualityTier?) =
+                prepareDownloadBatch(activity, host, selections, language, cached, onPrepared, onError, option, audio, preferredTier)
             override fun blockedIds(): Set<String> = entries.value.filter { it.download.state != Download.STATE_FAILED }.map { it.id }.toSet() +
                 store.manager.currentDownloads.filter { it.state != Download.STATE_FAILED }.map { it.request.id }
             override suspend fun enqueue(requests: List<DownloadRequest>) = store.enqueue(requests)
@@ -264,17 +264,20 @@ internal interface DownloadUiDependencies {
     val discovery = anchor?.let { session.discoveries[it.first] }
     LaunchedEffect(anchor?.first, discoveryRetry) { anchor?.let { session.discover(store, it.second, language, discoveryRetry) } }
     val choices = discovery?.choicesKeeping(height).orEmpty()
-    val option = choices.firstOrNull { it.quality.height == height } ?: discovery?.default
+    val defaultTier = store.preferredTier.takeIf { height == null }
+    val option = selectedDownloadOption(discovery, store.preferredTier, height)
     LaunchedEffect(discovery?.finished, choices, height) {
-        if (discovery?.finished == true && choices.none { it.quality.height == height }) height = discovery.default?.quality?.height
+        if (height != null && discovery?.finished == true && choices.none { it.quality.height == height }) height = null
     }
-    LaunchedEffect(selected, option, discovery?.finished, retry, audioLabel) {
+    LaunchedEffect(selected, option, discovery?.finished, retry, audioLabel, defaultTier) {
         if (selected.isEmpty()) session.cancelSelectionWork(media.key)
-        else if (discovery?.finished == true && option != null) session.validateTier(store, selected, language, option, retry, audioLabel)
+        else if (discovery?.finished == true && option != null) session.validateTier(store, selected, language, option, retry, audioLabel, defaultTier)
         else session.cancelTierWork(media.key)
     }
     val qualities = selected.associate { (key, _) -> key to session.prepared[key]?.let {
-        if (it.qualities.isNotEmpty() && option != null) closestDownloadQuality(it.qualities, option.quality.height) else null
+        if (it.qualities.isNotEmpty() && option != null) {
+            if (defaultTier != null) preferredDownloadQuality(it, defaultTier) else closestDownloadQuality(it.qualities, option.quality.height)
+        } else null
     } }
     val checking = selected.any { it.first in session.pending }
     val exceptions = selected.filter { (key, _) -> key in session.errors || session.prepared[key]?.let { item ->
@@ -283,7 +286,7 @@ internal interface DownloadUiDependencies {
     } == true }
     val ready = discovery?.finished == true && option != null && selected.isNotEmpty() && !checking &&
         selected.all { it.first !in session.errors && qualities[it.first] != null && option != null &&
-            session.validated(it.first, option, language, audioLabel) }
+            session.validated(it.first, option, language, audioLabel, defaultTier) }
     fun estimate(item: PreparedDownload, quality: DownloadQuality): DownloadQuality {
         val tracks = item.audioTracksFor(quality)
         val index = if (audioLabel == "All tracks") -1 else tracks.firstOrNull { it.label == audioLabel }?.index
@@ -544,7 +547,7 @@ internal interface DownloadUiDependencies {
 @Composable internal fun DownloadSettings() {
     val store = rememberDownloads()
     val entries by store.entries.collectAsState()
-    var preferred by remember { mutableIntStateOf(store.preferredHeight) }
+    var preferred by remember { mutableStateOf(store.preferredTier) }
     var menu by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
         Text("Downloads", style = MaterialTheme.typography.labelMedium, color = AliflixContentSecondary)
@@ -555,15 +558,20 @@ internal interface DownloadUiDependencies {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Preferred quality", Modifier.weight(1f))
                     Box {
-                        TextButton(onClick = { menu = true }) { Text("${preferred}p ▾") }
+                        TextButton(onClick = { menu = true }) { Text(preferred.label + " ▾") }
                         DropdownMenu(menu, { menu = false },
         shape = AliflixCorners.Chrome,
         containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
         tonalElevation = AliflixElevation.None,
         shadowElevation = AliflixElevation.None,
-                        ) { listOf(360, 480, 720, 1080, 2160).forEach {
-                            DropdownMenuItem(text = { Text("${it}p") }, onClick = {
-                                preferred = it; store.preferences.edit().putInt("quality", it).apply(); menu = false
+                         ) { DownloadQualityTier.entries.forEach { tier ->
+                            DropdownMenuItem(text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(tier.label, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                    Text(tier.description, fontSize = 11.sp, color = AliflixContentSecondary, maxLines = 1)
+                                }
+                            }, trailingIcon = { if (preferred == tier) Icon(Icons.Rounded.Check, null, tint = AliflixAccentSecondary, modifier = Modifier.size(17.dp)) }, onClick = {
+                                preferred = tier; store.preferences.edit().putString("qualityTier", tier.name).apply(); menu = false
                             })
                         } }
                     }

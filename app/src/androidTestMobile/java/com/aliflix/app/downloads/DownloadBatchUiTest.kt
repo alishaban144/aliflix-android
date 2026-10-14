@@ -38,7 +38,7 @@ class DownloadBatchUiTest {
 
     private class FakeUi : DownloadUiDependencies {
         override val entries = MutableStateFlow<List<SavedDownload>>(emptyList())
-        override val preferredHeight = 720
+        override var preferredTier = DownloadQualityTier.MEDIUM
         override val requestNotifications = false
         var audioForPrepared: (String) -> List<DownloadAudioTrack> = { emptyList() }
         var heightsForPrepared: (String) -> List<Int> = { listOf(1080, 720, 480) }
@@ -104,13 +104,45 @@ class DownloadBatchUiTest {
         return SavedDownload(download, playback, "720p", contentLength)
     }
 
-    private fun openPicker(fake: FakeUi, episode: Episode?) {
+    private fun openPicker(fake: FakeUi, episode: Episode?, readyLabel: String = "Balanced") {
         compose.setContent { com.aliflix.app.ui.theme.AliflixMobileTheme { DownloadButton(Media(1396, MediaType.TV, "Series"), episode, dependencies = fake) } }
-        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Download, Series", true)
+        val description = if (episode == null) "Download, Series" else
+            "Download, Series, season ${episode.seasonNumber}, episode ${episode.number}"
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription(description)
             .fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithContentDescription("Download, Series").performClick()
+        compose.onNodeWithContentDescription(description).performClick()
         if (episode == null) compose.onNodeWithText("Episodes").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText(if (episode == null) "Clear" else "Balanced").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText(if (episode == null) "Clear" else readyLabel).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test fun lowPreferenceActuallyEnqueuesTheSmallestDetectedResolutionByDefault() {
+        val fake = FakeUi().apply {
+            preferredTier = DownloadQualityTier.LOW
+            heightsForPrepared = { listOf(930,560,320) }
+        }
+        openPicker(fake,Episode(1,1,"Episode 1"))
+        compose.onAllNodesWithText("Download").onLast().performClick()
+        compose.waitUntil(5_000) { fake.enqueued.isNotEmpty() }
+        assertEquals("320p",fake.enqueued.single().single().second)
+    }
+
+    @Test fun highPreferenceActuallyEnqueuesTheBestDetectedResolutionByDefault() {
+        val fake = FakeUi().apply {
+            preferredTier = DownloadQualityTier.HIGH
+            heightsForPrepared = { listOf(930,560,320) }
+        }
+        openPicker(fake,Episode(1,1,"Episode 1"))
+        compose.onAllNodesWithText("Download").onLast().performClick()
+        compose.waitUntil(5_000) { fake.enqueued.isNotEmpty() }
+        assertEquals("930p",fake.enqueued.single().single().second)
+    }
+
+    @Test fun mediumPreferenceWithTwoDetectedQualitiesActuallyEnqueuesLower() {
+        val fake = FakeUi().apply { heightsForPrepared = { listOf(930,320) } }
+        openPicker(fake,Episode(1,1,"Episode 1"),readyLabel = "Best")
+        compose.onAllNodesWithText("Download").onLast().performClick()
+        compose.waitUntil(5_000) { fake.enqueued.isNotEmpty() }
+        assertEquals("320p",fake.enqueued.single().single().second)
     }
 
     private fun selectAll() {

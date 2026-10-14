@@ -28,15 +28,13 @@ import kotlin.math.sin
 
 /** A compact orbital treatment around the canonical brand asset. */
 @Composable
-internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
-    val reducedMotion = !ValueAnimator.areAnimatorsEnabled()
-    val orbit = rememberInfiniteTransition(label = "ask-orbit")
-    val phase by orbit.animateFloat(
-        initialValue = 0f,
-        targetValue = if (reducedMotion) 0f else 1f,
-        animationSpec = infiniteRepeatable(tween(48000, easing = LinearEasing)),
-        label = "subtle-orbit",
-    )
+internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { DiscoverTouchTracker() }, onMode: (Int) -> Unit) {
+    val phase = if (com.aliflix.app.BuildConfig.IS_TV) {
+        val orbit = rememberInfiniteTransition(label = "ask-orbit")
+        val value by orbit.animateFloat(0f, if (!ValueAnimator.areAnimatorsEnabled()) 0f else 1f,
+            infiniteRepeatable(tween(48000, easing = LinearEasing)), label = "subtle-orbit")
+        value
+    } else 0f
     AliflixSurface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small),
         shape = AliflixCorners.Panel,
@@ -59,7 +57,9 @@ internal fun DiscoverAskCard(onMode: (Int) -> Unit) {
                     color = AliflixContentPrimary,
                     modifier = Modifier.weight(1f).padding(start = 9.dp),
                 )
-                Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
+                if (!com.aliflix.app.BuildConfig.IS_TV) {
+                    DiscoverLiveOrb(touchTracker, Modifier.size(76.dp))
+                } else Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
                     Canvas(Modifier.fillMaxSize()) {
                         val r = size.minDimension * .41f
                         val angle = phase * (2f * PI.toFloat())

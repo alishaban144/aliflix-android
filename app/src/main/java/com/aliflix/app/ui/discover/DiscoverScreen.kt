@@ -152,6 +152,7 @@ internal fun DiscoverScreen(
     catalogBottomPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
+    val touchTracker = remember { DiscoverTouchTracker() }
     val context = LocalContext.current
     val shelves = remember(context) { com.aliflix.app.data.ActivityShelves(context) }
     var recentSearches by remember { mutableStateOf(shelves.read("search")) }
@@ -237,7 +238,8 @@ internal fun DiscoverScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .downloadAtmosphere(),
+            .downloadAtmosphere()
+            .then(if (!com.aliflix.app.BuildConfig.IS_TV) Modifier.observeDiscoverTouches(touchTracker) else Modifier),
     ) {
         AnimatedContent(
             targetState = recommendModeActive,
@@ -428,7 +430,7 @@ internal fun DiscoverScreen(
                             }
                         }
 
-                        if (aiEnabled && fieldValue.text.isBlank()) DiscoverAskCard { mode ->
+                        if (aiEnabled && fieldValue.text.isBlank()) DiscoverAskCard(touchTracker) { mode ->
                             onSetAskEditorState(askEditorState.copy(mode = mode))
                             recommendModeActive = true
                             onModeChange(SearchMode.AI)

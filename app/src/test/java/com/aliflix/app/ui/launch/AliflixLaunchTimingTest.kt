@@ -7,6 +7,15 @@ import org.junit.Test
 class AliflixLaunchTimingTest {
 
     @Test
+    fun layeredRevealPreservesTheThreeSecondSequenceAndCompletesBeforeWords() {
+        assertEquals(0f, launchSecondaryReveal(0f), 0f)
+        assertEquals(1f, launchSecondaryReveal(1f), 0f)
+        assertTrue(launchSecondaryReveal(.2f) > 0f)
+        assertTrue(LAUNCH_TITLE_START_SECONDS + LAUNCH_TITLE_REVEAL_SECONDS < LAUNCH_WORD_SEQUENCE_START_SECONDS)
+        assertEquals(3.05f, LAUNCH_WORD_SEQUENCE_START_SECONDS + LAUNCH_WORD_SLOT_SECONDS * LAUNCH_WORD_COUNT, .0001f)
+    }
+
+    @Test
     fun testWordmarkUsesTheRequestedSubtleTopAnchoredCurve() {
         assertEquals("ALIFLIX", ALIFLIX_WORDMARK)
         assertEquals(
