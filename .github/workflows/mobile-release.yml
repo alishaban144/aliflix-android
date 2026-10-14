@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "251"
-  RELEASE_VERSION_NAME: "3.1.161"
+  RELEASE_VERSION_CODE: "252"
+  RELEASE_VERSION_NAME: "3.1.162"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -358,7 +358,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Restores the original My Space collection tabs while keeping the My List genre improvements. Player actions use slim custom icons without cards, magnification or lift; the familiar back button returns with cleaner placement in portrait and landscape."
+          RELEASE_NOTES="Shorter, coordinated launch with a brief Stories hold and a fast Home handoff. Slow networking opens Home's loading state instead of extending the branded screen. Ask bookmarks move to the card corner. Player actions align right in portrait and reveal together. The subtitle shortcut opens only subtitles; More retains advanced settings."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -387,15 +387,17 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile UI correction based on the latest GitHub release, v3.1.160.
+            Mobile motion and interaction refinements based on the latest GitHub release, v3.1.161.
 
-            - Restores the original My List, Favorites, History and Downloads tabs. The redesigned My List genre row remains.
-            - Restores the familiar circular player back button.
-            - Replaces upper player tiles with custom, consistent line icons and invisible 48dp touch targets. No background cards, dock magnification, lift or header slide.
-            - Keeps title, episode identity and actions aligned in portrait and landscape, including long titles and large fonts.
-            - Retains the launch, Ask Aliflix, switch and slim play/pause improvements from v3.1.160.
+            - Coordinates the logo and wordmark on a 420ms settle. Movies and Series each get 500ms; Stories has a brief 260ms still hold. The animation budget is about two seconds. Home prepares during the final still phase to protect word transitions; slow networking opens the existing Home loading state instead of holding the branded screen.
+            - Moves Ask Aliflix bookmarks to the upper right of each result card, clear of the poster.
+            - Keeps the custom player icons and landscape placement. Portrait aligns back and the right-hand action group on one top baseline, with full-width title and episode details below. More stays beside the other actions.
+            - Adapts the inspected Floating Action Button reveal into a shared 180ms player transition without a plus button, action cards or delayed controls.
+            - Removes the play button's circular outline and hard plate. The slim morphing glyph has softened corners and a rounded tip over a feathered shadow.
+            - The subtitle shortcut opens tracks, Off, More Subtitles, Search and results only. Advanced audio, sync and subtitle settings remain available through More.
+            - Keeps the restored My Space collection tabs and redesigned My List genre navigation.
 
-            Regression coverage and physical-device visual evidence are documented in docs/mobile-161-player-correction.md. TV source, resources and version are unchanged. No new runtime dependencies.
+            Regression coverage and physical-device visual evidence are documented in docs/mobile-162-motion-refinement.md. TV behavior, resources and version are unchanged. No new runtime dependencies.
           files: |
             aliflix-mobile.apk
             update-mobile.json

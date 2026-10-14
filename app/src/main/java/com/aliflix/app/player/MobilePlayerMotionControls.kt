@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -42,34 +43,56 @@ internal fun MobilePlayerActionHeader(title: String, detail: String, episodic: B
     BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         val compact = maxWidth < 640.dp
         val shortViewport = maxHeight < 400.dp
+        val titleLines = when {
+            shortViewport -> 1
+            compact && maxHeight >= 720.dp && LocalDensity.current.fontScale > 1.3f -> 3
+            else -> 2
+        }
         val actions: @Composable () -> Unit = {
             FlowRow(Modifier.testTag("player-actions"),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 0.dp else 4.dp, Alignment.End),
                 verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 if (episodic) PlayerLineAction(PlayerActionGlyph.Episodes,"Episodes",onEpisodes)
-                PlayerLineAction(PlayerActionGlyph.Captions,"Audio & Subtitles",onSubtitles)
+                PlayerLineAction(PlayerActionGlyph.Captions,"Subtitles",onSubtitles)
                 onQuality?.let { PlayerLineAction(PlayerActionGlyph.Quality,"Quality",it) }
                 PlayerLineAction(PlayerActionGlyph.Rotate,"Rotate",onRotate)
-                if (!compact) PlayerLineAction(PlayerActionGlyph.More,"More",onMore)
+                PlayerLineAction(PlayerActionGlyph.More,"More",onMore)
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        val back: @Composable () -> Unit = {
                 IconButton(onBack, Modifier.size(48.dp).clip(CircleShape)
                     .background(Color.White.copy(alpha = .07f))) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack,"Back",tint = Color.White,modifier = Modifier.size(22.dp))
                 }
-                Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp),
+        }
+        val identity: @Composable (Modifier) -> Unit = { identityModifier ->
+                Column(identityModifier,
                     verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(title, color = Color.White, fontSize = if (compact) 15.sp else 19.sp,
                         lineHeight = if (compact) 20.sp else 24.sp, fontWeight = FontWeight.SemiBold,
-                        maxLines = if (shortViewport) 1 else 2, overflow = TextOverflow.Ellipsis)
+                        maxLines = titleLines, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("player-title"))
                     if (detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = .65f), fontSize = 12.sp,
-                        lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        lineHeight = 16.sp, maxLines = if (compact && !shortViewport) 2 else 1,
+                        overflow = TextOverflow.Ellipsis,modifier = Modifier.fillMaxWidth().testTag("player-detail"))
                 }
-                if (compact) PlayerLineAction(PlayerActionGlyph.More,"More",onMore) else actions()
+        }
+        if (compact) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Navigation and actions share the first baseline; long identity text gets its own width.
+                Row(Modifier.fillMaxWidth(),verticalAlignment = Alignment.Top) {
+                    back()
+                    Spacer(Modifier.weight(1f))
+                    actions()
+                }
+                identity(Modifier.fillMaxWidth().padding(horizontal = 12.dp))
             }
-            if (compact) Row(Modifier.fillMaxWidth().padding(start = 60.dp)) { actions() }
+        } else {
+            Row(Modifier.fillMaxWidth(),verticalAlignment = Alignment.CenterVertically) {
+                back()
+                identity(Modifier.weight(1f).padding(start = 12.dp,end = 8.dp))
+                actions()
+            }
         }
     }
 }
@@ -84,7 +107,7 @@ private fun PlayerLineAction(glyph: PlayerActionGlyph, label: String, onClick: (
         role = Role.Button, onClick = onClick).semantics { contentDescription = label },
         contentAlignment = Alignment.Center) {
         // A 24-unit optical grid and a shared rounded stroke keep every glyph equally light.
-        Canvas(Modifier.size(26.dp)) {
+        Canvas(Modifier.size(26.dp).playerActionReveal()) {
             val ink = Color.White.copy(alpha = if (pressed) .60f else .94f)
             val stroke = Stroke(1.65f, cap = StrokeCap.Round, join = StrokeJoin.Round)
             fun line(x1: Float,y1: Float,x2: Float,y2: Float) =
@@ -138,25 +161,44 @@ private val playPoints = listOf(Offset(8f,5f),Offset(13f,8.5f),Offset(13f,15.5f)
 internal fun playbackMorphPoint(index: Int, playProgress: Float): Offset =
     pausePoints[index] + (playPoints[index] - pausePoints[index]) * playProgress.coerceIn(0f,1f)
 
-/** Aceternity's two compatible four-point paths. Pause bars are half the source width,
- * with no added SVG stroke. The real playback state owns both the glyph and its label. */
+/** Rounds the exposed corners while letting the two play halves meet flush. */
+private fun Path.roundedPlaybackHalf(half: Int, progress: Float) {
+    rewind()
+    val corners = (0..3).map { playbackMorphPoint(half*4+it,progress) to it }
+        .fold(mutableListOf<Pair<Offset,Int>>()) { result, corner ->
+            if (result.isEmpty() || (result.last().first-corner.first).getDistance() > .001f) result.add(corner)
+            result
+        }
+    corners.forEachIndexed { index, (point, originalIndex) ->
+        val before = corners[(index+corners.size-1)%corners.size].first-point
+        val after = corners[(index+1)%corners.size].first-point
+        val shared = if (half == 0) originalIndex == 1 || originalIndex == 2 else originalIndex == 0 || originalIndex == 3
+        val rounding = .75f * if (shared) 1f-progress else 1f
+        val incoming = point + before * (minOf(rounding,before.getDistance()*.45f)/before.getDistance())
+        val outgoing = point + after * (minOf(rounding,after.getDistance()*.45f)/after.getDistance())
+        if (index == 0) moveTo(incoming.x,incoming.y) else lineTo(incoming.x,incoming.y)
+        quadraticTo(point.x,point.y,outgoing.x,outgoing.y)
+    }
+    close()
+}
+
+/** Aceternity's compatible paths retain slim pause bars and a smooth morph, with
+ * softly rounded outer corners and no outline. Playback owns both glyph and label. */
 @Composable
 internal fun MobileMorphPlaybackIcon(isPlaying: Boolean, modifier: Modifier = Modifier) {
     val motion = rememberMobileMotionEnabled()
     val progress = animateFloatAsState(if (isPlaying) 0f else 1f,
         if (motion) spring(dampingRatio = .85f, stiffness = 289f) else snap(),label = "playback-path-morph")
     val paths = remember { listOf(Path(),Path()) }
-    Canvas(modifier.semantics { contentDescription = if (isPlaying) "Pause" else "Play" }) {
+    val merged = remember { Path() }
+    Canvas(modifier.playerActionReveal(rotate = false).semantics { contentDescription = if (isPlaying) "Pause" else "Play" }) {
         withTransform({ scale(size.width/24f,size.height/24f, pivot = Offset.Zero) }) {
             paths.forEachIndexed { half, path ->
-                path.rewind()
-                repeat(4) { corner ->
-                    val point = playbackMorphPoint(half*4+corner,progress.value)
-                    if (corner == 0) path.moveTo(point.x,point.y) else path.lineTo(point.x,point.y)
-                }
-                path.close()
-                drawPath(path,Color(0xFFF5F1FF))
+                path.roundedPlaybackHalf(half,progress.value.coerceIn(0f,1f))
             }
+            // One filled silhouette avoids a faint antialias seam where the play halves meet.
+            if (merged.op(paths[0],paths[1],PathOperation.Union)) drawPath(merged,Color(0xFFF5F1FF))
+            else paths.forEach { drawPath(it,Color(0xFFF5F1FF)) }
         }
     }
 }

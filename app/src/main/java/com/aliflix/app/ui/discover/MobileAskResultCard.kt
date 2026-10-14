@@ -34,23 +34,22 @@ internal fun MobileAskResultCard(
             val posterWidth = (maxWidth * .25f).coerceIn(54.dp, 82.dp)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(posterWidth)) {
-                    AskAliflixPoster(item.media, Modifier.fillMaxWidth().aspectRatio(2f/3f), cornerRadius = 12.dp)
-                    AliflixIconButton(onClick = onToggleMyList,
-                        modifier = Modifier.align(Alignment.BottomEnd).size(48.dp).testTag("ask-result-bookmark"),
-                        level = AliflixSurfaceLevel.Elevated) {
-                        Icon(if (inMyList) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
-                            if (inMyList) "Remove ${item.media.title} from My List" else "Add ${item.media.title} to My List",
-                            tint = if (inMyList) AliflixAccentSecondary else AliflixContentPrimary, modifier = Modifier.size(19.dp))
-                    }
-                }
+                AskAliflixPoster(item.media, Modifier.width(posterWidth).aspectRatio(2f/3f).testTag("ask-result-poster"), cornerRadius = 12.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(item.media.title, color = AliflixContentPrimary, fontSize = 16.sp,
-                        lineHeight = 20.sp, fontWeight = FontWeight.Bold,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth().testTag("ask-result-title"))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        Text(item.media.title, color = AliflixContentPrimary, fontSize = 16.sp,
+                            lineHeight = 20.sp, fontWeight = FontWeight.Bold,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).testTag("ask-result-title"))
+                        IconButton(onClick = onToggleMyList,
+                            modifier = Modifier.size(48.dp).testTag("ask-result-bookmark")) {
+                            Icon(if (inMyList) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
+                                if (inMyList) "Remove ${item.media.title} from My List" else "Add ${item.media.title} to My List",
+                                tint = if (inMyList) AliflixAccentSecondary else AliflixContentPrimary, modifier = Modifier.size(19.dp))
+                        }
+                    }
                     Text(askResultMetadata(item.media), color = AliflixContentSecondary,
-                        fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        fontSize = 11.sp, lineHeight = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (item.media.genres.isNotEmpty()) Text(item.media.genres.take(2).joinToString(" · "),
                         color = AliflixContentSecondary, fontSize = 11.sp, lineHeight = 15.sp,
                         maxLines = 2, overflow = TextOverflow.Ellipsis,

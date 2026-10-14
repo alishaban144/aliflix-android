@@ -59,6 +59,11 @@ class MobilePolishUiTest {
             compose.runOnIdle { width = w; scale = f }
             val card = compose.onNodeWithTag("ask-result-${item.media.key}").fetchSemanticsNode().boundsInRoot
             val score = compose.onNodeWithTag("ask-result-score",useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val bookmark = compose.onNodeWithTag("ask-result-bookmark",useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val poster = compose.onNodeWithTag("ask-result-poster",useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue("Bookmark belongs to the card's upper right",bookmark.right > card.right-with(compose.density) { 16.dp.toPx() })
+            assertTrue("Bookmark never overlays the poster",bookmark.left >= poster.right)
+            assertTrue("Bookmark is anchored at the top",bookmark.top <= card.top+with(compose.density) { 13.dp.toPx() })
             assertTrue(score.left >= card.left && score.right <= card.right+.5f)
             assertTrue(card.height < with(compose.density) { 360.dp.toPx() })
             if (w >= 320.dp && f == 1f) assertTrue(card.height < with(compose.density) { 190.dp.toPx() })
@@ -140,7 +145,7 @@ class MobilePolishUiTest {
         capture("home-pinned.png")
     }
 
-    @Test fun launchWaitsForHomeAndCompletesOnlyAfterItsTimedExit() {
+    @Test fun launchHandsOffToHomeSkeletonWithoutWaitingForNetwork() {
         var ready by mutableStateOf(false)
         var completed = 0
         compose.mainClock.autoAdvance = false
@@ -151,13 +156,11 @@ class MobilePolishUiTest {
         capture("launch-logo-first.png")
         compose.mainClock.advanceTimeBy(300)
         capture("launch-title-reveal.png")
-        compose.mainClock.advanceTimeBy(2600)
-        compose.runOnIdle { assertEquals(0,completed); ready = true }
-        compose.mainClock.advanceTimeBy(32)
-        compose.mainClock.advanceTimeBy(250)
-        compose.runOnIdle { assertEquals(0,completed) }
-        compose.mainClock.advanceTimeBy(100)
-        compose.runOnIdle { assertEquals(1,completed) }
+        compose.mainClock.advanceTimeBy(700)
+        compose.runOnIdle { assertEquals(0,completed); assertFalse(ready) }
+        compose.mainClock.advanceTimeBy(1000)
+        compose.runOnIdle { assertEquals(1,completed); assertFalse(ready); ready = true }
+        compose.onNodeWithText("Ready Home").assertIsDisplayed()
         compose.mainClock.advanceTimeBy(1000)
         compose.runOnIdle { assertEquals(1,completed) }
     }
@@ -197,10 +200,12 @@ class MobilePolishUiTest {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density,fontScale)) {
             NativePlayerScreen(NativePlayerUi(title = "Fixture",ready = true,
+                playbackSelection = PlaybackSelection(Media(1,MediaType.MOVIE,"Fixture"),source = PlaybackSource(MobilePlaybackProvider.FLIXER)),
                 audioSyncAvailable = true,audioSyncApplied = true,audioSyncState = status),null)
             }
         } }
-        compose.onNodeWithContentDescription("Audio & Subtitles").performClick()
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Audio & subtitles").performClick()
         for (scale in listOf(1f,2f)) {
             compose.runOnIdle { fontScale = scale; status = null }
             compose.onNodeWithText("BETA",useUnmergedTree = true).assertIsDisplayed()
@@ -278,13 +283,16 @@ class MobilePolishUiTest {
         } }
         compose.mainClock.advanceTimeBy(32)
         val initial = compositions
+        compose.mainClock.advanceTimeBy(700)
+        compose.runOnIdle { assertEquals("Heavy Home stays out of moving words",initial,compositions) }
+        compose.mainClock.advanceTimeBy(1000)
+        compose.runOnIdle { assertEquals(1,compositions) }
         repeat(60) { compose.mainClock.advanceTimeBy(16) }
         compose.runOnIdle {
-            assertEquals(0,initial)
-            // CI also exercises Android's reduced-motion setting (no moving intro).
-            assertEquals(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 0 else 1,compositions)
+            assertEquals(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 0 else 1,initial)
+            assertEquals(1,compositions)
         }
-        compose.mainClock.advanceTimeBy(2800)
+        compose.mainClock.advanceTimeBy(600)
         compose.runOnIdle { assertEquals(1,compositions) }
     }
 
@@ -303,7 +311,7 @@ class MobilePolishUiTest {
         for (w in listOf(240.dp,320.dp,700.dp)) for (f in listOf(1f,2f)) {
             compose.runOnIdle { width = w; scale = f }
             val root = compose.onNodeWithTag("player-header-fixture").fetchSemanticsNode().boundsInRoot
-            for (label in listOf("Back","Episodes","Audio & Subtitles","Quality","Rotate","More")) {
+            for (label in listOf("Back","Episodes","Subtitles","Quality","Rotate","More")) {
                 val button = compose.onNodeWithContentDescription(label).assertIsDisplayed()
                 val bounds = button.fetchSemanticsNode().boundsInRoot
                 assertTrue("$label fits at $w",bounds.left >= root.left-.5f && bounds.right <= root.right+.5f)

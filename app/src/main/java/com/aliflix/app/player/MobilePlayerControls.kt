@@ -179,7 +179,7 @@ internal fun MobilePlayerCenterControls(
             ) {
                 Seek15Icon(
                     isForward = false,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(40.dp).playerActionReveal(rotate = false),
                 )
             }
             if (feedback?.isForward == false) SeekButtonFeedback(feedback)
@@ -199,9 +199,10 @@ internal fun MobilePlayerCenterControls(
             Box(
                 modifier = Modifier
                     .size(if (com.aliflix.app.BuildConfig.IS_TV) 72.dp else 64.dp)
-                    .clip(CircleShape)
-                    .background(if (com.aliflix.app.BuildConfig.IS_TV) Color(0xFFF4F1FA) else Color(0x54201D29))
-                    .border(BorderStroke(.5.dp, Color.White.copy(alpha = if (com.aliflix.app.BuildConfig.IS_TV) .55f else .24f)), CircleShape),
+                    .then(if (com.aliflix.app.BuildConfig.IS_TV) Modifier.clip(CircleShape)
+                        .background(Color(0xFFF4F1FA)).border(BorderStroke(.5.dp,Color.White.copy(alpha = .55f)),CircleShape)
+                    else Modifier.background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(
+                        Color.Black.copy(alpha = .28f),Color.Black.copy(alpha = .12f),Color.Transparent)))),
                 contentAlignment = Alignment.Center,
             ) {
                 if (!com.aliflix.app.BuildConfig.IS_TV) MobileMorphPlaybackIcon(isPlaying, Modifier.size(42.dp))
@@ -240,7 +241,7 @@ internal fun MobilePlayerCenterControls(
             ) {
                 Seek15Icon(
                     isForward = true,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(40.dp).playerActionReveal(rotate = false),
                 )
             }
             if (feedback?.isForward == true) SeekButtonFeedback(feedback)

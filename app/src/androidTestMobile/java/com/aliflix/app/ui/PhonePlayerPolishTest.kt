@@ -108,7 +108,7 @@ class PhonePlayerPolishTest {
         } }
         compose.onNodeWithText("Silo").assertIsDisplayed()
         compose.onNodeWithText("S1 E6 • Prayers and Visions").assertIsDisplayed()
-        for (description in listOf("Back", "Audio & Subtitles", "Rotate", "More")) {
+        for (description in listOf("Back", "Subtitles", "Rotate", "More")) {
             val bounds = compose.onNodeWithContentDescription(description).fetchSemanticsNode().touchBoundsInRoot
             assertTrue("$description needs a usable touch target", bounds.width >= 48 && bounds.height >= 48)
         }

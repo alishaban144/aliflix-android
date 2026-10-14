@@ -549,16 +549,6 @@ internal fun NativePlayerScreen(
             }
         }
 
-        // Subtle dark scrim when controls are visible
-        AnimatedVisibility(
-            visible = controls && !preparing,
-            enter = fadeIn(tween(180)),
-            exit = fadeOut(tween(200)),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            Box(Modifier.fillMaxSize().background(PlayerScrimColor))
-        }
-
         if (preparing) {
             IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
@@ -567,17 +557,14 @@ internal fun NativePlayerScreen(
             }
         }
 
-        // Redesigned controls overlay (compact top bar, outlined center controls, purple timeline)
-        AnimatedVisibility(
+        // One visibility transition owns the header, transport, timeline and scrim.
+        MobilePlayerControlsVisibility(
             visible = controls && !preparing,
-            enter = fadeIn(tween(180)) + androidx.compose.animation.scaleIn(tween(220), initialScale = 0.98f),
-            exit = fadeOut(tween(200)),
             modifier = Modifier.fillMaxSize(),
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    ,
+                    .fillMaxSize().background(PlayerScrimColor),
             ) {
                 MobilePlayerTopBar(
                     title = state.title,
@@ -591,7 +578,7 @@ internal fun NativePlayerScreen(
                         interaction++
                     },
                     onSubtitles = {
-                        sheet = "Audio & subtitles"
+                        sheet = "Subtitles"
                         interaction++
                     },
                     onQuality = {
@@ -623,9 +610,7 @@ internal fun NativePlayerScreen(
                         onSeekBack = { seekWithFeedback(false) },
                         onSeekForward = { seekWithFeedback(true) },
                         feedback = seekFeedback.state,
-                        modifier = Modifier.align(Alignment.Center).animateEnterExit(
-                            enter = fadeIn(tween(220, delayMillis = 35)) + scaleIn(tween(260, easing = FastOutSlowInEasing), initialScale = .86f),
-                            exit = fadeOut(tween(150)) + scaleOut(tween(190), targetScale = .93f)),
+                        modifier = Modifier.align(Alignment.Center),
                     )
                 }
 
@@ -644,8 +629,6 @@ internal fun NativePlayerScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-                        .animateEnterExit(enter = androidx.compose.animation.slideInVertically(tween(200)) { it / 3 },
-                            exit = androidx.compose.animation.slideOutVertically(tween(140)) { it / 4 })
                         .padding(bottom = 20.dp),
                 )
             }
@@ -953,7 +936,8 @@ internal fun NativePlayerScreen(
                         TrackOptions(player, C.TRACK_TYPE_VIDEO, trackRevision) { _, _ -> sheet = null }
                     }
 
-                    "Audio & subtitles" -> {
+                    "Audio & subtitles", "Subtitles" -> {
+                        if (sheet == "Audio & subtitles") {
                         Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, onTrackSelected = onAudioSelected) { _, _ -> }
                         Spacer(Modifier.height(4.dp))
@@ -1079,6 +1063,7 @@ internal fun NativePlayerScreen(
                         }
 
                         Spacer(Modifier.height(4.dp))
+                        }
                         Text("SUBTITLES", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         SheetOption(
                             "Off",

@@ -85,7 +85,7 @@ class PlayerHeaderVisualTest {
                         title = if (series) "A Very Long Series Title Across the Edge of Tomorrow" else "The Girl Next Door"
                     }
                     compose.waitForIdle()
-                    val labels = listOf("Back","Audio & Subtitles","Quality","Rotate","More") + if (series) listOf("Episodes") else emptyList()
+                    val labels = listOf("Back","Subtitles","Quality","Rotate","More") + if (series) listOf("Episodes") else emptyList()
                     val bounds = labels.map { label ->
                         val node = compose.onNodeWithContentDescription(label).assertIsDisplayed().fetchSemanticsNode()
                         val target = node.touchBoundsInRoot
@@ -94,6 +94,24 @@ class PlayerHeaderVisualTest {
                         target
                     }
                     bounds.forEachIndexed { i, a -> bounds.drop(i+1).forEach { b -> assertFalse("Actions must never overlap",a.overlaps(b)) } }
+                    if (!landscape) {
+                        val more = compose.onNodeWithContentDescription("More").fetchSemanticsNode().boundsInRoot
+                        val rotate = compose.onNodeWithContentDescription("Rotate").fetchSemanticsNode().boundsInRoot
+                        val back = compose.onNodeWithContentDescription("Back").fetchSemanticsNode().boundsInRoot
+                        assertEquals("Portrait More stays beside the other actions",rotate.center.y,more.center.y,1f)
+                        assertEquals("Portrait actions align with navigation",back.center.y,more.center.y,1f)
+                        assertTrue("Portrait actions end at the right edge",more.right > compose.onNodeWithTag("full-player").fetchSemanticsNode().boundsInRoot.right-with(compose.density) { 20.dp.toPx() })
+                        val identity = compose.onNodeWithTag("player-title").fetchSemanticsNode().boundsInRoot
+                        val detail = compose.onNodeWithTag("player-detail").fetchSemanticsNode().boundsInRoot
+                        assertTrue("Identity stays clear of the aligned controls",identity.top >= more.bottom)
+                        assertEquals("Title and episode details share an edge",identity.left,detail.left,1f)
+                        assertTrue("Long episode details retain the full header width",detail.width <= compose.onNodeWithTag("full-player").fetchSemanticsNode().boundsInRoot.width)
+                        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                        compose.onNodeWithTag("player-detail").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                        val layout = layouts.single()
+                        capture("header-before-readability-check.png")
+                        assertFalse("Episode name remains readable: series=$series font=$font size=${layout.size} lines=${layout.lineCount} widthOverflow=${layout.didOverflowWidth} heightOverflow=${layout.didOverflowHeight}",layout.hasVisualOverflow)
+                    }
                     val play = compose.onNodeWithContentDescription("Play").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
                     bounds.forEach { assertFalse("Header must clear transport",it.overlaps(play)) }
                     assertFalse("Title must clear transport",compose.onNodeWithText(title).fetchSemanticsNode().boundsInRoot.overlaps(play))
@@ -113,7 +131,7 @@ class PlayerHeaderVisualTest {
                 MobilePlayerTopBar("Silo",true,{},{},{},{},{},detail = "S1 E6",onQuality = {})
             }
         } }
-        for (label in listOf("Episodes","Audio & Subtitles","Quality","Rotate","More")) {
+        for (label in listOf("Episodes","Subtitles","Quality","Rotate","More")) {
             val node = compose.onNodeWithContentDescription(label)
             val before = node.fetchSemanticsNode().boundsInRoot
             node.performTouchInput { down(center) }

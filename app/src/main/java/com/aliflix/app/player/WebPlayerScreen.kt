@@ -150,6 +150,7 @@ fun WebPlayerScreen(
     var episodeMenuExpanded by remember(selection.key) { mutableStateOf(false) }
     var controlsVisible by remember(selection.key) { mutableStateOf(true) }
     var subtitleDialogVisible by remember(selection.key) { mutableStateOf(false) }
+    var subtitlePickerOnly by remember { mutableStateOf(false) }
     var subtitleTracks by remember(selection.key) { mutableStateOf<List<SubtitleTrack>?>(null) }
     var subtitleSearching by remember(selection.key) { mutableStateOf(false) }
     var subtitleSearchError by remember(selection.key) { mutableStateOf<String?>(null) }
@@ -454,11 +455,13 @@ fun WebPlayerScreen(
                 onSelectEpisode = onSelectEpisode,
                 subtitlesActive = selectedSubtitleTrack != null && activeSubtitleCues.isNotEmpty(),
                 subtitleLanguage = selectedSubtitleTrack?.languageName,
-                onOpenSubtitles = { subtitleDialogVisible = true },
+                onOpenSubtitles = { subtitlePickerOnly = false; subtitleDialogVisible = true },
+                onOpenSubtitlePicker = { subtitlePickerOnly = true; subtitleDialogVisible = true },
             )
 
             if (subtitleDialogVisible) {
                 SubtitleDialog(
+                    pickerOnly = subtitlePickerOnly,
                     tracks = subtitleTracks.orEmpty(),
                     searching = subtitleSearching,
                     searchError = subtitleSearchError,
@@ -524,6 +527,7 @@ fun WebPlayerScreen(
 
 @Composable
 private fun SubtitleDialog(
+    pickerOnly: Boolean = false,
     tracks: List<SubtitleTrack>,
     searching: Boolean,
     searchError: String?,
@@ -597,7 +601,7 @@ private fun SubtitleDialog(
                     }
                 }
 
-                if (selectedTrack != null) {
+                if (selectedTrack != null && !pickerOnly) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()

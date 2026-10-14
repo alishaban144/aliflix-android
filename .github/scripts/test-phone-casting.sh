@@ -57,6 +57,7 @@ echo "Android phone API $API ready; running decoded-frame and notification regre
 classes=com.aliflix.app.player.NativeBackgroundPlaybackTest,com.aliflix.app.player.WebStreamHandoffTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.DetailsStabilityTest,com.aliflix.app.data.ExactProgressTest,com.aliflix.app.player.CastSubtitleTracksTest,com.aliflix.app.player.NativeSubtitleRenderingTest,com.aliflix.app.ui.PhonePlayerPolishTest,com.aliflix.app.ui.DiscoverCatalogueUiTest
 classes="$classes,com.aliflix.app.ui.MobilePolishUiTest,com.aliflix.app.downloads.DownloadBatchUiTest"
 classes="$classes,com.aliflix.app.player.PlayerHeaderVisualTest"
+classes="$classes,com.aliflix.app.player.MobileRefinementUiTest"
 classes="${ALIFLIX_TEST_CLASSES:-$classes}"
 # Use a deterministic modern phone viewport for full and focused suites alike.
 # The generic AVD's inherited tiny viewport clips nested-sheet/player fixtures.

@@ -79,24 +79,32 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 
-private val launchCameraEase = CubicBezierEasing(.33f,0f,.2f,1f)
 private val launchLayerEase = CubicBezierEasing(.16f,1f,.3f,1f)
-internal fun launchSecondaryReveal(progress: Float): Float {
-    val p = progress.coerceIn(0f,1f)
-    if (p == 0f || p == 1f) return p
-    // A damped spring corresponding to the reference's bouncy secondary mask reveal.
-    return (1f - kotlin.math.exp(-7f*p)*kotlin.math.cos(10f*p)).coerceIn(0f,1f)
-}
 
-internal const val LAUNCH_TITLE_START_SECONDS = 0.3f
-internal const val LAUNCH_TITLE_REVEAL_SECONDS = 0.58f
-internal const val LAUNCH_ROTATOR_START_SECONDS = 0.78f
-internal const val LAUNCH_ROTATOR_REVEAL_SECONDS = 0.35f
-internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 0.95f
-internal const val LAUNCH_WORD_SLOT_SECONDS = 0.7f
+internal const val LAUNCH_TITLE_START_SECONDS = 0.08f
+internal const val LAUNCH_TITLE_REVEAL_SECONDS = 0.34f
+internal const val LAUNCH_ROTATOR_START_SECONDS = 0.4f
+internal const val LAUNCH_ROTATOR_REVEAL_SECONDS = 0.12f
+internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 0.52f
+internal const val LAUNCH_WORD_SLOT_SECONDS = 0.5f
 internal const val LAUNCH_WORD_COUNT = 3
-internal const val LAUNCH_REDUCED_MOTION_MIN_SECONDS = 0.65f
-internal const val LAUNCH_EXIT_DURATION_SECONDS = 0.3f
+internal const val LAUNCH_FINAL_WORD_SLOT_SECONDS = 0.36f
+internal const val LAUNCH_BRAND_REVEAL_SECONDS = 0.42f
+internal const val LAUNCH_WORD_FADE_SECONDS = 0.1f
+internal const val LAUNCH_SEQUENCE_SECONDS = LAUNCH_WORD_SEQUENCE_START_SECONDS +
+    LAUNCH_WORD_SLOT_SECONDS * (LAUNCH_WORD_COUNT - 1) + LAUNCH_FINAL_WORD_SLOT_SECONDS
+internal const val LAUNCH_HOME_PREPARE_SECONDS = LAUNCH_WORD_SEQUENCE_START_SECONDS +
+    LAUNCH_WORD_SLOT_SECONDS * (LAUNCH_WORD_COUNT - 1) + LAUNCH_WORD_FADE_SECONDS
+internal const val LAUNCH_NETWORK_LIMIT_SECONDS = 2.0f
+internal const val LAUNCH_REDUCED_NETWORK_LIMIT_SECONDS = 0.3f
+
+internal fun launchBrandProgress(seconds: Float, reducedMotion: Boolean): Float =
+    if (reducedMotion) 1f else launchLayerEase.transform((seconds / LAUNCH_BRAND_REVEAL_SECONDS).coerceIn(0f,1f))
+
+internal fun isLaunchContentPreparationReady(seconds: Float, reducedMotion: Boolean): Boolean =
+    reducedMotion || seconds >= LAUNCH_HOME_PREPARE_SECONDS
+internal const val LAUNCH_REDUCED_MOTION_MIN_SECONDS = 0.15f
+internal const val LAUNCH_EXIT_DURATION_SECONDS = 0.16f
 internal const val LAUNCH_LOGO_MOTION_RATE = 1.15f
 internal const val ALIFLIX_WORDMARK = "ALIFLIX"
 internal val ALIFLIX_WORDMARK_HEIGHT_SCALES = listOf(1.055f, 1.035f, 1.017f, 1f, 1.017f, 1.035f, 1.055f)
@@ -107,7 +115,7 @@ internal fun isLaunchSequenceComplete(
 ): Boolean = elapsedSeconds >= if (isReducedMotion) {
     LAUNCH_REDUCED_MOTION_MIN_SECONDS
 } else {
-    LAUNCH_WORD_SEQUENCE_START_SECONDS + LAUNCH_WORD_SLOT_SECONDS * LAUNCH_WORD_COUNT
+    LAUNCH_SEQUENCE_SECONDS
 }
 
 /** Cached Home is already usable while its background refresh is still running. */
@@ -118,7 +126,8 @@ internal fun isLaunchExitReady(
     isHomeReady: Boolean,
     elapsedSeconds: Float,
     isReducedMotion: Boolean,
-): Boolean = isHomeReady && isLaunchSequenceComplete(elapsedSeconds, isReducedMotion)
+): Boolean = isLaunchSequenceComplete(elapsedSeconds, isReducedMotion) &&
+    (isHomeReady || elapsedSeconds >= if (isReducedMotion) LAUNCH_REDUCED_NETWORK_LIMIT_SECONDS else LAUNCH_NETWORK_LIMIT_SECONDS)
 
 internal fun calculateLaunchExitProgress(
     elapsedSeconds: Float,
@@ -190,14 +199,17 @@ fun AliflixLaunchOverlay(
     var composeHome by remember { mutableStateOf(false) }
     var homeFrameReady by remember { mutableStateOf(false) }
     LaunchedEffect(isReducedMotion) {
-        snapshotFlow { isLaunchSequenceComplete(clock.value, isReducedMotion) }.first { it }
-        // Compose the heavy catalogue only after the moving intro reaches its static hold.
+        snapshotFlow { isLaunchContentPreparationReady(clock.value, isReducedMotion) }.first { it }
+        // Home's first composition can be expensive. Keep it out of all moving word phases.
+        // Start in the final still hold, without adding another timed wait before handoff.
         // Two frame boundaries ensure layout/draw has finished before starting the fade.
+        withFrameNanos { }
+        withFrameNanos { }
         composeHome = true
     }
     LaunchedEffect(composeHome, isHomeReady) {
         homeFrameReady = false
-        if (composeHome && isHomeReady) {
+        if (composeHome) {
             withFrameNanos { }
             withFrameNanos { }
             homeFrameReady = true
@@ -206,8 +218,8 @@ fun AliflixLaunchOverlay(
 
     // Observe milestones, not every frame. Home composes independently from the launch clock.
     LaunchedEffect(isHomeReady, isReducedMotion, homeFrameReady) {
-        if (isHomeReady && homeFrameReady && !isDismissed) {
-            snapshotFlow { isLaunchExitReady(true, clock.value, isReducedMotion) }.first { it }
+        if (homeFrameReady && !isDismissed) {
+            snapshotFlow { isLaunchExitReady(isHomeReady, clock.value, isReducedMotion) }.first { it }
             if (exitStartSeconds < 0f) exitStartSeconds = clock.value
         }
     }
@@ -275,15 +287,16 @@ private fun AliflixLaunchStage(
         modifier = Modifier
             .width(stageWidth)
             .graphicsLayer {
-                translationY = (-10).dp.toPx()
-                val camera = if (isReducedMotion) 1f else 1.14f - .14f * launchCameraEase.transform((clock.value/3.05f).coerceIn(0f,1f))
+                val brand = launchBrandProgress(clock.value,isReducedMotion)
+                translationY = (-10f + 8f * (1f-brand)).dp.toPx()
+                val camera = 1.08f - .08f * brand
                 scaleX = camera; scaleY = camera
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // The original vector colors are never covered by the former heat/glow animation.
         AliflixLogoMark(Modifier.size(logoSize).graphicsLayer {
-            alpha = if (isReducedMotion) 1f else launchLayerEase.transform((clock.value/.3f).coerceIn(0f,1f))
+            alpha = launchBrandProgress(clock.value,isReducedMotion)
         })
 
         Spacer(Modifier.height(0.dp))
@@ -293,11 +306,10 @@ private fun AliflixLaunchStage(
             translationY = 0.dp,
             modifier = Modifier.fillMaxWidth()
                 .graphicsLayer {
-                    val p = if (isReducedMotion) 1f else launchLayerEase.transform(titleProgress())
-                    scaleX = 1f + 2.306f*(1f-p); scaleY = scaleX
+                    alpha = if (isReducedMotion) 1f else launchLayerEase.transform(titleProgress())
                 }
                 .drawWithContent {
-                    clipRect(bottom = size.height * launchSecondaryReveal(titleProgress())) { this@drawWithContent.drawContent() }
+                    clipRect(bottom = size.height * launchLayerEase.transform(titleProgress())) { this@drawWithContent.drawContent() }
                 }
                 .clearAndSetSemantics { contentDescription = ALIFLIX_WORDMARK },
         )
@@ -372,29 +384,20 @@ internal fun calculateWordState(
     }
     if (seq < LAUNCH_WORD_SEQUENCE_START_SECONDS) return 0f to 8f
     val wordTime = seq - LAUNCH_WORD_SEQUENCE_START_SECONDS
-    val sequenceDuration = LAUNCH_WORD_SLOT_SECONDS * LAUNCH_WORD_COUNT
-    if (wordTime >= sequenceDuration) {
-        return if (wordIndex == LAUNCH_WORD_COUNT - 1) 1f to 0f else 0f to 8f
-    }
-    val activeIdx = floor(wordTime / LAUNCH_WORD_SLOT_SECONDS).toInt()
-    if (wordIndex != activeIdx) return 0f to 8f
-
-    val local = (wordTime % LAUNCH_WORD_SLOT_SECONDS) / LAUNCH_WORD_SLOT_SECONDS
+    val finalStart = LAUNCH_WORD_SLOT_SECONDS * (LAUNCH_WORD_COUNT - 1)
+    val activeIndex = if (wordTime >= finalStart) LAUNCH_WORD_COUNT - 1 else
+        floor(wordTime / LAUNCH_WORD_SLOT_SECONDS).toInt()
+    if (wordIndex != activeIndex) return 0f to 8f
+    val localSeconds = wordTime - LAUNCH_WORD_SLOT_SECONDS * activeIndex
     return when {
-        local < 0.18f -> {
-            val p = local / 0.18f
-            val opacity = p
-            val y = 8f * (1f - easeOutCubic(p))
-            opacity to y
+        localSeconds < LAUNCH_WORD_FADE_SECONDS -> {
+            val p = (localSeconds / LAUNCH_WORD_FADE_SECONDS).coerceIn(0f,1f)
+            p to 8f * (1f-easeOutCubic(p))
         }
-        local < 0.76f || wordIndex == LAUNCH_WORD_COUNT - 1 -> {
-            1f to 0f
-        }
+        activeIndex == LAUNCH_WORD_COUNT - 1 || localSeconds <= LAUNCH_WORD_SLOT_SECONDS - LAUNCH_WORD_FADE_SECONDS -> 1f to 0f
         else -> {
-            val p = (local - 0.76f) / 0.24f
-            val opacity = 1f - p
-            val y = -8f * easeInOut(p)
-            opacity to y
+            val p = ((localSeconds - LAUNCH_WORD_SLOT_SECONDS + LAUNCH_WORD_FADE_SECONDS) / LAUNCH_WORD_FADE_SECONDS).coerceIn(0f,1f)
+            (1f-p) to -8f * easeInOut(p)
         }
     }
 }
