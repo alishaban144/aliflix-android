@@ -54,7 +54,9 @@ class DownloadBatchUiTest {
             selection: PlaybackSelection, language: String, onUpdate: (DownloadDiscovery) -> Unit): PreparedDownload {
             discoveries++
             val gate = progressiveGate ?: return super<DownloadUiDependencies>.discover(activity, host, selection, language, onUpdate)
-            fun source(vararg heights: Int) = PreparedDownload(selection, request(selection),
+            // Quality discovery is local: avoid Flixer's real subtitle lookup on enqueue.
+            val fixtureSelection = selection.copy(source = com.aliflix.app.model.PlaybackSource(com.aliflix.app.model.PlaybackProviderId.RAMOFLIX))
+            fun source(vararg heights: Int) = PreparedDownload(fixtureSelection, request(fixtureSelection),
                 heights.map { DownloadQuality("${it}p", it, 1_000_000, true, emptyList()) }, true, "Fixture")
             val early = source(560, 320)
             val options = early.qualities.map { DownloadOption(it, early) }.toMutableList()
