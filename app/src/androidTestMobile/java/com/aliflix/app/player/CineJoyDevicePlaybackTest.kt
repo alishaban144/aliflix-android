@@ -70,8 +70,8 @@ class CineJoyDevicePlaybackTest {
             }
             output.resolve("startup.txt").writeText("readyMs=${SystemClock.elapsedRealtime() - startedAt}\nstream=$initialStream\n$videoTracks\n")
 
-            val audioButton = waitForNode(instrumentation, contentDescription = "Audio & Subtitles")
-            assertTrue("Audio & Subtitles button must be clickable", clickNode(audioButton))
+            assertTrue("More menu must open", clickNode(waitForNode(instrumentation, contentDescription = "More")))
+            assertTrue("Advanced audio settings must open", clickNode(waitForNode(instrumentation, text = "Audio & subtitles")))
             labels.forEach { label -> waitForNode(instrumentation, text = label) }
 
             val customSeeks = arguments.getString("liveSeekPositions")?.split(',')?.map { it.toLong() }

@@ -13,6 +13,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import com.aliflix.app.ui.theme.AliflixMobileTheme
+import com.aliflix.app.model.*
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -39,11 +40,14 @@ class PlayerPremiumControlsTest {
             val density = LocalDensity.current.density
             CompositionLocalProvider(LocalDensity provides Density(density, 2f), LocalLayoutDirection provides LayoutDirection.Rtl) {
                 Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    NativePlayerScreen(NativePlayerUi(title = "The Terminator", detail = "1984", ready = true), null)
+                    NativePlayerScreen(NativePlayerUi(title = "The Terminator", detail = "1984", ready = true,
+                        playbackSelection = PlaybackSelection(Media(1,MediaType.MOVIE,"The Terminator"),
+                            source = PlaybackSource(MobilePlaybackProvider.FLIXER))), null)
                 }
             }
         } }
-        compose.onNodeWithContentDescription("Audio & Subtitles").performClick()
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Audio & subtitles").performClick()
         compose.onNodeWithContentDescription("Close player options").assertIsDisplayed()
         compose.onNodeWithText("Large").performScrollTo().assertIsDisplayed()
         compose.onNodeWithContentDescription("Close player options").performClick()
