@@ -2192,7 +2192,7 @@ private fun MobileFilterBar(selected: HomeFilter, onSelect: (HomeFilter) -> Unit
         .graphicsLayer { alpha = if (visible) 1f else 0f }
         .then(if (visible) Modifier.testTag("home-filter-bar") else Modifier.clearAndSetSemantics {})
         .drawBehind {
-        drawRect(AliflixBackgroundBase.copy(alpha = AliflixAlpha.Chrome * opacity()))
+        drawRect(AliflixBackgroundBase.copy(alpha = opacity()))
     }, contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
         items(HomeFilter.entries) { filter ->
