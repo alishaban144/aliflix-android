@@ -107,4 +107,20 @@ class AliflixLaunchTimingTest {
         assertEquals(0.5f, calculateLaunchExitProgress(elapsedSeconds = 4.15f, exitStartSeconds = 4f), 0.001f)
         assertEquals(1f, calculateLaunchExitProgress(elapsedSeconds = 4.3f, exitStartSeconds = 4f), 0.001f)
     }
+    @Test fun droppedFramesCannotExtendTheSequenceOrTheExit() {
+        assertTrue(isLaunchExitReady(true,3.5f,false))
+        assertEquals(1f,calculateLaunchExitProgress(10f,3.5f),0f)
+        assertEquals(0f,calculateLaunchExitProgress(3.4f,3.5f),0f)
+        assertTrue(!isLaunchExitReady(false,60f,false))
+    }
+
+    @Test fun cachedHomeDoesNotWaitForNetworkRefreshAndAnEmptyHomeStillWaits() {
+        assertTrue(isLaunchHomeReady(loading=true,hasContent=true,hasError=false))
+        assertTrue(isLaunchHomeReady(loading=false,hasContent=true,hasError=false))
+        assertTrue(isLaunchHomeReady(loading=false,hasContent=false,hasError=true))
+        assertTrue(!isLaunchHomeReady(loading=true,hasContent=false,hasError=false))
+        assertTrue(!isLaunchHomeReady(loading=true,hasContent=false,hasError=true))
+        assertTrue(!isLaunchHomeReady(loading=false,hasContent=false,hasError=false))
+    }
+
 }

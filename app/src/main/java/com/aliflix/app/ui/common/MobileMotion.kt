@@ -41,7 +41,13 @@ internal fun rememberMobileResumed(): Boolean {
 /** Accumulates active time only; resuming never advances a suspended animation by a large step. */
 @Composable
 internal fun rememberMobileAnimationTime(active: Boolean, infinite: Boolean = true): Float {
-    var seconds by remember { mutableFloatStateOf(0f) }
+    return rememberMobileAnimationClock(active, infinite).value
+}
+
+/** Keep the clock as State so draw/layer consumers do not invalidate composition. */
+@Composable
+internal fun rememberMobileAnimationClock(active: Boolean, infinite: Boolean = true): State<Float> {
+    val seconds = remember { mutableFloatStateOf(0f) }
     LaunchedEffect(active, infinite) {
         if (active) {
             var previous = 0L
@@ -49,7 +55,7 @@ internal fun rememberMobileAnimationTime(active: Boolean, infinite: Boolean = tr
                 val now = if (infinite) withInfiniteAnimationFrameNanos { it } else withFrameNanos { it }
                 if (previous != 0L) {
                     val delta = (now-previous)/1_000_000_000f
-                    seconds += delta.coerceAtLeast(0f)
+                    seconds.floatValue += delta.coerceAtLeast(0f)
                 }
                 previous = now
             }

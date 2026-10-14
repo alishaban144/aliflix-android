@@ -28,6 +28,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.State
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
+import com.aliflix.app.ui.common.rememberMobileAnimationClock
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -106,6 +110,10 @@ internal fun isLaunchSequenceComplete(
     LAUNCH_WORD_SEQUENCE_START_SECONDS + LAUNCH_WORD_SLOT_SECONDS * LAUNCH_WORD_COUNT
 }
 
+/** Cached Home is already usable while its background refresh is still running. */
+internal fun isLaunchHomeReady(loading: Boolean, hasContent: Boolean, hasError: Boolean): Boolean =
+    hasContent || (!loading && hasError)
+
 internal fun isLaunchExitReady(
     isHomeReady: Boolean,
     elapsedSeconds: Float,
@@ -175,37 +183,43 @@ fun AliflixLaunchOverlay(
     val isReducedMotion = !rememberMobileMotionEnabled()
     val resumed = rememberMobileResumed()
     var clockFinished by remember { mutableStateOf(false) }
-    val elapsedSeconds = rememberMobileAnimationTime(resumed && !clockFinished, infinite = false)
+    val clock = rememberMobileAnimationClock(resumed && !clockFinished, infinite = false)
     var exitStartSeconds by remember { mutableFloatStateOf(-1f) }
     var isDismissed by remember { mutableStateOf(false) }
-
-    val exitReady = isLaunchExitReady(isHomeReady, elapsedSeconds, isReducedMotion)
-
-    LaunchedEffect(exitReady) {
-        if (exitReady && !isDismissed && exitStartSeconds < 0f) {
-            exitStartSeconds = elapsedSeconds
+    val latestComplete by androidx.compose.runtime.rememberUpdatedState(onLaunchComplete)
+    var composeHome by remember { mutableStateOf(false) }
+    var homeFrameReady by remember { mutableStateOf(false) }
+    LaunchedEffect(isReducedMotion) {
+        snapshotFlow { isLaunchSequenceComplete(clock.value, isReducedMotion) }.first { it }
+        // Compose the heavy catalogue only after the moving intro reaches its static hold.
+        // Two frame boundaries ensure layout/draw has finished before starting the fade.
+        composeHome = true
+    }
+    LaunchedEffect(composeHome, isHomeReady) {
+        homeFrameReady = false
+        if (composeHome && isHomeReady) {
+            withFrameNanos { }
+            withFrameNanos { }
+            homeFrameReady = true
         }
     }
 
-    val exitProgress = calculateLaunchExitProgress(elapsedSeconds, exitStartSeconds)
-
-    LaunchedEffect(exitProgress) {
-        if (exitProgress >= 1f && !isDismissed) {
+    // Observe milestones, not every frame. Home composes independently from the launch clock.
+    LaunchedEffect(isHomeReady, isReducedMotion, homeFrameReady) {
+        if (isHomeReady && homeFrameReady && !isDismissed) {
+            snapshotFlow { isLaunchExitReady(true, clock.value, isReducedMotion) }.first { it }
+            if (exitStartSeconds < 0f) exitStartSeconds = clock.value
+        }
+    }
+    LaunchedEffect(exitStartSeconds) {
+        if (exitStartSeconds >= 0f) {
+            snapshotFlow { calculateLaunchExitProgress(clock.value, exitStartSeconds) >= 1f }.first { it }
             isDismissed = true
             clockFinished = true
-            onLaunchComplete()
+            latestComplete()
         }
     }
-
-    val easeProgress = easeInOut(exitProgress)
-
-    // Home layer transformations
-    val homeAlpha = if (isDismissed) 1f else if (exitStartSeconds >= 0f) easeProgress else 0f
-    val homeScale = if (isDismissed || isReducedMotion) 1f else 1.025f - 0.025f * easeProgress
-
-    // Launch layer transformations
-    val launchAlpha = if (isDismissed) 0f else 1f - easeProgress
-    val launchScale = if (isReducedMotion) 1f else 1f + 0.035f * easeProgress
+    val exit: () -> Float = { easeInOut(calculateLaunchExitProgress(clock.value, exitStartSeconds)) }
 
     Box(modifier = modifier.fillMaxSize().background(AliflixLaunchTheme.Background)) {
         // Real Home screen rendered underneath
@@ -213,12 +227,13 @@ fun AliflixLaunchOverlay(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    alpha = homeAlpha
-                    scaleX = homeScale
-                    scaleY = homeScale
+                    alpha = if (isDismissed) 1f else if (exitStartSeconds >= 0f) exit() else 0f
+                    val scale = if (isDismissed || isReducedMotion) 1f else 1.025f - .025f * exit()
+                    scaleX = scale
+                    scaleY = scale
                 },
         ) {
-            content()
+            if (composeHome) content()
         }
 
         // Branded Launch Overlay
@@ -227,14 +242,15 @@ fun AliflixLaunchOverlay(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        alpha = launchAlpha
-                        scaleX = launchScale
-                        scaleY = launchScale
+                        alpha = 1f - exit()
+                        val scale = if (isReducedMotion) 1f else 1f + .035f * exit()
+                        scaleX = scale
+                        scaleY = scale
                     },
                 contentAlignment = Alignment.Center,
             ) {
                 AliflixLaunchStage(
-                    seq = elapsedSeconds,
+                    clock = clock,
                     isReducedMotion = isReducedMotion,
                 )
             }
@@ -244,7 +260,7 @@ fun AliflixLaunchOverlay(
 
 @Composable
 private fun AliflixLaunchStage(
-    seq: Float,
+    clock: State<Float>,
     isReducedMotion: Boolean,
 ) {
     val configuration = LocalConfiguration.current
@@ -252,45 +268,37 @@ private fun AliflixLaunchStage(
     val stageWidth = minOf(screenWidth * 0.76f, 390.dp)
     val logoSize = minOf(screenWidth * 0.66f, 270.dp)
 
-    val titleProgress = if (isReducedMotion) 1f else {
-        ((seq - LAUNCH_TITLE_START_SECONDS) / LAUNCH_TITLE_REVEAL_SECONDS).coerceIn(0f, 1f)
-    }
-    val titleOpacity = if (isReducedMotion) 1f else 1f
-    val titleTranslateY = 0.dp
-
-    val rotatorProgress = if (isReducedMotion) 1f else {
-        ((seq - LAUNCH_ROTATOR_START_SECONDS) / LAUNCH_ROTATOR_REVEAL_SECONDS).coerceIn(0f, 1f)
-    }
+    val titleProgress = { if (isReducedMotion) 1f else
+        ((clock.value - LAUNCH_TITLE_START_SECONDS) / LAUNCH_TITLE_REVEAL_SECONDS).coerceIn(0f, 1f) }
 
     Column(
         modifier = Modifier
             .width(stageWidth)
             .graphicsLayer {
                 translationY = (-10).dp.toPx()
-                val camera = if (isReducedMotion) 1f else 1.14f - .14f * launchCameraEase.transform((seq/3.05f).coerceIn(0f,1f))
+                val camera = if (isReducedMotion) 1f else 1.14f - .14f * launchCameraEase.transform((clock.value/3.05f).coerceIn(0f,1f))
                 scaleX = camera; scaleY = camera
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // The original vector colors are never covered by the former heat/glow animation.
         AliflixLogoMark(Modifier.size(logoSize).graphicsLayer {
-            alpha = if (isReducedMotion) 1f else launchLayerEase.transform((seq/.3f).coerceIn(0f,1f))
+            alpha = if (isReducedMotion) 1f else launchLayerEase.transform((clock.value/.3f).coerceIn(0f,1f))
         })
 
         Spacer(Modifier.height(0.dp))
 
         AliflixLaunchWordmark(
-            opacity = titleOpacity,
-            translationY = titleTranslateY,
+            opacity = 1f,
+            translationY = 0.dp,
             modifier = Modifier.fillMaxWidth()
                 .graphicsLayer {
-                    val p = if (isReducedMotion) 1f else launchLayerEase.transform(titleProgress)
+                    val p = if (isReducedMotion) 1f else launchLayerEase.transform(titleProgress())
                     scaleX = 1f + 2.306f*(1f-p); scaleY = scaleX
                 }
                 .drawWithContent {
-                    clipRect(bottom = size.height * launchSecondaryReveal(titleProgress)) { this@drawWithContent.drawContent() }
+                    clipRect(bottom = size.height * launchSecondaryReveal(titleProgress())) { this@drawWithContent.drawContent() }
                 }
-                .blur(if (isReducedMotion) 0.dp else 4.dp * (1f-launchSecondaryReveal(titleProgress)))
                 .clearAndSetSemantics { contentDescription = ALIFLIX_WORDMARK },
         )
 
@@ -301,16 +309,12 @@ private fun AliflixLaunchStage(
             modifier = Modifier
                 .height(26.dp)
                 .width(210.dp)
-                .graphicsLayer { alpha = rotatorProgress },
+                .graphicsLayer { alpha = if (isReducedMotion) 1f else
+                    ((clock.value - LAUNCH_ROTATOR_START_SECONDS) / LAUNCH_ROTATOR_REVEAL_SECONDS).coerceIn(0f,1f) },
             contentAlignment = Alignment.Center,
         ) {
             val words = listOf("MOVIES", "SERIES", "STORIES")
             words.forEachIndexed { index, word ->
-                val (wordOpacity, wordY) = calculateWordState(
-                    seq = seq,
-                    wordIndex = index,
-                    isReducedMotion = isReducedMotion,
-                )
                 Text(
                     text = word,
                     color = AliflixLaunchTheme.SubtitleMuted,
@@ -320,6 +324,7 @@ private fun AliflixLaunchStage(
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .graphicsLayer {
+                            val (wordOpacity, wordY) = calculateWordState(clock.value, index, isReducedMotion)
                             alpha = wordOpacity
                             translationY = wordY.dp.toPx()
                             translationX = (0.16f * 12.sp.value).dp.toPx()
@@ -339,7 +344,7 @@ private fun AliflixLaunchWordmark(
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
-        val desiredPx = ALIFLIX_WORDMARK.sumOf { letter -> measurer.measure(letter.toString(), TextStyle(fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)).size.width }
+        val desiredPx = remember(measurer, density) { ALIFLIX_WORDMARK.sumOf { letter -> measurer.measure(letter.toString(), TextStyle(fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)).size.width } }
         val trackingPx = with(density) { (32.sp*.34f).toPx() }
         val fit = (with(density) { maxWidth.toPx() } / (desiredPx + trackingPx*6)).coerceAtMost(1f)
         val fontSize = 32.sp * fit

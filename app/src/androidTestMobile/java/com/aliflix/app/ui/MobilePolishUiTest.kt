@@ -61,6 +61,7 @@ class MobilePolishUiTest {
             val score = compose.onNodeWithTag("ask-result-score",useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             assertTrue(score.left >= card.left && score.right <= card.right+.5f)
             assertTrue(card.height < with(compose.density) { 360.dp.toPx() })
+            if (w >= 320.dp && f == 1f) assertTrue(card.height < with(compose.density) { 190.dp.toPx() })
             if (w == 320.dp && f == 1f || w == 240.dp && f == 2f) capture("card-${w.value.toInt()}-font$f.png")
             val layouts = mutableListOf<TextLayoutResult>()
             compose.onNodeWithText("AI 97.8",useUnmergedTree = true)
@@ -230,6 +231,116 @@ class MobilePolishUiTest {
         compose.onNodeWithText("High ▾").assertIsDisplayed()
         compose.runOnIdle { assertEquals("HIGH",preferences.getString("qualityTier",null)) }
     }
+    @Test fun libraryTabsAndLongGenresStayReadableOnNarrowScreensAtLargeFonts() {
+        var selected by mutableIntStateOf(0)
+        var scale by mutableFloatStateOf(1f)
+        compose.setContent { AliflixMobileTheme {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density,scale)) {
+                Column(Modifier.width(240.dp).background(Color(0xFF10111B)).testTag("library-fixture")) {
+                    MobileLibraryTabs(listOf("My List" to 30,"Favorites" to 7,"History" to 30,"Downloads" to 2),selected,{selected=it})
+                    MobileLibraryGenre("Science Fiction & Extremely Long International Fantasy",30,true,{})
+                }
+            }
+        } }
+        for (font in listOf(1f,1.5f,2f)) {
+            compose.runOnIdle { scale = font }
+            compose.onNodeWithTag("library-tabs").performScrollToIndex(3)
+            compose.onNodeWithTag("library-tab-3").assertIsDisplayed().performClick().assertIsSelected()
+            compose.runOnIdle { assertEquals(3,selected) }
+            compose.onNodeWithTag("library-tabs").performScrollToIndex(0)
+            compose.onNodeWithTag("library-tab-0").assertIsDisplayed().performClick()
+            capture("library-navigation-font$font.png")
+        }
+    }
+
+    @Test fun activeToggleHasNoPixelsAboveItsTrackInEitherDirection() {
+        var checked by mutableStateOf(false)
+        var direction by mutableStateOf(LayoutDirection.Ltr)
+        compose.setContent { AliflixMobileTheme {
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides direction) {
+                AliflixLiquidToggle(checked,{checked=it},Modifier.background(Color.Black).testTag("clean-toggle"))
+            }
+        } }
+        for (rtl in listOf(LayoutDirection.Ltr,LayoutDirection.Rtl)) for (value in listOf(false,true)) {
+            compose.runOnIdle { direction = rtl; checked = value }
+            compose.waitForIdle()
+            val pixels = compose.onNodeWithTag("clean-toggle").captureToImage().toPixelMap()
+            val top = with(compose.density) { 7.dp.toPx() }.toInt()
+            for (y in 0 until top) for (x in 0 until pixels.width)
+                assertEquals("No detached droplet at $x,$y", Color.Black.toArgb(), pixels[x,y].toArgb())
+        }
+    }
+
+    @Test fun launchAnimationDoesNotRecomposeHomeForEveryFrame() {
+        var compositions = 0
+        compose.mainClock.autoAdvance = false
+        compose.setContent { AliflixMobileTheme {
+            AliflixLaunchOverlay(true,{}) { SideEffect { compositions++ }; Text("Home composition fixture") }
+        } }
+        compose.mainClock.advanceTimeBy(32)
+        val initial = compositions
+        repeat(60) { compose.mainClock.advanceTimeBy(16) }
+        compose.runOnIdle {
+            assertEquals(0,initial)
+            // CI also exercises Android's reduced-motion setting (no moving intro).
+            assertEquals(if (android.animation.ValueAnimator.areAnimatorsEnabled()) 0 else 1,compositions)
+        }
+        compose.mainClock.advanceTimeBy(2800)
+        compose.runOnIdle { assertEquals(1,compositions) }
+    }
+
+    @Test fun playerDockFitsNarrowWidthsAndAllActionsKeepTheirTargets() {
+        var width by mutableStateOf(240.dp)
+        var calls = 0
+        var scale by mutableFloatStateOf(1f)
+        compose.setContent { AliflixMobileTheme {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density,scale)) {
+            Column(Modifier.width(width).background(Color(0xFF0B0911)).testTag("player-dock-fixture")) {
+                com.aliflix.app.player.MobilePlayerTopBar("A very long title for an episode on a narrow phone",true,
+                    {calls++},{calls++},{calls++},{calls++},{calls++},detail = "Season 12 · Episode 24",onQuality = {calls++})
+            }
+        } } }
+        for (w in listOf(240.dp,320.dp,700.dp)) for (f in listOf(1f,2f)) {
+            compose.runOnIdle { width = w; scale = f }
+            val root = compose.onNodeWithTag("player-dock-fixture").fetchSemanticsNode().boundsInRoot
+            for (label in listOf("Back","Episodes","Audio & Subtitles","Quality","Rotate","More")) {
+                val button = compose.onNodeWithContentDescription(label).assertIsDisplayed()
+                val bounds = button.fetchSemanticsNode().boundsInRoot
+                assertTrue("$label fits at $w",bounds.left >= root.left-.5f && bounds.right <= root.right+.5f)
+                button.performClick()
+            }
+            capture("player-dock-${w.value.toInt()}-font$f.png")
+        }
+        compose.runOnIdle { assertEquals(36,calls) }
+    }
+
+    @Test fun playPauseMorphKeepsOneAccessibleActionAndDrawsIntermediateGeometry() {
+        var playing by mutableStateOf(false)
+        var calls = 0
+        compose.mainClock.autoAdvance = false
+        compose.setContent { AliflixMobileTheme {
+            Box(Modifier.width(240.dp).background(Color(0xFF0B0911)).testTag("morph-fixture")) {
+                com.aliflix.app.player.MobilePlayerCenterControls(playing,{playing=!playing;calls++},{},{})
+            }
+        } }
+        compose.mainClock.advanceTimeBy(32)
+        val before = compose.onNodeWithTag("morph-fixture").captureToImage().toPixelMap()
+        compose.onNodeWithContentDescription("Play").performClick()
+        compose.mainClock.advanceTimeBy(96)
+        capture("playback-morph-intermediate.png")
+        compose.onAllNodesWithContentDescription("Pause").assertCountEquals(1)
+        compose.mainClock.advanceTimeBy(1000)
+        val after = compose.onNodeWithTag("morph-fixture").captureToImage().toPixelMap()
+        var changed = 0
+        for (y in 0 until before.height) for (x in 0 until before.width) if (before[x,y] != after[x,y]) changed++
+        assertTrue(changed > 20)
+        compose.onNodeWithContentDescription("Pause").performClick()
+        compose.runOnIdle { assertEquals(2,calls); assertFalse(playing) }
+        capture("playback-morph-play.png")
+    }
+
     private fun capture(name: String) {
         val directory = File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir,"mobile-polish").apply { mkdirs() }
         compose.waitForIdle()

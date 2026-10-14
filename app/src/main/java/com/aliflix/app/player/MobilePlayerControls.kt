@@ -72,6 +72,10 @@ internal fun MobilePlayerTopBar(
     detail: String = "",
     onQuality: (() -> Unit)? = null,
 ) {
+    if (!com.aliflix.app.BuildConfig.IS_TV) {
+        MobilePlayerActionHeader(title, detail, isTv, onBack, onEpisodes, onSubtitles, onRotate, onMore, onQuality, modifier)
+        return
+    }
     androidx.compose.foundation.layout.BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
         val compact = maxWidth < 560.dp
         val identity: @Composable () -> Unit = {
@@ -150,9 +154,10 @@ internal fun MobilePlayerCenterControls(
     hideSeekForward: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+    val gap = if (com.aliflix.app.BuildConfig.IS_TV) 48.dp else ((maxWidth - 184.dp) / 2).coerceIn(8.dp,48.dp)
     Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(48.dp),
+        horizontalArrangement = Arrangement.spacedBy(gap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Seek Back 15s
@@ -193,12 +198,14 @@ internal fun MobilePlayerCenterControls(
         ) {
             Box(
                 modifier = Modifier
-                    .size(72.dp)
+                    .size(if (com.aliflix.app.BuildConfig.IS_TV) 72.dp else 64.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFF4F1FA))
-                    .border(BorderStroke(.5.dp, Color.White.copy(alpha = .55f)), CircleShape),
+                    .background(if (com.aliflix.app.BuildConfig.IS_TV) Color(0xFFF4F1FA) else Color(0x54201D29))
+                    .border(BorderStroke(.5.dp, Color.White.copy(alpha = if (com.aliflix.app.BuildConfig.IS_TV) .55f else .24f)), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
+                if (!com.aliflix.app.BuildConfig.IS_TV) MobileMorphPlaybackIcon(isPlaying, Modifier.size(42.dp))
+                else {
                 AnimatedContent(targetState = isPlaying, transitionSpec = {
                     (fadeIn(tween(180, delayMillis = 45)) + scaleIn(tween(220), initialScale = .65f)) togetherWith
                         (fadeOut(tween(100)) + scaleOut(tween(160), targetScale = 1.2f))
@@ -209,6 +216,7 @@ internal fun MobilePlayerCenterControls(
                     tint = Color(0xFF18151F),
                     modifier = Modifier.size(32.dp),
                 )
+                }
                 }
             }
         }
@@ -237,6 +245,7 @@ internal fun MobilePlayerCenterControls(
             }
             if (feedback?.isForward == true) SeekButtonFeedback(feedback)
         }
+    }
     }
 }
 

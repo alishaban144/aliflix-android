@@ -69,8 +69,7 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
     var bounds by remember { mutableStateOf(Rect.Zero) }
     var look by remember { mutableStateOf(Offset(0f,.08f)) }
     var blink by remember { mutableFloatStateOf(0f) }
-    val seconds = rememberMobileAnimationTime(motion && resumed)
-    val currentSeconds by rememberUpdatedState(seconds)
+    val seconds = rememberMobileAnimationClock(motion && resumed)
     LaunchedEffect(motion, resumed) {
         if (!motion) { look = Offset(0f,.08f); blink = 0f }
         else if (resumed) {
@@ -81,7 +80,7 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
                     else boundedOrbLook(requireNotNull(tracker.point), bounds.center, bounds.width/2f)
                 if (previous != 0L) look = dampOrbLook(look,target,(now-previous)/1_000_000_000f,idle)
                 previous = now
-                val t = currentSeconds % 4.2f
+                val t = seconds.value % 4.2f
                 blink = when {
                     t < 2f || t >= 2.18f -> 0f
                     t < 2.055f -> (t-2f)/.055f

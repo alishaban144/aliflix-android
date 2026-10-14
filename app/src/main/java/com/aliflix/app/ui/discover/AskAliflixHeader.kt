@@ -33,6 +33,7 @@ fun AskAliflixHeader(
     showNewSearch: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val touchTracker = LocalAskTouchTracker.current
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -49,9 +50,8 @@ fun AskAliflixHeader(
                     tint = AliflixContentPrimary,
                 )
             }
-            AnimatedAliflixHeatmapLogo(
-                modifier = Modifier.size(42.dp),
-            )
+            if (touchTracker != null) DiscoverLiveOrb(touchTracker, Modifier.size(38.dp))
+            else AnimatedAliflixHeatmapLogo(modifier = Modifier.size(42.dp))
             Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = "Ask Aliflix",
@@ -94,3 +94,5 @@ fun AskAliflixHeader(
         }
     }
 }
+
+internal val LocalAskTouchTracker = androidx.compose.runtime.staticCompositionLocalOf<DiscoverTouchTracker?> { null }

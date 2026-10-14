@@ -23,13 +23,20 @@ class MobileMotionRegressionTest {
         assertTrue(recentered.getDistance() > current.getDistance()*.9f)
         assertEquals(current,dampOrbLook(current,Offset.Zero,0f,true))
     }
-    @Test fun liquidToggleHasCorrectEndpointsAndMergesInTheMiddle() {
-        assertEquals(LiquidToggleGeometry(16f,10f,24f,0f),liquidToggleGeometry(0f))
-        assertEquals(LiquidToggleGeometry(28f,0f,36f,10f),liquidToggleGeometry(1f))
-        val middle = liquidToggleGeometry(.5f)
-        assertTrue(middle.rightX-middle.leftX < middle.leftRadius+middle.rightRadius)
-        assertEquals(liquidToggleGeometry(0f),liquidToggleGeometry(-5f))
-        assertEquals(liquidToggleGeometry(1f),liquidToggleGeometry(5f))
+    @Test fun playerDockFalloffAndSlimPlaybackMorphHaveBoundedContinuousGeometry() {
+        assertEquals(1f,com.aliflix.app.player.playerDockInfluence(0f),0f)
+        assertEquals(.5f,com.aliflix.app.player.playerDockInfluence(75f),0f)
+        assertEquals(0f,com.aliflix.app.player.playerDockInfluence(-151f),0f)
+        assertEquals(0f,com.aliflix.app.player.playerDockInfluence(151f),0f)
+        for (i in 0..7) {
+            val start = com.aliflix.app.player.playbackMorphPoint(i,0f)
+            val end = com.aliflix.app.player.playbackMorphPoint(i,1f)
+            assertEquals((start+end)/2f,com.aliflix.app.player.playbackMorphPoint(i,.5f))
+            assertEquals(start,com.aliflix.app.player.playbackMorphPoint(i,-1f))
+            assertEquals(end,com.aliflix.app.player.playbackMorphPoint(i,2f))
+        }
+        assertEquals(2f,com.aliflix.app.player.playbackMorphPoint(1,0f).x-com.aliflix.app.player.playbackMorphPoint(0,0f).x,0f)
+        assertEquals(com.aliflix.app.player.playbackMorphPoint(5,1f),com.aliflix.app.player.playbackMorphPoint(6,1f))
     }
     @Test fun lumaFollowsEightSourceInsetsAndHalfCycleDelayWithoutASeam() {
         val expected = listOf(

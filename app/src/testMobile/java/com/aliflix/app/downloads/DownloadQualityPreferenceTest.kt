@@ -61,4 +61,18 @@ class DownloadQualityPreferenceTest {
         p.edit().putString("qualityTier","future-value").putInt("quality",1080).commit()
         assertEquals(DownloadQualityTier.HIGH,readDownloadQualityTier(p))
     }
+    @Test fun migrationBoundariesAndExistingTierWinWithoutRewritingOtherPreferences() {
+        val p = ApplicationProvider.getApplicationContext<Context>().getSharedPreferences("quality-boundary-test",Context.MODE_PRIVATE)
+        mapOf(-1 to DownloadQualityTier.MEDIUM,0 to DownloadQualityTier.MEDIUM,1 to DownloadQualityTier.LOW,
+            480 to DownloadQualityTier.LOW,481 to DownloadQualityTier.MEDIUM,1079 to DownloadQualityTier.MEDIUM,
+            1080 to DownloadQualityTier.HIGH,Int.MAX_VALUE to DownloadQualityTier.HIGH).forEach { (height,expected) ->
+            p.edit().clear().putInt("quality",height).putString("preferredVideoQuality","AUTO").commit()
+            assertEquals(expected,readDownloadQualityTier(p))
+            assertEquals(expected.name,p.getString("qualityTier",null))
+            assertEquals("AUTO",p.getString("preferredVideoQuality",null))
+        }
+        p.edit().putString("qualityTier","LOW").putInt("quality",2160).commit()
+        assertEquals(DownloadQualityTier.LOW,readDownloadQualityTier(p))
+    }
+
 }

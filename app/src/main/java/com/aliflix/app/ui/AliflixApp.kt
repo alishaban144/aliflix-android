@@ -60,6 +60,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -594,7 +595,7 @@ fun AliflixApp(
     }
     var accountNotice by rememberSaveable { mutableStateOf<String?>(null) }
     var launchCompleted by rememberSaveable { mutableStateOf(false) }
-    val isHomeReady = !home.loading && (home.content != null || home.error != null)
+    val isHomeReady = com.aliflix.app.ui.launch.isLaunchHomeReady(home.loading, home.content != null, home.error != null)
     val requestedDetailProvider = PlaybackProvider.fromStoredValue(detailProviderName)
     val detailProvider = requestedDetailProvider?.takeIf { provider ->
         detail.item?.let(provider::isAvailableFor) == true
@@ -3311,7 +3312,8 @@ internal fun MySpaceScreen(
             "History" to recent.size,
             "Downloads" to com.aliflix.app.downloads.downloadCount(),
         )
-        AliflixSegmentedControl(
+        if (!BuildConfig.IS_TV) MobileLibraryTabs(libraryTabs, pagerState.currentPage, onPageChange)
+        else AliflixSegmentedControl(
             modifier = Modifier
                 .padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small)
                 .fillMaxWidth(),
@@ -3416,21 +3418,13 @@ private fun GenreOrganizedList(
         // Fixed within the library's scroll container, beneath My Space's existing header.
         LazyRow(
             contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth().background(AliflixBackgroundBase),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.fillMaxWidth().selectableGroup(),
         ) {
             items(groups.filter { it.key.isNotEmpty() }, key = { it.key }) { group ->
-                FilterChip(
-                    selected = activeGenre == group.key,
-                    onClick = { scope.launch { gridState.animateScrollToItem(sectionIndices.getValue(group.key)) } },
-                    label = { Text(group.key, fontSize = 12.sp, maxLines = 1) },
-                    shape = AliflixCorners.Small,
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = AliflixAccentPrimary.copy(alpha = .22f),
-                        selectedLabelColor = AliflixAccentSecondary,
-                        labelColor = AliflixContentSecondary,
-                    ),
-                )
+                MobileLibraryGenre(group.key, group.value.size, activeGenre == group.key) {
+                    scope.launch { gridState.animateScrollToItem(sectionIndices.getValue(group.key)) }
+                }
             }
         }
         LazyVerticalGrid(

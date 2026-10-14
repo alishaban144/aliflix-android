@@ -1,0 +1,55 @@
+{
+  "base": "v3.1.159",
+  "candidate": "v3.1.160",
+  "device": "Physical Pixel 7a",
+  "package": "com.aliflix.app.validation",
+  "mode": "Both test APKs compiled with cmd package compile -m speed -f",
+  "measurement": "0.2 <= intended-vsync offset from first window frame < 3.0 seconds; merge framestats every 550 ms to avoid the 120-frame ring truncating startup; three fresh-process launches per build",
+  "baseline": [
+    {
+      "run": 0,
+      "frames": 151,
+      "over16_7ms": 39,
+      "p95ms": 46.87,
+      "maxMs": 418.35
+    },
+    {
+      "run": 1,
+      "frames": 150,
+      "over16_7ms": 42,
+      "p95ms": 55.37,
+      "maxMs": 362.54
+    },
+    {
+      "run": 2,
+      "frames": 156,
+      "over16_7ms": 37,
+      "p95ms": 53.82,
+      "maxMs": 383.24
+    }
+  ],
+  "updated": [
+    {
+      "run": 0,
+      "frames": 251,
+      "over16_7ms": 1,
+      "p95ms": 6.04,
+      "maxMs": 17.89
+    },
+    {
+      "run": 1,
+      "frames": 245,
+      "over16_7ms": 2,
+      "p95ms": 6.07,
+      "maxMs": 26.33
+    },
+    {
+      "run": 2,
+      "frames": 251,
+      "over16_7ms": 2,
+      "p95ms": 6.09,
+      "maxMs": 29.39
+    }
+  ],
+  "limitations": "Test-build measurements on one device, not production-APK or all-device performance guarantees; first activity draw and static-hold Home preparation are outside this moving-intro window."
+}
