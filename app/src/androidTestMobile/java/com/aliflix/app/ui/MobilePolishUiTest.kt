@@ -245,10 +245,8 @@ class MobilePolishUiTest {
         } }
         for (font in listOf(1f,1.5f,2f)) {
             compose.runOnIdle { scale = font }
-            compose.onNodeWithTag("library-tabs").performScrollToIndex(3)
             compose.onNodeWithTag("library-tab-3").assertIsDisplayed().performClick().assertIsSelected()
             compose.runOnIdle { assertEquals(3,selected) }
-            compose.onNodeWithTag("library-tabs").performScrollToIndex(0)
             compose.onNodeWithTag("library-tab-0").assertIsDisplayed().performClick()
             capture("library-navigation-font$font.png")
         }
@@ -290,28 +288,28 @@ class MobilePolishUiTest {
         compose.runOnIdle { assertEquals(1,compositions) }
     }
 
-    @Test fun playerDockFitsNarrowWidthsAndAllActionsKeepTheirTargets() {
+    @Test fun unframedPlayerActionsFitNarrowWidthsAndKeepTheirTargets() {
         var width by mutableStateOf(240.dp)
         var calls = 0
         var scale by mutableFloatStateOf(1f)
         compose.setContent { AliflixMobileTheme {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density,scale)) {
-            Column(Modifier.width(width).background(Color(0xFF0B0911)).testTag("player-dock-fixture")) {
+            Column(Modifier.width(width).background(Color(0xFF0B0911)).testTag("player-header-fixture")) {
                 com.aliflix.app.player.MobilePlayerTopBar("A very long title for an episode on a narrow phone",true,
                     {calls++},{calls++},{calls++},{calls++},{calls++},detail = "Season 12 · Episode 24",onQuality = {calls++})
             }
         } } }
         for (w in listOf(240.dp,320.dp,700.dp)) for (f in listOf(1f,2f)) {
             compose.runOnIdle { width = w; scale = f }
-            val root = compose.onNodeWithTag("player-dock-fixture").fetchSemanticsNode().boundsInRoot
+            val root = compose.onNodeWithTag("player-header-fixture").fetchSemanticsNode().boundsInRoot
             for (label in listOf("Back","Episodes","Audio & Subtitles","Quality","Rotate","More")) {
                 val button = compose.onNodeWithContentDescription(label).assertIsDisplayed()
                 val bounds = button.fetchSemanticsNode().boundsInRoot
                 assertTrue("$label fits at $w",bounds.left >= root.left-.5f && bounds.right <= root.right+.5f)
                 button.performClick()
             }
-            capture("player-dock-${w.value.toInt()}-font$f.png")
+            capture("player-header-${w.value.toInt()}-font$f.png")
         }
         compose.runOnIdle { assertEquals(36,calls) }
     }

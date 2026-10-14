@@ -3,14 +3,13 @@ package com.aliflix.app.player
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.interaction.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.ViewList
-import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -18,15 +17,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.*
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -34,83 +32,100 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.ui.common.rememberMobileMotionEnabled
-import kotlin.math.abs
 
-internal fun playerDockInfluence(distance: Float): Float = (1f - abs(distance) / 150f).coerceIn(0f,1f)
-
-/** 21st / Preet Suthar: distance [-150,0,150], spring mass .1, stiffness 150, damping 12.
- * Touch targets stay fixed; magnification is restrained to fit a video overlay. */
+/** Stable, unframed actions. Only the conventional navigation button has a surface. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun MobilePlayerActionHeader(title: String, detail: String, episodic: Boolean,
     onBack: () -> Unit, onEpisodes: () -> Unit, onSubtitles: () -> Unit,
     onRotate: () -> Unit, onMore: () -> Unit, onQuality: (() -> Unit)?, modifier: Modifier) {
-    BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-        val compact = maxWidth < 580.dp
-        val motion = rememberMobileMotionEnabled()
-        var pointer by remember { mutableStateOf<Offset?>(null) }
-        var origin by remember { mutableStateOf(Offset.Zero) }
-        val observe = Modifier.onGloballyPositioned { origin = it.localToRoot(Offset.Zero) }.pointerInput(Unit) {
-            awaitPointerEventScope {
-                while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                    val change = event.changes.firstOrNull()
-                    pointer = if (change != null && (change.pressed || change.type == PointerType.Mouse) && event.type != PointerEventType.Exit)
-                        origin + change.position else null
-                }
-            }
-        }
+    BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        val compact = maxWidth < 640.dp
+        val shortViewport = maxHeight < 400.dp
         val actions: @Composable () -> Unit = {
-            FlowRow(observe.testTag("player-action-dock").padding(horizontal = 6.dp, vertical = 7.dp),
-                maxItemsInEachRow = ((maxWidth.value - 4f) / 56f).toInt().coerceIn(1,5),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (episodic) PlayerDockAction(Icons.AutoMirrored.Rounded.ViewList,"Episodes",onEpisodes,pointer,motion)
-                PlayerDockAction(Icons.Rounded.Subtitles,"Audio & Subtitles",onSubtitles,pointer,motion)
-                onQuality?.let { PlayerDockAction(Icons.Rounded.HighQuality,"Quality",it,pointer,motion) }
-                PlayerDockAction(Icons.Rounded.ScreenRotation,"Rotate",onRotate,pointer,motion)
-                PlayerDockAction(Icons.Rounded.MoreHoriz,"More",onMore,pointer,motion)
+            FlowRow(Modifier.testTag("player-actions"),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                if (episodic) PlayerLineAction(PlayerActionGlyph.Episodes,"Episodes",onEpisodes)
+                PlayerLineAction(PlayerActionGlyph.Captions,"Audio & Subtitles",onSubtitles)
+                onQuality?.let { PlayerLineAction(PlayerActionGlyph.Quality,"Quality",it) }
+                PlayerLineAction(PlayerActionGlyph.Rotate,"Rotate",onRotate)
+                if (!compact) PlayerLineAction(PlayerActionGlyph.More,"More",onMore)
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                PlayerDockAction(Icons.AutoMirrored.Rounded.ArrowBack,"Back",onBack,null,motion)
-                Column(Modifier.weight(1f).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                IconButton(onBack, Modifier.size(48.dp).clip(CircleShape)
+                    .background(Color.White.copy(alpha = .07f))) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack,"Back",tint = Color.White,modifier = Modifier.size(22.dp))
+                }
+                Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(title, color = Color.White, fontSize = if (compact) 15.sp else 19.sp,
                         lineHeight = if (compact) 20.sp else 24.sp, fontWeight = FontWeight.SemiBold,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    if (detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = .65f), fontSize = 11.sp,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        maxLines = if (shortViewport) 1 else 2, overflow = TextOverflow.Ellipsis)
+                    if (detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = .65f), fontSize = 12.sp,
+                        lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (!compact) actions()
+                if (compact) PlayerLineAction(PlayerActionGlyph.More,"More",onMore) else actions()
             }
-            if (compact) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { actions() }
+            if (compact) Row(Modifier.fillMaxWidth().padding(start = 60.dp)) { actions() }
         }
     }
 }
 
+private enum class PlayerActionGlyph { Episodes, Captions, Quality, Rotate, More }
+
 @Composable
-private fun PlayerDockAction(icon: ImageVector, label: String, onClick: () -> Unit, pointer: Offset?, motion: Boolean) {
-    var bounds by remember { mutableStateOf(Rect.Zero) }
+private fun PlayerLineAction(glyph: PlayerActionGlyph, label: String, onClick: () -> Unit) {
     val interactions = remember { MutableInteractionSource() }
     val pressed by interactions.collectIsPressedAsState()
-    val hovered by interactions.collectIsHoveredAsState()
-    val focused by interactions.collectIsFocusedAsState()
-    val density = androidx.compose.ui.platform.LocalDensity.current.density
-    val influence = if (pressed || hovered || focused) 1f else if (pointer == null) 0f
-        else playerDockInfluence((pointer.x - bounds.center.x) / density)
-    val amount = animateFloatAsState(influence, if (motion) spring(dampingRatio = 1.55f, stiffness = 1500f) else snap(), label = "player-dock-lift")
-    val shape = RoundedCornerShape(topStart = 16.dp, topEnd = 10.dp, bottomEnd = 16.dp, bottomStart = 10.dp)
-    IconButton(onClick, interactionSource = interactions,
-        modifier = Modifier.size(48.dp).onGloballyPositioned { bounds = it.boundsInRoot() }) {
-        Box(Modifier.size(42.dp).graphicsLayer {
-            scaleX = 1f + .12f * amount.value; scaleY = scaleX
-            translationY = -3.dp.toPx() * amount.value
-        }.clip(shape).background(Brush.verticalGradient(listOf(Color(0xA42A2834),Color(0x8A13131B))))
-            .border(.6.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .25f),Color.White.copy(alpha = .05f))),shape),
-            contentAlignment = Alignment.Center) {
-            Icon(icon,label,tint = Color(0xFFF4F0FF),modifier = Modifier.size(20.dp).graphicsLayer {
-                scaleX = 1f + .08f * amount.value; scaleY = scaleX
-            })
+    Box(Modifier.size(48.dp).clickable(interactionSource = interactions, indication = null,
+        role = Role.Button, onClick = onClick).semantics { contentDescription = label },
+        contentAlignment = Alignment.Center) {
+        // A 24-unit optical grid and a shared rounded stroke keep every glyph equally light.
+        Canvas(Modifier.size(26.dp)) {
+            val ink = Color.White.copy(alpha = if (pressed) .60f else .94f)
+            val stroke = Stroke(1.65f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            fun line(x1: Float,y1: Float,x2: Float,y2: Float) =
+                drawLine(ink,Offset(x1,y1),Offset(x2,y2),1.65f,StrokeCap.Round)
+            fun path(first: Offset, second: Offset, third: Offset, fourth: Offset? = null) {
+                val p = Path().apply { listOfNotNull(first,second,third,fourth).forEachIndexed { i, v -> if (i==0) moveTo(v.x,v.y) else lineTo(v.x,v.y) } }
+                drawPath(p,ink,style = stroke)
+            }
+            withTransform({ scale(size.width/24f,size.height/24f,pivot = Offset.Zero) }) {
+                when (glyph) {
+                    PlayerActionGlyph.Episodes -> {
+                        line(6f,3f,18f,3f)
+                        drawRoundRect(ink,Offset(3f,6f),Size(18f,15f),CornerRadius(2.5f),style = stroke)
+                        path(Offset(10f,10f),Offset(15f,13.5f),Offset(10f,17f),Offset(10f,10f))
+                    }
+                    PlayerActionGlyph.Captions -> {
+                        drawRoundRect(ink,Offset(2.5f,4.5f),Size(19f,15f),CornerRadius(3f),style = stroke)
+                        line(6.5f,10.5f,10.5f,10.5f); line(14f,10.5f,17.5f,10.5f)
+                        line(6.5f,14.5f,14f,14.5f); line(17f,14.5f,17.5f,14.5f)
+                    }
+                    PlayerActionGlyph.Quality -> {
+                        path(Offset(3f,8f),Offset(3f,4f),Offset(7f,4f))
+                        path(Offset(17f,4f),Offset(21f,4f),Offset(21f,8f))
+                        path(Offset(3f,16f),Offset(3f,20f),Offset(7f,20f))
+                        path(Offset(17f,20f),Offset(21f,20f),Offset(21f,16f))
+                        line(7f,14.5f,7f,12.5f); line(12f,14.5f,12f,10.5f); line(17f,14.5f,17f,8.5f)
+                    }
+                    PlayerActionGlyph.Rotate -> {
+                        val p = Path().apply {
+                            moveTo(9f,6.5f); lineTo(17.5f,11.5f); quadraticTo(19f,12.4f,18f,14f)
+                            lineTo(15f,19f); quadraticTo(14f,20.5f,12.5f,19.5f); lineTo(4f,14.5f)
+                            quadraticTo(2.5f,13.6f,3.5f,12f); lineTo(6.5f,7f); quadraticTo(7.5f,5.5f,9f,6.5f)
+                            close()
+                        }
+                        drawPath(p,ink,style = stroke)
+                        path(Offset(13f,2.5f),Offset(18f,3f),Offset(21f,6f))
+                        path(Offset(21f,2.5f),Offset(21f,6f),Offset(17.5f,6f))
+                    }
+                    PlayerActionGlyph.More -> listOf(5f,12f,19f).forEach { x -> drawCircle(ink,1.45f,Offset(x,12f)) }
+                }
+            }
         }
     }
 }

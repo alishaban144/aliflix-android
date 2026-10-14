@@ -100,7 +100,7 @@ class PhonePlayerPolishTest {
         compose.runOnIdle { assertEquals(30_000L, position) }
     }
 
-    @Test fun compactPillRetainsFullEpisodeIdentity() {
+    @Test fun playerHeaderRetainsFullEpisodeIdentity() {
         compose.setContent { AliflixMobileTheme {
             Box(Modifier.fillMaxSize().background(Color.Black)) {
                 NativePlayerScreen(NativePlayerUi(title = "Silo", detail = "S1 E6 • Prayers and Visions", ready = true), null)
@@ -162,6 +162,7 @@ class PhonePlayerPolishTest {
                 0, {}, PlaybackProviderId.MOVIEPIRE, {}, {}, false, {}, RecommendationAiModel.entries.first(), {},
                 SubtitleLanguage.ENGLISH, {}, true, {}, MobileUpdateUiState(), {}, {}, {})
         } }
+        capture("my-space-restored-tabs.png")
         compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 500) }
         compose.waitForIdle()
         var firstIndex = 0

@@ -23,11 +23,7 @@ class MobileMotionRegressionTest {
         assertTrue(recentered.getDistance() > current.getDistance()*.9f)
         assertEquals(current,dampOrbLook(current,Offset.Zero,0f,true))
     }
-    @Test fun playerDockFalloffAndSlimPlaybackMorphHaveBoundedContinuousGeometry() {
-        assertEquals(1f,com.aliflix.app.player.playerDockInfluence(0f),0f)
-        assertEquals(.5f,com.aliflix.app.player.playerDockInfluence(75f),0f)
-        assertEquals(0f,com.aliflix.app.player.playerDockInfluence(-151f),0f)
-        assertEquals(0f,com.aliflix.app.player.playerDockInfluence(151f),0f)
+    @Test fun slimPlaybackMorphHasBoundedContinuousGeometry() {
         for (i in 0..7) {
             val start = com.aliflix.app.player.playbackMorphPoint(i,0f)
             val end = com.aliflix.app.player.playbackMorphPoint(i,1f)

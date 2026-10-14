@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "250"
-  RELEASE_VERSION_NAME: "3.1.160"
+  RELEASE_VERSION_CODE: "251"
+  RELEASE_VERSION_NAME: "3.1.161"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -358,7 +358,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Smoother launch rendering, compact Ask Aliflix cards, a touch-aware Ask Orb, integrated My Space navigation, clean switches, and spring-animated player controls with slim morphing play/pause."
+          RELEASE_NOTES="Restores the original My Space collection tabs while keeping the My List genre improvements. Player actions use slim custom icons without cards, magnification or lift; the familiar back button returns with cleaner placement in portrait and landscape."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -387,15 +387,15 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile design and performance update based on the latest GitHub release, v3.1.159.
+            Mobile UI correction based on the latest GitHub release, v3.1.160.
 
-            - Launch animation updates draw and graphics layers without recomposing the screen each frame; removes the animated text blur.
-            - Ask Aliflix result cards group their poster, title, metadata, score and actions in a compact row. The header Orb follows touches across the page.
-            - My Space uses content-sized collection tabs and integrated genre navigation without the mismatched black strip.
-            - Switches render a smooth native thumb without the detached white dot or software bitmap processing.
-            - The player replaces its top pill with individual translucent controls, touch-aware spring magnification, and a slim two-path play/pause morph inspired by the inspected references.
+            - Restores the original My List, Favorites, History and Downloads tabs. The redesigned My List genre row remains.
+            - Restores the familiar circular player back button.
+            - Replaces upper player tiles with custom, consistent line icons and invisible 48dp touch targets. No background cards, dock magnification, lift or header slide.
+            - Keeps title, episode identity and actions aligned in portrait and landscape, including long titles and large fonts.
+            - Retains the launch, Ask Aliflix, switch and slim play/pause improvements from v3.1.160.
 
-            Regression coverage and physical-device evidence are documented in docs/mobile-160-elegance.md. TV source, resources and version are unchanged. No new runtime dependencies.
+            Regression coverage and physical-device visual evidence are documented in docs/mobile-161-player-correction.md. TV source, resources and version are unchanged. No new runtime dependencies.
           files: |
             aliflix-mobile.apk
             update-mobile.json

@@ -552,7 +552,7 @@ internal fun NativePlayerScreen(
         // Subtle dark scrim when controls are visible
         AnimatedVisibility(
             visible = controls && !preparing,
-            enter = fadeIn(tween(180)) + androidx.compose.animation.scaleIn(tween(220), initialScale = 0.98f),
+            enter = fadeIn(tween(180)),
             exit = fadeOut(tween(200)),
             modifier = Modifier.fillMaxSize(),
         ) {
@@ -606,9 +606,7 @@ internal fun NativePlayerScreen(
                         moreVisible = true
                         interaction++
                     },
-                    modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(top = 8.dp).animateEnterExit(
-                        enter = androidx.compose.animation.slideInVertically(tween(200)) { -it / 3 },
-                        exit = androidx.compose.animation.slideOutVertically(tween(140)) { -it / 4 }),
+                    modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(top = 8.dp),
                 )
 
                 if (!preparing && state.error == null && !(isLandscape && showCountdown)) {
