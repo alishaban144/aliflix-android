@@ -9,7 +9,7 @@ const identitySchema = z.object({ sub: z.string().min(1).max(128), exp: z.number
 type Identity = z.infer<typeof identitySchema>;
 const contentSchema = z.object({ id: z.number().int().positive().max(999999999), type: z.enum(['movie','tv']),
   season: z.number().int().min(0).max(10000).default(1), episode: z.number().int().min(1).max(10000).default(1),
-  title: z.string().min(1).max(200), poster: z.string().max(240).default(''), language: z.string().max(8).default(''), year: z.string().max(10).default('') }).strict();
+  title: z.string().min(1).max(200), poster: z.string().max(240).default(''), language: z.string().max(8).default(''), year: z.string().max(10).default(''), imdbId: z.string().regex(/^(tt[0-9]{1,12})?$/).default(''), genres: z.array(z.string().max(64)).max(12).default([]) }).strict();
 type Content = z.infer<typeof contentSchema>;
 const rights = z.object({ play: z.boolean(), pause: z.boolean(), seek: z.boolean() }).strict();
 type Rights = z.infer<typeof rights>;
@@ -134,7 +134,7 @@ export class WatchParty extends DurableObject<Env> {
     if(!member) {
       if(r.inviteExpires<=now||r.inviteHash!==inviteHash)return json({error:'INVITE_EXPIRED'},403);
       if(r.members.length>=MAX_MEMBERS)return json({error:'ROOM_FULL'},409);
-      member={id,name:name.trim()||'Guest',rights:{play:false,pause:false,seek:false},status:'waiting',joined:now,seen:now,sequence:0,connection:''};r.members.push(member);
+      member={id,name:name.trim()||'Guest',rights:{play:r.everyone,pause:r.everyone,seek:r.everyone},status:'waiting',joined:now,seen:now,sequence:0,connection:''};r.members.push(member);
     }
     for(const old of this.ctx.getWebSockets(id)){try{old.close(4001,'Reconnected');}catch{}}
     const pair=new WebSocketPair(); const client=pair[0],server=pair[1];
@@ -156,7 +156,7 @@ export class WatchParty extends DurableObject<Env> {
       const host=m.id===r.host;
       const deny=()=>{ws.send(JSON.stringify({type:'error',error:'PERMISSION_DENIED'}));};
       if(event.type==='control') {
-        if(!host&&!r.everyone&&!m.rights[event.action]){deny();return;}
+        if(!host&&!m.rights[event.action]){deny();return;}
         if(event.sequence<=m.sequence||event.version!==r.playbackVersion){ws.send(JSON.stringify(this.snapshot(r)));return;}
         m.sequence=event.sequence;r.playbackVersion++;
         // play/pause use the authoritative projected clock; only seek supplies a position.
@@ -164,9 +164,9 @@ export class WatchParty extends DurableObject<Env> {
         if(event.action!=='seek')r.playing=event.action==='play';
       } else if(event.type==='status') {
         if(event.sequence<=m.sequence)return;m.sequence=event.sequence;m.status=event.status;
-      } else if(event.type==='policy'){if(!host){deny();return;}r.everyone=event.everyone;
+      } else if(event.type==='policy'){if(!host){deny();return;}r.everyone=event.everyone;r.members.forEach(p=>{p.rights={play:event.everyone,pause:event.everyone,seek:event.everyone};});
       } else if(event.type==='permission'){if(!host){deny();return;}const target=r.members.find(p=>p.id===event.member);if(target)target.rights=event.rights;
-      } else if(event.type==='transfer'){if(!host){deny();return;}const target=r.members.find(p=>p.id===event.member&&this.connected(p));if(!target){deny();return;}r.host=target.id;
+      } else if(event.type==='transfer'){if(!host){deny();return;}const target=r.members.find(p=>p.id===event.member&&this.connected(p));if(!target){deny();return;}m.rights={play:r.everyone,pause:r.everyone,seek:r.everyone};r.host=target.id;
       } else if(event.type==='episode') {
         if(!host){deny();return;}if(event.sequence<=m.sequence||event.version!==r.playbackVersion)return;
         if(r.content.type!=='tv'||event.content.type!=='tv'||r.content.id!==event.content.id){deny();return;}
@@ -189,7 +189,10 @@ export class WatchParty extends DurableObject<Env> {
   async webSocketError(ws:WebSocket){try{ws.close(1011,'Disconnected');}catch{}await this.disconnected(ws);}
   private async disconnected(ws:WebSocket){const r=this.read();if(!r)return;const a=ws.deserializeAttachment() as {id:string;connection:string};const m=r.members.find(m=>m.id===a.id&&m.connection===a.connection);if(m){m.status='reconnecting';m.seen=this.now();r.version++;this.save(r);this.broadcast(r);}}
   async alarm(){const r=this.read();if(!r)return;const now=this.now();
-    for(const m of r.members){if(!this.connected(m)&&now-m.seen>30000){r.members=r.members.filter(p=>p.id!==m.id);this.transferOrEnd(r,m.id,now);}}
+    for(const m of r.members){if(!this.connected(m)&&now-m.seen>30000){
+      if(m.id===r.host){const next=r.members.filter(p=>p.id!==m.id&&this.connected(p)).sort((a,b)=>a.joined-b.joined)[0];if(next){m.rights={play:r.everyone,pause:r.everyone,seek:r.everyone};r.host=next.id;}else {r.position=this.position(r,now);r.at=now;r.playing=false;}}
+      if(now-m.seen>300000){r.members=r.members.filter(p=>p.id!==m.id);this.transferOrEnd(r,m.id,now);}
+    }}
     if(r.expires<=now)r.ended=true;
     if(r.ended){this.broadcast(r);for(const ws of this.ctx.getWebSockets()){try{ws.close(4004,'Room ended');}catch{}}this.ctx.storage.sql.exec('DELETE FROM room');return;}
     r.version++;this.save(r);this.broadcast(r);await this.ctx.storage.setAlarm(now+15000);

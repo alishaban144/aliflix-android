@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { issueIdentity, verifyIdentity, watchPartyRoute } from '../src/watchParty';
 import type { RecommendationEnv } from '../src/types';
 
-const content={id:70523,type:'tv' as const,season:1,episode:1,title:'Dark',poster:'',language:'de',year:'2017'};
+const content={id:70523,type:'tv' as const,season:1,episode:1,title:'Dark',poster:'',language:'de',year:'2017',imdbId:'tt5753856',genres:['Drama']};
 const hash=async(value:string)=>btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
 async function room(){const stub=env.WATCH_PARTIES.getByName(crypto.randomUUID());await stub.create('host',content,'Host',await hash('invite'),10000);return stub;}
 async function joinSocket(stub:Awaited<ReturnType<typeof room>>,id:string,digest:string,name:string){return stub.fetch(new Request('https://party/socket',{headers:{'Upgrade':'websocket','x-party-identity':id,'x-party-invite-hash':digest,'x-party-name':name}}));}
@@ -44,7 +44,7 @@ describe('Watch Party protocol and security',()=>{
   r=await send(host.ws,{type:'control',action:'seek',position:500000,sequence:2,version:1},stub);expect(r.position).toBeLessThan(500000);
   host.ws.close();guest.ws.close();
  });
- it('preserves state across object eviction and reconnects an admitted guest after invitation expiry',async()=>{
+ it('preserves persisted admission and reconnects an admitted guest after invitation expiry',async()=>{
   const stub=await room();const host=await connect(stub,'host');const guest=await connect(stub,'guest');
   await runInDurableObject(stub,(_instance,ctx)=>{const r=JSON.parse(ctx.storage.sql.exec<{value:string}>('SELECT value FROM room').one().value);r.inviteExpires=0;ctx.storage.sql.exec('UPDATE room SET value=?',JSON.stringify(r));});
   expect((await joinSocket(stub,'new',await hash('invite'),'New')).status).toBe(403);
@@ -73,4 +73,27 @@ describe('Watch Party protocol and security',()=>{
   const response=await watchPartyRoute(new Request('https://test/v1/party/rooms',{method:'POST',headers:{authorization:'Bearer '+token},body:JSON.stringify({content:{...content,url:'https://provider/video',cookie:'session'},name:'Host'})}),partyEnv);
   expect(response?.status).toBe(400);
  });
+ it('allows individual restrictions after everyone controls is enabled',async()=>{
+  const stub=await room();const host=await connect(stub,'host');const guest=await connect(stub,'guest');
+  let r=await send(host.ws,{type:'policy',everyone:true},stub);
+  r=await send(guest.ws,{type:'control',action:'play',position:0,sequence:1,version:r.playbackVersion},stub);expect(r.playing).toBe(true);
+  r=await send(host.ws,{type:'permission',member:'guest',rights:{play:false,pause:false,seek:true}},stub);
+  r=await send(guest.ws,{type:'control',action:'pause',position:0,sequence:2,version:r.playbackVersion},stub);expect(r.playing).toBe(true);
+  r=await send(guest.ws,{type:'control',action:'seek',position:123456,sequence:3,version:r.playbackVersion},stub);expect(r.position).toBe(123456);
+  host.ws.close();guest.ws.close();
+ });
+ it('transfers a disconnected host after grace and retains their secure reconnect admission',async()=>{
+  const stub=await room();const host=await connect(stub,'host');const guest=await connect(stub,'guest');host.ws.close();
+  await new Promise(resolve=>setTimeout(resolve,20));
+  await runInDurableObject(stub,(_instance,ctx)=>{const r=JSON.parse(ctx.storage.sql.exec<{value:string}>('SELECT value FROM room').one().value);r.members.find((m:{id:string})=>m.id==='host').seen=Date.now()-40000;ctx.storage.sql.exec('UPDATE room SET value=?',JSON.stringify(r));});
+  await runDurableObjectAlarm(stub);const r=await state(stub);expect(r.host).toBe('guest');expect(r.members).toHaveLength(2);expect(r.members.find((m:{id:string})=>m.id==='host').rights.play).toBe(false);
+  const restored=await connect(stub,'host','wrong');expect((await state(stub)).members).toHaveLength(2);restored.ws.close();guest.ws.close();
+ });
+ it('keeps an empty disconnected room paused during a five-minute recovery window',async()=>{
+  const stub=await room();const host=await connect(stub,'host');host.ws.close();await new Promise(r=>setTimeout(r,20));
+  await runInDurableObject(stub,(_instance,ctx)=>{const r=JSON.parse(ctx.storage.sql.exec<{value:string}>('SELECT value FROM room').one().value);r.members[0].seen=Date.now()-40000;r.playing=true;ctx.storage.sql.exec('UPDATE room SET value=?',JSON.stringify(r));});
+  await runDurableObjectAlarm(stub);const r=await state(stub);expect(r.ended).toBe(false);expect(r.playing).toBe(false);expect(r.members).toHaveLength(1);
+  const restored=await connect(stub,'host','wrong');restored.ws.close();
+ });
+
 });

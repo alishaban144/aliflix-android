@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 const base=process.env.ALIFLIX_PARTY_BASE||'https://aliflix-recommendations.equable-equipment.workers.dev';
 const request=async(path,body,token)=>{const r=await fetch(base+path,{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:JSON.stringify(body)});assert.ok(r.ok,`${path}: ${r.status}`);return r.json();};
+for(let i=0;i<30;i++){const r=await fetch(base+'/.well-known/assetlinks.json');if(r.ok)break;if(i===29)throw Error('Deployment did not propagate');await new Promise(resolve=>setTimeout(resolve,2000));}
 const a=await request('/v1/party/identity',{});const b=await request('/v1/party/identity',{});
 const room=await request('/v1/party/rooms',{content:{id:70523,type:'tv',season:1,episode:1,title:'Dark',language:'de',year:'2017'},name:'Release verification'},a.token);
 // Node's native WebSocket cannot supply Authorization headers. Use the already-installed ws implementation.
