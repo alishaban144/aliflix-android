@@ -106,6 +106,8 @@ class WatchPartyDeviceTest {
                 await { !client.state.value.host }
                 await { client.state.value.content?.optInt("episode") == 2 }
                 await { main { NativePlaybackService.activeRequest?.selectionJson?.let { nativeSelection(it).episodeNumber } == 2 && NativePlaybackService.playbackReady && NativePlaybackService.hasSelectedAudio && NativePlaybackService.renderedStreamUrl != null } }
+                compose.waitUntil(20000) { compose.onAllNodesWithContentDescription("More").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("More").assertIsDisplayed()
                 capture("pixel-party-episode2.png")
                 await { !client.state.value.active }
             } else {
@@ -133,6 +135,8 @@ class WatchPartyDeviceTest {
                 await { client.state.value.content?.optInt("episode") == 2 }
                 await { main { NativePlaybackService.activeRequest?.selectionJson?.let { nativeSelection(it).episodeNumber } == 2 && NativePlaybackService.playbackReady && NativePlaybackService.hasSelectedAudio && NativePlaybackService.renderedStreamUrl != null } }
                 await { client.state.value.members.all { it.optString("status") in listOf("ready", "playing") } }
+                compose.waitUntil(20000) { compose.onAllNodesWithContentDescription("More").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("More").assertIsDisplayed()
                 capture("redmi-party-episode2.png")
                 Thread.sleep(1000)
                 main { client.leave(end=true) }
