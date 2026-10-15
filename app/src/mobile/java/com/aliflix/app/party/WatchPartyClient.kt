@@ -11,6 +11,8 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -78,6 +80,8 @@ internal class WatchPartyClient private constructor(context: Context) {
     private val _state = MutableStateFlow(PartyState())
     val state: StateFlow<PartyState> = _state.asStateFlow()
     val clock = PartyClock()
+    private val identityLock = Mutex()
+    private var navigation = 0L
     private var token = prefs.getString("token", "").orEmpty()
     private var socket: WebSocket? = null
     private var connection = 0L
@@ -95,19 +99,22 @@ internal class WatchPartyClient private constructor(context: Context) {
         val invite = prefs.getString("invite", "").orEmpty()
         if (room.matches(Regex("[a-f0-9]{32}"))) scope.launch { join(room, invite) }
     }
-    private suspend fun identity() = withContext(Dispatchers.IO) {
-        val lifetime = if (prefs.getString("room", "").isNullOrBlank()) 9 * 3600000L else 60000L
-        if (prefs.getLong("expires", 0) < System.currentTimeMillis() + lifetime || token.isBlank()) {
-            val user = FirebaseAuth.getInstance().currentUser
+    private suspend fun identity() = identityLock.withLock { withContext(Dispatchers.IO) {
+        val hasRoom = !prefs.getString("room", "").isNullOrBlank()
+        val lifetime = if (!hasRoom) 9 * 3600000L else 60000L
+        val user = FirebaseAuth.getInstance().currentUser
+        val owner = user?.uid ?: "guest"
+        val ownerChanged = !hasRoom && prefs.getString("identity-owner", "guest") != owner
+        if (prefs.getLong("expires", 0) < System.currentTimeMillis() + lifetime || token.isBlank() || ownerChanged) {
             val input = JSONObject()
             user?.getIdToken(false)?.await()?.token?.let { input.put("idToken", it) }
             val result = post("/v1/party/identity", input, authenticated = false)
             token = result.getString("token")
-            prefs.edit().putString("token", token).putLong("expires", result.getLong("expires")).apply()
+            prefs.edit().putString("token", token).putString("identity-owner", owner).putLong("expires", result.getLong("expires")).apply()
         }
         // Signed payload is used only as a display identity here; the backend verifies the signature.
         JSONObject(String(android.util.Base64.decode(token.substringBefore('.'), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING))).getString("sub")
-    }
+    } }
     private fun post(path: String, body: JSONObject, authenticated: Boolean = true): JSONObject {
         val request = Request.Builder().url(BASE + path).post(body.toString().toRequestBody("application/json".toMediaType()))
         if (authenticated) request.header("Authorization", "Bearer $token")
@@ -118,29 +125,39 @@ internal class WatchPartyClient private constructor(context: Context) {
         }
     }
     suspend fun create(selection: PlaybackSelection, position: Long = 0) {
+        leave()
+        val ticket = ++navigation
         _state.value = PartyState(phase = "creating")
         try {
-            val self = identity(); name = displayName()
+            val self = identity(); if (ticket != navigation) return; name = displayName()
             val response = withContext(Dispatchers.IO) { post("/v1/party/rooms", JSONObject().put("content", PartyProtocol.content(selection)).put("name", name).put("position", position.coerceAtLeast(0))) }
+            if (ticket != navigation) return
             join(response.getString("room"), response.getString("invite"), self)
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { _state.value = PartyState(phase = "failed", error = "Couldn’t create room") }
+        catch (_: Exception) { if (ticket == navigation) _state.value = PartyState(phase = "failed", error = "Couldn’t create room") }
     }
     suspend fun join(room: String, invite: String, knownSelf: String? = null) {
-        if (!room.matches(Regex("[a-f0-9]{32}")) || !invite.matches(Regex("[A-Za-z0-9_-]{43}"))) { _state.value = PartyState(phase = "expired-invitation", error = "Invalid invitation"); return }
-        if (_state.value.active && _state.value.room != room) leave()
+        if (!room.matches(Regex("[a-f0-9]{32}")) || !invite.matches(Regex("[A-Za-z0-9_-]{43}"))) {
+            ++navigation
+            _state.value = if (_state.value.active) _state.value.copy(error = "Invalid invitation") else PartyState(phase = "expired-invitation", error = "Invalid invitation")
+            return
+        }
+        val previousRoom = _state.value.room.ifBlank { prefs.getString("room", "").orEmpty() }
+        if (previousRoom.isNotBlank() && previousRoom != room) leave()
+        val ticket = ++navigation
         try {
-            val self = knownSelf ?: identity(); name = displayName()
+            val self = knownSelf ?: identity(); if (ticket != navigation) return; name = displayName()
             _state.value = PartyState(room, invite, self, "joining")
             prefs.edit().putString("room", room).putString("invite", invite).apply()
             lastVersion = -1; sequence = 0; attempt = 0
             open()
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { _state.value = PartyState(phase = "failed", error = "Couldn’t join room") }
+        catch (_: Exception) { if (ticket == navigation) _state.value = PartyState(phase = "failed", error = "Couldn’t join room") }
     }
     private fun displayName() = FirebaseAuth.getInstance().currentUser?.displayName?.take(32)?.takeIf { it.isNotBlank() } ?: "Guest"
     private fun open() {
         reconnect?.cancel(); ping?.cancel(); socket?.cancel()
+        pendingControl = null; pendingUntil = 0
         val generation = ++connection; val current = _state.value
         clock.reset()
         val request = Request.Builder().url(BASE.replace("https://", "wss://") + "/v1/party/rooms/${current.room}/socket")
@@ -215,6 +232,7 @@ internal class WatchPartyClient private constructor(context: Context) {
     fun reconnectNow() { if (_state.value.active) { _state.value = _state.value.copy(phase = "reconnecting"); open() } }
     fun link() = BASE + "/party/${_state.value.room}#${_state.value.invite}"
     fun leave(end: Boolean = false) {
+        ++navigation; pendingControl = null; pendingUntil = 0
         command(if (end) "end" else "leave"); ++connection; reconnect?.cancel(); ping?.cancel(); socket?.close(1000, "Left"); socket = null
         prefs.edit().remove("room").remove("invite").apply(); _state.value = PartyState()
     }

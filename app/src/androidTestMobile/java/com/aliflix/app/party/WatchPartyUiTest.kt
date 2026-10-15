@@ -24,7 +24,7 @@ class WatchPartyUiTest {
         instrument.runOnMainSync {client=WatchPartyClient.get(context);client.leave()}
         val selected=PlaybackSelection(Media(70523,MediaType.TV,"Dark",posterPath="/apbrbWs8M9lyOpJYU5WXrpFbk1Z.jpg",year="2017",originalLanguage="de"),1,1)
         ActivityScenario.launch<WatchPartyActivity>(Intent(context,WatchPartyActivity::class.java).putExtra("selection",selected.nativeJson())).use {
-            compose.onNodeWithText("Create room").assertIsDisplayed();capture("create-portrait.png")
+            compose.onNodeWithText("Create room").performScrollTo().assertIsDisplayed();capture("create-portrait.png")
             compose.onNodeWithText("Create room").performClick()
             compose.waitUntil(20000){client.state.value.data!=null}
             compose.onNodeWithText("Dark").assertIsDisplayed()
@@ -48,7 +48,7 @@ class WatchPartyUiTest {
         val uri=android.net.Uri.parse(WatchPartyClient.BASE+"/party/"+"1".repeat(32)+"#"+"a".repeat(43))
         ActivityScenario.launch<WatchPartyActivity>(Intent(Intent.ACTION_VIEW,uri,context,WatchPartyActivity::class.java)).use {
             compose.waitUntil(20000){WatchPartyClient.get(context).state.value.phase=="room-ended"}
-            compose.onNodeWithText("Invitation expired").assertIsDisplayed();capture("expired-invitation.png")
+            compose.onNodeWithText("Invitation expired").performScrollTo().assertIsDisplayed();capture("expired-invitation.png")
         }
     }
 }

@@ -342,7 +342,7 @@ jobs:
       - name: Verify unchanged ARM64 binaries and original Silero model
         run: |
           curl --fail --location --retry 3 -o baseline-mobile.apk https://github.com/${{ github.repository }}/releases/download/v3.1.164/aliflix-mobile.apk
-          python .github/scripts/verify-mobile-native.py baseline-mobile.apk app/build/outputs/apk/mobile/release/app-mobile-release.apk --report native-parity.json
+          python .github/scripts/verify-mobile-native.py baseline-mobile.apk app/build/outputs/apk/mobile/release/app-mobile-release.apk --bridge aliflix-mobile-compat.apk --report native-parity.json
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           "$APKSIGNER" verify --print-certs aliflix-mobile-compat.apk | grep -i "$EXPECTED_MOBILE_SIGNER_SHA256"
           unzip -tq aliflix-mobile-compat.apk

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,8 +108,12 @@ class WatchPartyActivity : ComponentActivity() {
     val motion = rememberMobileMotionEnabled()
     val config = LocalConfiguration.current
     val landscape = config.screenWidthDp > config.screenHeightDp
-    var confirm by remember { mutableStateOf(false) }
-    var permissions by remember { mutableStateOf<String?>(null) }
+    var confirm by rememberSaveable { mutableStateOf(false) }
+    var permissions by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.active, state.host, permissions, state.members.map { it.optString("id") }) {
+        if (!state.active || !state.host || (permissions != null && state.members.none { it.optString("id") == permissions })) permissions = null
+        if (!state.active) confirm = false
+    }
     val content = state.content
     val title = content?.optString("title") ?: selection?.media?.title.orEmpty()
     val poster = content?.optString("poster")?.takeIf { it.startsWith('/') }?.let { "https://image.tmdb.org/t/p/w500$it" } ?: selection?.media?.posterUrl
@@ -163,9 +168,9 @@ class WatchPartyActivity : ComponentActivity() {
                             Text(member?.optString("name").orEmpty(), style = MaterialTheme.typography.titleLarge)
                             listOf("play" to "Play", "pause" to "Pause", "seek" to "Seek").forEach { (key, label) ->
                                 val checked = member?.optJSONObject("rights")?.optBoolean(key) == true
-                                PartyToggle(label, checked) { enabled -> client.command("permission") { put("member", permissions); put("rights", JSONObject(member?.optJSONObject("rights").toString()).put(key, enabled)) } }
+                                PartyToggle(label, checked) { enabled -> member?.optJSONObject("rights")?.let { currentRights -> client.command("permission") { put("member", member.optString("id")); put("rights", JSONObject(currentRights.toString()).put(key, enabled)) } } }
                             }
-                            PartyAction("Make host", Icons.Rounded.VerifiedUser) { client.command("transfer") { put("member", permissions) }; permissions = null }
+                            PartyAction("Make host", Icons.Rounded.VerifiedUser) { permissions?.let { id -> client.command("transfer") { put("member", id) } }; permissions = null }
                             TextButton(onClick = { permissions = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Done") }
                         }
                         "room" -> {
