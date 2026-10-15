@@ -274,7 +274,7 @@ class MobilePolishUiTest {
         }
     }
 
-    @Test fun liquidTogglePreservesReferenceDropletInBothDirections() {
+    @Test fun liquidToggleHasNoDetachedDotInEitherDirection() {
         var checked by mutableStateOf(false)
         var direction by mutableStateOf(LayoutDirection.Ltr)
         compose.setContent { AliflixMobileTheme {
@@ -288,8 +288,7 @@ class MobilePolishUiTest {
             val pixels = compose.onNodeWithTag("clean-toggle").captureToImage().toPixelMap()
             val top = with(compose.density) { 7.dp.toPx() }.toInt()
             val aboveTrack = (0 until top).sumOf { y -> (0 until pixels.width).count { x -> pixels[x,y].red > .4f } }
-            if (value) assertTrue("Reference droplet must be visible", aboveTrack > 0)
-            else assertEquals(0, aboveTrack)
+            assertEquals("No detached dot above the switch", 0, aboveTrack)
         }
     }
 

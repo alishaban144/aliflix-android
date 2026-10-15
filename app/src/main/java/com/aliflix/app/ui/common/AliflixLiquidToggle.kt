@@ -21,9 +21,9 @@ import androidx.compose.ui.geometry.Size
 import com.aliflix.app.ui.theme.*
 
 /** Native port of Deepak Chandwani's Liquid Toggle (21st.dev, bundled/673.html).
- * Keep the reference's two scaling circles, detached drop, colors, 500ms easing
+ * Keep the reference's two scaling circles, colors, 500ms easing
  * and goo filter. A null callback lets a labelled row own the single action.
- * All new mobile boolean settings should use this component. */
+ * The detached dot is intentionally omitted. All new mobile boolean settings use this component. */
 @Composable
 internal fun AliflixLiquidToggle(
     checked: Boolean,
@@ -60,7 +60,6 @@ internal fun AliflixLiquidToggle(
             val unit = size.width / 52f
             drawCircle(Color.White, 10f * (1f - progress) * unit, Offset((16f + 12f * progress) * unit, 24f * unit))
             drawCircle(Color.White, 10f * progress * unit, Offset((24f + 12f * progress) * unit, 24f * unit))
-            if (checked) drawCircle(Color.White, 2.5f * unit, Offset(35f * unit, 7f * unit))
         }
     }
 }

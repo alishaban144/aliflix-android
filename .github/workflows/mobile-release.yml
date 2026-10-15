@@ -309,6 +309,9 @@ jobs:
           fi
           fi
           fi
+          # One universal bridge lets pre-ABI-aware installations migrate safely.
+          ./gradlew packageMobileRelease -Paliflix.mobileCompatBridge=true
+          cp app/build/outputs/apk/mobile/release/app-mobile-release.apk aliflix-mobile-compat.apk
           ./gradlew packageMobileRelease
 
       - name: Verify release APKs integrity
@@ -336,10 +339,18 @@ jobs:
             test "$APK_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
           done
 
+      - name: Verify unchanged ARM64 binaries and original Silero model
+        run: |
+          curl --fail --location --retry 3 -o baseline-mobile.apk https://github.com/${{ github.repository }}/releases/download/v3.1.164/aliflix-mobile.apk
+          python .github/scripts/verify-mobile-native.py baseline-mobile.apk app/build/outputs/apk/mobile/release/app-mobile-release.apk --report native-parity.json
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --print-certs aliflix-mobile-compat.apk | grep -i "$EXPECTED_MOBILE_SIGNER_SHA256"
+          unzip -tq aliflix-mobile-compat.apk
+
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="The shared Liquid Toggle now follows the exact reference animation. Home prepares before the launch reveal and recommendation scoring runs off the UI thread. The logo and wordmark reveal has a longer readable pace. Sync with Audio can silently decode nearby buffered media from the selected soundtrack, with a dedicated Retry action when dialogue cannot be verified."
+          RELEASE_NOTES="Watch Together, prioritized Serienstream with German editions, launch motion and smoother Home scrolling. ARM64-only mobile package preserves the original speech model and native synchronization binaries."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -347,19 +358,32 @@ jobs:
           MOBILE_SIZE="$(stat -c %s "$MOBILE_APK")"
           MOBILE_DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/aliflix-mobile.apk"
 
-          cat <<EOF > update-mobile.json
+          cat <<EOF > update-mobile-arm64.json
           {
             "versionCode": ${RELEASE_VERSION_CODE},
             "versionName": "${RELEASE_VERSION_NAME}",
             "apkUrl": "${MOBILE_DOWNLOAD_URL}",
             "sha256": "${MOBILE_SHA256}",
             "sizeBytes": ${MOBILE_SIZE},
+            "supportedAbis": ["arm64-v8a"],
             "minimumSdk": 29,
             "notes": "${RELEASE_NOTES}",
             "releaseNotes": "${RELEASE_NOTES}"
           }
           EOF
           cp "$MOBILE_APK" aliflix-mobile.apk
+          # Older clients ignore unknown manifest ABI fields, so their URL must
+          # continue to advertise the universal bridge, never the ARM64 APK.
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          apk = Path('aliflix-mobile-compat.apk')
+          bridge = dict(versionCode=255, versionName='3.1.165', minimumSdk=29,
+              apkUrl=f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['RELEASE_TAG']}/aliflix-mobile-compat.apk",
+              sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), sizeBytes=apk.stat().st_size,
+              notes='Update compatibility. ARM64 devices can then install the latest mobile release.')
+          Path('update-mobile.json').write_text(json.dumps(bridge, indent=2)+'\n')
+          PY
 
       - name: Create or update release
         uses: softprops/action-gh-release@v2
@@ -368,15 +392,16 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile launch performance, the reference Liquid Toggle, and buffered dialogue synchronization, based on v3.1.163.
+            Private Watch Together rooms with independent streaming, authoritative playback synchronization, secure invitations, host transfer and native room controls.
 
-            - Ports Deepak Chandwani's Liquid Toggle into the shared native control, including its two-circle morph, droplet, colors and timing. All mobile settings switches use this control; future use is documented in docs/mobile-controls.md.
-            - Prepares Home before the visible launch animation, moves feed mapping and recommendation scoring off the UI thread, and scores each rail title once during sorting.
-            - Gives the logo and ALIFLIX reveal a longer, readable pace and a complete final hold before the Home crossfade.
-            - Lets Sync with Audio read nearby cached and buffered media through a bounded silent decoder, retaining the selected soundtrack and the visible playback position. Existing uniqueness, timing, cancellation and identity checks remain in force.
-            - Adds a dedicated Retry action when a match cannot be verified.
+            Serienstream is prioritized for series. German editions can prepare alongside another provider. The mobile launch follows the inspected poster zoom and reveal; repeated rail entrances and the detached toggle dot are removed.
 
-            Validation evidence and limitations are recorded in docs/mobile-164-validation.md. No new runtime dependencies or TV release changes.
+            `aliflix-mobile.apk` is ARM64-only. Existing installations first receive the signed universal compatibility bridge through `update-mobile.json`; the architecture-aware updater then reads `update-mobile-arm64.json`. Incompatible devices retain the installable bridge. `native-parity.json` records every unchanged ARM64 binary and original Silero model hash plus exact APK size reduction from v3.1.164.
+
+            Validation evidence: docs/mobile-166-validation.md. TV is unchanged and no TV APK is published.
           files: |
             aliflix-mobile.apk
             update-mobile.json
+            update-mobile-arm64.json
+            aliflix-mobile-compat.apk
+            native-parity.json

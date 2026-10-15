@@ -1,0 +1,43 @@
+# Mobile 3.1.166 validation
+
+Baseline: published v3.1.164, commit `2ba819c389af876cb6ccdf597f1b9ab3b49d9baa`, versionCode 254. Its APK is 66,266,641 bytes; SHA-256 `9a6a97bc69d9f6f12dd8df13a5d02e1a04e62a3aea3672bb5c925eaf53703873`.
+
+## Streaming and mobile UI
+
+Non-anime series now start with Serienstream even when catalogue metadata omits the original language. Explicit provider/server selections remain available. Its resolution budget includes the ordinary website verification flow. An expired cached VOE frame retries the exact episode's fresh route once; HTTP 403 can enter the normal browser verification flow. No security challenge is solved or fabricated by the app.
+
+A separate, muted and cancellable adapter prepares the exact episode's German Serienstream edition while another provider is selected. More exposes its Preparing/Ready/Retry state. Choosing it uses the normal native readiness, resume and subtitle transaction. Retries are bounded and back off; no background preparation replaces the running stream. Serienstream currently supplies a series catalogue; movie routing is preserved.
+
+Inspected the existing Flixer, Serienstream, CineJoy, Moviepire, Ramoflix, Doraby, 7Movies, Movy, Miruro and AniKuro routing. The off-phone gate covers provider identity, exact episodes, fallback cancellation, native request serialization, approved-frame capture, HLS masters, origin-scoped cookies and headers, audio selection and Media3 data sources. Live availability of every title on every external provider is not asserted. The two-phone provider playback below belongs specifically to Watch Party validation.
+
+The launch ports the inspected [GTA VI Poster reference](https://ui.aceternity.com/labs/gta-vi-poster): camera settle, 3.306x logo/wordmark zoom, staggered top-down spring reveal and wordmark defocus, shortened for mobile. Reduced motion and lifecycle handling remain native. The detached toggle dot alone was removed; the two-circle morph, goo effect, colors and timing remain. Lazy Home rails no longer restart a layout-changing entrance animation whenever scrolling composes them.
+
+## Watch Together
+
+The native flow runs from title details or player More through creation, sharing, joining, participant status, native playback, permissions and leave/end confirmation. It uses the existing mobile theme, surfaces, motion timings and Liquid Toggle, poster-derived ambient color, native spring transitions, predictive back and 48dp targets. The interaction references were [Animated Modal](https://ui.aceternity.com/components/animated-modal), [Stateful Button](https://ui.aceternity.com/components/stateful-button) and [Android shared-element navigation](https://developer.android.com/develop/ui/compose/animation/shared-elements/navigation). No React/WebView room UI is used.
+
+`WatchParty` is a separate SQLite-backed Durable Object in the existing Worker. Each room has at most eight participants, an eight-hour lifetime, expiring/renewable hashed invitations, persistent playback anchors, event and playback revisions, server-enforced controls and automatic host transfer. A disconnected host transfers after grace; an otherwise empty room pauses and retains secure admission during a five-minute recovery window. Alarms remove ended/expired state. WebSockets hibernate, and connection identities reject superseded sockets. HTTP and socket event rates and payloads are bounded.
+
+Firebase ID tokens are verified against Google's public keys, issuer, audience and expiry before issuing account sessions. Guests receive independent, signed temporary identities. Invite credentials stay in HTTPS fragments and private app storage, excluded from backup and device transfer. No video URL, source cookie, credential, audio setting, subtitle selection or subtitle synchronization data is in the room protocol.
+
+The Media3 service owns the playback listener. It observes actual native and MediaSession controls, estimates server clock offset from low-latency ping samples, rejects old revisions, tolerates 250ms drift, makes small temporary rate corrections and rate-limits hard position correction. Late join and reconnect project the authoritative timestamp. Local source/audio/subtitle/quality/volume/brightness choices remain independent. Shared playback uses 1x; normal speed settings return on leaving. Casting requires leaving the party. Episode transitions remain host-owned. There is no cross-provider fingerprint alignment.
+
+Endpoints are under `https://aliflix-recommendations.equable-equipment.workers.dev`: `/v1/party/identity`, `/v1/party/rooms`, `/v1/party/rooms/{room}/socket`, HTTPS invitation landing `/party/{room}`, and `/.well-known/assetlinks.json`. App Links use the existing release signer.
+
+## Executed evidence
+
+- Host Android gate: 636 unit tests, zero failures, three opt-in skips; mobile lint and app/test APK assembly passed. TV compatibility assembly passed; TV version and release remain unchanged.
+- Separate native host gate: 11 tests passed with zero skips, including the real WebRTC JNI capture and original Silero/ONNX recurrent-session benchmark, clock/drift simulation and ABI compatibility cases. The first attempt exposed an incompatible cached Java helper and a Windows runtime crash under JBR 21. Rebuilding only the Java helper for target 17 and using the installed JDK 25 resolved that host setup. No Android native binary or model was rebuilt or changed.
+- Worker: 127 tests passed, covering cryptographic identity, invitation admission/expiry, permissions including individual restrictions after everyone-controls, replay/stale events, persistence, host recovery, bounded rooms, cleanup and rejection of provider credentials/URLs.
+- Pixel 7a: 40 general UI/player checks passed, including Home/launch handoff, scrolling/layout, dot-free switches, large fonts/RTL player controls, More, subtitles, skip controls and buffered dialogue behavior. Fixture screenshots were inspected separately from actual room UI screenshots.
+- Pixel native room UI: creation, exact title/episode lobby, policy control, native share chooser, leave/end confirmation and expired invitation passed. Actual screens were captured and reviewed; the review prompted a smooth ambient fade and a compact expired-invitation state.
+- Two real phones: Pixel 7a resolved and decoded Dark S1E1 through Serienstream; Redmi Note 9 Pro resolved and decoded it independently through CineJoy. Both roles passed authoritative play/pause/seek, denied guest controls, individual seek permission, host transfer, episode transition state and room ending. A second complete two-phone run also passed forced WebSocket reconnect and participant buffering-status recovery. Buffering status was deliberately injected in that protocol recovery step; this is not a claim that every possible real network outage was reproduced.
+- Backend deployments use the existing GitHub workflow. Run `38796322966` passed deployment and the public two-client smoke check, including guest identity, permissions, seek, host transfer, ending, HTTPS fallback and asset links. Initial run `38792776020` deployed successfully but its immediate smoke check reached an old edge route; the follow-up live check passed. The workflow now waits for route propagation.
+
+## Packaging and update compatibility
+
+Only the mobile release APK excludes non-ARM64 native libraries. Debug retains test ABIs; TV packaging is untouched. The original Silero asset, ONNX Runtime ARM64 libraries and WebRTC VAD are verified byte-for-byte against the baseline APK by `.github/scripts/verify-mobile-native.py`. The release fails on a changed library set, model, SHA-256 or unexpected ABI. No recompilation, quantization, precision change, synchronization algorithm change or remote audio processing is part of the size reduction.
+
+Older clients cannot interpret ABI restrictions in their static GitHub update manifest. Consequently `update-mobile.json` continues to offer a signed universal compatibility bridge (3.1.165/code 255). That bridge and the new app read `update-mobile-arm64.json`; its `supportedAbis` gate prevents ARMv7/x86-only devices from downloading the ARM64 main APK (3.1.166/code 256). Both use the existing release certificate and package identity. The workflow publishes the main ARM64 APK, bridge, both manifests and `native-parity.json`, which records the exact signed APK reduction and all parity hashes.
+
+External websites, their content editions, challenges, CDNs and connectivity can change. The checks above document observed behavior and regression protection, not a guarantee of uninterrupted third-party service forever.

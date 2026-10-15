@@ -1,5 +1,5 @@
 import { env, runInDurableObject, runDurableObjectAlarm } from 'cloudflare:test';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { issueIdentity, verifyIdentity, watchPartyRoute } from '../src/watchParty';
 import type { RecommendationEnv } from '../src/types';
 
@@ -94,6 +94,26 @@ describe('Watch Party protocol and security',()=>{
   await runInDurableObject(stub,(_instance,ctx)=>{const r=JSON.parse(ctx.storage.sql.exec<{value:string}>('SELECT value FROM room').one().value);r.members[0].seen=Date.now()-40000;r.playing=true;ctx.storage.sql.exec('UPDATE room SET value=?',JSON.stringify(r));});
   await runDurableObjectAlarm(stub);const r=await state(stub);expect(r.ended).toBe(false);expect(r.playing).toBe(false);expect(r.members).toHaveLength(1);
   const restored=await connect(stub,'host','wrong');restored.ws.close();
+ });
+
+ it('verifies Firebase account signatures, audience and issuer before issuing a session identity',async()=>{
+  const keys=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
+  if(!('publicKey' in keys))throw Error('Expected RSA key pair');
+  const jwk={...await crypto.subtle.exportKey('jwk',keys.publicKey),kid:'party-test'};
+  const encode=(value:unknown)=>btoa(JSON.stringify(value)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
+  const header=encode({alg:'RS256',kid:'party-test'});
+  const claims={aud:'aliflix-e6332',iss:'https://securetoken.google.com/aliflix-e6332',sub:'account-user',exp:Math.floor(Date.now()/1000)+3600,auth_time:Math.floor(Date.now()/1000)-10};
+  const signed=async(value:unknown)=>{const payload=header+'.'+encode(value);const sig=new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5',keys.privateKey,new TextEncoder().encode(payload)));return payload+'.'+btoa(String.fromCharCode(...sig)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');};
+  const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async(input)=>{expect(String(input)).toBe('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com');return Response.json({keys:[jwk]});});
+  try{
+   const partyEnv:RecommendationEnv={...env,CURSOR_SIGNING_SECRET:'account-test',RECOMMENDATION_RATE_LIMITER:{limit:async()=>({success:true})}};
+   const request=async(token:string)=>watchPartyRoute(new Request('https://test/v1/party/identity',{method:'POST',body:JSON.stringify({idToken:token})}),partyEnv);
+   const response=await request(await signed(claims));expect(response?.status).toBe(200);const body=await response!.json<{token:string}>();const identity=await verifyIdentity(body.token,'account-test');expect(identity.kind).toBe('account');expect(identity.sub.startsWith('account:'+await hash('account-user')+':')).toBe(true);
+   expect((await request(await signed({...claims,aud:'other-app'})))?.status).toBe(400);
+   expect((await request(await signed({...claims,iss:'https://attacker.invalid'})))?.status).toBe(400);
+   expect((await request(await signed({...claims,exp:0})))?.status).toBe(400);
+   const token=await signed(claims);expect((await request(token.slice(0,40)+'x'+token.slice(41)))?.status).toBe(400);
+  }finally{fetch.mockRestore();}
  });
 
 });

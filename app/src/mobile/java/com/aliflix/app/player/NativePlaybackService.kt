@@ -61,6 +61,7 @@ import java.net.Inet4Address
 /** Owns decoding, session, notification and TV surface. No Activity/WebView references. */
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlaybackService : MediaSessionService() {
+    private var partyBridge: com.aliflix.app.party.PartyPlaybackBridge? = null
     private val boost = LocalAudioBoost()
     private val embeddedLanguageSample = ArrayDeque<SubtitleCue>()
     private val subtitlePreferences by lazy {
@@ -259,6 +260,8 @@ class NativePlaybackService : MediaSessionService() {
         preferenceScope.launch {
             (application as AliflixApplication).playerSettingsStore.settings.collect { updateBoost() }
         }
+        partyBridge = com.aliflix.app.party.PartyPlaybackBridge(player,
+            com.aliflix.app.party.WatchPartyClient.get(this), preferenceScope) { selection }
         player.addListener(cineJoyRecovery)
         player.addListener(object : Player.Listener {
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -657,6 +660,7 @@ class NativePlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        partyBridge?.close(); partyBridge = null
         releasing = true
         subtitlePreferences.unregisterOnSharedPreferenceChangeListener(subtitlePreferenceListener)
         preferenceScope.cancel()
@@ -741,6 +745,9 @@ class NativePlaybackService : MediaSessionService() {
                 "$name state=${player.playbackState},position=${player.currentPosition},buffer=${player.totalBufferedDuration},playing=${player.isPlaying},requested=${player.playWhenReady},error=${player.playerError?.stackTraceToString()}"
             } + "\nrecovery=${service.cineJoyRecovery.message},enabled=${service.cineJoyRecovery.enabled},hasPlayed=${service.cineJoyRecovery.hasPlayed}"
         }
+
+        internal fun positionForParty(current: PlaybackSelection): Long? = activeService
+            ?.takeIf { mobileSameContent(it.selection, current) }?.player?.currentPosition
 
         internal fun pauseFromBack() {
             check(Looper.myLooper() == Looper.getMainLooper())

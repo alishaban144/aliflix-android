@@ -22,7 +22,8 @@ internal class NoNativeServersException : Exception()
  * that chain off mid-flight, so it gets a longer, still bounded window.
  */
 internal fun resolveBudgetMillis(provider: PlaybackProvider): Long =
-    if (provider == PlaybackProviderId.CINEJOY || provider is MobilePlaybackProvider) 30_000 else 10_000
+    if (provider == MobilePlaybackProvider.SERIENSTREAM) 45_000
+    else if (provider == PlaybackProviderId.CINEJOY || provider is MobilePlaybackProvider) 30_000 else 10_000
 
 internal fun <T> selectNativeServer(servers: List<T>, preferredServer: String?, excluded: Set<String>,
     strictPreferredServer: Boolean = false, label: (T) -> String): T? {

@@ -1921,7 +1921,11 @@ internal fun HomeFeed(
             }
         }
         items(if (selectedFilter == HomeFilter.NEW) emptyList() else filteredRails, key = { "${selectedFilter.name}:${it.title}" }) { rail ->
-            androidx.compose.animation.AnimatedVisibility(visibleState = remember(selectedFilter, rail.title) {
+            if (!BuildConfig.IS_TV) {
+                // A lazy item enters composition on every approach to the viewport. Sliding
+                // each rail on entry remeasured the list throughout a fling and the Home handoff.
+                HomeMediaRail(rail = rail, onOpen = onOpen, compact = false)
+            } else androidx.compose.animation.AnimatedVisibility(visibleState = remember(selectedFilter, rail.title) {
                 androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true }
             }, enter = fadeIn(tween(320)) + slideInVertically(tween(380, easing = FastOutSlowInEasing)) { it / 8 },
                 modifier = Modifier.animateItem()) {
@@ -5026,6 +5030,8 @@ private fun DetailCinematicActionPanel(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            com.aliflix.app.ui.common.WatchTogetherEntry(PlaybackSelection(item,
+                mainEpisode?.seasonNumber, mainEpisode?.number, mainEpisode?.title))
             // Top row: CTA (weight 1) + Liked + My List
             Row(
                 modifier = Modifier.fillMaxWidth(),

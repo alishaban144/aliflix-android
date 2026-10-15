@@ -79,6 +79,10 @@ internal fun MobilePlayerMoreSheet(
     audioBoost: Boolean = false,
     audioBoostAvailability: AudioBoostAvailability = AudioBoostAvailability.OFF,
     onAudioBoostChange: ((Boolean) -> Unit)? = null,
+    onWatchTogether: (() -> Unit)? = null,
+    germanEdition: String? = null,
+    onGermanEdition: (() -> Unit)? = null,
+    synchronizedPlayback: Boolean = false,
 ) {
     // Removing the sheet resets navigation and scroll positions on its next opening.
     if (!visible) return
@@ -141,10 +145,17 @@ internal fun MobilePlayerMoreSheet(
             ) {
                 when (currentPage) {
                     MorePage.HOME -> {
+                        onWatchTogether?.let { action ->
+                            MoreOptionRow(Icons.Rounded.Groups, "Watch Together", "", onClick = { onDismiss(); action() })
+                        }
+                        germanEdition?.let { label ->
+                            MoreOptionRow(Icons.Rounded.Language, "German · Serienstream", label,
+                                onClick = { onGermanEdition?.let { onDismiss(); it() } })
+                        }
                         MoreOptionRow(Icons.Rounded.Subtitles, "Audio & subtitles",
                             if (subtitlesActive) subtitleLanguage ?: "On" else "Off",
                             onClick = { onDismiss(); onOpenSubtitles() })
-                        MoreOptionRow(Icons.Rounded.Speed, "Playback speed", speedLabel(activeSpeed),
+                        if (!synchronizedPlayback) MoreOptionRow(Icons.Rounded.Speed, "Playback speed", speedLabel(activeSpeed),
                             onClick = { page = MorePage.SPEED })
                         onAudioBoostChange?.let { update ->
                             val detail = when {

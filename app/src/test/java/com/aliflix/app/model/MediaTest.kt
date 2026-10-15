@@ -99,7 +99,7 @@ class MediaTest {
             media = item,
             seasonNumber = 2,
             episodeNumber = 3,
-            source = preferences.sourceFor(item),
+            source = preferences.sourceFor(item, PlaybackProviderId.MOVIEPIRE),
         )
 
         assertEquals(

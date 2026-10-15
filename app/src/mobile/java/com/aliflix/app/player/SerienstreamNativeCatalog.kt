@@ -122,10 +122,18 @@ internal object SerienstreamNativeCatalog {
         }.toString())
     }
 
-    private suspend fun resolveLink(selection: PlaybackSelection, link: SerienstreamLink, positionMs: Long): NativePlaybackRequest {
-        val verified = verifiedEmbeds[frameKey(selection, link.language)]
-            ?.takeIf { System.currentTimeMillis() - it.first < VERIFIED_FRAME_TTL }?.second
-        var document = page(verified ?: link.url)
+    private suspend fun resolveLink(selection: PlaybackSelection, link: SerienstreamLink, positionMs: Long, allowCached: Boolean = true): NativePlaybackRequest {
+        val verified = if (allowCached) verifiedEmbeds[frameKey(selection, link.language)]
+            ?.takeIf { System.currentTimeMillis() - it.first < VERIFIED_FRAME_TTL }?.second else null
+        return try {
+        var document = try { page(verified ?: link.url) } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            if (verified == null && error.message == "Serienstream HTTP 403") {
+                val title = titles["${selection.source.baseUrl.trimEnd('/')}:${selection.media.key}"] ?: throw error
+                throw SerienstreamVerificationRequired(selection, "$title/staffel-${selection.seasonNumber ?: 1}/episode-${selection.episodeNumber ?: 1}", link.language, link.url)
+            }
+            throw error
+        }
         if (document.html().contains("frameBridge")) {
             val title = titles["${selection.source.baseUrl.trimEnd('/')}:${selection.media.key}"] ?: error("Missing provider title")
             throw SerienstreamVerificationRequired(selection, "$title/staffel-${selection.seasonNumber ?: 1}/episode-${selection.episodeNumber ?: 1}", link.language, link.url)
@@ -146,9 +154,17 @@ internal object SerienstreamNativeCatalog {
         val stream = config.optString("source").takeIf(::isNativeStreamUrl)
             ?: error("VOE did not expose a playable stream")
         // Preserve the multivariant master, subtitles and embedded audio exactly as supplied by the host.
-        return NativePlaybackRequest(stream, if (stream.substringBefore('?').endsWith(".m3u8")) "application/x-mpegURL" else "video/mp4",
+        NativePlaybackRequest(stream, if (stream.substringBefore('?').endsWith(".m3u8")) "application/x-mpegURL" else "video/mp4",
             document.location(), USER_AGENT, "", selection.media.title, positionMs, false,
             selectionJson = selection.nativeJson(), sourceSubtitleOptions = config.optJSONArray("captions")?.toString().orEmpty())
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            if (verified == null) throw error
+            // A rotated/expired cached frame must never suppress this exact episode's fresh route.
+            verifiedEmbeds.remove(frameKey(selection, link.language))
+            resolveLink(selection, link, positionMs, allowCached = false)
+        }
     }
 }
 

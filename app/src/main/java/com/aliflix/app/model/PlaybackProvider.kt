@@ -275,7 +275,7 @@ data class PlaybackPreferences(
             ?.takeIf { candidate -> candidate.isAvailableFor(media) }
             ?: when {
                 !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV && media.isJapaneseAnime -> PlaybackProviderId.MIRURO
-                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV && media.originalLanguage.equals("de", true) -> MobilePlaybackProvider.SERIENSTREAM
+                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV -> MobilePlaybackProvider.SERIENSTREAM
                 effectiveGeneralProvider.isAvailableFor(media) -> effectiveGeneralProvider
                 else -> defaultGeneralPlaybackProvider(com.aliflix.app.BuildConfig.IS_TV)
             }

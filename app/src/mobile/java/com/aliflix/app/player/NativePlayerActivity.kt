@@ -46,6 +46,11 @@ import org.json.JSONArray
 /** Disposable UI and preparation; the service retains decoding, the TV surface and media session. */
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlayerActivity : FragmentActivity() {
+    private val party by lazy { com.aliflix.app.party.WatchPartyClient.get(this) }
+    private var germanEdition by mutableStateOf<String?>(null)
+    private var germanWarmup: Job? = null
+    private var germanPrepared: Pair<PlaybackSelection, NativePlaybackRequest>? = null
+    private var germanWarmKey: String? = null
     private val surfaceOwner = java.util.UUID.randomUUID().toString()
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller by mutableStateOf<MediaController?>(null)
@@ -235,6 +240,12 @@ class NativePlayerActivity : FragmentActivity() {
                     }, { showProviderVerification = false })
                 }
                 NativePlayerScreen(
+                    onWatchTogether = {
+                        if (ui.external) ui = ui.copy(message = "Stop casting to start Watch Together")
+                        else selection?.let { startActivity(Intent(this@NativePlayerActivity, com.aliflix.app.party.WatchPartyActivity::class.java).putExtra("selection", it.nativeJson())) }
+                    },
+                    germanEdition = germanEdition,
+                    onGermanEdition = ::useGermanEdition,
                     state = ui,
                     player = controller,
                     settings = playerSettings,
@@ -259,7 +270,8 @@ class NativePlayerActivity : FragmentActivity() {
                         controller?.sendCustomCommand(SessionCommand(NativePlaybackService.ACTION_STOP_CAST, Bundle.EMPTY), Bundle.EMPTY)
                     },
                     onWireless = {
-                        runCatching { startActivity(Intent(Settings.ACTION_CAST_SETTINGS)) }
+                        if (party.state.value.active) ui = ui.copy(message = "Leave Watch Together to cast")
+                        else runCatching { startActivity(Intent(Settings.ACTION_CAST_SETTINGS)) }
                             .onFailure { ui = ui.copy(message = "Wireless display settings are unavailable on this phone.") }
                     },
                     onFit = { fill ->
@@ -321,6 +333,24 @@ class NativePlayerActivity : FragmentActivity() {
         }, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
         acceptRequest(intent)
+        lifecycleScope.launch {
+            var lastPartyError: String? = null
+            party.state.collect { state ->
+                if (state.error != null && state.error != lastPartyError) ui = ui.copy(message = state.error)
+                lastPartyError = state.error
+                val current = selection
+                val content = state.content
+                if (state.active && content != null && current != null && !com.aliflix.app.party.PartyProtocol.matches(content, current)) {
+                    val target = com.aliflix.app.party.PartyProtocol.selection(content,
+                        com.aliflix.app.data.PlaybackProviderRepository(this@NativePlayerActivity).preferences.value)
+                    selection = target.copy(source = current.source.takeIf { it.identity.isAvailableFor(target.media) } ?: target.source,
+                        availableEpisodes = current.availableEpisodes.takeIf { target.media.key == current.media.key }.orEmpty())
+                    intent.putExtra("selection", selection!!.nativeJson())
+                    exhaustedSources.clear(); triedServers.clear(); recoveryCount = 0
+                    loadEpisodeQueue(); prepareSelection(positionMs = 0)
+                }
+            }
+        }
         lifecycleScope.launch {
             var previous = automaticSubtitlesEnabled() to selectedSubtitleLanguage()
             while (isActive) {
@@ -425,6 +455,10 @@ class NativePlayerActivity : FragmentActivity() {
 
     private fun selectEpisode(episode: Episode, recordPlay: Boolean) {
         val current = selection ?: return
+        if (party.state.value.active) {
+            party.episode(current.copy(seasonNumber = episode.seasonNumber, episodeNumber = episode.number, episodeTitle = episode.title))
+            return
+        }
         if (recordPlay) (application as AliflixApplication).libraryStore.markPlayed(current.media)
         recordCurrentProgress(urgent = true)
         selection = current.copy(seasonNumber = episode.seasonNumber, episodeNumber = episode.number, episodeTitle = episode.title)
@@ -482,6 +516,52 @@ class NativePlayerActivity : FragmentActivity() {
     private val resolvedServerNames = mutableMapOf<String, List<String>>()
     private val discoveredServers = mutableMapOf<com.aliflix.app.model.PlaybackProvider, List<MoviepireServerOption>>()
     private var discoveryJob: Job? = null
+
+    /** A separate, muted adapter never replaces the active stream or its language. */
+    private fun prepareGermanEdition() {
+        val current = selection ?: return
+        val key = com.aliflix.app.data.playbackProgressKey(current)
+        if (current.media.type != com.aliflix.app.model.MediaType.TV || current.source.identity == MobilePlaybackProvider.SERIENSTREAM) {
+            germanWarmup?.cancel(); germanWarmKey = null; germanPrepared = null; germanEdition = null
+            return
+        }
+        if (germanWarmKey == key && germanWarmup?.isActive == true) return
+        germanWarmup?.cancel(); germanPrepared = null; germanWarmKey = key; germanEdition = "Preparing"
+        germanWarmup = lifecycleScope.launch {
+            val candidate = current.copy(source = com.aliflix.app.model.PlaybackSource(MobilePlaybackProvider.SERIENSTREAM))
+            var attempts = 0
+            while (isActive && selection?.let { com.aliflix.app.data.playbackProgressKey(it) } == key) {
+                if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) { delay(5000); continue }
+                val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
+                try {
+                    val request = withTimeout(45_000) { adapter.resolve(candidate, 0, emptySet(), audioLanguage = "de") {} }
+                    if (selection?.let { com.aliflix.app.data.playbackProgressKey(it) } != key) return@launch
+                    germanPrepared = candidate to request; germanEdition = "Ready"
+                    delay(120_000)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    germanPrepared = null; germanEdition = "Retry"
+                    delay(if (attempts++ < 2) 15_000 else 120_000)
+                } finally { adapter.close() }
+            }
+        }
+    }
+
+    private fun useGermanEdition() {
+        val current = selection ?: return
+        getSharedPreferences("serienstream-audio", MODE_PRIVATE).edit().putString(current.media.key, "de").apply()
+        val prepared = germanPrepared
+        val position = controller?.currentPosition ?: 0
+        selection = current.copy(source = com.aliflix.app.model.PlaybackSource(MobilePlaybackProvider.SERIENSTREAM))
+        germanWarmup?.cancel(); germanPrepared = null; germanWarmKey = null; germanEdition = null
+        exhaustedSources.remove(MobilePlaybackProvider.SERIENSTREAM); triedServers.clear()
+        // Preparation goes through the normal native readiness, resume and subtitle transaction.
+        if (prepared != null && com.aliflix.app.data.playbackProgressKey(prepared.first) == com.aliflix.app.data.playbackProgressKey(current)) {
+            warmedEpisode = Triple(selection!!, "German · VOE", prepared.second.copy(positionMs = position, selectionJson = selection!!.nativeJson()))
+            warmedAt = android.os.SystemClock.elapsedRealtime()
+        }
+        prepareSelection(positionMs = position)
+    }
 
     private fun availableProvidersFor(current: PlaybackSelection): List<com.aliflix.app.model.PlaybackProvider> =
         (com.aliflix.app.model.mobileGeneralPlaybackProviders().filter { it.isAvailableFor(current.media) } +
@@ -562,7 +642,13 @@ class NativePlayerActivity : FragmentActivity() {
         prepareSelection(preferredServer = serverName, strictPreferredServer = true)
     }
 
+    private fun resumePreparedPlayback() {
+        if (party.state.value.active) controller?.playWhenReady = party.state.value.data?.optBoolean("playing") == true
+        else controller?.play()
+    }
+
     private fun updateSelectionUi() {
+        prepareGermanEdition()
         if (introKey != selection?.key) {
             introKey = selection?.key; introJob?.cancel(); ui = ui.copy(segments = emptyList())
             selection?.let { current -> introJob = lifecycleScope.launch {
@@ -655,7 +741,7 @@ class NativePlayerActivity : FragmentActivity() {
                     awaitNativeReady(saved.url, attempt)
                     ui = ui.copy(stage = null, ready = true, error = null)
                     reconcileSyncedCaptions()
-                    controller?.play()
+                    resumePreparedPlayback()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
                     controller?.pause()
@@ -742,7 +828,7 @@ class NativePlayerActivity : FragmentActivity() {
                         intent.putExtra("selection", restored.nativeJson())
                         ui = ui.copy(stage = null, ready = true, error = null)
                         reconcileSyncedCaptions()
-                        controller?.play()
+                        resumePreparedPlayback()
                         if (auto) loadAutomaticSubtitles(restored, language, request.url)
                         warmNextEpisode(restored, savedRoute.server)
                         return@launch
@@ -777,6 +863,7 @@ class NativePlayerActivity : FragmentActivity() {
                             val savedServer = if (candidate.source == savedRoute?.selection?.source) savedRoute.server else if (candidate.source.identity.name == savedProvider) history.getString("$seriesKey:server", null) else null
                             try {
                                 val request = withTimeout(when (candidate.source.identity) {
+                                    com.aliflix.app.model.MobilePlaybackProvider.SERIENSTREAM -> 45_000
                                     com.aliflix.app.model.PlaybackProviderId.MIRURO -> 45_000
                                     com.aliflix.app.model.PlaybackProviderId.ANIKURO -> 60_000
                                     com.aliflix.app.model.PlaybackProviderId.CINEJOY,
@@ -857,7 +944,7 @@ class NativePlayerActivity : FragmentActivity() {
                         ui = ui.copy(stage = null, ready = true, error = null,
                             message = null)
                         reconcileSyncedCaptions()
-                        controller?.play()
+                        resumePreparedPlayback()
                         warmNextEpisode(candidate, server)
                         return@launch
                     } catch (error: Exception) {
@@ -1727,6 +1814,8 @@ class NativePlayerActivity : FragmentActivity() {
     }
 
     private fun openReceiverPicker() {
+        if (party.state.value.active) { ui = ui.copy(message = "Leave Watch Together to cast"); return }
+
         ui = ui.copy(message = null)
         val permission = "android.permission.ACCESS_LOCAL_NETWORK"
         if (android.os.Build.VERSION.SDK_INT >= 37 && checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -1757,6 +1846,7 @@ class NativePlayerActivity : FragmentActivity() {
         super.onStop()
     }
     override fun onDestroy() {
+        germanWarmup?.cancel()
         audioSyncJob?.cancel()
         captionPreferences.unregisterOnSharedPreferenceChangeListener(syncedCaptionListener)
         subtitleChoices.unregisterOnSharedPreferenceChangeListener(syncedCaptionListener)

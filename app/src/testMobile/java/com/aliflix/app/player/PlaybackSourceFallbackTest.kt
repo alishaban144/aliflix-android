@@ -18,8 +18,8 @@ class PlaybackSourceFallbackTest {
         assertEquals(listOf(PlaybackProviderId.MIRURO, PlaybackProviderId.ANIKURO),
             initialPlaybackRace(playbackSourceFallbacks(old, preferences)).map { it.source.identity })
         assertEquals(PlaybackProviderId.CINEJOY, preferences.sourceFor(anime, PlaybackProviderId.CINEJOY).identity)
-        assertEquals(MobilePlaybackProvider.FLIXER, preferences.sourceFor(anime.copy(originalLanguage = "en")).identity)
-        assertEquals(MobilePlaybackProvider.FLIXER, preferences.sourceFor(anime.copy(genres = listOf("Drama"))).identity)
+        assertEquals(MobilePlaybackProvider.SERIENSTREAM, preferences.sourceFor(anime.copy(originalLanguage = "en")).identity)
+        assertEquals(MobilePlaybackProvider.SERIENSTREAM, preferences.sourceFor(anime.copy(genres = listOf("Drama"))).identity)
     }
     @Test fun otherSourcesFallBackWithoutChangingEpisodeIdentity() {
         val generalProviders = listOf(MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY)
@@ -103,7 +103,7 @@ class PlaybackSourceFallbackTest {
         for (provider in MobilePlaybackProvider.entries) {
             val media = Media(615, MediaType.TV, "Futurama")
             val preferences = PlaybackPreferences(generalProvider = PlaybackProvider.valueOf(provider.name))
-            val selection = PlaybackSelection(media, 2, 3, "Episode three", source = preferences.sourceFor(media))
+            val selection = PlaybackSelection(media, 2, 3, "Episode three", source = preferences.sourceFor(media, provider))
             val restored = nativeSelection(selection.nativeJson())
             assertEquals(provider, preferences.effectiveGeneralProvider)
             assertEquals(provider, restored.source.identity)

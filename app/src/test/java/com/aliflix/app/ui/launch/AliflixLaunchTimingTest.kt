@@ -9,7 +9,7 @@ class AliflixLaunchTimingTest {
     @Test
     fun brandRevealIsReadableAndSettlesBeforeTheWords() {
         assertTrue(LAUNCH_TITLE_START_SECONDS + LAUNCH_TITLE_REVEAL_SECONDS < LAUNCH_WORD_SEQUENCE_START_SECONDS)
-        assertEquals(2.28f, LAUNCH_SEQUENCE_SECONDS, .0001f)
+        assertEquals(2.38f, LAUNCH_SEQUENCE_SECONDS, .0001f)
         assertTrue(LAUNCH_BRAND_REVEAL_SECONDS <= LAUNCH_WORD_SEQUENCE_START_SECONDS)
         assertTrue("Stories has a readable final hold",LAUNCH_FINAL_WORD_SLOT_SECONDS-LAUNCH_WORD_FADE_SECONDS >= .25f)
         assertTrue("Brand reveal lasts long enough to see", LAUNCH_BRAND_REVEAL_SECONDS >= .85f)
@@ -22,7 +22,7 @@ class AliflixLaunchTimingTest {
         }
         assertEquals(0f,launchBrandProgress(0f,false),0f)
         assertTrue(launchBrandProgress(.42f,false) < 1f)
-        assertEquals(1f,launchBrandProgress(.9f,false),0f)
+        assertEquals(1f,launchBrandProgress(LAUNCH_BRAND_REVEAL_SECONDS,false),0f)
         assertEquals(1f,launchBrandProgress(0f,true),0f)
     }
 
@@ -47,20 +47,20 @@ class AliflixLaunchTimingTest {
         val word0BeforeStart = calculateWordState(seq = 0.47f, wordIndex = 0, isReducedMotion = false)
         assertEquals(0f, word0BeforeStart.first, 0.001f)
 
-        assertEquals(0.42f, LAUNCH_WORD_SLOT_SECONDS, 0.001f)
+        assertEquals(0.25f, LAUNCH_WORD_SLOT_SECONDS, 0.001f)
 
-        val word0MidFadeIn = calculateWordState(seq = 1.13f, wordIndex = 0, isReducedMotion = false)
+        val word0MidFadeIn = calculateWordState(seq = LAUNCH_WORD_SEQUENCE_START_SECONDS + .05f, wordIndex = 0, isReducedMotion = false)
         assertTrue("Word 0 should be fading in", word0MidFadeIn.first > 0f && word0MidFadeIn.first < 1f)
 
-        val word0Hold = calculateWordState(seq = 1.3f, wordIndex = 0, isReducedMotion = false)
+        val word0Hold = calculateWordState(seq = LAUNCH_WORD_SEQUENCE_START_SECONDS + .125f, wordIndex = 0, isReducedMotion = false)
         assertEquals("Word 0 should have full opacity during readable hold", 1f, word0Hold.first, 0.001f)
         assertEquals("Word 0 should have 0 translation Y during hold", 0f, word0Hold.second, 0.001f)
 
-        val word0AtSlotEnd = calculateWordState(seq = 1.5f, wordIndex = 0, isReducedMotion = false)
+        val word0AtSlotEnd = calculateWordState(seq = LAUNCH_WORD_SEQUENCE_START_SECONDS + LAUNCH_WORD_SLOT_SECONDS, wordIndex = 0, isReducedMotion = false)
         assertEquals("Word 0 should be 0 at end of slot", 0f, word0AtSlotEnd.first, 0.001f)
 
         // Word 1 (SERIES) during hold
-        val word1Hold = calculateWordState(seq = 1.7f, wordIndex = 1, isReducedMotion = false)
+        val word1Hold = calculateWordState(seq = LAUNCH_WORD_SEQUENCE_START_SECONDS + LAUNCH_WORD_SLOT_SECONDS + .125f, wordIndex = 1, isReducedMotion = false)
         assertEquals("Word 1 should have full opacity during readable hold", 1f, word1Hold.first, 0.001f)
 
         // Word 2 (STORIES) during hold

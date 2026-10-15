@@ -4,8 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 254
-val mobileVersionName = "3.1.164"
+val compatibilityBridge = providers.gradleProperty("aliflix.mobileCompatBridge").orNull == "true"
+val mobileVersionCode = 256
+val mobileVersionName = "3.1.166"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
@@ -23,7 +24,7 @@ val githubReleaseBaseUrl =
     "https://github.com/alishaban144/aliflix-android/releases/latest/download"
 val mobileUpdateManifestUrl = providers
     .gradleProperty("ALIFLIX_MOBILE_UPDATE_MANIFEST_URL")
-    .orElse("$githubReleaseBaseUrl/update-mobile.json")
+    .orElse("$githubReleaseBaseUrl/update-mobile-arm64.json")
     .get()
 val tvUpdateManifestUrl = providers
     .gradleProperty("ALIFLIX_TV_UPDATE_MANIFEST_URL")
@@ -54,8 +55,8 @@ android {
         create("mobile") {
             dimension = "formFactor"
             proguardFile("mobile-proguard-rules.pro")
-            versionCode = mobileVersionCode
-            versionName = mobileVersionName
+            versionCode = if (compatibilityBridge) 255 else mobileVersionCode
+            versionName = if (compatibilityBridge) "3.1.165" else mobileVersionName
             buildConfigField("boolean", "IS_TV", "false")
             buildConfigField(
                 "String",
@@ -131,14 +132,21 @@ android {
     }
 }
 
-// The universal mobile APK carries all supported CPU ABIs. Compress native
-// libraries for download; Android extracts them once at installation. TV keeps
-// its existing packaging. This avoids a 135 MiB stored ONNX library payload.
+// Compress the original native bytes. TV keeps its existing packaging.
 androidComponents.onVariants(androidComponents.selector().withFlavor("formFactor" to "mobile")) { variant ->
     variant.packaging.jniLibs.useLegacyPackaging.set(true)
     variant.packaging.jniLibs.useLegacyPackagingFromBundle.set(true)
     file("mobile-unused-protobuf-resources.txt").readLines().filter { it.isNotBlank() }.forEach { resource ->
         variant.packaging.resources.excludes.add(resource)
+    }
+}
+
+androidComponents.onVariants(androidComponents.selector()
+    .withFlavor("formFactor" to "mobile").withBuildType("release")) { variant ->
+    if (!compatibilityBridge) {
+        // Packaging only: never rebuild, strip differently, quantize or replace a library.
+        // Debug retains emulator ABIs; the signed migration bridge remains universal.
+        variant.packaging.jniLibs.excludes.addAll(listOf("**/armeabi-v7a/**", "**/x86/**", "**/x86_64/**"))
     }
 }
 
@@ -181,6 +189,7 @@ tasks.matching {
 }
 
 dependencies {
+    add("mobileImplementation", "com.squareup.okhttp3:okhttp:4.12.0")
     add("mobileImplementation", files("libs/webrtc-vad-2.0.10.aar"))
     add("mobileImplementation", "com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")

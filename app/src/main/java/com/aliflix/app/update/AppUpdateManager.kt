@@ -25,6 +25,7 @@ data class UpdateInfo(
     val sha256: String,
     val minimumSdk: Int,
     val notes: String,
+    val supportedAbis: List<String> = emptyList(),
 )
 
 sealed interface UpdateCheckResult {
@@ -57,6 +58,9 @@ object UpdateManifestParser {
             sha256 = sha256,
             minimumSdk = value.optInt("minimumSdk", 30),
             notes = value.optString("notes").trim(),
+            supportedAbis = value.optJSONArray("supportedAbis")?.let { array ->
+                (0 until array.length()).map { array.getString(it) }
+            }.orEmpty(),
         )
     }
 }
@@ -74,6 +78,7 @@ class AppUpdateManager(
         runCatching {
             val info = UpdateManifestParser.parse(fetchText(manifestUrl))
             when {
+                !updateSupportsDevice(info, Build.SUPPORTED_ABIS.toList()) -> UpdateCheckResult.UpToDate(BuildConfig.VERSION_NAME)
                 info.minimumSdk > Build.VERSION.SDK_INT -> UpdateCheckResult.Error(
                     "The latest release requires Android API ${info.minimumSdk} or newer.",
                 )
@@ -93,6 +98,7 @@ class AppUpdateManager(
         onProgress: suspend (Int) -> Unit,
     ): Result<File> = withContext(Dispatchers.IO) {
         try {
+            require(updateSupportsDevice(info, Build.SUPPORTED_ABIS.toList())) { "This update does not support this device." }
             val updateDirectory = File(activity.cacheDir, UPDATE_DIRECTORY).apply { mkdirs() }
             val partial = File(updateDirectory, "${info.sha256.lowercase()}.part")
             val destination = File(updateDirectory, UPDATE_FILE_NAME)
@@ -254,3 +260,6 @@ class AppUpdateManager(
         const val MAX_MANIFEST_BYTES = 64 * 1024
     }
 }
+
+internal fun updateSupportsDevice(info: UpdateInfo, abis: List<String>): Boolean =
+    info.supportedAbis.isEmpty() || info.supportedAbis.any { it in abis }

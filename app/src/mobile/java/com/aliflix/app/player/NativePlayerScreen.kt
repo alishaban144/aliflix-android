@@ -217,6 +217,9 @@ internal fun NativePlayerScreen(
     onResumeClicked: () -> Unit = {},
     onRetry: () -> Unit = {},
     onVerifyProvider: () -> Unit = {},
+    onWatchTogether: () -> Unit = {},
+    germanEdition: String? = null,
+    onGermanEdition: () -> Unit = {},
     onServer: () -> Unit = {},
     onSelectServer: (String) -> Unit = {},
     onBrowseProvider: (PlaybackProvider) -> Unit = {},
@@ -250,11 +253,14 @@ internal fun NativePlayerScreen(
     onOverlayVisibilityChanged: (Boolean) -> Unit = {},
 ) {
     val subtitleTracks = remember(state.subtitleTracks) { normalizeMobileSubtitleTracks(state.subtitleTracks) }
+    val partyContext = androidx.compose.ui.platform.LocalContext.current
+    val partyState by remember(partyContext) { com.aliflix.app.party.WatchPartyClient.get(partyContext) }.state.collectAsState()
     var controls by remember { mutableStateOf(true) }
     var interaction by remember { mutableIntStateOf(0) }
     var isScrubbing by remember { mutableStateOf(false) }
     var episodesVisible by remember { mutableStateOf(false) }
     var moreVisible by remember { mutableStateOf(false) }
+    var partyTopBarHeight by remember { mutableIntStateOf(56) }
     var sheet by remember { mutableStateOf<String?>(null) }
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     DisposableEffect(player) {
@@ -327,7 +333,7 @@ internal fun NativePlayerScreen(
     val withinNextWindow = ended || (nextWindowStart != null && position >= nextWindowStart)
     val showCountdown = next != null && withinNextWindow && !countdownCancelled &&
         !episodeAdvanced && !preparing && state.error == null
-    val autoAdvanceArmed = settings.playNextEpisode && showCountdown && (playing || ended)
+    val autoAdvanceArmed = settings.playNextEpisode && (!partyState.active || partyState.host) && showCountdown && (playing || ended)
 
     LaunchedEffect(autoAdvanceArmed, remainingMs) {
         if (autoAdvanceArmed && remainingMs <= 1200 && next != null) {
@@ -600,8 +606,11 @@ internal fun NativePlayerScreen(
                         moreVisible = true
                         interaction++
                     },
-                    modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(top = 8.dp),
+                    modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(top = 8.dp).onSizeChanged { partyTopBarHeight = it.height },
                 )
+
+                com.aliflix.app.party.PartyIndicator(onWatchTogether,
+                    Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(top = with(LocalDensity.current) { partyTopBarHeight.toDp() } + 16.dp, end = 20.dp))
 
                 if (!preparing && state.error == null && !(isLandscape && showCountdown)) {
                     MobilePlayerCenterControls(
@@ -839,6 +848,10 @@ internal fun NativePlayerScreen(
             }
         }
         MobilePlayerMoreSheet(
+            synchronizedPlayback = partyState.active,
+            onWatchTogether = onWatchTogether,
+            germanEdition = germanEdition,
+            onGermanEdition = onGermanEdition,
             visible = moreVisible,
             audioBoost = settings.boostAudio,
             audioBoostAvailability = boostAvailability,
