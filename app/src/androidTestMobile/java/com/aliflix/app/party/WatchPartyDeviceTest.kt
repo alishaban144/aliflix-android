@@ -86,21 +86,26 @@ class WatchPartyDeviceTest {
                 activity.onActivity { it.playbackController!!.pause() }
                 await { client.state.value.data?.optBoolean("playing") == false }
                 val other=client.state.value.members.first { it.optString("id") != client.state.value.self }.getString("id")
-                ActivityScenario.launch<WatchPartyActivity>(Intent(context,WatchPartyActivity::class.java).putExtra("selection",selection.nativeJson())).use {
+                activity.onActivity { it.startActivity(Intent(it,WatchPartyActivity::class.java).putExtra("selection",selection.nativeJson())) }
+                run {
                     compose.onNodeWithContentDescription("Manage Guest").performScrollTo().performClick()
                     compose.onNodeWithText("Seek").performScrollTo().performClick()
                     compose.waitUntil(5000){client.state.value.members.first { it.optString("id")==other }.getJSONObject("rights").getBoolean("seek")}
                     capture("pixel-individual-permission.png")
                     compose.onNodeWithText("Done").performClick()
+                    compose.onNodeWithContentDescription("Back").performScrollTo().performClick()
                 }
                 await { client.state.value.data?.optLong("position") in 89500L..90500L }
-                ActivityScenario.launch<WatchPartyActivity>(Intent(context,WatchPartyActivity::class.java).putExtra("selection",selection.nativeJson())).use {
+                activity.onActivity { it.startActivity(Intent(it,WatchPartyActivity::class.java).putExtra("selection",selection.nativeJson())) }
+                run {
                     compose.onNodeWithContentDescription("Manage Guest").performScrollTo().performClick()
                     compose.onNodeWithText("Make host").performScrollTo().performClick()
                     compose.waitUntil(5000){!client.state.value.host}
+                    compose.onNodeWithContentDescription("Back").performScrollTo().performClick()
                 }
                 await { !client.state.value.host }
                 await { client.state.value.content?.optInt("episode") == 2 }
+                await { main { NativePlaybackService.activeRequest?.selectionJson?.let { nativeSelection(it).episodeNumber } == 2 && NativePlaybackService.playbackReady && NativePlaybackService.hasSelectedAudio && NativePlaybackService.renderedStreamUrl != null } }
                 capture("pixel-party-episode2.png")
                 await { !client.state.value.active }
             } else {
@@ -126,12 +131,15 @@ class WatchPartyDeviceTest {
                 await { client.state.value.host }
                 main { client.episode(selection.copy(episodeNumber=2)) }
                 await { client.state.value.content?.optInt("episode") == 2 }
-                Thread.sleep(3000)
+                await { main { NativePlaybackService.activeRequest?.selectionJson?.let { nativeSelection(it).episodeNumber } == 2 && NativePlaybackService.playbackReady && NativePlaybackService.hasSelectedAudio && NativePlaybackService.renderedStreamUrl != null } }
+                await { client.state.value.members.all { it.optString("status") in listOf("ready", "playing") } }
+                capture("redmi-party-episode2.png")
+                Thread.sleep(1000)
                 main { client.leave(end=true) }
             }
             File(context.getExternalFilesDir(null),"party-proof/${if(host)"host" else "guest"}-result.json").writeText(JSONObject()
                 .put("provider",selection.source.identity.name).put("device",android.os.Build.MODEL).put("decodedAudio",true)
-                .put("decodedVideo",true).put("twoPhones",true).put("permissions",true).put("reconnect",true).put("bufferingProtocol",true).put("seek",true).put("hostTransfer",true).put("episodeChange",true).toString())
+                .put("decodedVideo",true).put("twoPhones",true).put("permissions",true).put("reconnect",true).put("bufferingProtocol",true).put("seek",true).put("hostTransfer",true).put("episodeChange",true).put("episode2Decoded",true).toString())
         }
     }
     private fun itPosition(activity: ActivityScenario<NativePlayerActivity>): Long { var position=0L;activity.onActivity {position=it.playbackController?.currentPosition?:0};return position }

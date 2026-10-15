@@ -256,6 +256,7 @@ internal class PartyPlaybackBridge(private val player: Player, private val clien
     private var aligned = false
     private var lastStatus = ""
     private var lastContent = ""
+    private var lastConnection = ""
     private val listener = object : Player.Listener {
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (applying || !usable() || player.playbackState != Player.STATE_READY) return
@@ -282,7 +283,10 @@ internal class PartyPlaybackBridge(private val player: Player, private val clien
         if (!wasActive) { oldSpeed = player.playbackParameters.speed; wasActive = true; aligned = false }
         if (!usable()) return
         val content = state.content.toString()
-        if (content != lastContent) { lastContent = content; aligned = false }
+        val connection = state.members.firstOrNull { it.optString("id") == state.self }?.optString("connection").orEmpty()
+        if (content != lastContent || connection != lastConnection) {
+            lastContent = content; lastConnection = connection; aligned = false; lastStatus = ""
+        }
         val remoteCast = player.deviceInfo.playbackType == androidx.media3.common.DeviceInfo.PLAYBACK_TYPE_REMOTE
         val status = when {
             remoteCast || player.playerError != null -> "source-unavailable"
