@@ -37,9 +37,9 @@ class WatchPartyUiTest {
             Thread.sleep(500);instrument.uiAutomation.executeShellCommand("input keyevent KEYCODE_BACK").close()
             compose.onNodeWithContentDescription("Leave room").performScrollTo().performClick()
             compose.onNodeWithText("Leave or end room?").assertIsDisplayed();capture("leave-confirmation.png")
-            compose.onNodeWithText("Stay").performClick()
+            compose.onNodeWithText("Stay").performScrollTo().performClick()
             compose.onNodeWithContentDescription("Leave room").performScrollTo().performClick()
-            compose.onNodeWithText("End for everyone").performClick()
+            compose.onNodeWithText("End for everyone").performScrollTo().assertIsDisplayed().performClick()
             compose.waitUntil(5000){!client.state.value.active}
         }
     }

@@ -84,13 +84,13 @@ describe('Watch Party protocol and security',()=>{
  });
  it('transfers a disconnected host after grace and retains their secure reconnect admission',async()=>{
   const stub=await room();const host=await connect(stub,'host');const guest=await connect(stub,'guest');host.ws.close();
-  await new Promise(resolve=>setTimeout(resolve,20));
+  await vi.waitFor(async()=>expect((await state(stub)).members.find((m:{id:string})=>m.id==='host').status).toBe('reconnecting'));
   await runInDurableObject(stub,(_instance,ctx)=>{const r=JSON.parse(ctx.storage.sql.exec<{value:string}>('SELECT value FROM room').one().value);r.members.find((m:{id:string})=>m.id==='host').seen=Date.now()-40000;ctx.storage.sql.exec('UPDATE room SET value=?',JSON.stringify(r));});
   await runDurableObjectAlarm(stub);const r=await state(stub);expect(r.host).toBe('guest');expect(r.members).toHaveLength(2);expect(r.members.find((m:{id:string})=>m.id==='host').rights.play).toBe(false);
   const restored=await connect(stub,'host','wrong');expect((await state(stub)).members).toHaveLength(2);restored.ws.close();guest.ws.close();
  });
  it('keeps an empty disconnected room paused during a five-minute recovery window',async()=>{
-  const stub=await room();const host=await connect(stub,'host');host.ws.close();await new Promise(r=>setTimeout(r,20));
+  const stub=await room();const host=await connect(stub,'host');host.ws.close();await vi.waitFor(async()=>expect((await state(stub)).members[0].status).toBe('reconnecting'));
   await runInDurableObject(stub,(_instance,ctx)=>{const r=JSON.parse(ctx.storage.sql.exec<{value:string}>('SELECT value FROM room').one().value);r.members[0].seen=Date.now()-40000;r.playing=true;ctx.storage.sql.exec('UPDATE room SET value=?',JSON.stringify(r));});
   await runDurableObjectAlarm(stub);const r=await state(stub);expect(r.ended).toBe(false);expect(r.playing).toBe(false);expect(r.members).toHaveLength(1);
   const restored=await connect(stub,'host','wrong');restored.ws.close();

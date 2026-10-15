@@ -179,13 +179,13 @@ export class WatchParty extends DurableObject<Env> {
       if(r.ended)for(const s of this.ctx.getWebSockets()){try{s.close(4004,'Room ended');}catch{}}
     }catch{try{ws.send(JSON.stringify({type:'error',error:'INVALID_EVENT'}));}catch{}}
   }
-  private connected(m:Member){return this.ctx.getWebSockets(m.id).some(s=>(s.deserializeAttachment() as {connection:string}).connection===m.connection);}
+  private connected(m:Member){return this.ctx.getWebSockets(m.id).some(s=>s.readyState===WebSocket.OPEN&&(s.deserializeAttachment() as {connection:string}).connection===m.connection);}
   private position(r:Room,now:number){return Math.min(604800000,r.position+(r.playing?Math.max(0,now-r.at):0));}
   private transferOrEnd(r:Room,departing:string,now:number){
     if(r.host===departing){const next=r.members.filter(m=>m.id!==departing&&this.connected(m)).sort((a,b)=>a.joined-b.joined)[0];if(next)r.host=next.id;else{r.position=this.position(r,now);r.at=now;r.playing=false;}}
     if(!r.members.length)r.ended=true;
   }
-  async webSocketClose(ws:WebSocket){await this.disconnected(ws);}
+  async webSocketClose(ws:WebSocket,code:number,reason:string){try{ws.close(code===1005?1000:code,reason);}catch{}await this.disconnected(ws);}
   async webSocketError(ws:WebSocket){try{ws.close(1011,'Disconnected');}catch{}await this.disconnected(ws);}
   private async disconnected(ws:WebSocket){const r=this.read();if(!r)return;const a=ws.deserializeAttachment() as {id:string;connection:string};const m=r.members.find(m=>m.id===a.id&&m.connection===a.connection);if(m){m.status='reconnecting';m.seen=this.now();r.version++;this.save(r);this.broadcast(r);}}
   async alarm(){const r=this.read();if(!r)return;const now=this.now();
