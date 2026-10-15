@@ -89,6 +89,12 @@ describe('Watch Party protocol and security',()=>{
   await runDurableObjectAlarm(stub);const r=await state(stub);expect(r.host).toBe('guest');expect(r.members).toHaveLength(2);expect(r.members.find((m:{id:string})=>m.id==='host').rights.play).toBe(false);
   const restored=await connect(stub,'host','wrong');expect((await state(stub)).members).toHaveLength(2);restored.ws.close();guest.ws.close();
  });
+ it('retains an owner when the host explicitly leaves while every guest is offline',async()=>{
+  const stub=await room();const host=await connect(stub,'host');const guest=await connect(stub,'guest');guest.ws.close();
+  await vi.waitFor(async()=>expect((await state(stub)).members.find((m:{id:string})=>m.id==='guest').status).toBe('reconnecting'));
+  const r=await send(host.ws,{type:'leave'},stub);expect(r.host).toBe('guest');expect(r.members).toHaveLength(1);expect(r.playing).toBe(false);expect(r.ended).toBe(false);
+  const restored=await connect(stub,'guest','wrong');const ended=await send(restored.ws,{type:'end'},stub);expect(ended.ended).toBe(true);restored.ws.close();
+ });
  it('keeps an empty disconnected room paused during a five-minute recovery window',async()=>{
   const stub=await room();const host=await connect(stub,'host');host.ws.close();await vi.waitFor(async()=>expect((await state(stub)).members[0].status).toBe('reconnecting'));
   await runInDurableObject(stub,(_instance,ctx)=>{const r=JSON.parse(ctx.storage.sql.exec<{value:string}>('SELECT value FROM room').one().value);r.members[0].seen=Date.now()-40000;r.playing=true;ctx.storage.sql.exec('UPDATE room SET value=?',JSON.stringify(r));});

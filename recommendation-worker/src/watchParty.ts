@@ -182,7 +182,7 @@ export class WatchParty extends DurableObject<Env> {
   private connected(m:Member){return this.ctx.getWebSockets(m.id).some(s=>s.readyState===WebSocket.OPEN&&(s.deserializeAttachment() as {connection:string}).connection===m.connection);}
   private position(r:Room,now:number){return Math.min(604800000,r.position+(r.playing?Math.max(0,now-r.at):0));}
   private transferOrEnd(r:Room,departing:string,now:number){
-    if(r.host===departing){const next=r.members.filter(m=>m.id!==departing&&this.connected(m)).sort((a,b)=>a.joined-b.joined)[0];if(next)r.host=next.id;else{r.position=this.position(r,now);r.at=now;r.playing=false;}}
+    if(r.host===departing){const remaining=r.members.filter(m=>m.id!==departing).sort((a,b)=>a.joined-b.joined);const next=remaining.find(m=>this.connected(m))||remaining[0];if(next)r.host=next.id;if(!next||!this.connected(next)){r.position=this.position(r,now);r.at=now;r.playing=false;}}
     if(!r.members.length)r.ended=true;
   }
   async webSocketClose(ws:WebSocket,code:number,reason:string){try{ws.close(code===1005?1000:code,reason);}catch{}await this.disconnected(ws);}
