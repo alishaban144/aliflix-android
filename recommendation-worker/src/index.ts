@@ -1,3 +1,5 @@
+import { watchPartyRoute } from './watchParty';
+export { WatchParty } from './watchParty';
 import { browse, categories } from './browse';
 import { catalogueSearch, discoverArguments, discoverCategory, DISCOVER_CATEGORIES, DiscoverCategory } from './discover';
 import { ZodError } from 'zod';
@@ -235,6 +237,8 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
 export default {
   async fetch(request: Request, env: RecommendationEnv, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const party = await watchPartyRoute(request, env);
+    if (party) return party;
     if (url.pathname === '/health' && request.method === 'GET') {
       return json({
         status: 'ok',

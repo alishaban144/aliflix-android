@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "254"
-  RELEASE_VERSION_NAME: "3.1.164"
+  RELEASE_VERSION_CODE: "256"
+  RELEASE_VERSION_NAME: "3.1.166"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -151,32 +151,12 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           npm ci
-          VERSION_TAG="release-${GITHUB_SHA}"
-          UPLOAD_OUTPUT="$(
-            npx wrangler versions upload \
-              --tag "$VERSION_TAG" \
-              --message "Aliflix ${RELEASE_VERSION_NAME} release" 2>&1
-          )"
-          printf '%s\n' "$UPLOAD_OUTPUT"
-          CANDIDATE_ID="$(
-            sed -nE \
-              's/^Worker Version ID:[[:space:]]*([0-9a-fA-F-]{36}).*$/\1/p' \
-              <<<"$UPLOAD_OUTPUT"
-          )"
-          test -n "$CANDIDATE_ID"
-          # Newly uploaded Worker versions can take tens of seconds to propagate.
-          for i in $(seq 1 12); do
-            sleep 5
-            if npx wrangler versions deploy "${CANDIDATE_ID}@100%" --message "Aliflix ${RELEASE_VERSION_NAME} release" --yes; then
-              break
-            fi
-            if [ "$i" -eq 12 ]; then
-              echo "Deployment failed after 12 propagation attempts."
-              exit 1
-            fi
-            echo "Worker version not visible yet; retrying (attempt $i/12)..."
-            sleep 3
-          done
+          # SQLite class migrations require a deployment, not a gradual versions upload.
+          npx wrangler deploy
+
+      - name: Verify live Watch Party protocol
+        working-directory: recommendation-worker
+        run: node scripts/verify-watch-party.mjs
 
       - name: Verify live genre-specific browsing
         if: github.ref_name != 'release/v3.1.102'
