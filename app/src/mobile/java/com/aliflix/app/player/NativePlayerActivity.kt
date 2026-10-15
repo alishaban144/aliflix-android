@@ -1335,6 +1335,8 @@ class NativePlayerActivity : FragmentActivity() {
         val generation = NativePlaybackService.speechGeneration
         val continuity = NativePlaybackService.speechContinuity
         val position = (controller?.currentPosition ?: 0L) / 1000.0
+        val scanRequest = NativePlaybackService.activeRequest
+        val scanAudio = NativePlaybackService.selectedAudioFingerprint()
         val initialHistory = NativePlaybackService.dialogueWordHistory(position)
         val playing = controller?.isPlaying == true
         val speed = controller?.playbackParameters?.speed ?: 1f
@@ -1358,6 +1360,8 @@ class NativePlayerActivity : FragmentActivity() {
                     var finiteJob: Job? = null
                     var cloudTranscripts: List<List<HeardWord>> = emptyList()
                     var cloudJob: Job? = null
+                    var bufferedJob: Job? = null
+                    var buffered: BufferedDialogueEvidence? = null
                     try {
                     while (solution == null && android.os.SystemClock.elapsedRealtime() - began < 18_500) {
                         deadlineCheck()
@@ -1380,21 +1384,26 @@ class NativePlayerActivity : FragmentActivity() {
                         // A focused earlier phrase can corroborate longer later
                         // clips. The matcher still requires nine words in total
                         // and independently verified phrases; keep clips separate.
-                        val cloudCandidates = cloudTranscripts.map { playedRecognitionWords(it, observedPosition) }.filter { it.size >= 3 }
+                        // Future words must belong to actual independently decoded PCM.
+                        // The continuous recognizer still remains strictly played-only.
+                        val decodedThrough = buffered?.pcm?.let { it.start + it.frames.size * .02 } ?: observedPosition
+                        val evidencePosition = maxOf(observedPosition, decodedThrough)
+                        val cloudCandidates = cloudTranscripts.map { playedRecognitionWords(it, evidencePosition) }.filter { it.size >= 3 }
                         val candidates = cloudCandidates + listOf(localHeard)
                         val latestReferences = syncReferences.toList()
                         solution = withContext(Dispatchers.Default) {
                             val context = currentCoroutineContext()
                             val check = { context.ensureActive(); deadlineCheck() }
-                            val observed = NativePlaybackService.quickSpeechEvidence()
+                            val playedObserved = NativePlaybackService.quickSpeechEvidence()
                             for (latestHeard in candidates) {
                             val cloudCandidate = latestHeard !== localHeard
+                            val observed = if (cloudCandidate) playedObserved + buffered?.speech.orEmpty() else playedObserved
                             val recentAfter = observedPosition - if (cloudCandidate) 120.0 else CURRENT_DIALOGUE_SECONDS
                             val latestHistory = if (cloudCandidate) latestHeard else localHistory
                             // Recovery may analyze dialogue before the current music
                             // tail. Its own scene is already verified by withheld
                             // words; do not reclassify it as an unverified older scene.
-                            val verificationPosition = if (cloudCandidate) latestHeard.maxOfOrNull { it.end }?.coerceAtMost(observedPosition)
+                            val verificationPosition = if (cloudCandidate) latestHeard.maxOfOrNull { it.end }?.coerceAtMost(evidencePosition)
                                 ?: observedPosition else observedPosition
                             hadDialogue = hadDialogue || latestHeard.size >= 9
                             val requireWideClock = latestReferences.any { it.verifiedEditionClock && kotlin.math.abs(it.targetToReference.rate - 1.0) > .0003 }
@@ -1429,6 +1438,7 @@ class NativePlayerActivity : FragmentActivity() {
 
                             }
 
+                            val observed = playedObserved
                             val recent = NativePlaybackService.recentSpeechWindow(observedPosition)
                             android.util.Log.i("AliflixAudioSync", "instant_context:position=$position,localWords=${localHeard.size},cloudCandidates=${cloudCandidates.size},recentStart=${recent?.start},recentFrames=${recent?.speech?.size};${NativePlaybackService.speechDiagnostics()}")
                             hadDialogue = hadDialogue || (recent != null && recent.speech.average() in .04.. .96)
@@ -1443,6 +1453,11 @@ class NativePlayerActivity : FragmentActivity() {
                             attempt.correction
                         }
                         if (solution == null && cloudJob == null) {
+                            if (scanRequest != null) bufferedJob = launch {
+                                BufferedDialogueAnalysis.collect(this@NativePlayerActivity, scanRequest, scanAudio, position) {
+                                    buffered = it
+                                }
+                            }
                             // Local evidence gets the first chance. Recovery then
                             // overlaps matching and follows fresh played dialogue.
                             cloudJob = launch {
@@ -1451,9 +1466,14 @@ class NativePlayerActivity : FragmentActivity() {
                                         continuity != NativePlaybackService.speechContinuity || key != audioCorrectionKey)
                                         throw CancellationException("audio_sync_identity")
                                     val playedPosition = (controller?.currentPosition ?: 0L) / 1000.0
-                                    NativePlaybackService.playedDialoguePcm(playedPosition)?.let { pcm ->
-                                        dialogueRecoverySamples(pcm, NativePlaybackService.quickSpeechEvidence())
-                                    }.orEmpty()
+                                    val played = NativePlaybackService.playedDialoguePcm(playedPosition)
+                                    val playedSpeech = NativePlaybackService.quickSpeechEvidence()
+                                    val ahead = buffered
+                                    withContext(Dispatchers.Default) {
+                                        (ahead?.let { dialogueRecoverySamples(it.pcm, it.speech) }.orEmpty() +
+                                            played?.let { dialogueRecoverySamples(it, playedSpeech) }.orEmpty())
+                                            .distinctBy { it.start to it.frames.size }
+                                    }
                                 }) { cloudTranscripts = it }
                             }
                         }
@@ -1481,8 +1501,8 @@ class NativePlayerActivity : FragmentActivity() {
                         if (solution == null) delay(250)
                     }
                     } finally {
-                        cloudJob?.cancel(); finiteJob?.cancel()
-                        cloudJob?.join(); finiteJob?.join()
+                        cloudJob?.cancel(); finiteJob?.cancel(); bufferedJob?.cancel()
+                        cloudJob?.join(); finiteJob?.join(); bufferedJob?.join()
                     }
                     solution
                 }

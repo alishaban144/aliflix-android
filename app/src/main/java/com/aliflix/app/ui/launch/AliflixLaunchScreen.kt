@@ -79,22 +79,21 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 
-private val launchLayerEase = CubicBezierEasing(.16f,1f,.3f,1f)
+private val launchLayerEase = CubicBezierEasing(.22f,.61f,.36f,1f)
 
-internal const val LAUNCH_TITLE_START_SECONDS = 0.08f
-internal const val LAUNCH_TITLE_REVEAL_SECONDS = 0.34f
-internal const val LAUNCH_ROTATOR_START_SECONDS = 0.4f
+internal const val LAUNCH_TITLE_START_SECONDS = 0.18f
+internal const val LAUNCH_TITLE_REVEAL_SECONDS = 0.72f
+internal const val LAUNCH_ROTATOR_START_SECONDS = 0.94f
 internal const val LAUNCH_ROTATOR_REVEAL_SECONDS = 0.12f
-internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 0.48f
+internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 1.08f
 internal const val LAUNCH_WORD_SLOT_SECONDS = 0.42f
 internal const val LAUNCH_WORD_COUNT = 3
-internal const val LAUNCH_FINAL_WORD_SLOT_SECONDS = 0.18f
-internal const val LAUNCH_BRAND_REVEAL_SECONDS = 0.42f
+internal const val LAUNCH_FINAL_WORD_SLOT_SECONDS = 0.36f
+internal const val LAUNCH_BRAND_REVEAL_SECONDS = 0.90f
 internal const val LAUNCH_WORD_FADE_SECONDS = 0.1f
 internal const val LAUNCH_SEQUENCE_SECONDS = LAUNCH_WORD_SEQUENCE_START_SECONDS +
     LAUNCH_WORD_SLOT_SECONDS * (LAUNCH_WORD_COUNT - 1) + LAUNCH_FINAL_WORD_SLOT_SECONDS
-internal const val LAUNCH_HOME_PREPARE_SECONDS = LAUNCH_WORD_SEQUENCE_START_SECONDS +
-    LAUNCH_WORD_SLOT_SECONDS * (LAUNCH_WORD_COUNT - 1) + LAUNCH_WORD_FADE_SECONDS
+internal const val LAUNCH_HOME_PREPARE_SECONDS = 0f
 internal const val LAUNCH_NETWORK_LIMIT_SECONDS = LAUNCH_SEQUENCE_SECONDS
 internal const val LAUNCH_REDUCED_NETWORK_LIMIT_SECONDS = 0.3f
 
@@ -192,28 +191,17 @@ fun AliflixLaunchOverlay(
     val isReducedMotion = !rememberMobileMotionEnabled()
     val resumed = rememberMobileResumed()
     var clockFinished by remember { mutableStateOf(false) }
-    val clock = rememberMobileAnimationClock(resumed && !clockFinished, infinite = false)
+    var homeFrameReady by remember { mutableStateOf(false) }
+    val clock = rememberMobileAnimationClock(resumed && homeFrameReady && !clockFinished, infinite = false)
     var exitStartSeconds by remember { mutableFloatStateOf(-1f) }
     var isDismissed by remember { mutableStateOf(false) }
     val latestComplete by androidx.compose.runtime.rememberUpdatedState(onLaunchComplete)
-    var composeHome by remember { mutableStateOf(false) }
-    var homeFrameReady by remember { mutableStateOf(false) }
-    LaunchedEffect(isReducedMotion) {
-        snapshotFlow { isLaunchContentPreparationReady(clock.value, isReducedMotion) }.first { it }
-        // Home's first composition can be expensive. Keep it out of all moving word phases.
-        // Start in the final still hold, without adding another timed wait before handoff.
-        // Two frame boundaries ensure layout/draw has finished before starting the fade.
+    LaunchedEffect(Unit) {
+        // First composition/layout happens behind the opaque launch layer before
+        // its clock starts. No expensive cold composition during the exit fade.
         withFrameNanos { }
         withFrameNanos { }
-        composeHome = true
-    }
-    LaunchedEffect(composeHome, isHomeReady) {
-        homeFrameReady = false
-        if (composeHome) {
-            withFrameNanos { }
-            withFrameNanos { }
-            homeFrameReady = true
-        }
+        homeFrameReady = true
     }
 
     // Observe milestones, not every frame. Home composes independently from the launch clock.
@@ -239,13 +227,15 @@ fun AliflixLaunchOverlay(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    alpha = if (isDismissed) 1f else if (exitStartSeconds >= 0f) kotlin.math.sqrt(exit()) else 0f
+                    // A zero-alpha layer skips drawing entirely. Warm Home's
+                    // display lists/textures underneath the opaque launch layer.
+                    alpha = if (isDismissed) 1f else if (exitStartSeconds >= 0f) kotlin.math.sqrt(exit()) else .001f
                     val scale = if (isDismissed || isReducedMotion) 1f else 1.018f - .018f * exit()
                     scaleX = scale
                     scaleY = scale
                 },
         ) {
-            if (composeHome) content()
+            content()
         }
 
         // Branded Launch Overlay
@@ -360,7 +350,7 @@ private fun PosterRevealLogo(clock: State<Float>, reducedMotion: Boolean, modifi
         val top = (size.height - unit) / 2
         repeat(3) { panel ->
             val progress = if (reducedMotion) 1f else launchLayerEase.transform(
-                ((clock.value - panel * .045f) / .30f).coerceIn(0f, 1f))
+                ((clock.value - panel * .08f) / .66f).coerceIn(0f, 1f))
             val x = left + unit * panel / 3f
             clipRect(left = x, right = x + unit / 3f + .5f, top = top + unit * (1f - progress), bottom = top + unit) {
                 withTransform({

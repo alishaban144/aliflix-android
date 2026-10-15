@@ -82,6 +82,7 @@ classes="$classes,com.aliflix.app.ui.MobilePolishUiTest,com.aliflix.app.download
 classes="$classes,com.aliflix.app.player.PlayerHeaderVisualTest"
 classes="$classes,com.aliflix.app.player.MobileRefinementUiTest"
 classes="$classes,com.aliflix.app.player.PlayerPremiumControlsTest"
+classes="$classes,com.aliflix.app.player.BufferedDialogueDeviceTest"
 classes="${ALIFLIX_TEST_CLASSES:-$classes}"
 # Use a deterministic modern phone viewport for full and focused suites alike.
 # The generic AVD's inherited tiny viewport clips nested-sheet/player fixtures.

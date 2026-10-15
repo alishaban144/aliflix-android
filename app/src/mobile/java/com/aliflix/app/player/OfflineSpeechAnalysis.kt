@@ -87,7 +87,9 @@ internal object OfflineSpeechAnalysis {
         } finally { scanner.release(); capture.close() }
     }
 
-    internal class ScanAudioSink(delegate: AudioSink, private val capture: PlaybackSpeechBuffer) : ForwardingAudioSink(delegate) {
+    internal class ScanAudioSink(delegate: AudioSink, private val capture: PlaybackSpeechBuffer,
+                                 private val untilSeconds: Double = Double.POSITIVE_INFINITY,
+                                 private val captureEnabled: () -> Boolean = { true }) : ForwardingAudioSink(delegate) {
         private var format = Format.Builder().build()
         private var offset = 0L
         private var clock = AudioSink.CURRENT_POSITION_NOT_SET
@@ -102,6 +104,10 @@ internal object OfflineSpeechAnalysis {
             offset = outputStreamOffsetUs
         }
         override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
+            if (!captureEnabled()) return false
+            // Backpressure at the bounded scan horizon; never decode a whole film
+            // while the main thread is waiting to collect this short clip.
+            if ((presentationTimeUs - offset) / 1_000_000.0 >= untilSeconds) return false
             capture.awaitNeuralCapacity()
             capture.pcm(buffer, format, presentationTimeUs, offset)
             // MediaCodecAudioRenderer's clock is in renderer time; only the

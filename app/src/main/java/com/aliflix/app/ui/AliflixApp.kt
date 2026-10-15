@@ -1688,7 +1688,7 @@ internal fun HomeFeed(
     var feedTop by remember { mutableFloatStateOf(0f) }
     var insideHeaderBottom by remember { mutableFloatStateOf(0f) }
 
-    val filteredRails = remember(content, selectedFilter, likes, tvNetworks.rails) {
+    val baseRails = remember(content, selectedFilter, likes, tvNetworks.rails) {
         val matchingRails = when (selectedFilter) {
             HomeFilter.FOR_YOU -> content.rails
             HomeFilter.MOVIES -> content.rails
@@ -1710,7 +1710,7 @@ internal fun HomeFeed(
         } else {
             matchingRails
         }
-        if (selectedFilter == HomeFilter.FOR_YOU && likes.isNotEmpty()) {
+        if (com.aliflix.app.BuildConfig.IS_TV && selectedFilter == HomeFilter.FOR_YOU && likes.isNotEmpty()) {
             selectedRails.map { rail ->
                 rail.copy(
                     items = rail.items.sortedByDescending { item ->
@@ -1722,6 +1722,19 @@ internal fun HomeFeed(
             selectedRails
         }
     }
+    // Affinity comparisons are CPU work. Score each title once on a worker,
+    // instead of running the full matcher repeatedly inside a UI-thread sort.
+    val filteredRails = if (com.aliflix.app.BuildConfig.IS_TV) baseRails else
+        androidx.compose.runtime.produceState(baseRails, baseRails, selectedFilter, likes) {
+            value = baseRails
+            if (selectedFilter == HomeFilter.FOR_YOU && likes.isNotEmpty()) {
+                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    val scores = baseRails.flatMap { it.items }.distinctBy(Media::key)
+                        .associate { it.key to (PersonalizationEngine.match(it, likes)?.score ?: 0) }
+                    baseRails.map { rail -> rail.copy(items = rail.items.sortedByDescending { scores[it.key] ?: 0 }) }
+                }
+            }
+        }.value
     val heroCandidates = remember(filteredRails, content.hero) {
         filteredRails.flatMap { rail -> rail.items }
             .filter { it.backdropPath != null }

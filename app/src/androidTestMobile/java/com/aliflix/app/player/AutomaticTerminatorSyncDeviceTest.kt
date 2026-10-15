@@ -23,7 +23,8 @@ class AutomaticTerminatorSyncDeviceTest {
         assumeTrue(InstrumentationRegistry.getArguments().getString("liveAutomaticTerminator") == "true")
         val language = InstrumentationRegistry.getArguments().getString("captionLanguage") ?: "en"
         val singleScene = InstrumentationRegistry.getArguments().getString("singleScene") == "true"
-        val playedSeconds = InstrumentationRegistry.getArguments().getString("playedSeconds")?.toDoubleOrNull()?.coerceIn(4.0, 60.0) ?: 48.0
+        val playedSeconds = InstrumentationRegistry.getArguments().getString("playedSeconds")?.toDoubleOrNull()?.coerceIn(.5, 60.0) ?: 48.0
+        val pauseOnSync = InstrumentationRegistry.getArguments().getString("pauseOnSync") == "true"
         grantNativeFixtureNetworkPermission()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val choices = context.getSharedPreferences("native-subtitle-choice", android.content.Context.MODE_PRIVATE)
@@ -92,7 +93,10 @@ class AutomaticTerminatorSyncDeviceTest {
                         }.toString())
                     }
                     var began = 0L
-                    scenario.onActivity { it.resetSubtitleSync(); began = SystemClock.elapsedRealtime(); it.syncWithAudio() }
+                    scenario.onActivity {
+                        if (pauseOnSync) it.playbackController!!.pause()
+                        it.resetSubtitleSync(); began = SystemClock.elapsedRealtime(); it.syncWithAudio()
+                    }
                     await("Bounded sync completion", 19_500) {
                         var done = false
                         scenario.onActivity { done = it.playbackUiState.audioSyncState != "Syncing…" }
@@ -125,7 +129,7 @@ class AutomaticTerminatorSyncDeviceTest {
                             assertEquals(checked.startSeconds, actual.startSeconds, .002)
                             assertEquals(checked.endSeconds, actual.endSeconds, .002)
                         }
-                        assertTrue(activity.playbackController!!.isPlaying)
+                        assertEquals(!pauseOnSync, activity.playbackController!!.isPlaying)
                     }
                 } finally { NativePlaybackService.debugObserveSpeech(null) }
             }

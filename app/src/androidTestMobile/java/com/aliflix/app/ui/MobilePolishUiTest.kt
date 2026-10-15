@@ -159,7 +159,7 @@ class MobilePolishUiTest {
         capture("launch-title-reveal.png")
         compose.mainClock.advanceTimeBy(700)
         compose.runOnIdle { assertEquals(if (motion) 0 else 1,completed); assertFalse(ready) }
-        compose.mainClock.advanceTimeBy(1000)
+        compose.mainClock.advanceTimeBy(1600)
         compose.runOnIdle { assertEquals(1,completed); assertFalse(ready); ready = true }
         compose.onNodeWithText("Ready Home").assertIsDisplayed()
         compose.mainClock.advanceTimeBy(1000)
@@ -221,6 +221,22 @@ class MobilePolishUiTest {
         }
     }
 
+    @Test fun failedAudioMatchOffersAnExplicitRetryWithoutReasonText() {
+        var attempts = 0
+        compose.setContent { AliflixMobileTheme {
+            NativePlayerScreen(NativePlayerUi(title = "Fixture", ready = true,
+                playbackSelection = PlaybackSelection(Media(1, MediaType.MOVIE, "Fixture")),
+                audioSyncAvailable = true, audioSyncState = "Couldn't match this dialogue"), null,
+                onSyncWithAudio = { attempts++ })
+        } }
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Audio & subtitles").performClick()
+        compose.onNodeWithText("Couldn't match this dialogue").assertDoesNotExist()
+        compose.onNodeWithText("Retry").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(1, attempts) }
+        capture("sync-retry.png")
+    }
+
     @Test fun downloadTierMenuMigratesAndPersistsWithoutChangingStreamingQuality() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val preferences = context.getSharedPreferences("offline-downloads",android.content.Context.MODE_PRIVATE)
@@ -258,7 +274,7 @@ class MobilePolishUiTest {
         }
     }
 
-    @Test fun activeToggleHasNoPixelsAboveItsTrackInEitherDirection() {
+    @Test fun liquidTogglePreservesReferenceDropletInBothDirections() {
         var checked by mutableStateOf(false)
         var direction by mutableStateOf(LayoutDirection.Ltr)
         compose.setContent { AliflixMobileTheme {
@@ -271,8 +287,9 @@ class MobilePolishUiTest {
             compose.waitForIdle()
             val pixels = compose.onNodeWithTag("clean-toggle").captureToImage().toPixelMap()
             val top = with(compose.density) { 7.dp.toPx() }.toInt()
-            for (y in 0 until top) for (x in 0 until pixels.width)
-                assertEquals("No detached droplet at $x,$y", Color.Black.toArgb(), pixels[x,y].toArgb())
+            val aboveTrack = (0 until top).sumOf { y -> (0 until pixels.width).count { x -> pixels[x,y].red > .4f } }
+            if (value) assertTrue("Reference droplet must be visible", aboveTrack > 0)
+            else assertEquals(0, aboveTrack)
         }
     }
 
@@ -286,12 +303,12 @@ class MobilePolishUiTest {
         compose.mainClock.advanceTimeBy(32)
         val initial = compositions
         compose.mainClock.advanceTimeBy(700)
-        compose.runOnIdle { assertEquals("Home defers during moving words and prepares immediately for reduced motion",if (motion) 0 else 1,compositions) }
+        compose.runOnIdle { assertEquals("Home warms once before brand animation",1,compositions) }
         compose.mainClock.advanceTimeBy(1000)
         compose.runOnIdle { assertEquals(1,compositions) }
         repeat(60) { compose.mainClock.advanceTimeBy(16) }
         compose.runOnIdle {
-            if (motion) assertEquals(0,initial) else assertTrue(initial in 0..1)
+            assertEquals(1,initial)
             assertEquals(1,compositions)
         }
         compose.mainClock.advanceTimeBy(600)

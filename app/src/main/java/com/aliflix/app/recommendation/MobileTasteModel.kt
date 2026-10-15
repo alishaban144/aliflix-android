@@ -72,7 +72,7 @@ object MobileTasteModel {
     }
     private val enriched = MutableStateFlow<Map<String, Media>>(emptyMap())
     val metadata = enriched.asStateFlow()
-    private var viewingHistory: List<Media> = emptyList()
+    @Volatile private var viewingHistory: List<Media> = emptyList()
     fun setHistory(history: List<Media>) { viewingHistory = history.distinctBy(Media::key).take(20) }
     fun history(): List<Media> = viewingHistory
     @Synchronized internal fun clear() { enriched.value = emptyMap(); viewingHistory = emptyList(); cache.clear() }

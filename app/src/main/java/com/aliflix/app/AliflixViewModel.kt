@@ -716,7 +716,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         if (!BuildConfig.IS_TV) {
             // Starts before the launch overlay finishes; Firebase already owns startup retry.
             accountServices.syncRepository.retry()
-            viewModelScope.launch {
+            viewModelScope.launch(Dispatchers.Default) {
                 combine(likes, recent, playbackProgressStore.entries, accountState) { liked, history, progress, account ->
                     val watched = (progress.values.sortedByDescending { it.updatedAtMillis }.map { it.media } + history)
                         .distinctBy(Media::key).take(20)
@@ -848,10 +848,13 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             )
             if (!BuildConfig.IS_TV) {
                 _home.value = runCatching {
-                    aiClient.getHomeFeed().toStableMobileHome(
-                        previousContent = previous.content,
-                        previousEditorialPicks = previous.editorialPicks,
-                    )
+                    val feed = aiClient.getHomeFeed()
+                    withContext(Dispatchers.Default) {
+                        feed.toStableMobileHome(
+                            previousContent = previous.content,
+                            previousEditorialPicks = previous.editorialPicks,
+                        )
+                    }
                 }.fold(
                     onSuccess = { snapshot ->
                         lastHomeRefreshAt = System.currentTimeMillis()

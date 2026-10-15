@@ -77,7 +77,7 @@ class MobileRefinementUiTest {
             capture("$name.png")
         }
         compose.runOnIdle { assertEquals(0,complete); assertEquals(1,homeCompositions) }
-        compose.mainClock.advanceTimeBy(440)
+        compose.mainClock.advanceTimeBy(1040)
         compose.runOnIdle { assertEquals(1,complete); assertEquals(1,homeCompositions) }
         compose.onNodeWithText("Ready Home").assertIsDisplayed()
         capture("launch-home-ready.png")

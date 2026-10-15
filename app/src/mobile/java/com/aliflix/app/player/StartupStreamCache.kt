@@ -31,7 +31,7 @@ internal object StartupStreamCache {
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
 
-    suspend fun awaitPlayable(context: Context, request: NativePlaybackRequest, audioLanguage: String = "", bufferMs: Long = 250) = withContext(Dispatchers.Main.immediate) { withTimeout(12_000) {
+    fun mediaFactory(context: Context, request: NativePlaybackRequest): androidx.media3.datasource.DataSource.Factory {
         val origin = java.net.URI(request.referer).let { "${it.scheme}://${it.rawAuthority}" }
         val http = DefaultHttpDataSource.Factory().setUserAgent(request.userAgent)
             .setConnectTimeoutMs(4_000).setReadTimeoutMs(4_000)
@@ -48,10 +48,14 @@ internal object StartupStreamCache {
             if (request.referer == CineJoyNativeCatalog.REFERER) CineJoyAudioPlaylistDataSource(source, request.url, fragments) else source
         }
         val upstream = factory(context, DefaultDataSource.Factory(context, playlists))
-        val media = androidx.media3.datasource.DataSource.Factory {
+        return androidx.media3.datasource.DataSource.Factory {
             val source = upstream.createDataSource()
             if (request.referer == CineJoyNativeCatalog.REFERER) CineJoyManifestDataSource(source, request) else source
         }
+    }
+
+    suspend fun awaitPlayable(context: Context, request: NativePlaybackRequest, audioLanguage: String = "", bufferMs: Long = 250) = withContext(Dispatchers.Main.immediate) { withTimeout(12_000) {
+        val media = mediaFactory(context, request)
         val player = ExoPlayer.Builder(context.applicationContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(media).setLoadErrorHandlingPolicy(CineJoyLoadErrorPolicy { request.referer == CineJoyNativeCatalog.REFERER }))
             .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(

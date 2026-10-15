@@ -76,6 +76,17 @@ internal class PlaybackSpeechBuffer(
         return PlayedDialoguePcm(rows.first().first, rows.map { it.second.copyOf() })
     }
 
+    /** Only for an independent silent decoder: explicitly bounded decoded media,
+     * including future samples. The visible player's played-only API stays strict. */
+    @Synchronized fun decodedDialoguePcm(start: Double, end: Double): PlayedDialoguePcm? {
+        if (!start.isFinite() || !end.isFinite() || end <= start || end - start > 120.0) return null
+        val rows = playedPcm.filter { it.first >= start && it.first + .02 <= end + .001 }
+        if (rows.size < 200 || rows.zipWithNext().any {
+            abs(it.second.first - it.first.first - .02) > .003
+        }) return null
+        return PlayedDialoguePcm(rows.first().first, rows.map { it.second.copyOf() })
+    }
+
     @Synchronized fun reset() {
         playedPcm.clear()
         evidence.clear(); neuralEvidence.clear(); boundaryCount++; duplicateFrames = 0; failure = null; captureNanos = 0

@@ -963,6 +963,7 @@ internal fun NativePlayerScreen(
                         // Subtitle Sync / Delay
                         Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         val syncing = state.audioSyncState in setOf("Syncing…")
+                        val retry = state.audioSyncState != null && !syncing && state.audioSyncState != "Synced"
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         FilledTonalButton(
                             onClick = onSyncWithAudio,
@@ -972,9 +973,9 @@ internal fun NativePlayerScreen(
                             colors = ButtonDefaults.filledTonalButtonColors(containerColor = AliflixAccentPrimary.copy(alpha = .18f), contentColor = AliflixAccentSecondary),
                         ) {
                             if (syncing) com.aliflix.app.ui.common.AliflixSyncBars(Modifier.size(22.dp, 28.dp))
-                            else Icon(Icons.Rounded.GraphicEq, null, Modifier.size(20.dp))
+                            else Icon(if (retry) Icons.Filled.Refresh else Icons.Rounded.GraphicEq, null, Modifier.size(20.dp))
                             Spacer(Modifier.width(10.dp))
-                            Text(state.audioSyncState ?: "Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            Text(if (retry) "Retry" else state.audioSyncState ?: "Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Spacer(Modifier.width(6.dp))
                             Text("BETA", color = AliflixAccentSecondary, fontSize = 8.sp, lineHeight = 10.sp,
