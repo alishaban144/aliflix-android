@@ -30,6 +30,10 @@
       {
         "name": "WATCH_PARTIES",
         "class_name": "WatchParty"
+      },
+      {
+        "name": "TALK_SESSIONS",
+        "class_name": "TalkSession"
       }
     ]
   },
@@ -44,6 +48,12 @@
       "tag": "v2-watch-party",
       "new_sqlite_classes": [
         "WatchParty"
+      ]
+    },
+    {
+      "tag": "v3-talk",
+      "new_sqlite_classes": [
+        "TalkSession"
       ]
     }
   ],

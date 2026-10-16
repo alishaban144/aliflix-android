@@ -1,3 +1,5 @@
+import { talkRoute } from './talk';
+export { TalkSession } from './talk';
 import { watchPartyRoute } from './watchParty';
 export { WatchParty } from './watchParty';
 import { browse, categories } from './browse';
@@ -237,6 +239,8 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
 export default {
   async fetch(request: Request, env: RecommendationEnv, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const talk = await talkRoute(request, env);
+    if (talk) return talk;
     const party = await watchPartyRoute(request, env);
     if (party) return party;
     if (url.pathname === '/health' && request.method === 'GET') {
