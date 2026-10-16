@@ -1,6 +1,6 @@
 import { env, runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it, vi } from 'vitest';
-import { TalkContextSchema, permittedEpisode, validateTalkAnswer, stripMarkup, completedMovieEvidence, recommendTalkTitles } from '../src/talkEvidence';
+import { TalkContextSchema, permittedEpisode, validateTalkAnswer, stripMarkup, completedMovieEvidence, recommendTalkTitles, talkHistoryBoundary } from '../src/talkEvidence';
 import { talkRoute } from '../src/talk';
 import { TALK_MODELS, boundedJson } from '../src/talkProviders';
 import type { RecommendationEnv } from '../src/types';
@@ -14,12 +14,15 @@ describe('Talk privacy and evidence boundaries', () => {
     expect(TalkContextSchema.safeParse({ imdbId: 'https://untrusted.test' }).success).toBe(false);
   });
   it('enforces season and episode ordering independently of a requested number', () => {
-    const context = TalkContextSchema.parse({ type: 'tv', season: 2, episode: 3, position: 100 });
+    const context = TalkContextSchema.parse({ type: 'tv', season: 2, episode: 3, position: 100,
+      viewedRanges: [{ season: 1, first: 99, last: 99 }, { season: 2, first: 2, last: 2 }] });
     expect(permittedEpisode(context, 1, 99)).toBe(true);
     expect(permittedEpisode(context, 2, 2)).toBe(true);
     expect(permittedEpisode(context, 2, 3)).toBe(false);
     expect(permittedEpisode(context, 2, 4)).toBe(false);
     expect(permittedEpisode(context, 3, 1)).toBe(false);
+    expect(permittedEpisode(context, 1, 1)).toBe(false);
+    expect(permittedEpisode({ ...context, viewedRanges: [] }, 2, 2)).toBe(false);
     expect(permittedEpisode({ ...context, completed: true }, 2, 3)).toBe(true);
     expect(permittedEpisode({ ...context, completed: true }, 2, 4)).toBe(false);
   });
@@ -27,6 +30,13 @@ describe('Talk privacy and evidence boundaries', () => {
     const context = TalkContextSchema.parse({ season: 1, episode: 1, position: 604800 });
     expect(permittedEpisode(context, 1, 1)).toBe(false);
     expect(permittedEpisode({ ...context, spoilers: true }, 90, 200)).toBe(true);
+  });
+  it('fences retained conversation from other titles, episodes and spoiler permissions', () => {
+    const current = TalkContextSchema.parse({ type: 'tv', imdbId: 'tt5753856', season: 1, episode: 2 });
+    expect(talkHistoryBoundary(current)).toBe(talkHistoryBoundary({ ...current, position: 300 }));
+    expect(talkHistoryBoundary(current)).not.toBe(talkHistoryBoundary({ ...current, episode: 1 }));
+    expect(talkHistoryBoundary(current)).not.toBe(talkHistoryBoundary({ ...current, spoilers: true }));
+    expect(talkHistoryBoundary(current)).not.toBe(talkHistoryBoundary({ ...current, imdbId: 'tt0898266' }));
   });
   it('rejects fabricated references, ungrounded facts and ungrounded interpretations', () => {
     const base = { answer: 'The story is about time.', kind: 'fact', sources: [], words: 'TIME' };
@@ -104,7 +114,7 @@ describe('Talk authentication, quotas and cleanup', () => {
     await new Promise(resolve => setTimeout(resolve, 30));
     await runInDurableObject(stub, (_instance, ctx) => { expect(ctx.storage.sql.exec("SELECT key FROM memory WHERE key='history'").toArray()).toHaveLength(0); });
     expect(messages.some(m => m.type === 'cleared')).toBe(true);
-    ws.send('x'.repeat(31000)); await new Promise(resolve => setTimeout(resolve, 30));
-    expect(messages.some(m => m.type === 'error')).toBe(true); ws.close();
+    ws.send('x'.repeat(31000));
+    await vi.waitFor(() => expect(messages.some(m => m.type === 'error')).toBe(true)); ws.close();
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decode, encode } from '@msgpack/msgpack';
-import { connectAsr, fishSpeech } from '../src/talkProviders';
+import { connectAsr, fishSpeech, speechPcm24k } from '../src/talkProviders';
 import type { RecommendationEnv } from '../src/types';
 import { env } from 'cloudflare:test';
 
@@ -8,6 +8,16 @@ const configuration = { ...env, CURSOR_SIGNING_SECRET: 'test', GEMINI_API_KEY: '
 afterEach(() => vi.restoreAllMocks());
 
 describe('Talk streaming protocol and cancellation', () => {
+  it('preserves exact PCM samples from a WAV fallback and rejects wrong sample rates', () => {
+    const wav = new Uint8Array(48), view = new DataView(wav.buffer);
+    const tag = (at: number, text: string) => [...text].forEach((c, i) => wav[at + i] = c.charCodeAt(0));
+    tag(0, 'RIFF'); view.setUint32(4, 40, true); tag(8, 'WAVE'); tag(12, 'fmt '); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint16(34, 16, true);
+    tag(36, 'data'); view.setUint32(40, 4, true); wav.set([1, 2, 3, 4], 44);
+    expect([...speechPcm24k(wav, 'audio/wav')]).toEqual([1, 2, 3, 4]);
+    view.setUint32(24, 16000, true); expect(() => speechPcm24k(wav, 'audio/wav')).toThrow('TTS_FORMAT');
+    expect(() => speechPcm24k(new Uint8Array([1, 2]), 'audio/pcm;rate=16000')).toThrow('TTS_FORMAT');
+  });
   it('uses binary MessagePack, explicit free model header and incremental PCM', async () => {
     const events: string[] = []; const chunks: Uint8Array[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {

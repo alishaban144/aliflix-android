@@ -11,13 +11,18 @@ export const TalkContextSchema = z.object({
   completed: z.boolean().default(false), spoilers: z.boolean().default(false),
   library: z.array(z.object({ imdbId: z.string().regex(/^tt\d{1,12}$/),
     kind: z.enum(['saved', 'favorite', 'watched']), type: z.enum(['movie', 'tv']) }).strict()).max(8).default([]),
+  viewedRanges: z.array(z.object({ season: z.number().int().min(0).max(1000),
+    first: z.number().int().min(1).max(10000), last: z.number().int().min(1).max(10000) }).strict()
+    .refine(r => r.last >= r.first)).max(120).default([]),
 }).strict();
 export type TalkContext = z.infer<typeof TalkContextSchema>;
 export type Evidence = { id: string; title: string; text: string; url: string; license: string; season?: number; episode?: number };
 
 export function permittedEpisode(context: TalkContext, season: number, episode: number): boolean {
-  return context.spoilers || season < context.season || season === context.season &&
-    (episode < context.episode || episode === context.episode && context.completed);
+  if (context.spoilers) return true;
+  if (season === context.season && episode === context.episode) return context.completed;
+  const earlier = season < context.season || season === context.season && episode < context.episode;
+  return earlier && context.viewedRanges.some(r => r.season === season && episode >= r.first && episode <= r.last);
 }
 export function stripMarkup(text: string) {
   return text.replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&#39;/g, "'")
@@ -127,7 +132,11 @@ export async function completedMovieEvidence(context: TalkContext, signal: Abort
 
 export const TalkAnswerSchema = z.object({ answer: z.string().min(1).max(1600),
   kind: z.enum(['fact', 'interpretation', 'question', 'unknown']),
-  sources: z.array(z.string().max(80)).max(5), words: z.string().max(32) });
+  sources: z.array(z.string().max(80)).max(5), words: z.string().max(32),
+  language: z.string().regex(/^[a-z]{2,3}$/).default('en') });
+export function talkHistoryBoundary(context: TalkContext): string {
+  return JSON.stringify([context.type, context.imdbId, context.season, context.episode, context.completed, context.spoilers, context.viewedRanges]);
+}
 export function validateTalkAnswer(raw: unknown, evidence: Evidence[]) {
   const value = TalkAnswerSchema.parse(raw);
   const known = new Set(evidence.map(s => s.id));

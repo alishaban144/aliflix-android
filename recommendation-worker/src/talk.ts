@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 import { verifyIdentity } from './watchParty';
 import type { RecommendationEnv } from './types';
-import { TalkContextSchema, TalkContext, Evidence, episodeEvidence, lookupTalkTitles, movieEvidence, talkTitleDetails, TalkToolSchema, recommendTalkTitles, completedMovieEvidence } from './talkEvidence';
+import { TalkContextSchema, TalkContext, Evidence, episodeEvidence, lookupTalkTitles, movieEvidence, talkTitleDetails, TalkToolSchema, recommendTalkTitles, completedMovieEvidence, talkHistoryBoundary } from './talkEvidence';
 import { TALK_MODELS, TalkPlan, TalkTurn, answerTalk, base64, chooseTalkPlan, connectAsr, fishSpeech,
   geminiSpeech, transcribeGroq } from './talkProviders';
 
@@ -32,7 +32,7 @@ export async function talkRoute(request: Request, env: RecommendationEnv): Promi
     if (!rate.success) return json({ error: 'TRY_LATER' }, 429);
     // Guest identity re-issuance cannot reset the IP or global daily budget.
     if (!await env.TALK_SESSIONS.getByName('quota:ip:' + ipHash).reserve(1, 12) ||
-        !await env.TALK_SESSIONS.getByName('quota:global').reserve(1, 300)) return json({ error: 'DAILY_LIMIT' }, 429);
+        !await env.TALK_SESSIONS.getByName('quota:global').reserve(1, 40)) return json({ error: 'DAILY_LIMIT' }, 429);
     return env.TALK_SESSIONS.getByName('user:' + identity.sub).fetch(new Request('https://talk/socket', {
       headers: { Upgrade: 'websocket', 'x-talk-owner': identity.sub, 'x-talk-expiry': String(Math.min(identity.exp, Date.now() + 30 * MINUTE)) } }));
   } catch { return json({ error: 'UNAUTHORIZED' }, 401); }
@@ -49,6 +49,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   private keep = false;
   private active = false;
   private ending = false;
+  private awaitingAsrEnd = false;
   private transcript = '';
   private chunks: Uint8Array[] = [];
   private chunkBytes = 0;
@@ -61,6 +62,8 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   private turns = 0;
   private bytesWindow = 0;
   private windowAt = Date.now();
+  private eventWindowAt = Date.now();
+  private eventCount = 0;
   private expires = 0;
   private endTimer?: ReturnType<typeof setTimeout>;
 
@@ -85,12 +88,28 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
     const pair = new WebSocketPair(); const [client, server] = Object.values(pair);
     this.socket = server; this.generation++; this.expires = Number(request.headers.get('x-talk-expiry'));
     this.started = false; this.booting = false; this.turns = 0;
-    this.ctx.acceptWebSocket(server);
+    // An active voice session owns ephemeral PCM and upstream streams. Keep it
+    // warm, bounded to 30 minutes, rather than persisting microphone buffers or
+    // losing the first utterance when an idle ASR connection hibernates. Watch
+    // Party continues to use its separate hibernating sockets unchanged.
+    server.binaryType = 'arraybuffer'; server.accept();
+    server.addEventListener('message', event => this.ctx.waitUntil(this.webSocketMessage(server, event.data)));
+    server.addEventListener('close', () => {
+      server.close(1000, 'Ended'); this.ctx.waitUntil(this.webSocketClose(server));
+    });
+    server.addEventListener('error', () => this.ctx.waitUntil(this.webSocketError(server)));
     await this.ctx.storage.setAlarm(Math.min(this.expires, Date.now() + 30 * MINUTE));
     this.send({ type: 'connected', protocol: 1 });
     return new Response(null, { status: 101, webSocket: client });
   }
-  private send(value: unknown) { try { this.socket?.send(JSON.stringify(value)); } catch { this.stop(); } }
+  private send(value: unknown) {
+    try { this.socket?.send(JSON.stringify(value)); }
+    catch {
+      // Clear first: stop() emits an interruption, so a failed socket must not
+      // recursively re-enter send()/stop() during disconnect cleanup.
+      const dead = this.socket; this.socket = undefined; this.stop(); dead?.close(1011, 'Connection lost');
+    }
+  }
   private interrupt() {
     this.sequence++; this.turnAbort?.abort(); this.turnAbort = undefined;
     if (this.endTimer) clearTimeout(this.endTimer); this.endTimer = undefined;
@@ -112,7 +131,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
         if (ticket !== this.generation || connection !== this.asrGeneration || !this.started || !this.active && !this.ending) return;
         if (final) this.transcript = (this.transcript + text).slice(0, 2000);
         if (text) this.send({ type: 'transcript', role: 'user', text: final ? this.transcript : this.transcript + text, final: false, sequence: this.sequence });
-        if (final && this.ending) this.scheduleFinish(100);
+        if (final && this.ending) { this.awaitingAsrEnd = false; this.scheduleFinish(100); }
       }, () => {
         if (ticket !== this.generation || connection !== this.asrGeneration || !this.started) return;
         this.asr = undefined;
@@ -130,6 +149,8 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   }
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
     if (ws !== this.socket) { ws.close(1008); return; }
+    if (Date.now() - this.eventWindowAt >= 1000) { this.eventWindowAt = Date.now(); this.eventCount = 0; }
+    if (++this.eventCount > 120) { this.stop(); ws.close(1008, 'Message rate'); return; }
     if (Date.now() > this.expires) { this.stop(); ws.close(1000, 'Session limit'); return; }
     try {
       if (typeof message !== 'string') { this.audio(new Uint8Array(message)); return; }
@@ -137,22 +158,30 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       const event = command.parse(JSON.parse(message));
       if (event.type === 'ping') { this.send({ type: 'pong' }); return; }
       if (event.type === 'clear') {
-        this.interrupt(); this.history = []; this.ctx.storage.sql.exec("DELETE FROM memory WHERE key='history'");
+        this.interrupt(); this.history = []; this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN ('history','history-context')");
+        this.active = false; this.ending = false; this.transcript = ''; this.chunks = []; this.chunkBytes = 0;
+        this.asrGeneration++; this.asr?.close(1000, 'History cleared'); this.asr = undefined;
         this.send({ type: 'cleared' }); return;
       }
       if (event.type === 'privacy') {
-        this.keep = event.keepHistory; if (!this.keep) this.ctx.storage.sql.exec("DELETE FROM memory WHERE key='history'");
+        this.keep = event.keepHistory; if (!this.keep) this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN ('history','history-context')");
         else await this.persistHistory(); return;
       }
-      if (event.type === 'spoilers') { this.context = { ...this.context, spoilers: event.allowed }; this.interrupt(); return; }
+      if (event.type === 'spoilers') {
+        this.context = { ...this.context, spoilers: event.allowed }; this.interrupt();
+        if (!event.allowed) { this.history = []; this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN ('history','history-context')"); }
+        return;
+      }
       if (event.type === 'interrupt') { this.interrupt(); return; }
       if (event.type === 'start') {
         if (this.started || this.booting) return;
         this.booting = true; const ticket = this.generation;
         this.sessionAbort = new AbortController(); this.context = event.context; this.keep = event.keepHistory;
         const saved = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM memory WHERE key='history' AND expires>?", Date.now()).toArray()[0];
-        this.history = this.keep && saved ? z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000) })).max(12).parse(JSON.parse(saved.value)) : event.history;
-        if (!this.keep) this.ctx.storage.sql.exec("DELETE FROM memory WHERE key='history'");
+        const boundary = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM memory WHERE key='history-context' AND expires>?", Date.now()).toArray()[0];
+        this.history = this.keep && saved && boundary?.value === talkHistoryBoundary(this.context) ?
+          z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000) })).max(12).parse(JSON.parse(saved.value)) : event.history;
+        if (!this.keep) this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN ('history','history-context')");
         this.plan = await chooseTalkPlan(this.env, AbortSignal.any([this.sessionAbort.signal, AbortSignal.timeout(6000)]));
         const cooldown = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM memory WHERE key='reasoning-cooldown' AND expires>?", Date.now()).toArray()[0];
         if (cooldown && this.env.GROQ_API_KEY) this.plan.reasoning = 'groq';
@@ -166,14 +195,25 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       if (event.type === 'activity') {
         if (event.active) {
           if (this.active) return;
+          const unfinished = this.awaitingAsrEnd;
           this.interrupt(); this.transcript = ''; this.chunks = []; this.chunkBytes = 0; this.active = true;
-          if (this.asr && Date.now() - this.asrOpened > 9 * MINUTE) {
-            this.asr.close(1000, 'Rotate'); this.asr = undefined; this.plan.asr = 'gemini';
+          this.awaitingAsrEnd = false;
+          if (this.asr && (unfinished || Date.now() - this.asrOpened > 9 * MINUTE)) {
+            this.asrGeneration++; this.asr.close(1000, 'Rotate'); this.asr = undefined;
+          }
+          const sequence = this.sequence;
+          if (this.plan.asr === 'gemini' && !this.asr) {
             await this.startAsr(this.generation);
           }
+          if (sequence !== this.sequence || !this.active) return;
           this.asr?.send(JSON.stringify({ realtimeInput: { activityStart: {} } }));
+          // Audio arriving during a new handshake is already bounded in chunks.
+          // Flush it before live frames so rotation cannot drop opening words.
+          if (this.asr) for (const pcm of this.chunks)
+            this.asr.send(JSON.stringify({ realtimeInput: { audio: { data: base64(pcm), mimeType: 'audio/pcm;rate=16000' } } }));
         } else if (this.active) {
           this.active = false; this.ending = true;
+          this.awaitingAsrEnd = true;
           this.asr?.send(JSON.stringify({ realtimeInput: { activityEnd: {} } })); this.scheduleFinish(this.plan.asr === 'groq' ? 0 : 900);
         }
       }
@@ -184,7 +224,8 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
     }
   }
   private audio(pcm: Uint8Array) {
-    if (!this.started || !this.active || pcm.length > 6400 || pcm.length % 2) return;
+    if (pcm.length > 6400 || pcm.length % 2) { this.stop(); this.socket?.close(1009, 'Audio frame limit'); return; }
+    if (!this.started || !this.active) return;
     const now = Date.now(); if (now - this.windowAt >= 1000) { this.windowAt = now; this.bytesWindow = 0; }
     this.bytesWindow += pcm.length;
     if (this.bytesWindow > 64_000 || this.chunkBytes + pcm.length > 960_000) { this.stop(); this.socket?.close(1008, 'Audio limit'); return; }
@@ -206,10 +247,16 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       const suggestions = await recommendTalkTitles(text, timeout).catch(() => [] as Evidence[]);
       if (suggestions.length) return suggestions;
     }
-    if (this.context.type === 'movie' && this.context.imdbId && (this.context.completed || this.context.spoilers))
-      return completedMovieEvidence(this.context, timeout);
+    if (this.context.type === 'movie' && this.context.imdbId && (this.context.completed || this.context.spoilers)) {
+      const key = `evidence:movie:${this.context.id || 0}:${this.context.imdbId}`;
+      const cached = this.ctx.storage.sql.exec<{ value: string }>('SELECT value FROM memory WHERE key=? AND expires>?', key, Date.now()).toArray()[0];
+      if (cached) return JSON.parse(cached.value) as Evidence[];
+      const facts = await completedMovieEvidence(this.context, timeout);
+      if (facts.length) { this.ctx.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES (?,?,?)', key, JSON.stringify(facts), Date.now() + DAY); this.trimCache(); }
+      return facts;
+    }
     if (this.context.type === 'tv' && this.context.imdbId) {
-      const key = `evidence:${this.context.imdbId}:${season}:${episode}`;
+      const key = `evidence:tv:${this.context.id || 0}:${this.context.imdbId}:${season}:${episode}`;
       // Check permission BEFORE touching the cache; older permitted responses
       // must never leak through after a context/boundary change.
       const { permittedEpisode } = await import('./talkEvidence');
@@ -250,7 +297,10 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
     }
   }
   private async persistHistory() {
-    if (this.keep) this.ctx.storage.sql.exec("INSERT OR REPLACE INTO memory VALUES ('history',?,?)", JSON.stringify(this.history.slice(-12)), Date.now() + 7 * DAY);
+    if (this.keep) {
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO memory VALUES ('history',?,?)", JSON.stringify(this.history.slice(-12)), Date.now() + 7 * DAY);
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO memory VALUES ('history-context',?,?)", talkHistoryBoundary(this.context), Date.now() + 7 * DAY);
+    }
     await this.ctx.storage.setAlarm(this.socket ? this.expires : this.keep ? Date.now() + 7 * DAY : Date.now() + MINUTE);
   }
   private async finishTurn() {
@@ -290,9 +340,17 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       this.history.push({ role: 'assistant', text: answer.answer }); this.history = this.history.slice(-12);
       await this.persistHistory();
       if (!valid()) return;
-      this.send({ type: 'answer', text: answer.answer, words: answer.words, kind: answer.kind, references: answer.references, sequence: seq });
+      this.send({ type: 'answer', text: answer.answer, words: answer.words, language: answer.language, kind: answer.kind, references: answer.references, sequence: seq });
       let emitted = 0;
-      const audio = (bytes: Uint8Array) => { if (valid()) { emitted += bytes.length; this.send({ type: 'audio', data: base64(bytes), sampleRate: 24000, sequence: seq }); } };
+      const audio = (bytes: Uint8Array) => {
+        if (!valid()) return;
+        if (emitted + bytes.length > 2_400_000 || bytes.length % 2) throw Error('AUDIO_LIMIT');
+        emitted += bytes.length;
+        // Gemini's fallback may return a complete utterance. Bound every client
+        // message exactly like streamed Fish audio, without changing PCM samples.
+        for (let at = 0; at < bytes.length; at += 24000)
+          this.send({ type: 'audio', data: base64(bytes.subarray(at, at + 24000)), sampleRate: 24000, sequence: seq });
+      };
       try {
         if (this.plan.tts === 'fish') await fishSpeech(this.env, answer.answer, audio, signal);
         else if (this.plan.tts === 'gemini') audio(await geminiSpeech(this.env, answer.answer, signal));
@@ -302,8 +360,8 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
         // Never repeat a partially spoken answer after a provider fails.
         if (emitted === 0 && this.plan.tts === 'fish' && this.env.GEMINI_API_KEY) {
           try { audio(await geminiSpeech(this.env, answer.answer, signal)); }
-          catch { if (valid()) this.send({ type: 'speak-local', text: answer.answer, sequence: seq }); }
-        } else if (emitted === 0) this.send({ type: 'speak-local', text: answer.answer, sequence: seq });
+          catch { if (valid()) this.send({ type: 'speak-local', text: answer.answer, language: answer.language, sequence: seq }); }
+        } else if (emitted === 0) this.send({ type: 'speak-local', text: answer.answer, language: answer.language, sequence: seq });
       }
       if (valid()) this.send({ type: 'audio-end', sequence: seq });
     } catch (error) {
@@ -317,7 +375,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
         fields: error instanceof z.ZodError ? error.issues.map(i => ({ path: i.path, code: i.code })) : [], sequence: seq });
     }
   }
-  async webSocketClose(ws: WebSocket) { if (ws === this.socket) { this.stop(); this.socket = undefined; await this.persistHistory(); } }
+  async webSocketClose(ws: WebSocket) { if (ws === this.socket) { this.socket = undefined; this.stop(); await this.persistHistory(); } }
   async webSocketError(ws: WebSocket) { await this.webSocketClose(ws); }
   async alarm() {
     this.trimCache();

@@ -12,9 +12,10 @@ const talkResponseSchema = {
   properties: {
     answer: { type: 'string' }, kind: { type: 'string', enum: ['fact', 'interpretation', 'question', 'unknown'] },
     sources: { type: 'array', items: { type: 'string' } }, words: { type: 'string' },
+    language: { type: 'string' },
     tool: { type: 'string', enum: ['none', 'lookup_titles', 'recommendations', 'title_details', 'episode_evidence', 'my_space'] },
     query: { type: 'string' }, imdbId: { type: 'string' }, season: { type: 'integer' }, episode: { type: 'integer' },
-  }, required: ['answer', 'kind', 'sources', 'words', 'tool', 'query', 'imdbId', 'season', 'episode'],
+  }, required: ['answer', 'kind', 'sources', 'words', 'language', 'tool', 'query', 'imdbId', 'season', 'episode'],
 };
 
 export async function boundedJson(response: Response, max = 128_000): Promise<unknown> {
@@ -36,7 +37,9 @@ export async function openProviderSocket(url: string, headers: Record<string, st
   const response = await fetch(url, { headers: { Upgrade: 'websocket', ...headers }, signal });
   if (response.status !== 101 || !response.webSocket) { await response.body?.cancel(); throw Error('SOCKET_UNAVAILABLE'); }
   response.webSocket.binaryType = 'arraybuffer';
-  response.webSocket.accept(); return response.webSocket;
+  response.webSocket.accept();
+  if (signal.aborted) { response.webSocket.close(1000, 'Cancelled'); throw Error('CANCELLED'); }
+  return response.webSocket;
 }
 export function base64(bytes: Uint8Array): string {
   let text = ''; for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode(...bytes.subarray(i, i + 8192));
@@ -124,9 +127,9 @@ You may request ONE tool by returning JSON {"tool":"lookup_titles|recommendation
 lookup_titles/recommendations search independent permitted catalogues; title_details resolves an IMDb identity; my_space retrieves the person's saved/favorite/watched identities; episode_evidence is permission-gated.
 Use a tool if needed, then answer only from returned evidence. Do not keep requesting a tool already represented by evidence. Preserve the discussed title in follow-up context; ask to disambiguate similar titles.
 Return JSON only: {"answer":"...","kind":"fact|interpretation|question|unknown","sources":["exact evidence id"],"words":"ONE OR TWO CONTEXT WORDS"}.
-Always include tool, query, imdbId, season, episode. For a final answer use tool="none", query="", imdbId="", season=0, episode=1. For a tool request use answer="", kind="question", sources=[], words="ALIFLIX" and the tool's relevant arguments; irrelevant strings are empty.
+Always include language (the user's two-letter ISO language, e.g. en/de/ar/es), tool, query, imdbId, season, episode. For a final answer use tool="none", query="", imdbId="", season=0, episode=1. For a tool request use answer="", kind="question", sources=[], words="ALIFLIX" and the tool's relevant arguments; irrelevant strings are empty.
 Facts and interpretations require source ids. Titles from permitted catalogue search can be suggested, with their source.
-Progress (identifiers only): ${JSON.stringify(context)}\nVerified evidence: ${JSON.stringify(evidence)}`;
+Progress (independent IMDb identifier and the viewer's own boundary): ${JSON.stringify({ ...context, id: undefined })}\nVerified evidence: ${JSON.stringify(evidence)}`;
   const instruction = system + (toolsAvailable ? '' : '\nTool budget is exhausted. Return a final answer with tool="none". If the retrieved evidence is insufficient, ask one concise clarification or admit you cannot verify it. Do not invent facts.');
   const schema = toolsAvailable ? talkResponseSchema : { ...talkResponseSchema, properties: {
     ...talkResponseSchema.properties, tool: { type: 'string', enum: ['none'] },
@@ -196,6 +199,30 @@ export async function geminiSpeech(env: RecommendationEnv, text: string, signal:
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } } } }) }), 3_500_000);
   const audio = (raw as { candidates?: { content?: { parts?: { inlineData?: { data: string; mimeType: string } }[] } }[] })
     .candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData;
-  if (!audio || !audio.mimeType.startsWith('audio/L16') && !audio.mimeType.startsWith('audio/pcm')) throw Error('TTS_FORMAT');
-  return unbase64(audio.data);
+  if (!audio) throw Error('TTS_FORMAT');
+  return speechPcm24k(unbase64(audio.data), audio.mimeType);
+}
+
+/** Gemini may return bare PCM or a WAV container. Never play a header as sound,
+ * silently change pitch, or apply lossy conversion to an unexpected format. */
+export function speechPcm24k(bytes: Uint8Array, mime: string): Uint8Array {
+  if (mime.startsWith('audio/L16') || mime.startsWith('audio/pcm')) {
+    const rate = /rate=(\d+)/.exec(mime)?.[1];
+    if (rate && rate !== '24000' || bytes.length % 2) throw Error('TTS_FORMAT');
+    return bytes;
+  }
+  if (!/^audio\/(wav|wave|x-wav)/i.test(mime) || bytes.length < 44) throw Error('TTS_FORMAT');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tag = (at: number) => String.fromCharCode(...bytes.subarray(at, at + 4));
+  if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') throw Error('TTS_FORMAT');
+  let format = false;
+  for (let at = 12; at + 8 <= bytes.length;) {
+    const size = view.getUint32(at + 4, true), begin = at + 8;
+    if (begin + size > bytes.length) throw Error('TTS_FORMAT');
+    if (tag(at) === 'fmt ') format = size >= 16 && view.getUint16(begin, true) === 1 &&
+      view.getUint16(begin + 2, true) === 1 && view.getUint32(begin + 4, true) === 24000 && view.getUint16(begin + 14, true) === 16;
+    if (tag(at) === 'data') { if (!format || size % 2) throw Error('TTS_FORMAT'); return bytes.slice(begin, begin + size); }
+    at = begin + size + (size % 2);
+  }
+  throw Error('TTS_FORMAT');
 }
