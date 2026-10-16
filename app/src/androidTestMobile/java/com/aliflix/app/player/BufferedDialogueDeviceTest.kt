@@ -25,7 +25,8 @@ class BufferedDialogueDeviceTest {
                 val deadline = android.os.SystemClock.elapsedRealtime() + 20_000
                 var ready = false
                 while (!ready && android.os.SystemClock.elapsedRealtime() < deadline) {
-                    scenario.onActivity { ready = it.playbackUiState.ready && NativePlaybackService.selectedAudioFingerprint().isNotBlank() }
+                    scenario.onActivity { ready = it.playbackUiState.ready && it.playbackController?.isPlaying == true &&
+                        (it.playbackController?.currentPosition ?: 0L) >= 1000L && NativePlaybackService.selectedAudioFingerprint().isNotBlank() }
                     if (!ready) Thread.sleep(50)
                 }
                 assertTrue("Visible player ready", ready)
@@ -35,6 +36,19 @@ class BufferedDialogueDeviceTest {
                     position = it.playbackController!!.currentPosition / 1000.0
                     audio = NativePlaybackService.selectedAudioFingerprint()
                 }
+                // MediaController.pause is asynchronous; capture the acknowledged,
+                // stable paused clock, after startup preparation has completed.
+                val pauseDeadline = android.os.SystemClock.elapsedRealtime() + 5000
+                var settled = false
+                while (!settled && android.os.SystemClock.elapsedRealtime() < pauseDeadline) {
+                    Thread.sleep(100)
+                    scenario.onActivity {
+                        val current = it.playbackController!!.currentPosition / 1000.0
+                        settled = !it.playbackController!!.isPlaying && kotlin.math.abs(current - position) < .001
+                        position = current
+                    }
+                }
+                assertTrue("Pause acknowledged before independent scan", settled)
                 var evidence: BufferedDialogueEvidence? = null
                 runBlocking { BufferedDialogueAnalysis.collect(context, request, audio, position) { evidence = it } }
                 val observed = requireNotNull(evidence) { "No independent decoded audio" }
