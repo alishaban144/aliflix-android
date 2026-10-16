@@ -121,7 +121,7 @@ class MediaTest {
 
         assertEquals(
             PlaybackProviderId.MOVIEPIRE,
-            preferences.sourceFor(item).provider,
+            preferences.sourceFor(item, PlaybackProviderId.MOVIEPIRE).provider,
         )
     }
 
@@ -135,6 +135,7 @@ class MediaTest {
                 PlaybackProviderId.MOVIEPIRE,
                 PlaybackProviderId.RAMOFLIX,
                 PlaybackProviderId.DORABY,
+                MobilePlaybackProvider.FILMO,
                 MobilePlaybackProvider.SEVEN_MOVIES,
                 MobilePlaybackProvider.MOVY,
             ),
@@ -193,7 +194,7 @@ class MediaTest {
 
         assertEquals(
             "https://moviepire-mirror.example/watch/27205",
-            preferences.sourceFor(media).buildEntryUrl(media),
+            preferences.sourceFor(media, PlaybackProviderId.MOVIEPIRE).buildEntryUrl(media),
         )
         assertEquals(PlaybackProviderId.MOVIEPIRE, PlaybackSource.moviepire().provider)
     }

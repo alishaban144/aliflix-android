@@ -89,7 +89,8 @@ class DownloadDiscoveryTest {
     @Test fun animeRacesBothDedicatedCataloguesEvenWhenStartingFromAGeneralSource() {
         val anime = Media(21, MediaType.TV, "One Piece", originalLanguage = "ja", genres = listOf("Animation"))
         val order = downloadProviderOrder(PlaybackSelection(anime, 1, 1, source = PlaybackSource(MobilePlaybackProvider.FLIXER)))
-        assertEquals(listOf(PlaybackProviderId.MIRURO, PlaybackProviderId.ANIKURO), order.take(2))
+        assertEquals(MobilePlaybackProvider.ANIWORLD, order.first())
+        assertTrue(order.containsAll(listOf(PlaybackProviderId.MIRURO, PlaybackProviderId.ANIKURO)))
         assertTrue(order.take(4).contains(MobilePlaybackProvider.FLIXER))
         assertEquals(order.size, order.distinct().size)
         assertFalse(downloadProviderOrder(PlaybackSelection(Media(218, MediaType.MOVIE, "The Terminator"))).any { it.isAnimeNative })

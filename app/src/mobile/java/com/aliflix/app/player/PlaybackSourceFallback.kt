@@ -4,7 +4,7 @@ import com.aliflix.app.model.*
 
 /** Keep content/progress identity while trying every available provider automatically. */
 internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: PlaybackPreferences): List<PlaybackSelection> =
-    listOf(selection) + (listOf(MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.MIRURO,
+    listOf(selection) + (listOf(MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FILMO, MobilePlaybackProvider.FLIXER, PlaybackProviderId.MIRURO,
         PlaybackProviderId.ANIKURO, PlaybackProviderId.MOVIEPIRE, PlaybackProviderId.CINEJOY,
         PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY,
         MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY))
@@ -15,7 +15,7 @@ internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: 
 internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<PlaybackSelection> {
     val anime = candidates.filter { it.source.identity.isAnimeNative }
     return when {
-        candidates.firstOrNull()?.source?.identity == MobilePlaybackProvider.SERIENSTREAM -> candidates.take(1)
+        candidates.firstOrNull()?.source?.identity?.hasSourceEditions == true -> candidates.take(1)
         candidates.firstOrNull()?.media?.let { it.type == MediaType.TV && it.isJapaneseAnime } == true && anime.isNotEmpty() -> anime
         else -> candidates
     }

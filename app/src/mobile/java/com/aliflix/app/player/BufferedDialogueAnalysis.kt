@@ -43,7 +43,8 @@ internal object BufferedDialogueAnalysis {
             val renderers = object : DefaultRenderersFactory(context) {
                 override fun buildAudioSink(context: Context, enableFloatOutput: Boolean,
                                             enableAudioOutputPlaybackParams: Boolean): AudioSink =
-                    OfflineSpeechAnalysis.ScanAudioSink(checkNotNull(super.buildAudioSink(context, false, false)), capture, end, selectedAudioReady::get)
+                    OfflineSpeechAnalysis.ScanAudioSink(checkNotNull(super.buildAudioSink(context, false, false)), capture, end, selectedAudioReady::get,
+                        validatePcmContinuity=true)
             }
             val media = if (request.offlineDownloadId.isNotBlank())
                 DefaultDataSource.Factory(context, OfflineDownloads.get(context).offlineFactory())
@@ -66,13 +67,10 @@ internal object BufferedDialogueAnalysis {
                     }
                     val available = scanner.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
                         .flatMap { group -> (0 until group.length).map { group to it } }
-                    // An audio-only HLS period may renumber a sole muxed track
-                    // when video is disabled. Its exact request has no alternate
-                    // soundtrack to substitute. Multiple renditions require the
-                    // full selected identity as before.
+                    // Match the selected soundtrack even when there is only
+                    // one rendition. Unknown identity cannot certify captions.
                     android.util.Log.i("AliflixAudioSync", "buffered_tracks:count=${available.size},exact=${available.count { (g, i) -> audioSyncFingerprint(g.getTrackFormat(i)) == audio }}")
                     val selected = available.firstOrNull { (group, index) -> audioSyncFingerprint(group.getTrackFormat(index)) == audio }
-                        ?: available.singleOrNull()
                         ?: return@withTimeout
                     scanner.trackSelectionParameters = scanner.trackSelectionParameters.buildUpon()
                         .setOverrideForType(TrackSelectionOverride(selected.first.mediaTrackGroup, selected.second)).build()

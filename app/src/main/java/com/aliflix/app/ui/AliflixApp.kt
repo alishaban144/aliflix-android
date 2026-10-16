@@ -2,6 +2,8 @@
 
 package com.aliflix.app.ui
 
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 
@@ -20,6 +22,7 @@ import com.aliflix.app.ui.common.AliflixSurface
 import androidx.compose.runtime.DisposableEffect
 
 import androidx.activity.ComponentActivity
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
@@ -57,6 +60,8 @@ import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.clickable
@@ -68,6 +73,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -912,6 +918,24 @@ fun AliflixApp(
         }
     }
 
+    val updateLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(updateManager, updateLifecycle) {
+        if (BuildConfig.IS_TV) return@LaunchedEffect
+        var lastCheck = 0L
+        updateLifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while (true) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (!updateUi.busy && (lastCheck == 0L || now - lastCheck >= 4 * 60 * 60 * 1000L)) {
+                    lastCheck = now
+                    val result = updateManager.checkForUpdate()
+                    if (result is UpdateCheckResult.Available && !updateUi.busy)
+                        updateUi = updateUi.copy(available = result.info)
+                }
+                kotlinx.coroutines.delay(60_000)
+            }
+        }
+    }
+
     fun installDownloadedUpdate() {
         val apk = updateUi.downloadedApk ?: return
         val message = when (updateManager.launchInstaller(apk)) {
@@ -1457,7 +1481,7 @@ fun AliflixApp(
 
         urlDialogProvider?.let { provider ->
             val currentUrl = when (provider) {
-                MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> provider.defaultBaseUrl
+                MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> provider.defaultBaseUrl
                 PlaybackProviderId.MIRURO -> provider.defaultBaseUrl
                 PlaybackProviderId.ANIKURO -> provider.defaultBaseUrl
                 PlaybackProviderId.RAMOFLIX -> ramoflixConfig.baseUrl
@@ -1471,7 +1495,7 @@ fun AliflixApp(
                 defaultUrl = provider.defaultBaseUrl,
                 onSave = { newUrl ->
                     when (provider) {
-                        MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
+                        MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.updateRamoflixUrl(newUrl)
@@ -1482,7 +1506,7 @@ fun AliflixApp(
                 },
                 onReset = {
                     when (provider) {
-                        MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
+                        MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, PlaybackProviderId.CINEJOY, MobilePlaybackProvider.SEVEN_MOVIES, MobilePlaybackProvider.MOVY -> Unit
                         PlaybackProviderId.MIRURO -> Unit
                         PlaybackProviderId.ANIKURO -> Unit
                         PlaybackProviderId.RAMOFLIX -> viewModel.resetRamoflixUrl()
@@ -1551,7 +1575,7 @@ private fun AliflixBottomBar(
                                 if (isSelected) Icons.Filled.Home else Icons.Outlined.Home
                             }
                             AppTab.SEARCH -> {
-                                if (isSelected) Icons.Filled.Search else Icons.Outlined.Search
+                                if (isSelected) Icons.Filled.Explore else Icons.Outlined.Explore
                             }
                             AppTab.MY_SPACE -> {
                                 if (isSelected) Icons.Filled.Person else Icons.Outlined.Person
@@ -1577,20 +1601,7 @@ private fun AliflixBottomBar(
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
                     )
-                    if (isSelected) {
-                        Spacer(Modifier.height(2.dp))
-                        Box(
-                            modifier = Modifier
-                                .width(20.dp)
-                                .height(3.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.horizontalGradient(
-                                        listOf(AliflixAccentPrimary, AliflixAccentSecondary),
-                                    ),
-                                ),
-                        )
-                    }
+
                 }
             }
         }
@@ -1616,13 +1627,14 @@ private fun HomeScreen(
     onSelectFilter: (HomeFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val movieListState = rememberLazyListState()
+    val tvListState = rememberLazyListState()
+    val activeListState = when (selectedFilter) { HomeFilter.MOVIES -> movieListState; HomeFilter.TV -> tvListState; else -> listState }
     when {
         state.content != null -> MobileHomeSearchFrame(selectedFilter != HomeFilter.NEW,
             modifier.fillMaxSize().aliflixScreenBackground(),
-            header = { Column { MobileTopSafeArea(extraPadding = 0.dp); HomeHeader(onSearch) } },
+            header = { Column(Modifier.scrollable(activeListState, Orientation.Vertical, reverseDirection = true)) { MobileTopSafeArea(extraPadding = 0.dp); HomeHeader(onSearch) } },
         ) { headerBottom ->
-            val movieListState = rememberLazyListState()
-            val tvListState = rememberLazyListState()
             AnimatedContent(
                 targetState = selectedFilter,
                 modifier = Modifier.fillMaxSize(),
@@ -3306,12 +3318,11 @@ internal fun MySpaceScreen(
                 contentPadding = PaddingValues(horizontal = AliflixSpacing.Medium),
                 border = null,
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Settings,
-                    contentDescription = "Open Settings",
-                    tint = Color.White,
-                    modifier = Modifier.size(17.dp),
-                )
+                Box {
+                    Icon(Icons.Rounded.Settings, "Open Settings", tint = Color.White, modifier = Modifier.size(17.dp))
+                    com.aliflix.app.ui.common.UpdateAvailableDot(!BuildConfig.IS_TV && (updateUi.available != null || updateUi.downloadedApk != null),
+                        Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-3).dp))
+                }
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = "Settings",
@@ -5039,21 +5050,96 @@ private fun DetailCinematicActionPanel(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                com.aliflix.app.ui.common.DetailPlayAction(ctaText, progressRatio.takeIf { isPartiallyWatched }, onClick = {
-                    if (item.type == MediaType.TV && mainEpisode != null) onPlayEpisode(item, mainEpisode) else onPlay(item)
-                }, modifier = Modifier.weight(1f))
+                Button(
+                    onClick = {
+                        if (item.type == MediaType.TV && mainEpisode != null) {
+                            onPlayEpisode(item, mainEpisode)
+                        } else {
+                            onPlay(item)
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(54.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AliflixAccentPrimary,
+                        contentColor = AliflixContentPrimary,
+                    ),
+                    shape = AliflixCorners.Card,
+                    contentPadding = PaddingValues(horizontal = AliflixSpacing.Small, vertical = 6.dp),
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = ctaText,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (isPartiallyWatched) {
+                            Spacer(Modifier.height(3.dp))
+                            LinearProgressIndicator(
+                                progress = { progressRatio },
+                                modifier = Modifier
+                                    .fillMaxWidth(0.72f)
+                                    .height(3.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = Color.White,
+                                trackColor = Color.White.copy(alpha = 0.35f),
+                            )
+                        }
+                    }
+                }
 
-                com.aliflix.app.ui.common.WatchTogetherEntry(PlaybackSelection(item,
-                    mainEpisode?.seasonNumber, mainEpisode?.number, mainEpisode?.title))
                 com.aliflix.app.downloads.DownloadButton(item)
 
-                com.aliflix.app.ui.common.DetailIconAction(
-                    if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                    if (liked) "Liked" else "Like", liked) { onToggleLike(item) }
-                com.aliflix.app.ui.common.DetailIconAction(
-                    if (inMyList) Icons.Filled.Check else Icons.Filled.Add,
-                    if (inMyList) "In My List" else "Add to My List", inMyList) { onToggleMyList(item) }
+                // Compact Liked button
+                AliflixSurface(
+                    onClick = { onToggleLike(item) },
+                    modifier = Modifier.size(48.dp),
+                    shape = AliflixCorners.Card,
+                    level = if (liked) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                            contentDescription = if (liked) "Liked" else "Like",
+                            tint = if (liked) AliflixAccentSecondary else AliflixContentSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
 
+                // Compact My List button
+                AliflixSurface(
+                    onClick = { onToggleMyList(item) },
+                    modifier = Modifier.size(48.dp),
+                    shape = AliflixCorners.Card,
+                    level = if (inMyList) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = if (inMyList) Icons.Filled.Check else Icons.Filled.Add,
+                            contentDescription = if (inMyList) "In My List" else "Add to My List",
+                            tint = if (inMyList) AliflixAccentSecondary else AliflixContentSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
             }
 
             // Subtle divider

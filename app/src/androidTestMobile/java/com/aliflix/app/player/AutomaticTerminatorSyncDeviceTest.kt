@@ -98,9 +98,20 @@ class AutomaticTerminatorSyncDeviceTest {
                         var position = 0.0
                         scenario.onActivity { position = it.playbackController!!.currentPosition / 1000.0 }
                         val audio = synchronized(frames) { frames.toList() }.filter { it.first >= start && it.first + .02 <= position }
-                        writeWave(File(output, "scene-$index.wav"), audio)
-                        File(output, "scene-$index-clock.json").writeText(JSONObject()
-                            .put("start", audio.first().first).put("end", audio.last().first + .02).toString())
+                        val runs=mutableListOf<MutableList<Pair<Double,ShortArray>>>()
+                        audio.forEach { frame ->
+                            if(runs.isEmpty() || kotlin.math.abs(frame.first-runs.last().last().first-.02)>=.003) runs.add(mutableListOf())
+                            runs.last().add(frame)
+                        }
+                        val observed=runs.filter { it.size>=50 }
+                        assertTrue("Insufficient decoded played PCM",observed.sumOf { it.size }>=playedSeconds*50*.60)
+                        val clocks=JSONArray()
+                        observed.forEachIndexed { part,run ->
+                            val name="scene-$index-run-$part.wav"
+                            writeWave(File(output,name),run)
+                            clocks.put(JSONObject().put("file",name).put("start",run.first().first).put("end",run.last().first+.02))
+                        }
+                        File(output, "scene-$index-clock.json").writeText(JSONObject().put("runs",clocks).toString())
                         scenes.put(JSONObject().put("position", position).put("diagnostics", NativePlaybackService.speechDiagnostics()))
                     }
                     scenario.onActivity { activity ->

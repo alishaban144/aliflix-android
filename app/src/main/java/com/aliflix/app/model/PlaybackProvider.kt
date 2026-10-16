@@ -30,14 +30,21 @@ enum class MobilePlaybackProvider(
 ) : PlaybackProvider {
     FLIXER("Flixer", "https://flixer.gd/"),
     SERIENSTREAM("Serienstream", "https://serienstream.to/"),
+    FILMO("Filmo", "https://filmo.to/"),
+    ANIWORLD("AniWorld", "https://aniworld.to/"),
     SEVEN_MOVIES("7Movies", "https://7movies.ac/"),
     MOVY("Movy", "https://www.movy.sx/");
 
-    override val supportsGeneralPlayback: Boolean get() = !com.aliflix.app.BuildConfig.IS_TV
+    override val supportsGeneralPlayback: Boolean get() = !com.aliflix.app.BuildConfig.IS_TV && this != ANIWORLD
     override val isBeta: Boolean = false
     override val usesMoviepire: Boolean = false
-    override val isAnimeNative: Boolean = false
-    override fun isAvailableFor(media: Media): Boolean = supportsGeneralPlayback && (this != SERIENSTREAM || media.type == MediaType.TV)
+    override val isAnimeNative: Boolean get() = this == ANIWORLD
+    override fun isAvailableFor(media: Media): Boolean = !com.aliflix.app.BuildConfig.IS_TV && when(this) {
+        SERIENSTREAM -> media.type == MediaType.TV
+        FILMO -> media.type == MediaType.MOVIE
+        ANIWORLD -> media.type == MediaType.TV && media.isJapaneseAnime
+        else -> supportsGeneralPlayback
+    }
 }
 
 enum class PlaybackProviderId(
@@ -115,6 +122,9 @@ enum class PlaybackProviderId(
 
 internal fun defaultGeneralPlaybackProvider(isTv: Boolean): PlaybackProvider =
     if (isTv) PlaybackProviderId.RAMOFLIX else MobilePlaybackProvider.FLIXER
+
+internal val PlaybackProvider.hasSourceEditions: Boolean get() = !com.aliflix.app.BuildConfig.IS_TV &&
+    this in setOf(MobilePlaybackProvider.SERIENSTREAM,MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD)
 
 internal fun mobileGeneralPlaybackProviders(): List<PlaybackProvider> = buildList {
     add(MobilePlaybackProvider.FLIXER)
@@ -197,6 +207,8 @@ data class PlaybackSource(
         episodeNumber: Int? = null,
     ): String? = when (identity) {
         MobilePlaybackProvider.SERIENSTREAM -> baseUrl.trimEnd('/') + "/suche?term=" + java.net.URLEncoder.encode(media.title, "UTF-8")
+        MobilePlaybackProvider.FILMO -> baseUrl.trimEnd('/') + "/search?q=" + java.net.URLEncoder.encode(media.title, "UTF-8")
+        MobilePlaybackProvider.ANIWORLD -> baseUrl.trimEnd('/') + "/animes"
         PlaybackProviderId.CINEJOY -> baseUrl.trimEnd('/') + if (media.type == MediaType.TV) {
             "/watch/tv/${media.id}/${seasonNumber ?: 1}/${episodeNumber ?: 1}"
         } else "/watch/movie/${media.id}"
@@ -274,8 +286,9 @@ data class PlaybackPreferences(
         val provider = requestedProvider
             ?.takeIf { candidate -> candidate.isAvailableFor(media) }
             ?: when {
-                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV && media.isJapaneseAnime -> PlaybackProviderId.MIRURO
+                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV && media.isJapaneseAnime -> MobilePlaybackProvider.ANIWORLD
                 !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.TV -> MobilePlaybackProvider.SERIENSTREAM
+                !com.aliflix.app.BuildConfig.IS_TV && media.type == MediaType.MOVIE -> MobilePlaybackProvider.FILMO
                 effectiveGeneralProvider.isAvailableFor(media) -> effectiveGeneralProvider
                 else -> defaultGeneralPlaybackProvider(com.aliflix.app.BuildConfig.IS_TV)
             }
@@ -283,6 +296,8 @@ data class PlaybackPreferences(
             PlaybackProviderId.CINEJOY -> PlaybackSource(PlaybackProviderId.CINEJOY)
             MobilePlaybackProvider.FLIXER -> PlaybackSource(MobilePlaybackProvider.FLIXER)
             MobilePlaybackProvider.SERIENSTREAM -> PlaybackSource(MobilePlaybackProvider.SERIENSTREAM)
+            MobilePlaybackProvider.FILMO -> PlaybackSource(MobilePlaybackProvider.FILMO)
+            MobilePlaybackProvider.ANIWORLD -> PlaybackSource(MobilePlaybackProvider.ANIWORLD)
             MobilePlaybackProvider.SEVEN_MOVIES -> PlaybackSource(MobilePlaybackProvider.SEVEN_MOVIES)
             MobilePlaybackProvider.MOVY -> PlaybackSource(MobilePlaybackProvider.MOVY)
             PlaybackProviderId.RAMOFLIX -> PlaybackSource.ramoflix(ramoflixConfig)

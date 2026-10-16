@@ -232,6 +232,9 @@ internal class RecentDialogueRecognition(private val context: Context, private v
                     .putExtra(RecognizerIntent.EXTRA_REQUEST_WORD_CONFIDENCE, true)
                     .putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE))
             }
+            // The source descriptor has been registered. Its bounded pipe can
+            // now feed PCM without waiting for a microphone-ready callback.
+            completed.countDown()
         } catch (_: Exception) { failed = true; completed.countDown(); stopSession() }
     }
     private fun stopRecognizer() { runCatching { recognizer?.cancel() }; runCatching { recognizer?.destroy() }; recognizer = null }

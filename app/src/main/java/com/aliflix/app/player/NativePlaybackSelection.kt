@@ -12,7 +12,8 @@ internal fun PlaybackSelection.nativeJson(): String = JSONObject().apply {
     put("media", media.toJson()); put("season", seasonNumber); put("episode", episodeNumber)
     put("episodeTitle", episodeTitle); put("provider", source.identity.name); put("baseUrl", source.baseUrl)
     put("episodes", JSONArray().apply { availableEpisodes.forEach { episode ->
-        put(JSONObject().put("season", episode.seasonNumber).put("number", episode.number).put("title", episode.title).put("stillPath", episode.stillPath).put("runtime", episode.runtime).put("overview", episode.overview))
+        put(JSONObject().put("season", episode.seasonNumber).put("number", episode.number).put("title", episode.title).put("stillPath", episode.stillPath).put("runtime", episode.runtime).put("overview", episode.overview)
+            .put("imdbId",episode.imdbId).put("imdbRating",episode.imdbRating).put("imdbVoteCount",episode.imdbVoteCount).put("imdbRatingState",episode.imdbRatingState?.name))
     } })
 }.toString()
 
@@ -23,7 +24,11 @@ internal fun nativeSelection(raw: String): PlaybackSelection = JSONObject(raw).l
         episodeTitle = json.optString("episodeTitle").takeIf { it.isNotBlank() && it != "null" },
         availableEpisodes = (0 until episodes.length()).map { index -> episodes.getJSONObject(index).let {
             Episode(it.getInt("season"), it.getInt("number"), it.getString("title"),
-                overview = it.optString("overview"), stillPath = it.optString("stillPath").takeIf { path -> path.isNotBlank() && path != "null" }, runtime = it.optString("runtime"))
+                overview = it.optString("overview"), stillPath = it.optString("stillPath").takeIf { path -> path.isNotBlank() && path != "null" }, runtime = it.optString("runtime"),
+                imdbId=it.optString("imdbId").takeIf { value->value.matches(Regex("tt[0-9]+")) },
+                imdbRating=it.optDouble("imdbRating").takeIf { value->value.isFinite() && value>0 },
+                imdbVoteCount=it.optInt("imdbVoteCount").takeIf { _->it.has("imdbVoteCount") && !it.isNull("imdbVoteCount") },
+                imdbRatingState=runCatching { RatingSourceState.valueOf(it.optString("imdbRatingState")) }.getOrNull())
         } },
         source = PlaybackSource(PlaybackProvider.valueOf(json.getString("provider")), json.getString("baseUrl")))
 }

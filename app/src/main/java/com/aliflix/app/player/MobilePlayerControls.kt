@@ -198,14 +198,14 @@ internal fun MobilePlayerCenterControls(
         ) {
             Box(
                 modifier = Modifier
-                    .size(72.dp)
+                    .size(if (com.aliflix.app.BuildConfig.IS_TV) 72.dp else 76.dp)
                     .then(if (com.aliflix.app.BuildConfig.IS_TV) Modifier.clip(CircleShape)
                         .background(Color(0xFFF4F1FA)).border(BorderStroke(.5.dp,Color.White.copy(alpha = .55f)),CircleShape)
                     else Modifier.background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(
                         Color.Black.copy(alpha = .28f),Color.Black.copy(alpha = .12f),Color.Transparent)))),
                 contentAlignment = Alignment.Center,
             ) {
-                if (!com.aliflix.app.BuildConfig.IS_TV) MobileMorphPlaybackIcon(isPlaying, Modifier.size(48.dp))
+                if (!com.aliflix.app.BuildConfig.IS_TV) MobileMorphPlaybackIcon(isPlaying, Modifier.size(50.dp))
                 else {
                 AnimatedContent(targetState = isPlaying, transitionSpec = {
                     (fadeIn(tween(180, delayMillis = 45)) + scaleIn(tween(220), initialScale = .65f)) togetherWith

@@ -5,6 +5,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AutomaticCaptionSelectionTest {
+    @Test fun changingVideoSourceOrAudioEditionRefreshesOnlyAutomaticOnlineCaptions() {
+        assertTrue(refreshAutomaticCaptionCache(true,AUTOMATIC_CAPTION_SELECTION_POLICY,true,false,sameEdition=false))
+        assertFalse(refreshAutomaticCaptionCache(false,AUTOMATIC_CAPTION_SELECTION_POLICY,true,false,sameEdition=false))
+        assertFalse(refreshAutomaticCaptionCache(true,AUTOMATIC_CAPTION_SELECTION_POLICY,false,false,sameEdition=false))
+        assertFalse(refreshAutomaticCaptionCache(true,AUTOMATIC_CAPTION_SELECTION_POLICY,true,true,sameEdition=false))
+        assertFalse(refreshAutomaticCaptionCache(true,AUTOMATIC_CAPTION_SELECTION_POLICY,true,false,sameEdition=true))
+    }
     @Test fun cacheMigrationPreservesManualChoicesAndOfflineCaptions() {
         assertTrue(refreshAutomaticCaptionCache(true, 0, true, false))
         assertFalse(refreshAutomaticCaptionCache(false, 0, true, false))

@@ -34,7 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.ui.common.rememberMobileMotionEnabled
 
-/** Stable, unframed actions. Only the conventional navigation button has a surface. */
+/** Stable, unframed mobile navigation and player actions. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun MobilePlayerActionHeader(title: String, detail: String, episodic: Boolean,
@@ -60,8 +60,7 @@ internal fun MobilePlayerActionHeader(title: String, detail: String, episodic: B
             }
         }
         val back: @Composable () -> Unit = {
-                IconButton(onBack, Modifier.size(48.dp).clip(CircleShape)
-                    .background(Color.White.copy(alpha = .07f))) {
+                IconButton(onBack, Modifier.size(48.dp)) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack,"Back",tint = Color.White,modifier = Modifier.size(22.dp))
                 }
         }

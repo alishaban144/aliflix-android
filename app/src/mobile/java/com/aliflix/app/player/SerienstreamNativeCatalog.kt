@@ -87,7 +87,10 @@ internal object SerienstreamNativeCatalog {
                 val title = page(url)
                 if (serienstreamTitleMatches(title, selection.media)) url else error("Title identity mismatch")
             } }
-            require(verified.isNotEmpty()) { "Serienstream has no matching series" }
+            if(verified.isEmpty()) {
+                if(serienstreamSearchProvesAbsence(search)) throw ProviderItemUnavailable(selection.source.identity)
+                error("Serienstream search response could not be verified")
+            }
             firstSuccessful(verified, parallelism = 2).also { titles[titleKey] = it }
         }
         val episode = "$titleUrl/staffel-${selection.seasonNumber ?: 1}/episode-${selection.episodeNumber ?: 1}"
@@ -99,7 +102,8 @@ internal object SerienstreamNativeCatalog {
 
     suspend fun resolve(selection: PlaybackSelection, positionMs: Long, excluded: Set<String>,
         preferredServer: String?, strict: Boolean, onServers: (List<String>) -> Unit,
-        onServer: (String) -> Unit, audioLanguage: String? = null): NativePlaybackRequest = withTimeout(15_000) {
+        onServer: (String) -> Unit, audioLanguage: String? = null,
+        validate: suspend (NativePlaybackRequest) -> Unit = {}): NativePlaybackRequest = withTimeout(45_000) {
         val links = links(selection)
         onServers(links.map { it.label })
         val preferredLanguage = audioLanguage ?: links.firstOrNull { it.label == preferredServer }?.language
@@ -110,11 +114,20 @@ internal object SerienstreamNativeCatalog {
         // Try the original language's hosts first. Explicit audio choices never fall through to another language.
         if (audioLanguage != null) require(sameLanguage.isNotEmpty()) { "Selected audio is unavailable" }
         val candidates = (sameLanguage.ifEmpty { available }).sortedBy { if (it.label == preferredServer) 0 else 1 }
-        val attempts = candidates.map { link -> suspend {
-            val request = resolveLink(selection, link, positionMs)
+        suspend fun attempt(choices: List<SerienstreamLink>) = firstSuccessful(choices.map { link -> suspend {
+            val request = resolveLink(selection, link, positionMs).copy(sourceAudioLanguage=link.language)
+            validate(request)
             link to request
-        } }
-        val (link, request) = firstSuccessful(attempts, parallelism = 2)
+        } }, parallelism = 2)
+        val (link, request) = try { attempt(candidates) }
+        catch (cancelled:CancellationException) { throw cancelled }
+        catch (gate:SerienstreamVerificationRequired) { throw gate }
+        catch (error:Exception) {
+            currentCoroutineContext().ensureActive()
+            val otherEditions=available.filter { it !in candidates }
+            if(audioLanguage!=null || otherEditions.isEmpty()) throw error
+            attempt(otherEditions)
+        }
         onServer(link.label)
         request.copy(sourceAudioLanguage = link.language, sourceAudioOptions = JSONArray().apply {
             links.distinctBy { it.language }.forEach { put(JSONObject().put("language", it.language)
@@ -175,6 +188,9 @@ internal fun serienstreamTitleCandidates(page: Document, media: Media): List<Str
         if (uri.host != URI(page.location()).host || uri.scheme != "https" || !uri.path.matches(Regex("/serie/[^/]+"))) return@mapNotNull null
         uri.toString() to (normalizedSerienTitle(title) == normalizedSerienTitle(media.title))
     }.distinctBy { it.first }.sortedByDescending { it.second }.take(8).map { it.first }
+
+internal fun serienstreamSearchProvesAbsence(page:Document):Boolean =
+    page.select(".search-results .results-group[data-group=shows]").any { it.text().trim()=="Keine Serien gefunden" }
 
 private fun normalizedSerienTitle(title: String) = java.text.Normalizer.normalize(title.lowercase(java.util.Locale.ROOT), java.text.Normalizer.Form.NFKD)
     .replace(Regex("\\p{M}"), "").replace(Regex("[^\\p{L}\\p{N}]"), "")

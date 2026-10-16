@@ -20,22 +20,35 @@ internal object SerienstreamHttp {
             if (response.redirect == null) return AnimeCatalogueHttp.Response(response.bytes, response.type, next)
             val target = URI(next).resolve(response.redirect)
             require(target.scheme == "https" && target.userInfo == null && target.host != null)
-            require(target.host in setOf("serienstream.to", "serienstream.cx") || target.path.matches(Regex("/e/[A-Za-z0-9]+"))) { "Unexpected provider redirect" }
+            require(isProviderSiteRedirect(target)) { "Unexpected provider redirect: ${target.host}, path segments=${target.path.split('/').filter { it.isNotBlank() }.map { it.length }}" }
             next = target.toString()
         }
         error("Too many provider redirects")
     }
     private data class Response(val bytes: ByteArray, val type: String, val redirect: String? = null)
-    private suspend fun request(url: String, referer: String): Response = suspendCancellableCoroutine { continuation ->
+    suspend fun post(url: String, referer: String, body: String, json: Boolean = false, csrf: String? = null): String {
+        require(URI(url).scheme == "https" && URI(url).host == URI(referer).host)
+        return String(request(url, referer, body, json, csrf).bytes, Charsets.UTF_8)
+    }
+    private suspend fun request(url: String, referer: String, body: String? = null, json: Boolean = false, csrf: String? = null): Response = suspendCancellableCoroutine { continuation ->
         val cookies = CookieManager.getInstance()
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = false; connectTimeout = 4_000; readTimeout = 6_000
             setRequestProperty("User-Agent", SerienstreamNativeCatalog.USER_AGENT)
             setRequestProperty("Referer", referer)
+            if (body != null) {
+                requestMethod = "POST"; doOutput = true
+                setRequestProperty("Content-Type", if (json) "application/json" else "application/x-www-form-urlencoded")
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                setRequestProperty("Origin", "${URI(url).scheme}://${URI(url).host}")
+                csrf?.let { setRequestProperty("X-CSRF-TOKEN", it) }
+            }
             cookies.getCookie(url)?.takeIf { it.isNotBlank() }?.let { setRequestProperty("Cookie", it) }
         }
         val task = executor.submit {
             try {
+                if (body != null) connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 val status = connection.responseCode
                 connection.headerFields.filterKeys { it?.equals("Set-Cookie", true) == true }.values.flatten().forEach {
                     cookies.setCookie(url, it)
@@ -63,3 +76,10 @@ internal object SerienstreamHttp {
         continuation.invokeOnCancellation { task.cancel(true); connection.disconnect() }
     }
 }
+
+/** Video hosts use both public file documents and tokenized player routes.
+ * Authorize the inspected HTTPS origins instead of guessing their URL paths;
+ * sessions stay origin-scoped and unrelated redirect destinations remain closed. */
+internal fun isProviderSiteRedirect(target:URI):Boolean = target.scheme=="https" && target.userInfo==null &&
+    target.port in setOf(-1,443) && target.host?.lowercase(java.util.Locale.ROOT)?.removePrefix("www.") in
+        setOf("serienstream.to","serienstream.cx","filmo.to","aniworld.to","voe.sx","megankiddifference.com")

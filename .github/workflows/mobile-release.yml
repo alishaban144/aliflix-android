@@ -350,7 +350,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Watch Together, prioritized Serienstream with German editions, launch motion and smoother Home scrolling. ARM64-only mobile package preserves the original speech model and native synchronization binaries."
+          RELEASE_NOTES="Talk to Aliflix, priority Filmo / Serienstream / AniWorld playback and audio, compact mobile controls, all-season episodes and update indicators. ARM64 packaging preserves the original speech model and native binaries."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -392,13 +392,15 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile playback polish: title-safe Watch Together exit confirmation, compact detail actions, confirmed audio switching with applying feedback, and a read-only Streaming sources catalogue.
+            Mobile-only: Talk to Aliflix within Ask Aliflix, with continuous voice interaction, streaming speech, interruption, private history controls and attributed, spoiler-aware retrieval.
 
-            Sync with Audio uses the original local Silero model and on-device recognition with bounded selected-soundtrack look-ahead. Logo, wordmark and Movies / Series / Stories now start together.
+            Filmo movies, Serienstream series and AniWorld Japanese anime are prioritized. Audio switching confirms the actual native track; downloads expose available audio editions. Details restores its original actions, episodes includes all seasons/IMDb ratings, Streaming sources is a collapsed catalogue, and new updates have a small indicator. The next-episode card is redesigned while retaining its moving ring.
 
-            `aliflix-mobile.apk` is ARM64-only. Existing installations first receive the signed universal compatibility bridge through `update-mobile.json`; the architecture-aware updater then reads `update-mobile-arm64.json`. Incompatible devices retain the installable bridge. `native-parity.json` records every unchanged ARM64 binary and original Silero model hash plus exact APK size reduction from v3.1.164.
+            Sync with Audio remains local with the original Silero/ONNX/WebRTC binaries and unchanged confidence gates. Some short multilingual caption editions remain ambiguous and are rejected safely; see the validation report for exact passing and failed cases.
 
-            Validation evidence: docs/mobile-168-validation.md. TV is unchanged and no TV APK is published.
+            `aliflix-mobile.apk` is ARM64-only. Legacy clients receive the signed universal compatibility bridge via `update-mobile.json`; the architecture-aware updater reads `update-mobile-arm64.json`. Incompatible devices retain the installable bridge. `native-parity.json` records binary/model hashes and exact size reduction.
+
+            Validation: docs/mobile-168-validation.md. TV is unchanged; no TV APK is published.
           files: |
             aliflix-mobile.apk
             update-mobile.json

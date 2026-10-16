@@ -92,6 +92,7 @@ class GermanAudioSyncDeviceTest {
         val context = instrument.targetContext
         val language = InstrumentationRegistry.getArguments().getString("captionLanguage") ?: "en"
         val episode = InstrumentationRegistry.getArguments().getString("episode")?.toIntOrNull() ?: 1
+        val playedSeconds=InstrumentationRegistry.getArguments().getString("playedSeconds")?.toIntOrNull()?.coerceIn(8,60) ?: 8
         val selection = PlaybackSelection(Media(1418, MediaType.TV, "The Big Bang Theory", year = "2007",
             imdbId = "tt0898266", originalLanguage = "en"), 1, episode, if (episode == 1) "Pilot" else "The Big Bran Hypothesis",
             source = PlaybackSource(MobilePlaybackProvider.SERIENSTREAM))
@@ -118,7 +119,7 @@ class GermanAudioSyncDeviceTest {
                 ready
             }
             scenario.onActivity { assertEquals("de", NativePlaybackService.selectedAudioLanguage()); it.playbackController!!.seekTo(125000) }
-            await("Short German dialogue", 45000) { var ready = false; scenario.onActivity { ready = it.playbackController!!.currentPosition >= 133000 }; ready }
+            await("German dialogue", playedSeconds*1000L+45000) { var ready = false; scenario.onActivity { ready = it.playbackController!!.currentPosition >= 125000+playedSeconds*1000L }; ready }
             val original = requireNotNull(NativePlaybackService.originalSubtitles())
             File(output,"original-cues.json").writeText(original)
             if (InstrumentationRegistry.getArguments().getString("collectReferences") == "true") {

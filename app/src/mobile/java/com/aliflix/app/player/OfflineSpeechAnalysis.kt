@@ -89,7 +89,8 @@ internal object OfflineSpeechAnalysis {
 
     internal class ScanAudioSink(delegate: AudioSink, private val capture: PlaybackSpeechBuffer,
                                  private val untilSeconds: Double = Double.POSITIVE_INFINITY,
-                                 private val captureEnabled: () -> Boolean = { true }) : ForwardingAudioSink(delegate) {
+                                 private val captureEnabled: () -> Boolean = { true },
+                                 private val validatePcmContinuity:Boolean=false) : ForwardingAudioSink(delegate) {
         private var format = Format.Builder().build()
         private var offset = 0L
         private var clock = AudioSink.CURRENT_POSITION_NOT_SET
@@ -98,9 +99,14 @@ internal object OfflineSpeechAnalysis {
         override fun getFormatSupport(format: Format) = if (format.sampleMimeType == MimeTypes.AUDIO_RAW)
             super.getFormatSupport(format) else AudioSink.SINK_FORMAT_UNSUPPORTED
         override fun getFormatOffloadSupport(format: Format): AudioOffloadSupport = AudioOffloadSupport.DEFAULT_UNSUPPORTED
-        override fun configure(config: AudioSink.AudioSinkConfig) { format = config.format; capture.discontinuity(); ended = false }
+        override fun configure(config: AudioSink.AudioSinkConfig) {
+            val next=config.format
+            if(!validatePcmContinuity || next.sampleRate!=format.sampleRate || next.channelCount!=format.channelCount || next.pcmEncoding!=format.pcmEncoding)
+                capture.discontinuity()
+            format=next;ended=false
+        }
         override fun setOutputStreamOffsetUs(outputStreamOffsetUs: Long) {
-            if (offset != outputStreamOffsetUs) capture.discontinuity()
+            if (offset != outputStreamOffsetUs && !validatePcmContinuity) capture.discontinuity()
             offset = outputStreamOffsetUs
         }
         override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
@@ -122,7 +128,10 @@ internal object OfflineSpeechAnalysis {
         override fun playToEndOfStream() { ended = true }
         override fun play() = Unit
         override fun pause() = Unit
-        override fun handleDiscontinuity() { capture.discontinuity() }
+        // HLS can announce a new period while decoded media PTS remain exact.
+        // A fixed-track scanner lets pcm() verify the next actual sample clock;
+        // real gaps, format changes and flush/reset still split the evidence.
+        override fun handleDiscontinuity() { if(!validatePcmContinuity) capture.discontinuity() }
         override fun flush() { capture.discontinuity(); clock = AudioSink.CURRENT_POSITION_NOT_SET; ended = false }
         override fun reset() { flush() }
     }

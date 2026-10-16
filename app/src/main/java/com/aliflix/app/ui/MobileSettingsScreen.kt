@@ -92,6 +92,8 @@ internal fun MobileSettingsDialog(
                             Icon(Icons.Rounded.ChevronRight, null, tint = AliflixContentTertiary, modifier = Modifier.size(18.dp))
                         }
                     }
+                    androidx.compose.runtime.CompositionLocalProvider(LocalUpdateAvailable provides
+                        (updateUi.available != null || updateUi.downloadedApk != null)) {
                     SettingsGroup("APP UPDATES") {
                         SettingsRow(Icons.Rounded.SystemUpdate, "App updates", updateUi.message.ifBlank { "Aliflix ${BuildConfig.VERSION_NAME}" }) {
                             if (updateUi.busy) CircularProgressIndicator(Modifier.size(22.dp), color = AliflixAccentSecondary, strokeWidth = 2.dp)
@@ -103,17 +105,16 @@ internal fun MobileSettingsDialog(
                         }
                         updateUi.progress?.let { progress -> LinearProgressIndicator(progress = { progress.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth(), color = AliflixAccentPrimary) }
                     }
+                    }
                     SettingsGroup("PLAYBACK") {
-                        SettingsRow(Icons.Rounded.HighQuality, "Preferred quality", "") {
-                            AliflixSegmentedControl(contentPadding = PaddingValues(3.dp), horizontalArrangement = Arrangement.Start) {
-                                PreferredVideoQuality.entries.forEach { quality ->
-                                    val selected = playerSettings.preferredVideoQuality == quality
-                                    Text(quality.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                                        color = if (selected) Color.White else AliflixContentSecondary,
-                                        modifier = Modifier.aliflixSelection(selected, AliflixCorners.Small)
-                                            .selectable(selected, role = Role.RadioButton, onClick = { store.updatePreferredVideoQuality(quality) })
-                                            .testTag("settings-quality-${quality.name.lowercase()}").padding(horizontal = 13.dp, vertical = 14.dp))
-                                }
+                        var qualityMenu by remember { mutableStateOf(false) }
+                        Box {
+                            SettingsRow(Icons.Rounded.HighQuality,"Preferred quality","",onClick={qualityMenu=true}) {
+                                Text(playerSettings.preferredVideoQuality.label,color=AliflixAccentSecondary,fontSize=12.sp)
+                                Icon(Icons.Rounded.ExpandMore,null,tint=AliflixAccentSecondary)
+                            }
+                            SettingsMenu(qualityMenu,{qualityMenu=false},PreferredVideoQuality.entries,{it.label},playerSettings.preferredVideoQuality) {
+                                store.updatePreferredVideoQuality(it);qualityMenu=false
                             }
                         }
                         SettingsDivider()
@@ -182,11 +183,19 @@ internal fun MobileSettingsDialog(
                             }
                         }
                     }
+                    var sourcesExpanded by remember { mutableStateOf(false) }
                     SettingsGroup("STREAMING SOURCES") {
-                        val sources = (mobileGeneralPlaybackProviders() + PlaybackProviderId.entries.filter { it.isAnimeNative }).distinctBy { it.name }
-                        sources.forEachIndexed { index, provider ->
-                            if (index > 0) SettingsDivider()
-                            SettingsRow(Icons.Rounded.Dns, provider.displayName, "") { }
+                        SettingsRow(Icons.Rounded.Dns, "Streaming sources", "", onClick = { sourcesExpanded = !sourcesExpanded }) {
+                            Icon(if (sourcesExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = AliflixAccentSecondary)
+                        }
+                        androidx.compose.animation.AnimatedVisibility(sourcesExpanded) {
+                            Column {
+                                val sources = (mobileGeneralPlaybackProviders() + MobilePlaybackProvider.entries.filter { it.isAnimeNative } + PlaybackProviderId.entries.filter { it.isAnimeNative }).distinctBy { it.name }
+                                sources.forEach { provider ->
+                                    SettingsDivider()
+                                    SettingsRow(Icons.Rounded.PlayCircleOutline, provider.displayName, "") { }
+                                }
+                            }
                         }
                     }
                     Text("ALIFLIX  ·  ${BuildConfig.VERSION_NAME}", Modifier.fillMaxWidth().padding(bottom = AliflixSpacing.Panel), color = AliflixContentTertiary,
@@ -214,7 +223,10 @@ internal fun MobileSettingsDialog(
         .heightIn(min = 64.dp).padding(horizontal = 13.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
         Icon(icon, null, Modifier.size(22.dp), tint = AliflixContentSecondary)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AliflixContentPrimary)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AliflixContentPrimary)
+                if (title == "App updates") com.aliflix.app.ui.common.UpdateAvailableDot(LocalUpdateAvailable.current)
+            }
             if (detail.isNotBlank()) Text(detail, fontSize = 11.sp, lineHeight = 14.sp, color = AliflixContentSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         trailing()
@@ -240,13 +252,15 @@ internal fun MobileSettingsDialog(
                 val active = item == selected
                 Row(Modifier.fillMaxWidth().aliflixSelection(active, AliflixCorners.Card)
                     .selectable(active, role = Role.RadioButton, onClick = { onSelect(item) })
-                    .heightIn(min = 54.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    .then(if(item is PreferredVideoQuality) Modifier.testTag("settings-quality-${item.name.lowercase()}") else Modifier)
+                    .heightIn(min = 56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(label(item), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
                         fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
-                    Icon(if (active) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, null,
-                        Modifier.size(20.dp), tint = if (active) AliflixAccentSecondary else AliflixContentTertiary)
+                    AliflixChoiceMark(active)
                 }
             }
         }
     }
 }
+
+private val LocalUpdateAvailable = androidx.compose.runtime.staticCompositionLocalOf { false }

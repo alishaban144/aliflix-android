@@ -33,11 +33,9 @@ internal data class PreparedDownload(val selection: PlaybackSelection, val playb
 }
 
 internal fun downloadProviderOrder(selection: PlaybackSelection): List<PlaybackProvider> =
-    ((if (selection.media.isJapaneseAnime) listOf(selection.source.identity).filter { it.isAnimeNative } +
-        listOf(PlaybackProviderId.MIRURO, PlaybackProviderId.ANIKURO) else emptyList()) +
-        (if (selection.source.identity == MobilePlaybackProvider.SERIENSTREAM || selection.media.originalLanguage.equals("de", true))
-            listOf(MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, selection.source.identity)
-        else listOf(MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.SERIENSTREAM, selection.source.identity)) + mobileGeneralPlaybackProviders())
+    (listOf(if (selection.media.isJapaneseAnime && selection.media.type==MediaType.TV) MobilePlaybackProvider.ANIWORLD
+        else if (selection.media.type==MediaType.TV) MobilePlaybackProvider.SERIENSTREAM else MobilePlaybackProvider.FILMO,
+        selection.source.identity) + mobileGeneralPlaybackProviders() + listOf(PlaybackProviderId.MIRURO,PlaybackProviderId.ANIKURO))
         .filter { it.isAvailableFor(selection.media) }.distinct()
 
 internal fun downloadStreamKeys(quality: DownloadQuality, tracks: List<DownloadAudioTrack>, audioIndex: Int?): List<StreamKey> {
@@ -87,7 +85,21 @@ internal suspend fun prepareDownload(activity: ComponentActivity, host: FrameLay
         require(useful.isNotEmpty()) { "Selected audio unavailable" }
         return inspected.copy(qualities = useful)
     }
-    return discoverDownloadOptions(providers, ::attempt, onUpdate).prepared()
+    val primary=providers.first()
+    try {
+        val preferred=withTimeout(60_000) { attempt(primary) }
+        onUpdate(DownloadDiscovery(preferred.qualities.map { DownloadOption(it,preferred) },true))
+        return preferred
+    } catch (gate:SerienstreamVerificationRequired) { throw gate }
+    catch (cancelled:CancellationException) {
+        currentCoroutineContext().ensureActive()
+        if (!mayAutomaticallyLeaveSource(primary, cancelled)) throw IllegalStateException("Source unavailable · Retry", cancelled)
+    }
+    catch (error:Exception) {
+        currentCoroutineContext().ensureActive()
+        if (!mayAutomaticallyLeaveSource(primary, error)) throw error
+    }
+    return discoverDownloadOptions(providers.drop(1), ::attempt, onUpdate).prepared()
 }
 
 internal suspend fun prepareDownloadBatch(activity: ComponentActivity, host: FrameLayout,
@@ -232,9 +244,9 @@ internal suspend fun prepareDownloadBatchInternal(
 
 internal suspend fun inspectDownload(selection: PlaybackSelection, request: NativePlaybackRequest, language: String): PreparedDownload {
     val inspected = inspectDownloadMedia(selection, request, language)
-    if (selection.source.identity != MobilePlaybackProvider.SERIENSTREAM) return inspected
+    if (!selection.source.identity.hasSourceEditions) return inspected
     // Actual multiaudio masters retain their native rendition groups and stream keys.
-    if (inspected.audioTracks.isNotEmpty()) return inspected
+    if (inspected.audioTracks.size > 1) return inspected
     val tracks = request.sourceAudioChoices().mapIndexed { index, audio ->
         DownloadAudioTrack(audio.label, audio.language, "serienstream-source", index,
             original = audio.language.equals(selection.media.originalLanguage, true))
@@ -358,25 +370,27 @@ private suspend fun inspectDownloadMedia(selection: PlaybackSelection, request: 
 }
 
 internal suspend fun PreparedDownload.downloadRequest(quality: DownloadQuality, language: String, autoSubtitles: Boolean,
-    audioIndex: Int? = null, approveProvider: suspend (SerienstreamVerificationRequired) -> Boolean = { false }): DownloadRequest {
+    audioIndex: Int? = null, resolveAudio: suspend (PlaybackSelection,String)->NativePlaybackRequest = { _,_->error("Audio edition needs a running download picker") }, approveProvider: suspend (SerienstreamVerificationRequired) -> Boolean = { false }): DownloadRequest {
     val source = owner(quality)
-    if (source !== this) return source.downloadRequest(quality, language, autoSubtitles, audioIndex, approveProvider)
+    if (source !== this) return source.downloadRequest(quality, language, autoSubtitles, audioIndex, resolveAudio, approveProvider)
     if (quality.audioGroupId == "serienstream-source" && audioIndex != null) {
         require(audioIndex >= 0) { "Download one language edition at a time" }
         val audio = audioTracks.firstOrNull { it.index == audioIndex } ?: error("Selected audio unavailable")
         if (audio.language != playback.sourceAudioLanguage) {
-            suspend fun resolveEdition() = SerienstreamNativeCatalog.resolve(selection, 0, emptySet(), null, false, {}, {}, audio.language)
+            suspend fun resolveEdition() = if (selection.source.identity == MobilePlaybackProvider.SERIENSTREAM)
+                SerienstreamNativeCatalog.resolve(selection, 0, emptySet(), null, false, {}, {}, audio.language)
+                else resolveAudio(selection,requireNotNull(audio.language))
             val request = try { resolveEdition() } catch (gate: SerienstreamVerificationRequired) {
                 if (!approveProvider(gate)) throw gate
                 resolveEdition()
             }
             val refreshed = inspectDownload(selection, request, language)
-            return refreshed.downloadRequest(closestDownloadQuality(refreshed.qualities, quality.height), language, autoSubtitles, approveProvider = approveProvider)
+            return refreshed.downloadRequest(closestDownloadQuality(refreshed.qualities, quality.height), language, autoSubtitles, resolveAudio = resolveAudio, approveProvider = approveProvider)
         }
     }
     val originalSubtitles = quality.hasOriginalSubtitles ?: hasOriginalSubtitles
     var vtt = playback.subtitlesVtt
-    if (selection.source.identity == MobilePlaybackProvider.SERIENSTREAM && language.isNotBlank()) {
+    if (selection.source.identity.hasSourceEditions && language.isNotBlank()) {
         val caption = playback.sourceCaptionTracks().firstOrNull { canonicalSubtitleLanguageCode(it.languageCode) == canonicalSubtitleLanguageCode(language) }
         if (caption != null) {
             val cues = SubdlSubtitleRepository().download(caption, selection).getOrThrow()

@@ -69,11 +69,13 @@ class PhonePlayerPolishTest {
                 RecommendationAiModel.entries.first(), {}, SubtitleLanguage.ENGLISH, {}, enabled,
                 { enabled = it }, MobileUpdateUiState(), {}, {}, {}, {}, {})
         } }
-        compose.onNodeWithTag("settings-quality-low").performClick().assertIsSelected()
+        compose.onNode(hasText("Preferred quality") and hasClickAction()).performScrollTo().performClick()
+        compose.onNodeWithTag("settings-quality-low").performClick()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals(com.aliflix.app.player.PreferredVideoQuality.LOW,
             com.aliflix.app.player.PlayerSettingsStore(context).settings.value.preferredVideoQuality)
-        compose.onNodeWithTag("settings-quality-auto").performClick().assertIsSelected()
+        compose.onNode(hasText("Preferred quality") and hasClickAction()).performScrollTo().performClick()
+        compose.onNodeWithTag("settings-quality-auto").performClick()
         compose.onNodeWithText("Auto display").performScrollTo().assertIsDisplayed()
         capture("settings71.png")
         compose.onNodeWithText("Auto display").performClick()

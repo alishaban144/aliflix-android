@@ -173,7 +173,7 @@ class DownloadBatchUiTest {
         // Index zero is Select all/Clear. Reveal the nested list's bottom in
         // the outer sheet before checking its third episode at large text.
         compose.onAllNodes(androidx.compose.ui.test.hasScrollAction()).onLast().performScrollToIndex(3)
-        compose.onNode(hasText("Subtitles:", substring = true)).performScrollTo()
+        compose.onNodeWithTag("download-episodes-list").performScrollTo()
         compose.onNodeWithText("E3 · Episode 3").assertIsDisplayed()
         compose.onNodeWithText("Download 3 episodes").assertIsDisplayed()
     }
@@ -222,7 +222,7 @@ class DownloadBatchUiTest {
         val discoveries = fake.discoveries
         fake.unavailable = { false }
         // Reveal the nested episode list in the outer sheet before injecting a tap.
-        compose.onNode(hasText("Subtitles:", substring = true)).performScrollTo()
+        compose.onNodeWithTag("download-episodes-list").performScrollTo()
         compose.onNodeWithText("Retry").performScrollTo().performClick()
         compose.waitUntil(5_000) { !compose.onNodeWithText("Download 3 episodes").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) }
         assertEquals(discoveries, fake.discoveries)

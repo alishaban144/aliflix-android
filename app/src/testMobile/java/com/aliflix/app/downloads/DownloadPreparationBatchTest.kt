@@ -11,10 +11,10 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DownloadPreparationBatchTest {
-    @Test fun flixerIsTheFirstDownloadSource() {
+    @Test fun serienstreamIsTheFirstSeriesDownloadSource() {
         val dark = selection(1)
         val order = downloadProviderOrder(dark)
-        assertEquals(MobilePlaybackProvider.FLIXER, order.first())
+        assertEquals(MobilePlaybackProvider.SERIENSTREAM, order.first())
         assertEquals(1, order.count { it == PlaybackProviderId.CINEJOY })
     }
 

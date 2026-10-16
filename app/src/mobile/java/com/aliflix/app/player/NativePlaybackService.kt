@@ -420,7 +420,7 @@ class NativePlaybackService : MediaSessionService() {
         request = next
         preferredQualityApplied = false
         preferredAudioLabelApplied = false
-        val preferredAudio = next.sourceAudioLanguage.takeIf { it.isNotBlank() }
+        val preferredAudio = next.sourceAudioLanguage.takeIf { it.isNotBlank() }?.substringBefore('-')
             ?: getSharedPreferences("native-audio-choice", MODE_PRIVATE).getString("language", null)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
@@ -803,7 +803,7 @@ class NativePlaybackService : MediaSessionService() {
             val service = activeService ?: return
             if (android.os.Build.VERSION.SDK_INT < 34) return
             val language = dialogueRecognitionLanguage(selectedAudioLanguage(), captionLanguage, originalLanguage)
-            val enabledIdentity = identity?.takeIf { language != null }
+            val enabledIdentity = identity?.takeIf { language != null && localSpeechPermissionGranted(service) }
             if (enabledIdentity == service.dialogueRecognitionIdentity) return
             service.speechCapture.dialogueFrameObserver = null
             service.dialogueRecognition?.close(); service.dialogueRecognition = null

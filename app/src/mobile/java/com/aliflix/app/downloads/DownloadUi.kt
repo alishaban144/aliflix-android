@@ -1,5 +1,5 @@
 @file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package com.aliflix.app.downloads
 
 import com.aliflix.app.ui.common.*
@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
@@ -331,6 +332,26 @@ internal interface DownloadUiDependencies {
                             color = AliflixContentSecondary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
+                FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    if(tracks.isNotEmpty()) DownloadAudioMenu(tracks,audioLabel,!saving) { audioLabel=it }
+                    else Row(Modifier.heightIn(min=48.dp).padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Rounded.Audiotrack,null,Modifier.size(18.dp),tint=AliflixContentTertiary)
+                        Text("Audio",color=AliflixContentTertiary)
+                        if(discovery?.finished!=true || picker.loading) CircularProgressIndicator(Modifier.size(14.dp),strokeWidth=1.5.dp,color=AliflixAccentSecondary)
+                    }
+                if (selected.isNotEmpty()) Box {
+                    var menu by remember { mutableStateOf(false) }
+                    TextButton(onClick = { menu = true }, enabled = !saving) {
+                        Icon(Icons.Rounded.Subtitles, null); Spacer(Modifier.width(8.dp))
+                        Text(if (noSubtitles) "Subtitles: None" else "Subtitles: ${SubtitleLanguage.entries.firstOrNull { it.code == language }?.displayName ?: language}")
+                        Icon(Icons.Rounded.ExpandMore, null)
+                    }
+                    DropdownMenu(menu, { menu = false }, modifier = Modifier.heightIn(max = 280.dp), containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
+                        DropdownMenuItem(text = { Text("None") }, onClick = { noSubtitles = true; menu = false })
+                        SubtitleLanguage.entries.forEach { lang -> DropdownMenuItem(text = { Text(lang.displayName) }, onClick = { language = lang.code; noSubtitles = false; menu = false }) }
+                    }
+                }
+                }
                 if (media.type == MediaType.TV && initialEpisode == null) Row(verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.foundation.lazy.LazyRow(Modifier.weight(1f)) {
                         items(picker.seasons.size) { index -> val tab = picker.seasons[index]
@@ -339,7 +360,15 @@ internal interface DownloadUiDependencies {
                             }
                         }
                     }
-                    TextButton(onClick = { expanded = !expanded }, enabled = !saving) { Text("Episodes"); Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null) }
+                    AliflixSurface(shape=AliflixCorners.Card,level=if(expanded) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Elevated) {
+                        Row(Modifier.heightIn(min=48.dp).clickable(enabled=!saving) { expanded=!expanded }.padding(horizontal=14.dp),
+                            verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.VideoLibrary,null,Modifier.size(18.dp),tint=AliflixAccentSecondary)
+                            Text("Episodes",fontWeight=FontWeight.SemiBold)
+                            if(expanded && picker.loading) CircularProgressIndicator(Modifier.size(14.dp),strokeWidth=1.5.dp,color=AliflixAccentSecondary)
+                            else Icon(if(expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,null,Modifier.size(18.dp))
+                        }
+                    }
                 }
                 if (picker.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 if (verification != null) FilledTonalButton(onClick = { showVerification = true }, enabled = !saving,
@@ -373,8 +402,7 @@ internal interface DownloadUiDependencies {
                                         Text(if (batch && sized.bytes > 0) "≈ ${downloadSize(sized.bytes * selected.size)}"
                                             else sized.sizeLabel, color = AliflixContentSecondary, fontSize = 12.sp)
                                         Spacer(Modifier.width(12.dp))
-                                        Icon(if (active) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
-                                            if (active) "Selected" else null, tint = if (active) AliflixAccentPrimary else AliflixContentSecondary, modifier = Modifier.size(20.dp))
+                                        AliflixChoiceMark(active)
                                     }
                                 }
                             }
@@ -388,16 +416,17 @@ internal interface DownloadUiDependencies {
                 if (batch && option != null) Text(if (ready) "$total total" else if ((anchorEstimate?.bytes ?: 0) > 0)
                     "≈ ${downloadSize(requireNotNull(anchorEstimate).bytes * selected.size)} total · Estimate" else "Size unavailable",
                     color = AliflixContentSecondary, style = MaterialTheme.typography.labelMedium)
-                if (tracks.isNotEmpty()) DownloadAudioMenu(tracks, audioLabel, !saving) { audioLabel = it }
                 if (expanded || exceptions.isNotEmpty() || picker.error != null) LazyColumn(
-                    Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Modifier.heightIn(max = 220.dp).testTag("download-episodes-list"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     picker.error?.let { message -> item { Text(message, color = AliflixError); TextButton(onClick = { session.load(picker, media, initialEpisode, store, true) }) { Text("Retry") } } }
                     if (expanded) item { TextButton(onClick = { chosen = if (chosen.size == raw.size) emptySet() else raw.map { it.first }.toSet() }, enabled = !saving) { Text(if (chosen.size == raw.size) "Clear" else "Select all") } }
-                    items(if (expanded) raw else raw.filter { (_, s) -> exceptions.any { it.second.episodeNumber == s.episodeNumber } }, key = { it.first }) { (rawKey, value) ->
+                    items(if (expanded && !picker.loading) raw else raw.filter { (_, s) -> exceptions.any { it.second.episodeNumber == s.episodeNumber } }, key = { it.first }) { (rawKey, value) ->
                         val key = session.key(value, language)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (expanded) Checkbox(rawKey in chosen, enabled = !saving && playbackProgressKey(value) !in blocked,
-                                onCheckedChange = { chosen = if (it) chosen + rawKey else chosen - rawKey })
+                        Row(Modifier.fillMaxWidth().background(if(rawKey in chosen) AliflixAccentPrimary.copy(alpha=.10f) else AliflixSurfacePrimary,AliflixCorners.Card)
+                            .then(if(expanded) Modifier.toggleable(rawKey in chosen,enabled=!saving && playbackProgressKey(value) !in blocked,role=Role.Checkbox) {
+                                chosen=if(it) chosen+rawKey else chosen-rawKey
+                            } else Modifier).heightIn(min=56.dp).padding(10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                            if(expanded) AliflixChoiceMark(rawKey in chosen)
                             Column(Modifier.weight(1f)) {
                                 Text("E${value.episodeNumber} · ${value.episodeTitle.orEmpty()}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (key in session.errors) Text("Unavailable", color = AliflixError, fontSize = 12.sp)
@@ -410,18 +439,7 @@ internal interface DownloadUiDependencies {
                         }
                     }
                 }
-                if (selected.isNotEmpty()) Box {
-                    var menu by remember { mutableStateOf(false) }
-                    TextButton(onClick = { menu = true }, enabled = !saving) {
-                        Icon(Icons.Rounded.Subtitles, null); Spacer(Modifier.width(8.dp))
-                        Text(if (noSubtitles) "Subtitles: None" else "Subtitles: ${SubtitleLanguage.entries.firstOrNull { it.code == language }?.displayName ?: language}")
-                        Icon(Icons.Rounded.ExpandMore, null)
-                    }
-                    DropdownMenu(menu, { menu = false }, modifier = Modifier.heightIn(max = 280.dp), containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
-                        DropdownMenuItem(text = { Text("None") }, onClick = { noSubtitles = true; menu = false })
-                        SubtitleLanguage.entries.forEach { lang -> DropdownMenuItem(text = { Text(lang.displayName) }, onClick = { language = lang.code; noSubtitles = false; menu = false }) }
-                    }
-                }
+
                 anchor?.let { session.errors[it.first]?.takeIf { discovery?.choices.isNullOrEmpty() } }?.let { message ->
                     Text(message, color = AliflixError); TextButton(onClick = { discoveryRetry++ }, enabled = !saving) { Text("Retry") }
                 }
@@ -443,7 +461,11 @@ internal interface DownloadUiDependencies {
                                         "All tracks" -> -1
                                         else -> audioTracks.firstOrNull { it.label == audioLabel }?.index ?: error("Selected audio is unavailable.")
                                     }
-                                    item.downloadRequest(quality, requestedLanguage, prefs.autoDisplaySubtitles, index) { gate ->
+                                    item.downloadRequest(quality, requestedLanguage, prefs.autoDisplaySubtitles, index, resolveAudio = { target,audio ->
+                                        com.aliflix.app.player.NativeStreamResolver(activity,(activity.application as AliflixApplication).playbackProgressStore,session.host).use {
+                                            it.resolve(target,0,emptySet(),audioLanguage=audio) {}
+                                        }
+                                    }) { gate ->
                                         com.aliflix.app.player.SerienstreamBrowserSession.approve(activity, session.host, gate)
                                     }
                                 } } }.awaitAll()
@@ -650,7 +672,7 @@ internal fun Modifier.downloadAtmosphere(): Modifier = background(
                     if (tracks.any { it.label == label && it.original }) Text("Original", fontSize = 10.sp,
                         color = AliflixAccentSecondary, modifier = Modifier.background(AliflixAccentPrimary.copy(alpha = .16f), AliflixCorners.Small).padding(horizontal = 7.dp, vertical = 3.dp))
                     Spacer(Modifier.weight(1f))
-                    if (name == label) Icon(Icons.Rounded.CheckCircle, null, tint = AliflixAccentSecondary)
+                    AliflixChoiceMark(name==label)
                 }
             }
             }

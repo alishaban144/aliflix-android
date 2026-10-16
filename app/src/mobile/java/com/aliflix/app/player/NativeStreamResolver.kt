@@ -63,10 +63,24 @@ internal class NativeStreamResolver(
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
         reportServers = onServers
+        if (selection.source.identity in setOf(MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD)) {
+            return try { LinkedSiteCatalog(activity).resolve(selection,positionMs,excluded,preferredServer,strictPreferredServer,
+                audioLanguage,onServers,onServer) { label, target ->
+                val child=NativeStreamResolver(activity,progress,host)
+                children.add(child)
+                try { child.resolveSingle(selection,positionMs,emptySet(),label,listOf(label to target),true) {} }
+                finally { child.close();children.remove(child) }
+            } } catch(error:Exception) {
+                currentCoroutineContext().ensureActive()
+                android.util.Log.w("AliflixSite", "${selection.source.identity.name}: ${error.javaClass.simpleName}: ${error.message.orEmpty().replace(Regex("https?://\\S+"),"[url]").take(160)}")
+                throw error
+            }
+        }
         if (selection.source.identity == MobilePlaybackProvider.SERIENSTREAM) {
             SerienstreamNativeCatalog.restoreSession(activity)
             suspend fun resolveCatalogue() = SerienstreamNativeCatalog.resolve(selection, positionMs, excluded, preferredServer,
-                strictPreferredServer, onServers, onServer, audioLanguage)
+                strictPreferredServer, onServers, onServer, audioLanguage,
+                validate={ request -> if(validateSingle) StartupStreamCache.awaitPlayable(activity,request) })
             return try { resolveCatalogue() } catch (gate: SerienstreamVerificationRequired) {
                 if (!SerienstreamBrowserSession.approve(activity, host, gate)) throw gate
                 resolveCatalogue()

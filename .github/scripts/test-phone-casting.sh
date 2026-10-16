@@ -83,7 +83,7 @@ classes="$classes,com.aliflix.app.player.PlayerHeaderVisualTest"
 classes="$classes,com.aliflix.app.player.MobileRefinementUiTest"
 classes="$classes,com.aliflix.app.player.PlayerPremiumControlsTest"
 classes="$classes,com.aliflix.app.player.BufferedDialogueDeviceTest"
-classes="$classes,com.aliflix.app.player.NativeAudioSelectionDeviceTest,com.aliflix.app.ui.Mobile168UiTest"
+classes="$classes,com.aliflix.app.player.NativeAudioSelectionDeviceTest,com.aliflix.app.ui.Mobile168UiTest,com.aliflix.app.talk.TalkVoiceUiTest"
 classes="${ALIFLIX_TEST_CLASSES:-$classes}"
 # Use a deterministic modern phone viewport for full and focused suites alike.
 # The generic AVD's inherited tiny viewport clips nested-sheet/player fixtures.

@@ -149,6 +149,8 @@ class WebPlayerController(
     }
 
     private fun preparationScript() = if (nativePreparation) "\n" + nativePreparationScript() else ""
+    private val resolvedEmbedOrigin get()=trustedNativeEmbedOrigin(nativeEmbedUrl,nativePreparation,BuildConfig.IS_TV)
+    private fun nativeOriginRules(sourceHost:String)=nativePlaybackOriginRules(sourceHost)+setOfNotNull(resolvedEmbedOrigin)
     private var webView: WebView? = null
     private var loadedKey: String? = null
     private var activeSelection: PlaybackSelection? = null
@@ -693,8 +695,15 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ) {
         if (nativePreparation && nativeEmbedUrl != null) {
+            if(!BuildConfig.IS_TV && selection.source.identity in setOf(MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD,MobilePlaybackProvider.SERIENSTREAM)) {
+                // The site's external-player action may forbid framing. Load
+                // its normal document directly in the temporary muted resolver.
+                view.loadUrl(nativeEmbedUrl)
+                return
+            }
+            val safeEmbed=android.text.TextUtils.htmlEncode(nativeEmbedUrl)
             view.loadDataWithBaseURL(selection.entryUrl,
-                "<html><meta name='viewport' content='width=device-width,initial-scale=1'><body style='margin:0;background:black'><iframe src='$nativeEmbedUrl' allow='autoplay; fullscreen' style='border:0;width:100vw;height:100vh'></iframe></body></html>",
+                "<html><meta name='viewport' content='width=device-width,initial-scale=1'><body style='margin:0;background:black'><iframe src='$safeEmbed' allow='autoplay; fullscreen' style='border:0;width:100vw;height:100vh'></iframe></body></html>",
                 "text/html", "UTF-8", null)
             return
         }
@@ -724,7 +733,7 @@ class WebPlayerController(
             installMoviepireMessageListener(view, sourceHost)
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 moviepireDocumentStartScriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                    view, mobileMoviepireProgressBridgeScript(), nativePlaybackOriginRules(sourceHost))
+                    view, mobileMoviepireProgressBridgeScript(), nativeOriginRules(sourceHost))
             }
             return
         }
@@ -740,7 +749,7 @@ class WebPlayerController(
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 moviepireDocumentStartScriptHandler = WebViewCompat.addDocumentStartJavaScript(
                     view, (if (selection.source.identity == MobilePlaybackProvider.FLIXER) mobileMoviepireAdShieldScript() else "") + nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript() + preparationScript(),
-                    nativePlaybackOriginRules(sourceHost),
+                    nativeOriginRules(sourceHost),
                 )
             }
             return
@@ -786,7 +795,7 @@ class WebPlayerController(
             WebViewCompat.addWebMessageListener(
                 view,
                 PLAYBACK_BRIDGE_NAME,
-                nativePlaybackOriginRules(sourceHost),
+                nativeOriginRules(sourceHost),
                 object : WebViewCompat.WebMessageListener {
                     override fun onPostMessage(
                         view: WebView,
@@ -818,6 +827,7 @@ class WebPlayerController(
         selection: PlaybackSelection,
     ): Boolean {
         if (!origin.scheme.equals("https", ignoreCase = true)) return false
+        resolvedEmbedOrigin?.let { if(trustedNativeEmbedOrigin(origin.toString(),true,false)==it) return true }
         val host = origin.host?.lowercase()?.removePrefix("www.") ?: return false
         val approved = PlaybackNavigationPolicy.moviepirePlayerDocumentHosts + PlaybackNavigationPolicy.defaultApprovedPlaybackHosts +
             selection.source.cleanDomain.lowercase().removePrefix("www.")
@@ -1366,7 +1376,7 @@ class WebPlayerController(
     }
 
     private fun customHostsForActiveSelection(): Set<String> =
-        activeSelection?.source?.approvedTopLevelHosts.orEmpty()
+        activeSelection?.source?.approvedTopLevelHosts.orEmpty()+setOfNotNull(resolvedEmbedOrigin?.let { URI(it).host })
 
     private fun isMobileMoviepireSelection(): Boolean =
         !BuildConfig.IS_TV &&
@@ -1927,7 +1937,7 @@ class WebPlayerController(
         if (nativePreparation && nativeEmbedUrl != null) return
         when (selection.source.identity) {
             PlaybackProviderId.CINEJOY -> Unit // Exact TMDB movie/episode route, native HLS discovery.
-            MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Native mobile catalogues and exact TMDB routes.
+            MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD, MobilePlaybackProvider.SERIENSTREAM, MobilePlaybackProvider.FLIXER, MobilePlaybackProvider.MOVY, MobilePlaybackProvider.SEVEN_MOVIES -> Unit // Native mobile catalogues and exact TMDB routes.
             PlaybackProviderId.RAMOFLIX -> alignRamoflixContent(view, selection)
             PlaybackProviderId.MOVIEPIRE -> {
                 if (!BuildConfig.IS_TV) installMobileMoviepireAdShield(view, selection)

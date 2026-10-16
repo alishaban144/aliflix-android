@@ -1,5 +1,8 @@
 package com.aliflix.app.player
 
+internal fun localSpeechPermissionGranted(context:android.content.Context):Boolean =
+    androidx.core.content.ContextCompat.checkSelfPermission(context,android.Manifest.permission.RECORD_AUDIO)==android.content.pm.PackageManager.PERMISSION_GRANTED
+
 /** Android recognition sessions can disconnect independently of media playback.
  * Unsupported models/permissions need an honest unavailable result; transient
  * session errors recover in the background without waiting on a sync tap.
@@ -37,4 +40,4 @@ internal fun dialogueRecognitionLanguage(audio: String, captions: String, origin
 /** Provider edition metadata fills missing container tags, never replaces a labeled rendition. */
 internal fun resolvedDialogueLanguage(track: String, edition: String): String =
     track.takeIf { it.isNotBlank() && it.lowercase() !in setOf("und", "unknown") }
-        ?: edition.takeIf { it.isNotBlank() && it.lowercase() !in setOf("und", "unknown") }.orEmpty()
+        ?: edition.takeIf { it.isNotBlank() && it.lowercase() !in setOf("und", "unknown") }?.substringBefore('-').orEmpty()

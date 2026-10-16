@@ -51,13 +51,13 @@ class SerienstreamNativeCatalogTest {
         assertEquals(config.getString("source"), decodeVoeConfig(page).getString("source"))
     }
 
-    @Test fun routesGermanOriginalSeriesWithoutChangingExplicitSourcesOrMovies() {
+    @Test fun routesGermanOriginalSeriesAndKeepsExplicitSources() {
         val dark = Media(70523, MediaType.TV, "Dark", originalLanguage = "de")
         val prefs = PlaybackPreferences(generalProvider = MobilePlaybackProvider.FLIXER)
         assertEquals(MobilePlaybackProvider.SERIENSTREAM, prefs.sourceFor(dark).identity)
         assertEquals(MobilePlaybackProvider.SERIENSTREAM, prefs.copy(generalProvider = PlaybackProviderId.CINEJOY).sourceFor(dark).identity)
         assertEquals(PlaybackProviderId.CINEJOY, prefs.sourceFor(dark, PlaybackProviderId.CINEJOY).identity)
-        assertEquals(MobilePlaybackProvider.FLIXER, prefs.sourceFor(dark.copy(type = MediaType.MOVIE)).identity)
+        assertEquals(MobilePlaybackProvider.FILMO, prefs.sourceFor(dark.copy(type = MediaType.MOVIE)).identity)
         assertFalse(MobilePlaybackProvider.SERIENSTREAM.isAvailableFor(dark.copy(type = MediaType.MOVIE)))
         assertEquals(1, mobileGeneralPlaybackProviders().count { it == MobilePlaybackProvider.SERIENSTREAM })
         val selected = PlaybackSelection(dark,1,1,source = prefs.sourceFor(dark))

@@ -170,6 +170,9 @@ internal data class NativePlayerUi(
     val external: Boolean = false,
     val revision: Int = 0,
     val episodes: List<Episode> = emptyList(),
+    val seasons: List<com.aliflix.app.model.Season> = emptyList(),
+    val loadingSeason: Int? = null,
+    val seasonError: String? = null,
     val episodeNumber: Int? = null,
     val subtitleTracks: List<SubtitleTrack> = emptyList(),
     val activeSubtitleTrack: SubtitleTrack? = null,
@@ -230,6 +233,7 @@ internal fun NativePlayerScreen(
     onBrowseProvider: (PlaybackProvider) -> Unit = {},
     onSelectProviderServer: (PlaybackProvider, String) -> Unit = { _, _ -> },
     onRetryProviderServers: () -> Unit = {},
+    onSeasonSelected: (Int) -> Unit = {},
     onStop: () -> Unit = {},
     onStopCast: () -> Unit = {},
     onWireless: () -> Unit = {},
@@ -715,42 +719,15 @@ internal fun NativePlayerScreen(
                 .padding(end = 20.dp, bottom = landscapeBottom)
             else Modifier.align(Alignment.TopCenter).offset(y = animatedPortraitTop).padding(horizontal = 20.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = com.aliflix.app.ui.common.AliflixSurfaceDefaults.color(com.aliflix.app.ui.common.AliflixSurfaceLevel.Elevated),
-                border = BorderStroke(.5.dp, Color.White.copy(alpha = .09f)),
-                shadowElevation = 5.dp,
-                modifier = Modifier.widthIn(max = 288.dp).animateContentSize(tween(220)).onSizeChanged { nextCardHeight = it.height }
-            ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
-                            Text("Next episode", color = AliflixAccentSecondary, fontWeight = FontWeight.Medium, fontSize = 11.sp)
-                            Text("S${next!!.seasonNumber} E${next.number} · ${next.title}", color = Color.White,
-                                fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                        IconButton(onClick = { if (!episodeAdvanced) next?.let { episodeAdvanced = true; onEpisode(it) } },
-                            modifier = Modifier.size(48.dp)) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(40.dp)) {
-                                val target = nextWindowStart?.let { start ->
-                                    (remainingMs.toFloat() / (duration - start).coerceAtLeast(1L)).coerceIn(0f, 1f)
-                                } ?: 0f
-                                val ring by animateFloatAsState(target, tween(600, easing = FastOutSlowInEasing), label = "next-episode-ring")
-                                CircularProgressIndicator(progress = { ring }, color = AliflixAccentPrimary,
-                                    trackColor = Color.White.copy(alpha = .12f), modifier = Modifier.size(40.dp), strokeWidth = 2.dp)
-                                Box(Modifier.size(30.dp).background(AliflixAccentPrimary.copy(alpha = .16f), CircleShape), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.PlayArrow, "Play next episode", tint = AliflixAccentSecondary, modifier = Modifier.size(21.dp))
-                                }
-                            }
-                        }
-                    }
-                    TextButton(onClick = { countdownCancelled = true },
-                        modifier = Modifier.align(Alignment.Start).heightIn(min = 48.dp),
-                        contentPadding = PaddingValues(horizontal = 0.dp)) {
-                        Text("Watch credits", color = Color.White.copy(alpha = .65f), fontSize = 11.sp)
-                    }
-                }
-            }
+            MobileUpNextCard(
+                episode = next!!,
+                progress = nextWindowStart?.let { start ->
+                    (remainingMs.toFloat() / (duration - start).coerceAtLeast(1L)).coerceIn(0f, 1f)
+                } ?: 0f,
+                onPlay = { if (!episodeAdvanced) next?.let { episodeAdvanced = true; onEpisode(it) } },
+                onCredits = { countdownCancelled = true },
+                modifier = Modifier.onSizeChanged { nextCardHeight = it.height },
+            )
         }
 
         // Intro skip control. Outro is represented exclusively by Up Next above.
@@ -828,6 +805,7 @@ internal fun NativePlayerScreen(
         visible = episodesVisible,
         isLandscape = isLandscape,
         episodes = state.episodes,
+        seasonOptions = state.seasons,contentKey=state.title, loadingSeason = state.loadingSeason, seasonError = state.seasonError, onSeasonSelected = onSeasonSelected,
         currentSeason = state.playbackSelection?.seasonNumber,
         currentEpisode = state.episodeNumber,
         onSelectEpisode = { episode ->
@@ -968,7 +946,7 @@ internal fun NativePlayerScreen(
                     "Audio & subtitles", "Languages & subtitles", "Subtitles" -> {
                         if (sheet != "Subtitles") {
                         Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        if (state.sourceAudioOptions.isNotEmpty()) {
+                        if (state.sourceAudioOptions.isNotEmpty() && player?.currentTracks?.groups.orEmpty().filter { it.type == C.TRACK_TYPE_AUDIO }.sumOf { it.length } <= 1) {
                             state.sourceAudioOptions.forEach { audio ->
                                 SheetOption(audio.label,
                                     if (audio.language.equals(state.playbackSelection?.media?.originalLanguage, true)) "Original" else "",
@@ -977,8 +955,6 @@ internal fun NativePlayerScreen(
                                     onSourceAudioSelected(audio.language)
                                 }
                             }
-                            if (player?.currentTracks?.groups.orEmpty().filter { it.type == C.TRACK_TYPE_AUDIO }.sumOf { it.length } > 1)
-                                TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, pendingAudio = audioSelection.pending, confirmedAudio = audioSelection.selected.takeUnless { state.external }, onTrackSelected = onAudioSelected) { _, _ -> }
                         } else TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, pendingAudio = audioSelection.pending, confirmedAudio = audioSelection.selected.takeUnless { state.external }, onTrackSelected = onAudioSelected) { _, _ -> }
                         Spacer(Modifier.height(4.dp))
                         }

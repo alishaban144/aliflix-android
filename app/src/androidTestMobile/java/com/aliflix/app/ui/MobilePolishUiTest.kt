@@ -143,6 +143,11 @@ class MobilePolishUiTest {
         assertEquals(com.aliflix.app.ui.theme.AliflixBackgroundBase.toArgb(),
             compose.onNodeWithTag("pinned-layout").captureToImage().toPixelMap()[20,20].toArgb())
         capture("home-pinned.png")
+        compose.onNodeWithTag("filters").performTouchInput {
+            swipe(start=Offset(centerX,height-4f),end=Offset(centerX,4f),durationMillis=350)
+        }
+        compose.runOnIdle { assertTrue("A drag starting on the pinned filters scrolls Home",
+            state.firstVisibleItemIndex>4 || state.firstVisibleItemScrollOffset>20) }
     }
 
     @Test fun launchHandsOffToHomeSkeletonWithoutWaitingForNetwork() {

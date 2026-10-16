@@ -49,19 +49,18 @@ internal object PlayedDialogueRecognition {
 
     private suspend fun attempt(context: Context, language: String, pcm: PlayedDialoguePcm, onWords: (List<HeardWord>) -> Unit,
         onFailure: (Int) -> Unit): List<HeardWord> = withContext(Dispatchers.Main.immediate) {
-            if (pcm.frames.size < 400 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) return@withContext emptyList()
+            if (pcm.frames.size < 400 || !localSpeechPermissionGranted(context) || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) return@withContext emptyList()
             val pipe = ParcelFileDescriptor.createPipe()
             val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
             val result = CompletableDeferred<List<HeardWord>>()
             val heard = mutableListOf<HeardWord>()
-            val ready = CompletableDeferred<Boolean>()
             fun accept(bundle: Bundle) {
                 val parts = bundle.getParcelableArrayList(SpeechRecognizer.RECOGNITION_PARTS, RecognitionPart::class.java).orEmpty()
                 heard.addAll(recognizedDialogueWords(parts, pcm.start, pcm.start + pcm.frames.size * .02))
                 onWords(heard.distinctBy { it.text to it.start }.sortedBy { it.start })
             }
             recognizer.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) { ready.complete(true) }
+                override fun onReadyForSpeech(params: Bundle?) = Unit
                 override fun onBeginningOfSpeech() = Unit
                 override fun onRmsChanged(rmsdB: Float) = Unit
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
@@ -73,7 +72,6 @@ internal object PlayedDialogueRecognition {
                 override fun onResults(results: Bundle) { accept(results); onEndOfSegmentedSession() }
                 override fun onError(error: Int) {
                     android.util.Log.i("AliflixAudioSync", "played_dialogue_recognition_error:$error")
-                    ready.complete(false)
                     onFailure(error)
                     result.complete(emptyList())
                 }
@@ -92,7 +90,9 @@ internal object PlayedDialogueRecognition {
                     .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true))
                 writer = launch(Dispatchers.IO) {
                     try {
-                        if (!ready.await()) return@launch
+                        // The registered pipe provides backpressure while the
+                        // local service initializes. Waiting for a microphone-
+                        // readiness callback can starve injected-audio sessions.
                         ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { output ->
                             val bytes = ByteArray(640)
                             for (frame in pcm.frames) {

@@ -114,6 +114,17 @@ internal fun nativePlaybackOriginRules(sourceHost: String): Set<String> =
     (PlaybackNavigationPolicy.defaultApprovedPlaybackHosts + PlaybackNavigationPolicy.moviepirePlayerDocumentHosts + sourceHost)
         .flatMap { host -> listOf("https://$host", "https://*.$host") }.toSet()
 
+/** A resolver may follow the provider's explicit external-player action. Grant
+ * that one HTTPS origin the temporary stream-discovery bridge, never all frames. */
+internal fun trustedNativeEmbedOrigin(url:String?,preparing:Boolean,isTv:Boolean):String? {
+    if(!preparing || isTv || url==null) return null
+    return try {
+        val uri=URI(url)
+        if(uri.scheme!="https" || uri.host==null || uri.userInfo!=null || uri.port !in setOf(-1,443)) null
+        else "https://${uri.host.lowercase(java.util.Locale.ROOT)}"
+    } catch(_:Exception) { null }
+}
+
 internal fun nativeSubtitlesVtt(raw: String?, delaySeconds: Double): String {
     if (raw == null) return ""
     val cues = org.json.JSONArray(raw)

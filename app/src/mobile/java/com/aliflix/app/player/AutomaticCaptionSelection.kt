@@ -5,10 +5,11 @@ import com.aliflix.app.model.PlaybackSelection
 import kotlin.math.abs
 
 internal class ReferenceAlignmentTimeout : RuntimeException()
-internal const val AUTOMATIC_CAPTION_SELECTION_POLICY = 3
+internal const val AUTOMATIC_CAPTION_SELECTION_POLICY = 4
 
-internal fun refreshAutomaticCaptionCache(automatic: Boolean, policy: Int, online: Boolean, offlineDownload: Boolean): Boolean =
-    automatic && policy < AUTOMATIC_CAPTION_SELECTION_POLICY && online && !offlineDownload
+internal fun refreshAutomaticCaptionCache(automatic: Boolean, policy: Int, online: Boolean, offlineDownload: Boolean,
+    sameEdition:Boolean=true): Boolean =
+    automatic && (policy < AUTOMATIC_CAPTION_SELECTION_POLICY || !sameEdition) && online && !offlineDownload
 
 /** Metadata ranks candidates only. Actual dialogue independently verifies timing. */
 internal fun rankCompleteSubtitleCandidates(tracks: List<SubtitleTrack>, frameRate: Float): List<SubtitleTrack> {

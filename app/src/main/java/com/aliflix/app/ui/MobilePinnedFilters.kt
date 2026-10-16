@@ -1,6 +1,9 @@
 package com.aliflix.app.ui
 
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -56,7 +59,9 @@ internal fun MobilePinnedFilterLayout(
         }
         var barHeightPx = 1f
         val barPlaceable = subcompose("filters") {
-            bar { homeFilterOpacity(naturalY(), headerBottom(), barHeightPx) }
+            Box(Modifier.scrollable(state, Orientation.Vertical, reverseDirection = true)) {
+                bar { homeFilterOpacity(naturalY(), headerBottom(), barHeightPx) }
+            }
         }.single().measure(constraints.copy(minHeight = 0))
         barHeightPx = barPlaceable.height.toFloat()
         val listPlaceable = subcompose("feed") { feed(barPlaceable.height.toDp()) }.single().measure(constraints)
