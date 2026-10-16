@@ -297,6 +297,10 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       }
       if (valid()) this.send({ type: 'audio-end', sequence: seq });
     } catch (error) {
+      console.warn(JSON.stringify({ event: 'talk_turn_failed',
+        error: error instanceof Error ? error.name : 'Unknown',
+        code: error instanceof Error && /^[A-Z_0-9]{1,60}$/.test(error.message) ? error.message : 'INVALID_OR_INTERRUPTED',
+        aborted: signal.aborted }));
       if (!controller.signal.aborted && seq === this.sequence && ticket === this.generation) this.send({ type: 'error', code: error instanceof Error && error.message === 'QUOTA' ? 'QUOTA' : 'TURN_FAILED', sequence: seq });
     }
   }

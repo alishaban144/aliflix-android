@@ -7,9 +7,23 @@ export const TALK_MODELS = { asr: 'gemini-3.5-transcribe-live', reasoning: 'gemi
   fallbackTts: 'gemini-3.8-flash-lite-tts' } as const;
 export type TalkPlan = { asr: 'gemini' | 'groq'; reasoning: 'gemini' | 'groq'; tts: 'fish' | 'gemini' | 'android' };
 export type TalkTurn = { role: 'user' | 'assistant'; text: string };
+const talkResponseSchema = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    answer: { type: 'string' }, kind: { type: 'string', enum: ['fact', 'interpretation', 'question', 'unknown'] },
+    sources: { type: 'array', items: { type: 'string' } }, words: { type: 'string' },
+    tool: { type: 'string', enum: ['none', 'lookup_titles', 'recommendations', 'title_details', 'episode_evidence', 'my_space'] },
+    query: { type: 'string' }, imdbId: { type: 'string' }, season: { type: 'integer' }, episode: { type: 'integer' },
+  }, required: ['answer', 'kind', 'sources', 'words', 'tool', 'query', 'imdbId', 'season', 'episode'],
+};
 
 export async function boundedJson(response: Response, max = 128_000): Promise<unknown> {
-  if (!response.ok) { await response.body?.cancel(); throw Error(response.status === 429 ? 'QUOTA' : 'PROVIDER_UNAVAILABLE'); }
+  if (!response.ok) {
+    const status = response.status;
+    await response.body?.cancel();
+    console.warn(JSON.stringify({ event: 'talk_provider_http_failure', status }));
+    throw Error(status === 429 ? 'QUOTA' : 'PROVIDER_HTTP_' + status);
+  }
   const reader = response.body?.getReader(); if (!reader) throw Error('EMPTY_RESPONSE');
   const chunks: Uint8Array[] = []; let size = 0;
   try { for (;;) { const r = await reader.read(); if (r.done) break; size += r.value.length;
@@ -110,6 +124,7 @@ You may request ONE tool by returning JSON {"tool":"lookup_titles|recommendation
 lookup_titles/recommendations search independent permitted catalogues; title_details resolves an IMDb identity; my_space retrieves the person's saved/favorite/watched identities; episode_evidence is permission-gated.
 Use a tool if needed, then answer only from returned evidence. Do not keep requesting a tool already represented by evidence. Preserve the discussed title in follow-up context; ask to disambiguate similar titles.
 Return JSON only: {"answer":"...","kind":"fact|interpretation|question|unknown","sources":["exact evidence id"],"words":"ONE OR TWO CONTEXT WORDS"}.
+Always include tool, query, imdbId, season, episode. For a final answer use tool="none", query="", imdbId="", season=0, episode=1. For a tool request use answer="", kind="question", sources=[], words="ALIFLIX" and the tool's relevant arguments; irrelevant strings are empty.
 Facts and interpretations require source ids. Titles from permitted catalogue search can be suggested, with their source.
 Progress (identifiers only): ${JSON.stringify(context)}\nVerified evidence: ${JSON.stringify(evidence)}`;
   const turns = history.slice(-12).map(t => ({ role: t.role, content: t.text.slice(0, 2000) }));
@@ -119,17 +134,24 @@ Progress (identifiers only): ${JSON.stringify(context)}\nVerified evidence: ${JS
       method: 'POST', signal, headers: { 'x-goog-api-key': env.GEMINI_API_KEY!, 'content-type': 'application/json' },
       body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] },
         contents: turns.map(t => ({ role: t.role === 'assistant' ? 'model' : 'user', parts: [{ text: t.content }] })),
-        generationConfig: { temperature: .2, maxOutputTokens: 1000, responseMimeType: 'application/json', thinkingConfig: { thinkingLevel: 'low' } } }) }));
-    const parts = (response as { candidates?: { content?: { parts?: { text?: string }[] } }[] }).candidates?.[0]?.content?.parts;
-    raw = JSON.parse(parts?.map(p => p.text || '').join('') || '{}');
+        generationConfig: { temperature: .2, maxOutputTokens: 1536, responseMimeType: 'application/json', responseJsonSchema: talkResponseSchema, thinkingConfig: { thinkingLevel: 'low' } } }) }));
+    const parts = (response as { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] }).candidates?.[0]?.content?.parts;
+    raw = JSON.parse(parts?.filter(p => !p.thought).map(p => p.text || '').join('') || '{}');
   } else {
     const response = await boundedJson(await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST', signal, headers: { Authorization: 'Bearer ' + env.GROQ_API_KEY, 'content-type': 'application/json' },
       body: JSON.stringify({ model: TALK_MODELS.fallbackReasoning, messages: [{ role: 'system', content: system }, ...turns],
-        temperature: .2, max_completion_tokens: 900, reasoning_effort: 'low', response_format: { type: 'json_object' } }) }));
+        temperature: .2, max_completion_tokens: 2048, reasoning_effort: 'low', include_reasoning: false,
+        response_format: { type: 'json_schema', json_schema: { name: 'aliflix_voice', strict: true, schema: talkResponseSchema } } }) }));
     raw = JSON.parse((response as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content || '{}');
   }
-  const tool = TalkToolSchema.safeParse(raw);
+  const candidate = raw as Record<string, unknown>;
+  const tool = TalkToolSchema.safeParse(candidate.tool && candidate.tool !== 'none' ? {
+    tool: candidate.tool, ...(candidate.query ? { query: candidate.query } : {}),
+    ...(candidate.imdbId ? { imdbId: candidate.imdbId } : {}),
+    ...(typeof candidate.season === 'number' && candidate.season > 0 ? { season: candidate.season } : {}),
+    ...(typeof candidate.episode === 'number' && candidate.episode > 0 ? { episode: candidate.episode } : {}),
+  } : raw);
   return tool.success ? tool.data : validateTalkAnswer(raw, evidence);
 }
 
