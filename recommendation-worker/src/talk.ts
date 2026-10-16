@@ -154,6 +154,8 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
         this.history = this.keep && saved ? z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000) })).max(12).parse(JSON.parse(saved.value)) : event.history;
         if (!this.keep) this.ctx.storage.sql.exec("DELETE FROM memory WHERE key='history'");
         this.plan = await chooseTalkPlan(this.env, AbortSignal.any([this.sessionAbort.signal, AbortSignal.timeout(6000)]));
+        const cooldown = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM memory WHERE key='reasoning-cooldown' AND expires>?", Date.now()).toArray()[0];
+        if (cooldown && this.env.GROQ_API_KEY) this.plan.reasoning = 'groq';
         if (ticket !== this.generation) return;
         this.started = true;
         if (this.plan.asr === 'gemini') await this.startAsr(ticket);
@@ -200,6 +202,10 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
     const pair = /(?:season|staffel|s)\s*(\d+)\s*(?:episode|folge|e)\s*(\d+)/i.exec(text);
     const season = pair ? Number(pair[1]) : this.context.season;
     const episode = pair ? Number(pair[2]) : this.context.episode;
+    if (/recommend|suggest|empfehl|اقتراح|اقترح|رشح|recomiend|recomend/i.test(text)) {
+      const suggestions = await recommendTalkTitles(text, timeout).catch(() => [] as Evidence[]);
+      if (suggestions.length) return suggestions;
+    }
     if (this.context.type === 'movie' && this.context.imdbId && (this.context.completed || this.context.spoilers))
       return completedMovieEvidence(this.context, timeout);
     if (this.context.type === 'tv' && this.context.imdbId) {
@@ -271,6 +277,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       catch (error) {
         if (!valid() || this.plan.reasoning !== 'gemini' || !this.env.GROQ_API_KEY) throw error;
         this.plan.reasoning = 'groq'; this.send({ type: 'providers', plan: this.plan });
+        this.ctx.storage.sql.exec("INSERT OR REPLACE INTO memory VALUES ('reasoning-cooldown','groq',?)", Date.now() + 15 * MINUTE);
         answer = await answerTalk(this.env, this.plan, this.history, this.context, facts, signal);
       }
       if ('tool' in answer) {
