@@ -14,6 +14,7 @@ const command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('activity'), active: z.boolean() }).strict(),
   z.object({ type: z.literal('interrupt') }).strict(), z.object({ type: z.literal('ping') }).strict(),
   z.object({ type: z.literal('privacy'), keepHistory: z.boolean() }).strict(),
+  z.object({ type: z.literal('spoilers'), allowed: z.boolean() }).strict(),
   z.object({ type: z.literal('clear') }).strict(),
 ]);
 
@@ -33,7 +34,7 @@ export async function talkRoute(request: Request, env: RecommendationEnv): Promi
     if (!await env.TALK_SESSIONS.getByName('quota:ip:' + ipHash).reserve(1, 12) ||
         !await env.TALK_SESSIONS.getByName('quota:global').reserve(1, 300)) return json({ error: 'DAILY_LIMIT' }, 429);
     return env.TALK_SESSIONS.getByName('user:' + identity.sub).fetch(new Request('https://talk/socket', {
-      headers: { Upgrade: 'websocket', 'x-talk-owner': identity.sub, 'x-talk-expiry': String(Math.min(identity.exp, Date.now() + 10 * MINUTE)) } }));
+      headers: { Upgrade: 'websocket', 'x-talk-owner': identity.sub, 'x-talk-expiry': String(Math.min(identity.exp, Date.now() + 30 * MINUTE)) } }));
   } catch { return json({ error: 'UNAUTHORIZED' }, 401); }
 }
 
@@ -85,7 +86,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
     this.socket = server; this.generation++; this.expires = Number(request.headers.get('x-talk-expiry'));
     this.started = false; this.booting = false; this.turns = 0;
     this.ctx.acceptWebSocket(server);
-    await this.ctx.storage.setAlarm(Math.min(this.expires, Date.now() + 10 * MINUTE));
+    await this.ctx.storage.setAlarm(Math.min(this.expires, Date.now() + 30 * MINUTE));
     this.send({ type: 'connected', protocol: 1 });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -103,7 +104,9 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   }
   private async startAsr(ticket: number) {
     const connection = ++this.asrGeneration;
-    const signal = AbortSignal.any([this.sessionAbort!.signal, AbortSignal.timeout(7000)]);
+    const setupAbort = new AbortController();
+    const setupTimer = setTimeout(() => setupAbort.abort(), 7000);
+    const signal = AbortSignal.any([this.sessionAbort!.signal, setupAbort.signal]);
     try {
       const ws = await connectAsr(this.env, (text, final) => {
         if (ticket !== this.generation || connection !== this.asrGeneration || !this.started || !this.active && !this.ending) return;
@@ -123,7 +126,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       if (ticket !== this.generation) return;
       if (!this.env.GROQ_API_KEY) throw Error('ASR_UNAVAILABLE');
       this.plan!.asr = 'groq';
-    }
+    } finally { clearTimeout(setupTimer); }
   }
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
     if (ws !== this.socket) { ws.close(1008); return; }
@@ -141,6 +144,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
         this.keep = event.keepHistory; if (!this.keep) this.ctx.storage.sql.exec("DELETE FROM memory WHERE key='history'");
         else await this.persistHistory(); return;
       }
+      if (event.type === 'spoilers') { this.context = { ...this.context, spoilers: event.allowed }; this.interrupt(); return; }
       if (event.type === 'interrupt') { this.interrupt(); return; }
       if (event.type === 'start') {
         if (this.started || this.booting) return;
@@ -172,7 +176,8 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
         }
       }
     } catch (error) {
-      this.booting = false;
+      const failedStart = this.booting; this.booting = false;
+      if (failedStart) { this.started = false; this.sessionAbort?.abort(); this.asr?.close(1000); this.asr = undefined; }
       this.send({ type: 'error', code: error instanceof z.ZodError ? 'INVALID_MESSAGE' : error instanceof Error && error.message === 'QUOTA' ? 'QUOTA' : 'CONNECTION_FAILED' });
     }
   }
@@ -258,7 +263,13 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       this.send({ type: 'thinking', sequence: seq });
       this.history.push({ role: 'user', text }); this.history = this.history.slice(-12);
       let facts = await this.evidence(text, signal);
-      let answer = await answerTalk(this.env, this.plan, this.history, this.context, facts, signal);
+      let answer;
+      try { answer = await answerTalk(this.env, this.plan, this.history, this.context, facts, signal); }
+      catch (error) {
+        if (!valid() || this.plan.reasoning !== 'gemini' || !this.env.GROQ_API_KEY) throw error;
+        this.plan.reasoning = 'groq'; this.send({ type: 'providers', plan: this.plan });
+        answer = await answerTalk(this.env, this.plan, this.history, this.context, facts, signal);
+      }
       if ('tool' in answer) {
         const more = await this.tool(answer, signal);
         facts = [...facts, ...more].filter((s, i, all) => all.findIndex(x => x.id === s.id) === i).slice(-10);
@@ -286,7 +297,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       }
       if (valid()) this.send({ type: 'audio-end', sequence: seq });
     } catch (error) {
-      if (valid()) this.send({ type: 'error', code: error instanceof Error && error.message === 'QUOTA' ? 'QUOTA' : 'TURN_FAILED', sequence: seq });
+      if (!controller.signal.aborted && seq === this.sequence && ticket === this.generation) this.send({ type: 'error', code: error instanceof Error && error.message === 'QUOTA' ? 'QUOTA' : 'TURN_FAILED', sequence: seq });
     }
   }
   async webSocketClose(ws: WebSocket) { if (ws === this.socket) { this.stop(); this.socket = undefined; await this.persistHistory(); } }
