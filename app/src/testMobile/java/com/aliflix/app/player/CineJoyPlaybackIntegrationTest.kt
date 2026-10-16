@@ -118,6 +118,59 @@ class CineJoyPlaybackIntegrationTest {
         assertEquals("https://fixture.test/master.m3u8", f.player.currentMediaItem?.localConfiguration?.uri.toString())
     }
 
+    @Test fun generalAudioSelectionMapsControllerGroupsAndOnlyPersistsTheLatestChoice() = Fixture().use { f ->
+        val saved = mutableListOf<String?>()
+        val selection = NativeAudioSelection(f.player, { override ->
+            f.player.trackSelectionParameters = f.player.trackSelectionParameters.buildUpon().setOverrideForType(override).build()
+        }, { 1L to f.audio.sampleBufferReadCount.toLong() }, { null }) { _, label -> saved.add(label) }
+        for (label in listOf("Track 2", "Track 3", "Track 4")) {
+            val actual = f.player.currentTracks.groups.first { it.type == C.TRACK_TYPE_AUDIO && it.getTrackFormat(0).label == label }
+            val transported = androidx.media3.common.TrackGroup("controller",
+                actual.getTrackFormat(0).buildUpon().setPrimaryTrackGroupId("transport").build())
+            assertTrue(selection.select(transported, 0))
+            assertNotNull(selection.state.value.pending)
+        }
+        f.settle(); selection.tick()
+        assertEquals("Track 4", f.selected())
+        assertEquals(listOf("Track 4"), saved)
+        assertTrue(selection.state.value.selected!!.contains("Track 4"))
+        assertNull(selection.state.value.pending)
+    }
+
+    @Test fun selectionCheckboxWaitsForTheNewDecoderRatherThanOldBufferedPcm() = Fixture().use { f ->
+        val original = f.player.currentTracks.groups.first { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }.getTrackFormat(0)
+        val next = f.player.currentTracks.groups.first { it.type == C.TRACK_TYPE_AUDIO && it.getTrackFormat(0).label == "Track 3" }
+        var decoder = original; var decoded = 1L
+        val saved = mutableListOf<String?>()
+        val selection = NativeAudioSelection(f.player, { override ->
+            f.player.trackSelectionParameters = f.player.trackSelectionParameters.buildUpon().setOverrideForType(override).build()
+        }, { 1L to decoded }, { decoder }) { _, label -> saved.add(label) }
+        f.player.play()
+        assertTrue(selection.select(next.mediaTrackGroup, 0))
+        f.settle(); decoded++
+        selection.tick()
+        assertTrue(saved.isEmpty()); assertNotNull(selection.state.value.pending)
+        decoder = next.getTrackFormat(0); decoded++
+        selection.tick()
+        assertEquals(listOf("Track 3"), saved)
+        assertNull(selection.state.value.pending)
+    }
+
+    @Test fun failedGeneralAudioSelectionRestoresTheLastConfirmedRendition() = Fixture().use { f ->
+        val saved = mutableListOf<String?>()
+        val selection = NativeAudioSelection(f.player, { override ->
+            f.player.trackSelectionParameters = f.player.trackSelectionParameters.buildUpon().setOverrideForType(override).build()
+        }, { 1L to 0L }, { null }) { _, label -> saved.add(label) }
+        f.player.play()
+        val next = f.player.currentTracks.groups.first { it.type == C.TRACK_TYPE_AUDIO && it.getTrackFormat(0).label == "Track 2" }
+        selection.select(next.mediaTrackGroup, 0); f.settle()
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(13))
+        selection.tick(); f.settle()
+        assertEquals("Track 1", f.selected())
+        assertTrue(saved.isEmpty()); assertNotNull(selection.state.value.failed)
+        assertNull(selection.state.value.pending)
+    }
+
     @Test fun transient502DuringAudioSwitchRetriesWithinTheSelectedStream() = Fixture().use { f ->
         f.failTrack = "track2/"; f.failuresRemaining = 2
         f.select("Track 2")

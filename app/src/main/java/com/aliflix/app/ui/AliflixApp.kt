@@ -854,25 +854,28 @@ fun AliflixApp(
         selection: PlaybackSelection,
         requestedProvider: PlaybackProvider? = null,
     ) {
-        viewModel.markPlayed(selection.media)
         val unfinished = if (selection.media.type == MediaType.TV && selection.seasonNumber == null && selection.episodeNumber == null)
             viewModel.playbackProgressStore.entries.value.values.filter { it.media.key == selection.media.key &&
                 it.positionSeconds > 0 && it.positionSeconds < it.durationSeconds && !it.explicitlyRestarted }
                 .maxByOrNull { it.updatedAtMillis } else null
         val resumed = unfinished?.let { selection.copy(seasonNumber = it.seasonNumber, episodeNumber = it.episodeNumber, episodeTitle = it.episodeTitle) }
             ?: viewModel.playbackProgressStore.resumeSelection(selection)
-        playerSelection = resumed.copy(
+        val prepared = resumed.copy(
             source = playbackPreferences.sourceFor(
                 media = selection.media,
                 requestedProvider = requestedProvider,
             ),
         )
-        com.aliflix.app.player.claimDetailPreload(checkNotNull(playerSelection))
-        com.aliflix.app.player.launchNativeSelection(
-            activity, checkNotNull(playerSelection),
-            playbackPreferences.preferredSubtitleLanguage.code,
-            playbackPreferences.autoDisplaySubtitles,
-        )
+        com.aliflix.app.player.withPlaybackRoomConsent(activity, prepared) {
+            viewModel.markPlayed(selection.media)
+            playerSelection = prepared
+            com.aliflix.app.player.claimDetailPreload(prepared)
+            com.aliflix.app.player.launchNativeSelection(
+                activity, prepared,
+                playbackPreferences.preferredSubtitleLanguage.code,
+                playbackPreferences.autoDisplaySubtitles,
+            )
+        }
     }
 
     fun playMedia(item: Media) = playSelection(PlaybackSelection(item))
@@ -5030,104 +5033,27 @@ private fun DetailCinematicActionPanel(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            com.aliflix.app.ui.common.WatchTogetherEntry(PlaybackSelection(item,
-                mainEpisode?.seasonNumber, mainEpisode?.number, mainEpisode?.title))
             // Top row: CTA (weight 1) + Liked + My List
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Button(
-                    onClick = {
-                        if (item.type == MediaType.TV && mainEpisode != null) {
-                            onPlayEpisode(item, mainEpisode)
-                        } else {
-                            onPlay(item)
-                        }
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(54.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = AliflixAccentPrimary,
-                        contentColor = AliflixContentPrimary,
-                    ),
-                    shape = AliflixCorners.Card,
-                    contentPadding = PaddingValues(horizontal = AliflixSpacing.Small, vertical = 6.dp),
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = ctaText,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        if (isPartiallyWatched) {
-                            Spacer(Modifier.height(3.dp))
-                            LinearProgressIndicator(
-                                progress = { progressRatio },
-                                modifier = Modifier
-                                    .fillMaxWidth(0.72f)
-                                    .height(3.dp)
-                                    .clip(RoundedCornerShape(2.dp)),
-                                color = Color.White,
-                                trackColor = Color.White.copy(alpha = 0.35f),
-                            )
-                        }
-                    }
-                }
+                com.aliflix.app.ui.common.DetailPlayAction(ctaText, progressRatio.takeIf { isPartiallyWatched }, onClick = {
+                    if (item.type == MediaType.TV && mainEpisode != null) onPlayEpisode(item, mainEpisode) else onPlay(item)
+                }, modifier = Modifier.weight(1f))
 
+                com.aliflix.app.ui.common.WatchTogetherEntry(PlaybackSelection(item,
+                    mainEpisode?.seasonNumber, mainEpisode?.number, mainEpisode?.title))
                 com.aliflix.app.downloads.DownloadButton(item)
 
-                // Compact Liked button
-                AliflixSurface(
-                    onClick = { onToggleLike(item) },
-                    modifier = Modifier.size(48.dp),
-                    shape = AliflixCorners.Card,
-                    level = if (liked) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content,
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                            contentDescription = if (liked) "Liked" else "Like",
-                            tint = if (liked) AliflixAccentSecondary else AliflixContentSecondary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                }
+                com.aliflix.app.ui.common.DetailIconAction(
+                    if (liked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                    if (liked) "Liked" else "Like", liked) { onToggleLike(item) }
+                com.aliflix.app.ui.common.DetailIconAction(
+                    if (inMyList) Icons.Filled.Check else Icons.Filled.Add,
+                    if (inMyList) "In My List" else "Add to My List", inMyList) { onToggleMyList(item) }
 
-                // Compact My List button
-                AliflixSurface(
-                    onClick = { onToggleMyList(item) },
-                    modifier = Modifier.size(48.dp),
-                    shape = AliflixCorners.Card,
-                    level = if (inMyList) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content,
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (inMyList) Icons.Filled.Check else Icons.Filled.Add,
-                            contentDescription = if (inMyList) "In My List" else "Add to My List",
-                            tint = if (inMyList) AliflixAccentSecondary else AliflixContentSecondary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                }
             }
 
             // Subtle divider

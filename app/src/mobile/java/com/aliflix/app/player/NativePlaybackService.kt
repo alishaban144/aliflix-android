@@ -153,10 +153,20 @@ class NativePlaybackService : MediaSessionService() {
     private var relayWakeLock: PowerManager.WakeLock? = null
     private var releasing = false
     private val handler = Handler(Looper.getMainLooper())
+    private val audioSelection by lazy { NativeAudioSelection(player, { choice ->
+        preferredAudioLabelApplied = true
+        if (player.deviceInfo.playbackType != DeviceInfo.PLAYBACK_TYPE_LOCAL ||
+            !cineJoyRecovery.select(choice.mediaTrackGroup, choice.trackIndices.first())) {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_AUDIO).setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                .setOverrideForType(choice).build()
+        }
+    }, { speechCapture.generation to speechCapture.decodedFrameCount }, { localPlayer.audioFormat }, ::saveAudioChoice) }
     private val captionTask = object : Runnable {
         override fun run() {
             if (releasing) return
             cineJoyRecovery.tick()
+            audioSelection.tick()
             if (player.deviceInfo.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE)
                 playedUntil = maxOf(playedUntil, player.currentPosition / 1000.0)
             if (android.os.Build.VERSION.SDK_INT >= 34 && player.isPlaying &&
@@ -398,6 +408,7 @@ class NativePlaybackService : MediaSessionService() {
     }
 
     private fun load(next: NativePlaybackRequest) {
+        audioSelection.reset()
         cineJoyRecovery.reset(false)
         speechCapture.reset()
         embeddedSyncReference.reset(); playedUntil = 0.0
@@ -719,17 +730,10 @@ class NativePlaybackService : MediaSessionService() {
         internal fun selectAudio(group: androidx.media3.common.TrackGroup, index: Int) {
             check(Looper.myLooper() == Looper.getMainLooper())
             val service = activeService ?: return
-            val choice = nativeAudioChoice(service.player.currentTracks, group, index) ?: return
-            // Explicit selection supersedes the startup-only saved-label application.
-            service.preferredAudioLabelApplied = true
-            val actualIndex = choice.trackIndices.first()
-            if (service.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL &&
-                service.cineJoyRecovery.select(choice.mediaTrackGroup, actualIndex)) return
-            service.player.trackSelectionParameters = service.player.trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false).setOverrideForType(choice).build()
-            val format = choice.mediaTrackGroup.getFormat(actualIndex)
-            service.saveAudioChoice(format.language, format.label)
+            service.audioSelection.select(group, index)
         }
+
+        internal val audioSelectionState get() = activeService?.audioSelection?.state
 
         internal val isPlaybackRequested get() = activeService?.player?.playWhenReady == true
 
@@ -855,10 +859,15 @@ class NativePlaybackService : MediaSessionService() {
             service.videoClock.frameRate.takeIf { it > 0 } ?: service.localPlayer.videoFormat?.frameRate
         } ?: -1f
 
-        internal fun selectedAudioLanguage(): String = activeService?.localPlayer?.currentTracks?.groups
-            ?.filter { it.type == C.TRACK_TYPE_AUDIO }?.flatMap { group ->
-                (0 until group.length).filter { group.isTrackSelected(it) }.map { group.getTrackFormat(it).language.orEmpty() }
-            }?.firstOrNull().orEmpty()
+        internal fun selectedAudioLanguage(): String = activeService?.let { service ->
+            val metadata = service.localPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+                .flatMap { group -> (0 until group.length).filter { group.isTrackSelected(it) }
+                    .map { group.getTrackFormat(it).language.orEmpty() } }
+                .firstOrNull { it.isNotBlank() && it != "und" }.orEmpty()
+            // VOE often exposes an unlabeled single soundtrack. The resolved
+            // episode edition is authoritative before a show's original language.
+            resolvedDialogueLanguage(metadata, service.request?.sourceAudioLanguage.orEmpty())
+        }.orEmpty()
 
         internal fun refreshAutomaticSubtitlePreferences() { activeService?.applyAutomaticSubtitlePreferences() }
 

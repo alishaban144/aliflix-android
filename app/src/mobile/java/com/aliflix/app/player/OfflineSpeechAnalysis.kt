@@ -22,7 +22,7 @@ internal object OfflineSpeechAnalysis {
         val downloads = OfflineDownloads.get(context)
         val saved = downloads.entries.value.firstOrNull { it.id == request.offlineDownloadId &&
             it.download.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED } ?: return@withContext null
-        val capture = PlaybackSpeechBuffer()
+        val capture = PlaybackSpeechBuffer(retainDecodedNeuralHistory = true)
         capture.enableNeural(context)
         val reference = EmbeddedSyncReference()
         val factory = object : DefaultRenderersFactory(context) {

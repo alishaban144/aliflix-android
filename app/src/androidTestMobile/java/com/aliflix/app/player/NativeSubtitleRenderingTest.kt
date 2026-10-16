@@ -17,6 +17,25 @@ import java.io.File
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class NativeSubtitleRenderingTest {
+    private var previousLanguage: String? = null
+    private var previousAuto: Boolean? = null
+    @org.junit.Before fun useTheExplicitEnglishFixtureLanguage() {
+        val context=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val prefs=context.getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME,0)
+        previousLanguage=prefs.getString(com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE,null)
+        previousAuto=if(prefs.contains(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES)) prefs.getBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES,true) else null
+        prefs.edit().putString(com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE,"EN")
+            .putBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES,true).commit()
+    }
+    @org.junit.After fun restoreFixtureLanguage() {
+        val context=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val editor=context.getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME,0).edit()
+        val languageKey=com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE
+        val autoKey=com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES
+        if(previousLanguage==null) editor.remove(languageKey) else editor.putString(languageKey,previousLanguage)
+        if(previousAuto==null) editor.remove(autoKey) else editor.putBoolean(autoKey,previousAuto!!)
+        editor.commit()
+    }
     @Test fun firstFrameAndLateCaptionsNeverReprepareTheStream() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

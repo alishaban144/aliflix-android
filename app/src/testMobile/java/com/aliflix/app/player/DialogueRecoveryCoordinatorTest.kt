@@ -9,6 +9,15 @@ import org.junit.Test
 class DialogueRecoveryCoordinatorTest {
     private fun clip(start: Double, count: Int = 200) = PlayedDialoguePcm(start, List(count) { ShortArray(320) })
 
+    @Test fun onDeviceRecognizerRequestsNeverOverlap() = runTest {
+        var active=0;var peak=0
+        val job=launch { DialogueRecoveryCoordinator.run({ (0..5).map { clip(it*10.0,400) } }, {
+            active++;peak=maxOf(peak,active)
+            try { delay(500);emptyList() } finally { active-- }
+        }, {}, clock={testScheduler.currentTime},parallelism=1) }
+        job.join();assertEquals(1,peak);assertEquals(0,active)
+    }
+
     @Test fun laterClipsReceiveTheirOwnDeadlineAfterAnActualSlotOpens() = runTest {
         val calls = mutableListOf<Pair<Double, Long>>()
         val completed = mutableListOf<Double>()

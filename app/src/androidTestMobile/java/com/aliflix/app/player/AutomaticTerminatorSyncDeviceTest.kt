@@ -9,6 +9,8 @@ import com.aliflix.app.model.*
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import org.junit.Before
+import org.junit.After
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -19,6 +21,26 @@ import java.nio.ByteOrder
  * replacement subtitle editions enter the player. PCM stays in private evidence
  * for a separate, independently timed check after this test finishes. */
 class AutomaticTerminatorSyncDeviceTest {
+    private val savedPreferences=mutableListOf<Pair<android.content.SharedPreferences,Map<String,*>>>()
+    @Before fun preservePreferences() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        for(name in listOf(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME,"native-subtitle-choice")) {
+            val prefs=context.getSharedPreferences(name,0);savedPreferences.add(prefs to prefs.all.toMap())
+        }
+    }
+    @After fun restorePreferences() {
+        for((prefs,values) in savedPreferences) {
+            val editor=prefs.edit().clear()
+            for((key,value) in values) when(value) {
+                is String -> editor.putString(key,value)
+                is Boolean -> editor.putBoolean(key,value)
+                is Int -> editor.putInt(key,value)
+                is Long -> editor.putLong(key,value)
+                is Float -> editor.putFloat(key,value)
+            }
+            editor.commit()
+        }
+    }
     @Test fun normalAutomaticEnglishCaptionsRecoverAndSynchronizeAcrossScenes() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("liveAutomaticTerminator") == "true")
         val language = InstrumentationRegistry.getArguments().getString("captionLanguage") ?: "en"
@@ -30,7 +52,10 @@ class AutomaticTerminatorSyncDeviceTest {
         val choices = context.getSharedPreferences("native-subtitle-choice", android.content.Context.MODE_PRIVATE)
         val oldLanguage = choices.getString("language", null)
         val oldEnabled = choices.getBoolean("enabled", true)
-        choices.edit().putString("language", language).putBoolean("enabled", true).commit()
+        choices.edit().clear().putString("language", language).putBoolean("enabled", true).commit()
+        context.getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME,0).edit()
+            .putString(com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE,language.uppercase())
+            .putBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES,true).commit()
         val selection = PlaybackSelection(Media(218, MediaType.MOVIE, "The Terminator", year = "1984",
             imdbId = "tt0088247", originalLanguage = "en"))
         val output = File(context.getExternalFilesDir(null), "automatic-terminator-$language-private").apply { mkdirs() }
@@ -57,6 +82,7 @@ class AutomaticTerminatorSyncDeviceTest {
                     ready
                 }
                 val raw = requireNotNull(NativePlaybackService.originalSubtitles())
+                assertEquals(language.uppercase(),canonicalSubtitleLanguageCode(NativePlaybackService.activeRequest!!.subtitleLanguage.orEmpty()))
                 File(output, "original-cues.json").writeText(raw)
                 val frames = java.util.Collections.synchronizedList(mutableListOf<Pair<Double, ShortArray>>())
                 NativePlaybackService.debugObserveSpeech { time, pcm -> frames.add(time to pcm) }

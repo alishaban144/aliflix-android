@@ -1,76 +1,10 @@
 package com.aliflix.app.player
 
-import com.aliflix.app.BuildConfig
-import kotlinx.coroutines.*
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.concurrent.Executors
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
-/** A user-requested fallback through the existing backend. Audio only: never
- * send media URLs, subtitles, titles, cookies, or account credentials. No model
- * or API key is shipped in the APK. Each sample keeps its original media clock. */
-internal object GroqDialogueRecognition {
-    private val executor = Executors.newFixedThreadPool(2) {
-        Thread(it, "aliflix-dialogue-recovery").apply { isDaemon = true }
-    }
-
-    suspend fun recognize(pcm: PlayedDialoguePcm, speech: List<SpeechWindow>, onWords: (List<List<HeardWord>>) -> Unit) =
-        withTimeoutOrNull(18_000) { recover({ dialogueRecoverySamples(pcm, speech) }, onWords) }
-
-    suspend fun recover(samples: suspend () -> List<PlayedDialoguePcm>, onWords: (List<List<HeardWord>>) -> Unit) =
-        DialogueRecoveryCoordinator.run(samples, { sample ->
-            try {
-                read(sample).also { android.util.Log.i("AliflixAudioSync", "groq_dialogue:words=${it.size},start=${sample.start}") }
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) {
-                android.util.Log.i("AliflixAudioSync", "groq_dialogue_unavailable:${error.javaClass.simpleName}")
-                throw error
-            }
-        }, onWords)
-
-    private suspend fun read(sample: PlayedDialoguePcm): List<HeardWord> = suspendCancellableCoroutine { continuation ->
-        val connection = (URL(BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/') + "/v3/subtitles/audio-timing")
-            .openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"; doOutput = true
-            connectTimeout = 3_000; readTimeout = 9_500
-            setRequestProperty("Content-Type", "audio/wav")
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "Aliflix/${BuildConfig.VERSION_NAME}")
-        }
-        val task = executor.submit {
-            try {
-                if (!continuation.isActive) return@submit
-                val body = dialogueWav(sample, normalizeQuietAudio = sample.frames.size < 1_000)
-                connection.setFixedLengthStreamingMode(body.size)
-                connection.outputStream.use { it.write(body) }
-                check(connection.responseCode == 200)
-                val bytes = connection.inputStream.use { input ->
-                    val output = java.io.ByteArrayOutputStream()
-                    val buffer = ByteArray(4_096)
-                    while (output.size() <= 65_536 && continuation.isActive) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                    }
-                    output.toByteArray()
-                }
-                check(bytes.size <= 65_536)
-                val words = parseGroqDialogue(JSONObject(bytes.toString(Charsets.UTF_8)), sample)
-                if (continuation.isActive) continuation.resume(words)
-            } catch (error: Exception) {
-                if (continuation.isActive) continuation.resumeWithException(error)
-            } finally { connection.disconnect() }
-        }
-        continuation.invokeOnCancellation { task.cancel(true); connection.disconnect() }
-    }
-}
-
-/** Choose one contiguous clip using already measured speech, before uploading.
+/** Choose one contiguous clip using already measured speech, before local recognition.
  * Completed exchanges outrank a quiet/music tail; equally useful clips favor
  * recent dialogue. Speech never supplies an expected subtitle offset. */
 internal fun dialogueRecoverySample(pcm: PlayedDialoguePcm, speech: List<SpeechWindow>): PlayedDialoguePcm? {
@@ -109,7 +43,7 @@ internal fun dialogueRecoverySample(pcm: PlayedDialoguePcm, speech: List<SpeechW
     return PlayedDialoguePcm(pcm.start + best * .02, pcm.frames.subList(best, best + length))
 }
 
-/** Two network slots, at most six clips and 120 seconds including overlaps.
+/** Bounded recognition slots, at most six clips and 120 seconds including overlaps.
  * Shift the strongest exchange once to avoid an ASR segment cutting a word;
  * keep every response independent instead of concatenating conflicting words. */
 internal fun dialogueRecoverySamples(pcm: PlayedDialoguePcm, speech: List<SpeechWindow>): List<PlayedDialoguePcm> {

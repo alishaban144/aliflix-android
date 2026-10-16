@@ -5,8 +5,8 @@ plugins {
 }
 
 val compatibilityBridge = providers.gradleProperty("aliflix.mobileCompatBridge").orNull == "true"
-val mobileVersionCode = 256
-val mobileVersionName = "3.1.166"
+val mobileVersionCode = 258
+val mobileVersionName = "3.1.168"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
@@ -55,8 +55,8 @@ android {
         create("mobile") {
             dimension = "formFactor"
             proguardFile("mobile-proguard-rules.pro")
-            versionCode = if (compatibilityBridge) 255 else mobileVersionCode
-            versionName = if (compatibilityBridge) "3.1.165" else mobileVersionName
+            versionCode = if (compatibilityBridge) 257 else mobileVersionCode
+            versionName = if (compatibilityBridge) "3.1.167" else mobileVersionName
             buildConfigField("boolean", "IS_TV", "false")
             buildConfigField(
                 "String",

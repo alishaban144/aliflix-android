@@ -2,7 +2,7 @@ package com.aliflix.app.player
 
 import kotlinx.coroutines.*
 
-/** Per-attempt recovery. Only two requests exist at a time, so their deadlines
+/** Per-attempt recovery. At most two requests exist at a time, so their deadlines
  * never include an executor queue. Fresh played evidence outranks stale crops.
  * The caller owns the overall deadline and source/seek/caption identity fence. */
 internal object DialogueRecoveryCoordinator {
@@ -12,6 +12,7 @@ internal object DialogueRecoveryCoordinator {
         onWords: (List<List<HeardWord>>) -> Unit,
         requestTimeoutMs: Long = 10_000,
         clock: () -> Long = { System.nanoTime() / 1_000_000 },
+        parallelism: Int = 2,
     ) = supervisorScope {
         val sent = mutableSetOf<Pair<Double, Int>>()
         val collected = mutableListOf<List<HeardWord>>()
@@ -22,7 +23,7 @@ internal object DialogueRecoveryCoordinator {
         try {
             while (isActive && sent.size < 6) {
                 active.removeAll { it.isCompleted }
-                if (active.size < 2) {
+                if (active.size < parallelism.coerceIn(1, 2)) {
                     val candidates = samples().filter { sample ->
                         sample.start.isFinite() && sample.frames.size in 200..1_000 &&
                             (sample.start to sample.frames.size) !in sent &&

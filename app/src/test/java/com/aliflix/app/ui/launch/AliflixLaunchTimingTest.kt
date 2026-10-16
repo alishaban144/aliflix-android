@@ -7,10 +7,11 @@ import org.junit.Test
 class AliflixLaunchTimingTest {
 
     @Test
-    fun brandRevealIsReadableAndSettlesBeforeTheWords() {
-        assertTrue(LAUNCH_TITLE_START_SECONDS + LAUNCH_TITLE_REVEAL_SECONDS < LAUNCH_WORD_SEQUENCE_START_SECONDS)
+    fun brandAndWordsBeginTogetherWithoutExtendingLaunch() {
+        assertEquals(LAUNCH_TITLE_START_SECONDS, LAUNCH_WORD_SEQUENCE_START_SECONDS, 0f)
+        assertEquals(0f, LAUNCH_WORD_SEQUENCE_START_SECONDS, 0f)
         assertEquals(2.38f, LAUNCH_SEQUENCE_SECONDS, .0001f)
-        assertTrue(LAUNCH_BRAND_REVEAL_SECONDS <= LAUNCH_WORD_SEQUENCE_START_SECONDS)
+        assertTrue(LAUNCH_WORD_SLOT_SECONDS - LAUNCH_WORD_FADE_SECONDS >= .65f)
         assertTrue("Stories has a readable final hold",LAUNCH_FINAL_WORD_SLOT_SECONDS-LAUNCH_WORD_FADE_SECONDS >= .25f)
         assertTrue("Brand reveal lasts long enough to see", LAUNCH_BRAND_REVEAL_SECONDS >= .85f)
         assertTrue("Home remains bounded",LAUNCH_SEQUENCE_SECONDS+LAUNCH_EXIT_DURATION_SECONDS < 2.7f)
@@ -44,10 +45,10 @@ class AliflixLaunchTimingTest {
 
     @Test
     fun testWordCycleTimingAndSlotDuration() {
-        val word0BeforeStart = calculateWordState(seq = 0.47f, wordIndex = 0, isReducedMotion = false)
+        val word0BeforeStart = calculateWordState(seq = -0.01f, wordIndex = 0, isReducedMotion = false)
         assertEquals(0f, word0BeforeStart.first, 0.001f)
 
-        assertEquals(0.25f, LAUNCH_WORD_SLOT_SECONDS, 0.001f)
+        assertEquals(0.80f, LAUNCH_WORD_SLOT_SECONDS, 0.001f)
 
         val word0MidFadeIn = calculateWordState(seq = LAUNCH_WORD_SEQUENCE_START_SECONDS + .05f, wordIndex = 0, isReducedMotion = false)
         assertTrue("Word 0 should be fading in", word0MidFadeIn.first > 0f && word0MidFadeIn.first < 1f)

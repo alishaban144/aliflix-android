@@ -65,17 +65,21 @@ class PlaybackSourceCaptureDeviceTest {
                 val hash = MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
                 File(output,"scene-0-clock.json").writeText(JSONObject().put("start",played.first().first)
                     .put("playedEnd",end).put("urlSha256",hash).toString())
-                if (args.getString("captureGroqDialogue") == "true") {
+                if (args.getString("captureLocalDialogue") == "true") {
                     val pcm = requireNotNull(NativePlaybackService.playedDialoguePcm(end))
                     val speech = NativePlaybackService.quickSpeechEvidence()
                     val sample = requireNotNull(dialogueRecoverySample(pcm, speech))
                     File(output,"recovery-sample.wav").writeBytes(dialogueWav(sample))
                     File(output,"recovery-clock.json").writeText(JSONObject().put("start",sample.start).put("urlSha256",hash).toString())
                     kotlinx.coroutines.runBlocking {
-                        GroqDialogueRecognition.recognize(sample, speech) { transcripts ->
-                            val rows = org.json.JSONArray()
-                            transcripts.flatten().forEach { rows.put(JSONObject().put("text",it.text).put("start",it.start).put("end",it.end)) }
-                            File(output,"recovery-words.json").writeText(rows.toString())
+                        if (android.os.Build.VERSION.SDK_INT >= 34) {
+                            val language = dialogueRecognitionLanguage(NativePlaybackService.selectedAudioLanguage(), "en")
+                            if (language != null) {
+                                val words = PlayedDialogueRecognition.recognize(context,language,sample)
+                                val rows = org.json.JSONArray()
+                                words.forEach { rows.put(JSONObject().put("text",it.text).put("start",it.start).put("end",it.end)) }
+                                File(output,"recovery-words.json").writeText(rows.toString())
+                            }
                         }
                     }
                 }

@@ -1,5 +1,9 @@
 package com.aliflix.app.player
 
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
+
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -181,6 +185,7 @@ internal data class NativePlayerUi(
     val playbackSelection: PlaybackSelection? = null,
     val sourceAudioOptions: List<SourceAudioOption> = emptyList(),
     val sourceAudioLanguage: String = "",
+    val pendingSourceAudioLanguage: String? = null,
     val verificationRequired: Boolean = false,
 )
 
@@ -277,6 +282,10 @@ internal fun NativePlayerScreen(
     var hudTimerJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val audioSelection by (NativePlaybackService.audioSelectionState ?: remember {
+        kotlinx.coroutines.flow.MutableStateFlow(AudioSelectionState())
+    }).collectAsState()
+    LaunchedEffect(audioSelection.failed) { audioSelection.failed?.let { snackbar.showSnackbar(it) } }
     val seekFeedback = remember { SeekFeedbackController() }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val density = LocalDensity.current
@@ -963,13 +972,14 @@ internal fun NativePlayerScreen(
                             state.sourceAudioOptions.forEach { audio ->
                                 SheetOption(audio.label,
                                     if (audio.language.equals(state.playbackSelection?.media?.originalLanguage, true)) "Original" else "",
-                                    selected = audio.language == state.sourceAudioLanguage) {
+                                    selected = audio.language == state.sourceAudioLanguage && state.pendingSourceAudioLanguage == null,
+                                    pending = audio.language == state.pendingSourceAudioLanguage) {
                                     onSourceAudioSelected(audio.language)
                                 }
                             }
                             if (player?.currentTracks?.groups.orEmpty().filter { it.type == C.TRACK_TYPE_AUDIO }.sumOf { it.length } > 1)
-                                TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, onTrackSelected = onAudioSelected) { _, _ -> }
-                        } else TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, onTrackSelected = onAudioSelected) { _, _ -> }
+                                TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, pendingAudio = audioSelection.pending, confirmedAudio = audioSelection.selected.takeUnless { state.external }, onTrackSelected = onAudioSelected) { _, _ -> }
+                        } else TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, pendingAudio = audioSelection.pending, confirmedAudio = audioSelection.selected.takeUnless { state.external }, onTrackSelected = onAudioSelected) { _, _ -> }
                         Spacer(Modifier.height(4.dp))
                         }
                         if (sheet == "Audio & subtitles") {
@@ -1176,6 +1186,7 @@ private fun SheetOption(
     title: String,
     subtitle: String = "",
     selected: Boolean = false,
+    pending: Boolean = false,
     onClick: () -> Unit,
 ) {
     Row(
@@ -1185,6 +1196,7 @@ private fun SheetOption(
             .clip(RoundedCornerShape(16.dp))
             .background(if (selected) AliflixAccentPrimaryContainer.copy(alpha = .55f) else Color.White.copy(alpha = .035f))
             .clickable(onClick = onClick)
+            .semantics { this.selected = selected; stateDescription = if (pending) "Applying" else if (selected) "Selected" else "" }
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1194,7 +1206,9 @@ private fun SheetOption(
                 Text(subtitle, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (selected) {
+        if (pending) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = AliflixAccentSecondary)
+        } else if (selected) {
             Icon(Icons.Default.Check, "Selected", tint = AliflixAccentSecondary, modifier = Modifier.size(20.dp))
         }
     }
@@ -1203,6 +1217,8 @@ private fun SheetOption(
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun TrackOptions(player: Player?, type: Int, revision: Int,
+    pendingAudio: String? = null,
+    confirmedAudio: String? = null,
     onTrackSelected: ((androidx.media3.common.TrackGroup, Int) -> Unit)? = null, onSelect: (String?, String?) -> Unit) {
     val groups = remember(player, type, revision) { player?.currentTracks?.groups.orEmpty().filter { it.type == type } }
     groups.forEach { group ->
@@ -1212,7 +1228,7 @@ private fun TrackOptions(player: Player?, type: Int, revision: Int,
             else if (type == C.TRACK_TYPE_AUDIO) formatAudioTrackLabel(format.language, format.label)
             else format.label ?: format.language?.let { Locale.forLanguageTag(it).displayLanguage }
             ?: "Subtitles"
-            SheetOption(label, selected = group.isTrackSelected(index)) {
+            SheetOption(label, selected = (if (type == C.TRACK_TYPE_AUDIO && confirmedAudio != null) confirmedAudio == nativeAudioKey(format) else group.isTrackSelected(index)) && pendingAudio != nativeAudioKey(format), pending = pendingAudio == nativeAudioKey(format)) {
                 if (onTrackSelected != null) onTrackSelected(group.mediaTrackGroup, index)
                 else player?.let {
                     it.trackSelectionParameters = it.trackSelectionParameters.buildUpon()

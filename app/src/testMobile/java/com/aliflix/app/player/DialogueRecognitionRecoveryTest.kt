@@ -14,6 +14,15 @@ class DialogueRecognitionRecoveryTest {
         assertEquals("en-US", dialogueRecognitionLanguage("und", "ar", "en"))
         assertEquals("fr-FR", dialogueRecognitionLanguage("fr", "ar", "en"))
     }
+    @Test fun germanDubSelectsGermanRecognitionForEnglishAndArabicCaptions() {
+        for (captions in listOf("en", "ar")) {
+            val german = resolvedDialogueLanguage("und", "de")
+            assertEquals("de-DE", dialogueRecognitionLanguage(german, captions, "en"))
+            assertEquals("de-DE", dialogueRecognitionLanguage(resolvedDialogueLanguage("deu", "en"), captions, "en"))
+        }
+        assertEquals("en", resolvedDialogueLanguage("en", "de"))
+        assertEquals("", resolvedDialogueLanguage("und", "unknown"))
+    }
     @Test fun serverDisconnectionAndBusySessionsRecoverInsteadOfDisablingTheFilm() {
         for (code in listOf(11, 8, -1, -2)) {
             assertTrue(dialogueRecognitionCanRetry(code))

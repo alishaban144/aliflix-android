@@ -6,6 +6,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.PlaybackParameters
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.*
+import com.aliflix.app.player.requestPlaybackRoomConsent
 import com.aliflix.app.model.MediaType
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.*
@@ -95,9 +96,13 @@ internal class WatchPartyClient private constructor(context: Context) {
     private var lastVersion = -1L
     private var attempt = 0
     init {
+        com.aliflix.app.player.playbackRoomConsent = ::requestPlaybackRoomConsent
         val room = prefs.getString("room", "").orEmpty()
         val invite = prefs.getString("invite", "").orEmpty()
-        if (room.matches(Regex("[a-f0-9]{32}"))) scope.launch { join(room, invite) }
+        if (room.matches(Regex("[a-f0-9]{32}"))) {
+            _state.value = PartyState(room = room, invite = invite, phase = "reconnecting")
+            scope.launch { join(room, invite) }
+        }
     }
     private suspend fun identity() = identityLock.withLock { withContext(Dispatchers.IO) {
         val hasRoom = !prefs.getString("room", "").isNullOrBlank()

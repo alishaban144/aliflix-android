@@ -28,11 +28,19 @@ internal fun nativeSelection(raw: String): PlaybackSelection = JSONObject(raw).l
         source = PlaybackSource(PlaybackProvider.valueOf(json.getString("provider")), json.getString("baseUrl")))
 }
 
+// Installed by the mobile room client. Other form factors retain their original launch behavior.
+internal var playbackRoomConsent: ((Activity, PlaybackSelection, () -> Unit) -> Unit)? = null
+internal fun withPlaybackRoomConsent(activity: Activity, selection: PlaybackSelection, proceed: () -> Unit) {
+    playbackRoomConsent?.invoke(activity, selection, proceed) ?: proceed()
+}
+
 internal fun launchNativeSelection(activity: Activity, selection: PlaybackSelection, language: String, autoSubtitles: Boolean) {
+    withPlaybackRoomConsent(activity, selection) {
     activity.startActivity(Intent().setClassName(activity, "com.aliflix.app.player.NativePlayerActivity")
         .putExtra("selection", selection.nativeJson()).putExtra("subtitleLanguage", language)
         .putExtra("playTapElapsedMs", android.os.SystemClock.elapsedRealtime())
         .putExtra("autoSubtitles", autoSubtitles), nativePhoneLaunchOptions(activity))
+    }
 }
 
 // Service/notification launches otherwise inherit the last focused (possibly TV) display.

@@ -82,14 +82,14 @@ import kotlin.math.sin
 
 private val launchLayerEase = CubicBezierEasing(.22f,.61f,.36f,1f)
 
-internal const val LAUNCH_TITLE_START_SECONDS = 0.35f
+internal const val LAUNCH_TITLE_START_SECONDS = 0f
 internal const val LAUNCH_TITLE_REVEAL_SECONDS = 1.05f
-internal const val LAUNCH_ROTATOR_START_SECONDS = 1.4f
-internal const val LAUNCH_ROTATOR_REVEAL_SECONDS = 0.12f
-internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = 1.52f
-internal const val LAUNCH_WORD_SLOT_SECONDS = 0.25f
+internal const val LAUNCH_ROTATOR_START_SECONDS = LAUNCH_TITLE_START_SECONDS
+internal const val LAUNCH_ROTATOR_REVEAL_SECONDS = 0.32f
+internal const val LAUNCH_WORD_SEQUENCE_START_SECONDS = LAUNCH_TITLE_START_SECONDS
+internal const val LAUNCH_WORD_SLOT_SECONDS = 0.80f
 internal const val LAUNCH_WORD_COUNT = 3
-internal const val LAUNCH_FINAL_WORD_SLOT_SECONDS = 0.36f
+internal const val LAUNCH_FINAL_WORD_SLOT_SECONDS = 0.78f
 internal const val LAUNCH_BRAND_REVEAL_SECONDS = 1.4f
 internal const val LAUNCH_WORD_FADE_SECONDS = 0.1f
 internal const val LAUNCH_SEQUENCE_SECONDS = LAUNCH_WORD_SEQUENCE_START_SECONDS +

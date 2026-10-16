@@ -104,17 +104,6 @@ internal fun MobileSettingsDialog(
                         updateUi.progress?.let { progress -> LinearProgressIndicator(progress = { progress.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth(), color = AliflixAccentPrimary) }
                     }
                     SettingsGroup("PLAYBACK") {
-                        var sourceMenu by remember { mutableStateOf(false) }
-                        Box {
-                            SettingsRow(Icons.Rounded.PlayCircle, "Streaming source", generalProvider.displayName, onClick = { sourceMenu = true }) {
-                                if (generalProvider in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY, PlaybackProviderId.MOVIEPIRE)) AliflixIconButton(onClick = { onEditProviderUrl(generalProvider) }) { Icon(Icons.Rounded.Edit, "Edit URL", Modifier.size(17.dp), tint = AliflixContentSecondary) }
-                                Icon(Icons.Rounded.ExpandMore, "Choose source", Modifier.size(19.dp), tint = AliflixAccentSecondary)
-                            }
-                            SettingsMenu(sourceMenu, { sourceMenu = false }, mobileGeneralPlaybackProviders(), { it.displayName }, generalProvider) {
-                                sourceMenu = false; onSelectProvider(it)
-                            }
-                        }
-                        SettingsDivider()
                         SettingsRow(Icons.Rounded.HighQuality, "Preferred quality", "") {
                             AliflixSegmentedControl(contentPadding = PaddingValues(3.dp), horizontalArrangement = Arrangement.Start) {
                                 PreferredVideoQuality.entries.forEach { quality ->
@@ -191,6 +180,13 @@ internal fun MobileSettingsDialog(
                                 Icon(Icons.Rounded.Email, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp))
                                 Text("Aliflixapp@proton.me", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
+                        }
+                    }
+                    SettingsGroup("STREAMING SOURCES") {
+                        val sources = (mobileGeneralPlaybackProviders() + PlaybackProviderId.entries.filter { it.isAnimeNative }).distinctBy { it.name }
+                        sources.forEachIndexed { index, provider ->
+                            if (index > 0) SettingsDivider()
+                            SettingsRow(Icons.Rounded.Dns, provider.displayName, "") { }
                         }
                     }
                     Text("ALIFLIX  ·  ${BuildConfig.VERSION_NAME}", Modifier.fillMaxWidth().padding(bottom = AliflixSpacing.Panel), color = AliflixContentTertiary,

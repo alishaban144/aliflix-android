@@ -183,8 +183,8 @@ internal interface DownloadUiDependencies {
         role = Role.Button
         if (active) progressBarRangeInfo = if (fraction != null && !queued) ProgressBarRangeInfo(fraction, 0f..1f)
             else ProgressBarRangeInfo.Indeterminate
-    }, shape = if (showLabel) androidx.compose.foundation.shape.CircleShape else if (compact) AliflixCorners.Small else AliflixCorners.Card,
-        level = AliflixSurfaceLevel.Content,
+    }, shape = if (showLabel) androidx.compose.foundation.shape.CircleShape else if (compact) AliflixCorners.Small else androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+        level = if (showLabel || compact) AliflixSurfaceLevel.Content else AliflixSurfaceLevel.Elevated,
     ) {
         Row(
             modifier = if (showLabel) {
@@ -210,7 +210,7 @@ internal interface DownloadUiDependencies {
                 active -> Icons.Rounded.Pause
                 state == Download.STATE_FAILED -> Icons.Rounded.Refresh
                 else -> Icons.Rounded.Download
-            }, null, modifier = Modifier.size(if (showLabel) 16.dp else if (compact || active) 20.dp else 24.dp),
+            }, null, modifier = Modifier.size(if (showLabel) 16.dp else if (compact || active) 20.dp else 21.dp),
                 tint = if (state == Download.STATE_COMPLETED) AliflixAccentSecondary else AliflixContentSecondary)
             }
         }

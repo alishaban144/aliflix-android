@@ -33,3 +33,8 @@ internal fun dialogueRecognitionLanguage(audio: String, captions: String, origin
         else -> null
     }
 }
+
+/** Provider edition metadata fills missing container tags, never replaces a labeled rendition. */
+internal fun resolvedDialogueLanguage(track: String, edition: String): String =
+    track.takeIf { it.isNotBlank() && it.lowercase() !in setOf("und", "unknown") }
+        ?: edition.takeIf { it.isNotBlank() && it.lowercase() !in setOf("und", "unknown") }.orEmpty()

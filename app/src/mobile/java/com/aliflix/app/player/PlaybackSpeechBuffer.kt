@@ -28,6 +28,7 @@ private class WebRtcPlaybackSpeechDetector : PlaybackSpeechDetector {
  * WebRTC's six-band GMM replaces the former loudness/zero-crossing heuristic.
  */
 internal class PlaybackSpeechBuffer(
+    private val retainDecodedNeuralHistory: Boolean = false,
     private val detectorFactory: () -> PlaybackSpeechDetector = { WebRtcPlaybackSpeechDetector() },
 ) : AutoCloseable {
     @Volatile internal var debugFrameObserver: ((Double, ShortArray) -> Unit)? = null
@@ -103,8 +104,12 @@ internal class PlaybackSpeechBuffer(
     @Synchronized fun enableNeural(context: Context) {
         if (neural == null) neural = NeuralSpeechWorker(context, ::acceptNeural)
     }
-    @Synchronized private fun acceptNeural(start: Double, probability: Float, token: Long, boundary: Long) {
-        if (token != generation || boundary != boundaryCount) return
+    @Synchronized internal fun acceptNeural(start: Double, probability: Float, token: Long, boundary: Long) {
+        // Independent scanners never change their selected soundtrack. A later
+        // segment boundary must not erase valid in-flight earlier measurements.
+        // The visible player retains its original strict continuity fence.
+        if (token != generation || boundary > boundaryCount || boundary < 0 ||
+            (!retainDecodedNeuralHistory && boundary != boundaryCount)) return
         // Assign each 20 ms bin by its midpoint inside the observed 32 ms
         // inference interval. Never round both endpoints and fabricate a gap.
         val first = ceil((start - .01) * SPEECH_HZ - 1e-7).toInt()

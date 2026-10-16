@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "256"
-  RELEASE_VERSION_NAME: "3.1.166"
+  RELEASE_VERSION_CODE: "258"
+  RELEASE_VERSION_NAME: "3.1.168"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -378,7 +378,7 @@ jobs:
           import hashlib, json, os
           from pathlib import Path
           apk = Path('aliflix-mobile-compat.apk')
-          bridge = dict(versionCode=255, versionName='3.1.165', minimumSdk=29,
+          bridge = dict(versionCode=257, versionName='3.1.167', minimumSdk=29,
               apkUrl=f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['RELEASE_TAG']}/aliflix-mobile-compat.apk",
               sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), sizeBytes=apk.stat().st_size,
               notes='Update compatibility. ARM64 devices can then install the latest mobile release.')
@@ -392,13 +392,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Private Watch Together rooms with independent streaming, authoritative playback synchronization, secure invitations, host transfer and native room controls.
+            Mobile playback polish: title-safe Watch Together exit confirmation, compact detail actions, confirmed audio switching with applying feedback, and a read-only Streaming sources catalogue.
 
-            Serienstream is prioritized for series. German editions can prepare alongside another provider. The mobile launch follows the inspected poster zoom and reveal; repeated rail entrances and the detached toggle dot are removed.
+            Sync with Audio uses the original local Silero model and on-device recognition with bounded selected-soundtrack look-ahead. Logo, wordmark and Movies / Series / Stories now start together.
 
             `aliflix-mobile.apk` is ARM64-only. Existing installations first receive the signed universal compatibility bridge through `update-mobile.json`; the architecture-aware updater then reads `update-mobile-arm64.json`. Incompatible devices retain the installable bridge. `native-parity.json` records every unchanged ARM64 binary and original Silero model hash plus exact APK size reduction from v3.1.164.
 
-            Validation evidence: docs/mobile-166-validation.md. TV is unchanged and no TV APK is published.
+            Validation evidence: docs/mobile-168-validation.md. TV is unchanged and no TV APK is published.
           files: |
             aliflix-mobile.apk
             update-mobile.json
