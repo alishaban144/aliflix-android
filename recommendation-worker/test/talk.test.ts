@@ -1,6 +1,6 @@
 import { env, runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
-import { TalkContextSchema, permittedEpisode, validateTalkAnswer, stripMarkup } from '../src/talkEvidence';
+import { describe, expect, it, vi } from 'vitest';
+import { TalkContextSchema, permittedEpisode, validateTalkAnswer, stripMarkup, completedMovieEvidence, recommendTalkTitles } from '../src/talkEvidence';
 import { talkRoute } from '../src/talk';
 import { TALK_MODELS, boundedJson } from '../src/talkProviders';
 import type { RecommendationEnv } from '../src/types';
@@ -49,6 +49,24 @@ describe('Talk privacy and evidence boundaries', () => {
     await expect(boundedJson(new Response('x'.repeat(100), { status: 200 }), 10)).rejects.toThrow('RESPONSE_LIMIT');
     await expect(boundedJson(new Response('{}', { status: 429 }))).rejects.toThrow('QUOTA');
     await expect(boundedJson(Response.json({ ok: true }))).resolves.toEqual({ ok: true });
+  });
+  it('never retrieves whole-movie plots for a partially watched movie', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    try {
+      expect(await completedMovieEvidence(TalkContextSchema.parse({ type: 'movie', imdbId: 'tt0816692', position: 100 }), new AbortController().signal)).toEqual([]);
+      expect(spy).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
+  });
+  it('retrieves verified genre recommendations without forwarding plot summaries or future links', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json([
+      { id: 1, name: 'Known Science Fiction', url: 'https://www.tvmaze.com/shows/1', genres: ['Science-Fiction'], premiered: '2020-01-01', rating: { average: 8 }, summary: 'FUTURE PLOT SECRET' },
+      { id: 2, name: 'Comedy', url: 'https://www.tvmaze.com/shows/2', genres: ['Comedy'], rating: { average: 9 } },
+    ]));
+    try {
+      const result = await recommendTalkTitles('science fiction', new AbortController().signal);
+      expect(result).toHaveLength(1); expect(result[0].title).toBe('Known Science Fiction');
+      expect(JSON.stringify(result)).not.toContain('FUTURE PLOT SECRET'); expect(result[0].license).toContain('CC BY-SA');
+    } finally { spy.mockRestore(); }
   });
 });
 

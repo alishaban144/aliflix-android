@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 import { verifyIdentity } from './watchParty';
 import type { RecommendationEnv } from './types';
-import { TalkContextSchema, TalkContext, Evidence, episodeEvidence, lookupTalkTitles, movieEvidence, talkTitleDetails, TalkToolSchema } from './talkEvidence';
+import { TalkContextSchema, TalkContext, Evidence, episodeEvidence, lookupTalkTitles, movieEvidence, talkTitleDetails, TalkToolSchema, recommendTalkTitles, completedMovieEvidence } from './talkEvidence';
 import { TALK_MODELS, TalkPlan, TalkTurn, answerTalk, base64, chooseTalkPlan, connectAsr, fishSpeech,
   geminiSpeech, transcribeGroq } from './talkProviders';
 
@@ -200,6 +200,8 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
     const pair = /(?:season|staffel|s)\s*(\d+)\s*(?:episode|folge|e)\s*(\d+)/i.exec(text);
     const season = pair ? Number(pair[1]) : this.context.season;
     const episode = pair ? Number(pair[2]) : this.context.episode;
+    if (this.context.type === 'movie' && this.context.imdbId && (this.context.completed || this.context.spoilers))
+      return completedMovieEvidence(this.context, timeout);
     if (this.context.type === 'tv' && this.context.imdbId) {
       const key = `evidence:${this.context.imdbId}:${season}:${episode}`;
       // Check permission BEFORE touching the cache; older permitted responses
@@ -225,6 +227,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   private async tool(request: z.infer<typeof TalkToolSchema>, signal: AbortSignal): Promise<Evidence[]> {
     const bounded = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
     switch (request.tool) {
+      case 'recommendations': return recommendTalkTitles(request.query || '', bounded);
       case 'episode_evidence': return episodeEvidence(this.context, request.season ?? this.context.season,
         request.episode ?? this.context.episode, bounded);
       case 'title_details': return talkTitleDetails(request.imdbId || this.context.imdbId || '', bounded);
@@ -262,7 +265,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
       this.send({ type: 'transcript', role: 'user', text, final: true, sequence: seq });
       this.send({ type: 'thinking', sequence: seq });
       this.history.push({ role: 'user', text }); this.history = this.history.slice(-12);
-      let facts = await this.evidence(text, signal);
+      let facts = await this.evidence(text, signal).catch(() => [] as Evidence[]);
       let answer;
       try { answer = await answerTalk(this.env, this.plan, this.history, this.context, facts, signal); }
       catch (error) {
@@ -271,9 +274,9 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
         answer = await answerTalk(this.env, this.plan, this.history, this.context, facts, signal);
       }
       if ('tool' in answer) {
-        const more = await this.tool(answer, signal);
+        const more = await this.tool(answer, signal).catch(() => [] as Evidence[]);
         facts = [...facts, ...more].filter((s, i, all) => all.findIndex(x => x.id === s.id) === i).slice(-10);
-        answer = await answerTalk(this.env, this.plan, this.history, this.context, facts, signal);
+        answer = await answerTalk(this.env, this.plan, this.history, this.context, facts, signal, false);
       }
       if ('tool' in answer) throw Error('TOOL_LIMIT');
       if (!valid()) return;
@@ -301,7 +304,10 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
         error: error instanceof Error ? error.name : 'Unknown',
         code: error instanceof Error && /^[A-Z_0-9]{1,60}$/.test(error.message) ? error.message : 'INVALID_OR_INTERRUPTED',
         aborted: signal.aborted }));
-      if (!controller.signal.aborted && seq === this.sequence && ticket === this.generation) this.send({ type: 'error', code: error instanceof Error && error.message === 'QUOTA' ? 'QUOTA' : 'TURN_FAILED', sequence: seq });
+      if (!controller.signal.aborted && seq === this.sequence && ticket === this.generation) this.send({ type: 'error',
+        code: error instanceof Error && error.message === 'QUOTA' ? 'QUOTA' : 'TURN_FAILED',
+        reason: error instanceof Error && /^[A-Z_0-9]{1,60}$/.test(error.message) ? error.message : error instanceof Error ? error.name : 'Unknown',
+        fields: error instanceof z.ZodError ? error.issues.map(i => ({ path: i.path, code: i.code })) : [], sequence: seq });
     }
   }
   async webSocketClose(ws: WebSocket) { if (ws === this.socket) { this.stop(); this.socket = undefined; await this.persistHistory(); } }
