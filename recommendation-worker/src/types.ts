@@ -205,6 +205,7 @@ export interface SecretBindings {
   GEMINI_API_KEY?: string;
   GROQ_API_KEY?: string;
   FISH_AUDIO_API_KEY?: string;
+  TAVILY_API_KEY?: string;
   TMDB_API_KEY?: string;
   TMDB_READ_ACCESS_TOKEN?: string;
   SUBDL_API_KEY?: string;

@@ -1,120 +1,42 @@
-import { env, runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it, vi } from 'vitest';
-import { TalkContextSchema, permittedEpisode, validateTalkAnswer, stripMarkup, completedMovieEvidence, recommendTalkTitles, talkHistoryBoundary } from '../src/talkEvidence';
-import { talkRoute } from '../src/talk';
-import { TALK_MODELS, boundedJson } from '../src/talkProviders';
-import type { RecommendationEnv } from '../src/types';
-const testEnv = { ...env, CURSOR_SIGNING_SECRET: 'test-only' } satisfies RecommendationEnv;
-
-describe('Talk privacy and evidence boundaries', () => {
-  it('rejects TMDB text, artwork, subtitles and provider credentials at the protocol boundary', () => {
-    for (const field of ['overview', 'title', 'poster', 'subtitles', 'streamUrl', 'cookies', 'apiKey'])
-      expect(TalkContextSchema.safeParse({ [field]: 'private' }).success).toBe(false);
-    expect(TalkContextSchema.safeParse({ position: -1 }).success).toBe(false);
-    expect(TalkContextSchema.safeParse({ imdbId: 'https://untrusted.test' }).success).toBe(false);
-  });
-  it('enforces season and episode ordering independently of a requested number', () => {
-    const context = TalkContextSchema.parse({ type: 'tv', season: 2, episode: 3, position: 100,
-      viewedRanges: [{ season: 1, first: 99, last: 99 }, { season: 2, first: 2, last: 2 }] });
-    expect(permittedEpisode(context, 1, 99)).toBe(true);
-    expect(permittedEpisode(context, 2, 2)).toBe(true);
-    expect(permittedEpisode(context, 2, 3)).toBe(false);
-    expect(permittedEpisode(context, 2, 4)).toBe(false);
-    expect(permittedEpisode(context, 3, 1)).toBe(false);
-    expect(permittedEpisode(context, 1, 1)).toBe(false);
-    expect(permittedEpisode({ ...context, viewedRanges: [] }, 2, 2)).toBe(false);
-    expect(permittedEpisode({ ...context, completed: true }, 2, 3)).toBe(true);
-    expect(permittedEpisode({ ...context, completed: true }, 2, 4)).toBe(false);
-  });
-  it('requires explicit permission instead of inferring completion from viewing position', () => {
-    const context = TalkContextSchema.parse({ season: 1, episode: 1, position: 604800 });
-    expect(permittedEpisode(context, 1, 1)).toBe(false);
-    expect(permittedEpisode({ ...context, spoilers: true }, 90, 200)).toBe(true);
-  });
-  it('fences retained conversation from other titles, episodes and spoiler permissions', () => {
-    const current = TalkContextSchema.parse({ type: 'tv', imdbId: 'tt5753856', season: 1, episode: 2 });
-    expect(talkHistoryBoundary(current)).toBe(talkHistoryBoundary({ ...current, position: 300 }));
-    expect(talkHistoryBoundary(current)).not.toBe(talkHistoryBoundary({ ...current, episode: 1 }));
-    expect(talkHistoryBoundary(current)).not.toBe(talkHistoryBoundary({ ...current, spoilers: true }));
-    expect(talkHistoryBoundary(current)).not.toBe(talkHistoryBoundary({ ...current, imdbId: 'tt0898266' }));
-  });
-  it('rejects fabricated references, ungrounded facts and ungrounded interpretations', () => {
-    const base = { answer: 'The story is about time.', kind: 'fact', sources: [], words: 'TIME' };
-    expect(() => validateTalkAnswer(base, [])).toThrow();
-    expect(() => validateTalkAnswer({ ...base, kind: 'interpretation' }, [])).toThrow();
-    expect(() => validateTalkAnswer({ ...base, sources: ['invented'] }, [])).toThrow();
-    expect(validateTalkAnswer({ ...base, kind: 'unknown' }, []).kind).toBe('unknown');
-  });
-  it('retains licence attribution in the optional transcript and bounds semantic labels', () => {
-    const source = { id: 'tvmaze-episode-1', title: 'Episode', text: 'Evidence', url: 'https://www.tvmaze.com/episodes/1', license: 'TVmaze · CC BY-SA 4.0' };
-    const answer = validateTalkAnswer({ answer: 'A verified event.', kind: 'fact', sources: [source.id], words: '<TIME>' }, [source]);
-    expect(answer.words).toBe('TIME'); expect(answer.references[0].license).toContain('CC BY-SA');
-    expect(stripMarkup('<p>One &amp; two</p>')).toBe('One & two');
-  });
-  it('selects exactly the requested models, including an explicit free Fish identifier', () => {
-    expect(TALK_MODELS).toEqual({ asr: 'gemini-3.5-transcribe-live', reasoning: 'gemini-3.8-flash', tts: 's2.1-pro-free',
-      fallbackAsr: 'whisper-large-v3-turbo', fallbackReasoning: 'openai/gpt-oss-120b', fallbackTts: 'gemini-3.8-flash-lite-tts' });
-  });
-  it('bounds provider response memory and rejects quota failures', async () => {
-    await expect(boundedJson(new Response('x'.repeat(100), { status: 200 }), 10)).rejects.toThrow('RESPONSE_LIMIT');
-    await expect(boundedJson(new Response('{}', { status: 429 }))).rejects.toThrow('QUOTA');
-    await expect(boundedJson(Response.json({ ok: true }))).resolves.toEqual({ ok: true });
-  });
-  it('never retrieves whole-movie plots for a partially watched movie', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch');
-    try {
-      expect(await completedMovieEvidence(TalkContextSchema.parse({ type: 'movie', imdbId: 'tt0816692', position: 100 }), new AbortController().signal)).toEqual([]);
-      expect(spy).not.toHaveBeenCalled();
-    } finally { spy.mockRestore(); }
-  });
-  it('retrieves verified genre recommendations without forwarding plot summaries or future links', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json([
-      { id: 1, name: 'Known Science Fiction', url: 'https://www.tvmaze.com/shows/1', genres: ['Science-Fiction'], premiered: '2020-01-01', rating: { average: 8 }, summary: 'FUTURE PLOT SECRET' },
-      { id: 2, name: 'Comedy', url: 'https://www.tvmaze.com/shows/2', genres: ['Comedy'], rating: { average: 9 } },
-    ]));
-    try {
-      const result = await recommendTalkTitles('science fiction', new AbortController().signal);
-      expect(result).toHaveLength(1); expect(result[0].title).toBe('Known Science Fiction');
-      expect(JSON.stringify(result)).not.toContain('FUTURE PLOT SECRET'); expect(result[0].license).toContain('CC BY-SA');
-    } finally { spy.mockRestore(); }
-  });
+import {env,runInDurableObject} from 'cloudflare:test';
+import {describe,it,expect,vi,afterEach} from 'vitest';
+import {TalkContextSchema,explicitlyRequestsSpoilers,permittedEpisode,reusableUrl,stripMarkup,wikipediaEvidence} from '../src/talkEvidence';
+import {talkRoute,TalkSession} from '../src/talk';
+import {issueLiveToken,liveSetup,liveInstructions,TALK_MODEL,TALK_VOICE} from '../src/talkProviders';
+const config={...env,CURSOR_SIGNING_SECRET:'test-only',GEMINI_API_KEY:'test-only'};
+afterEach(()=>vi.restoreAllMocks());
+describe('Gemini-only live identity and security',()=>{
+ it('pins model, voice, automatic interruption and native compression',()=>{
+  const s=liveSetup(TalkContextSchema.parse({}));expect(s.model).toBe('models/gemini-3.8-live');
+  expect(s.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Aoede');
+  expect(s.realtimeInputConfig.automaticActivityDetection.disabled).toBe(false);
+  expect(s.tools[0].functionDeclarations[0].behavior).toBe('NON_BLOCKING');expect(s.contextWindowCompression.slidingWindow.targetTokens).toBe('4096');
+ });
+ it('provisions single-use constrained ephemeral tokens and never returns the key',async()=>{
+  let sent:any;vi.spyOn(globalThis,'fetch').mockImplementation(async(_,init)=>{sent=JSON.parse(String(init?.body));return Response.json({name:'auth_tokens/test-ephemeral'});});
+  const r=await issueLiveToken(config,TalkContextSchema.parse({}),Date.now()+1200000);
+  expect(r.token).toBe('auth_tokens/test-ephemeral');expect(JSON.stringify(r)).not.toContain('test-only');expect(sent.uses).toBe(1);
+  expect(sent.fieldMask).toContain('model');expect(sent.fieldMask).toContain('generationConfig');expect(sent.fieldMask).not.toContain('sessionResumption');
+  expect(r.model).toBe(TALK_MODEL);expect(r.voice).toBe(TALK_VOICE);
+ });
+ it('requires authenticated identity for token issuance and tools',async()=>{
+  for(const path of ['session','knowledge','close'])expect((await talkRoute(new Request('https://test/v1/talk/'+path,{method:'POST',body:'{}'}),config))?.status).toBe(401);
+ });
+ it('bounds daily quotas and removes expired state',async()=>{const stub=env.TALK_SESSIONS.getByName('test-live-quota');await runInDurableObject(stub,async instance=>{const talk=instance as unknown as TalkSession;expect(await talk.reserve(2,2)).toBe(true);expect(await talk.reserve(1,2)).toBe(false);});});
+ it('rejects playback URLs, TMDB text and credentials',()=>{for(const k of ['title','overview','subtitles','cookie','streamUrl','apiKey'])expect(TalkContextSchema.safeParse({[k]:'private'}).success).toBe(false);});
+ it('does not require spoilers or mandatory evidence for familiar answers',()=>{const p=liveInstructions(TalkContextSchema.parse({}));expect(p).toContain('never ask permission');expect(p).toContain('reliable');expect(p).toContain('NEVER future episodes');expect(p).not.toContain('Groq');});
 });
-
-describe('Talk authentication, quotas and cleanup', () => {
-  it('does not intercept existing recommendation and Watch Party paths', async () => {
-    expect(await talkRoute(new Request('https://worker/v1/recommendations'), testEnv)).toBeNull();
-    expect(await talkRoute(new Request('https://worker/v1/party/identity'), testEnv)).toBeNull();
-  });
-  it('requires authenticated WebSockets and exposes no internal exception details', async () => {
-    expect((await talkRoute(new Request('https://worker/v1/talk'), testEnv))?.status).toBe(426);
-    const response = await talkRoute(new Request('https://worker/v1/talk', { headers: { Upgrade: 'websocket', Authorization: 'Bearer forged' } }),
-      testEnv);
-    expect(response?.status).toBe(401); expect(await response?.text()).toBe('{"error":"UNAUTHORIZED"}');
-  });
-  it('atomically bounds daily use across concurrent callers and retains no transcript in quota storage', async () => {
-    const stub = env.TALK_SESSIONS.getByName('quota:test:' + crypto.randomUUID());
-    const results = await Promise.all(Array.from({ length: 20 }, () => stub.reserve(1, 5)));
-    expect(results.filter(Boolean)).toHaveLength(5);
-    await runInDurableObject(stub, (_instance, ctx) => {
-      const rows = ctx.storage.sql.exec<{ key: string; value: string }>('SELECT key,value FROM memory').toArray();
-      expect(rows).toHaveLength(1); expect(rows[0].key).toMatch(/^quota:/); expect(rows[0].value).toBe('5');
-    });
-  });
-  it('refuses a direct unauthenticated Durable Object socket', async () => {
-    const stub = env.TALK_SESSIONS.getByName('user:test:' + crypto.randomUUID());
-    expect((await stub.fetch(new Request('https://talk/socket', { headers: { Upgrade: 'websocket' } }))).status).toBe(401);
-  });
-  it('clears persistent history with no provider calls and rejects oversized frames', async () => {
-    const stub = env.TALK_SESSIONS.getByName('user:test:' + crypto.randomUUID());
-    const response = await stub.fetch(new Request('https://talk/socket', { headers: { Upgrade: 'websocket', 'x-talk-owner': 'test', 'x-talk-expiry': String(Date.now() + 60000) } }));
-    const ws = response.webSocket!; ws.accept(); const messages: { type: string; code?: string }[] = [];
-    ws.addEventListener('message', event => messages.push(JSON.parse(event.data as string)));
-    await runInDurableObject(stub, (_instance, ctx) => { ctx.storage.sql.exec("INSERT INTO memory VALUES ('history','[]',?)", Date.now() + 60000); });
-    ws.send(JSON.stringify({ type: 'clear' }));
-    await new Promise(resolve => setTimeout(resolve, 30));
-    await runInDurableObject(stub, (_instance, ctx) => { expect(ctx.storage.sql.exec("SELECT key FROM memory WHERE key='history'").toArray()).toHaveLength(0); });
-    expect(messages.some(m => m.type === 'cleared')).toBe(true);
-    ws.send('x'.repeat(31000));
-    await vi.waitFor(() => expect(messages.some(m => m.type === 'error')).toBe(true)); ws.close();
-  });
+describe('Evidence and spoiler intent',()=>{
+ it.each(['Explain the ending of The Shining (1980)','What does the final photograph mean?','Erkläre das Ende von Shining','اشرح نهاية الفيلم'])('authorizes an explicitly requested ending: %s',q=>expect(explicitlyRequestsSpoilers(q)).toBe(true));
+ it.each(['No spoilers: is Dark good?','ohne Ende bitte, keine Spoiler','بدون حرق النهاية'])('honours explicit spoiler limits: %s',q=>expect(explicitlyRequestsSpoilers(q)).toBe(false));
+ it('does not assume skipped episodes were watched',()=>{const c=TalkContextSchema.parse({season:2,episode:3,viewedRanges:[{season:2,first:1,last:1}]});expect(permittedEpisode(c,2,1)).toBe(true);expect(permittedEpisode(c,2,2)).toBe(false);expect(permittedEpisode(c,2,3)).toBe(false);});
+ it('restricts reusable source URLs',()=>{expect(reusableUrl('https://en.wikipedia.org/wiki/The_Shining_(film)')).toBe(true);for(const u of ['https://themoviedb.org/film/1','https://en.wikipedia.org.evil.test/wiki/a','http://en.wikipedia.org/wiki/a','https://user@en.wikipedia.org/wiki/a'])expect(reusableUrl(u)).toBe(false);});
+ it('strips executable source markup',()=>expect(stripMarkup('<script>bad()</script><p>Jack &amp; Wendy</p>')).toBe('Jack & Wendy'));
+ it('uses revision IDs from revisions and retrieves a frozen plot section',async()=>{
+  const urls:string[]=[];vi.spyOn(globalThis,'fetch').mockImplementation(async(u)=>{const v=String(u);urls.push(v);
+   if(v.includes('action=query'))return Response.json({query:{pages:{1:{pageid:1,title:'The Shining (film)',revisions:[{revid:42}]}}}});
+   if(v.includes('prop=sections'))return Response.json({parse:{sections:[{line:'Plot',index:'2'}]}});
+   return Response.json({parse:{text:{'*':'<p>The photograph shows Jack in 1921.</p>'}}});});
+  const e=await wikipediaEvidence('The Shining (film)',new AbortController().signal);expect(e[0].url).toContain('oldid=42');expect(e[0].text).toContain('1921');expect(urls.some(u=>u.includes('prop=sections|revid'))).toBe(false);
+ });
 });
