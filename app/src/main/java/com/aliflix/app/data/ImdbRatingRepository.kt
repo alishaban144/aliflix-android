@@ -252,7 +252,10 @@ class DefaultImdbRatingRepository(
                         }
                         episode.number to snapshot
                     }
-                    return resolved
+                    if (com.aliflix.app.BuildConfig.IS_TV) return resolved
+                    resolved.filterValues { it.state == RatingSourceState.VERIFIED || it.state == RatingSourceState.NOT_RATED }
+                        .forEach { (number, snapshot) -> fresh[number] = snapshot }
+                    if (requested.all { it.number in fresh }) return resolved
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Throwable) {
@@ -572,10 +575,12 @@ class DefaultImdbRatingRepository(
         if (snapshot.seasonNumber != episode.seasonNumber || snapshot.episodeNumber != episode.number) {
             return false
         }
-        if (episode.title.equals("Episode ${episode.number}", ignoreCase = true)) return true
+        if (com.aliflix.app.BuildConfig.IS_TV && episode.title.equals("Episode ${episode.number}", ignoreCase = true)) return true
         if (!com.aliflix.app.BuildConfig.IS_TV) {
             episode.imdbId?.takeIf(IMDB_ID_PATTERN::matches)?.let { return it == snapshot.imdbId }
-            return titleIdentityScore(normalizedEpisodeRatingTitle(episode.title), normalizedEpisodeRatingTitle(snapshot.title)) >= 65
+            // Returned nodes belong to the verified parent and exact S/E. IMDb's
+            // original title may differ completely from the localized catalogue.
+            return snapshot.imdbId?.matches(IMDB_ID_PATTERN) == true
         }
         return titleIdentityScore(normalize(episode.title), normalize(snapshot.title)) >= 65
     }

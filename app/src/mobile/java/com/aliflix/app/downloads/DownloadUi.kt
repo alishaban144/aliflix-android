@@ -5,6 +5,7 @@ package com.aliflix.app.downloads
 import com.aliflix.app.ui.common.*
 import com.aliflix.app.ui.common.AliflixSurface
 
+import androidx.compose.foundation.selection.selectable
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -596,32 +597,22 @@ internal interface DownloadUiDependencies {
     val store = rememberDownloads()
     val entries by store.entries.collectAsState()
     var preferred by remember { mutableStateOf(store.preferredTier) }
-    var menu by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
         Text("Downloads", style = MaterialTheme.typography.labelMedium, color = AliflixContentSecondary)
         AliflixSurface(shape = AliflixCorners.Card,
             level = AliflixSurfaceLevel.Content,
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Preferred quality", Modifier.weight(1f))
-                    Box {
-                        TextButton(onClick = { menu = true }) { Text(preferred.label + " ▾") }
-                        DropdownMenu(menu, { menu = false },
-        shape = AliflixCorners.Chrome,
-        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
-        tonalElevation = AliflixElevation.None,
-        shadowElevation = AliflixElevation.None,
-                         ) { DownloadQualityTier.entries.forEach { tier ->
-                            DropdownMenuItem(text = {
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(tier.label, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                    Text(tier.description, fontSize = 11.sp, color = AliflixContentSecondary, maxLines = 1)
-                                }
-                            }, trailingIcon = { if (preferred == tier) Icon(Icons.Rounded.Check, null, tint = AliflixAccentSecondary, modifier = Modifier.size(17.dp)) }, onClick = {
-                                preferred = tier; store.preferences.edit().putString("qualityTier", tier.name).apply(); menu = false
-                            })
-                        } }
+                Text("Preferred quality")
+                AliflixSegmentedControl(Modifier.fillMaxWidth()) {
+                    listOf(DownloadQualityTier.LOW,DownloadQualityTier.HIGH).forEach { tier ->
+                        val selected=if(tier==DownloadQualityTier.HIGH)preferred!=DownloadQualityTier.LOW else preferred==DownloadQualityTier.LOW
+                        Box(Modifier.weight(1f).aliflixSelection(selected,AliflixCorners.Card)
+                            .selectable(selected,role=androidx.compose.ui.semantics.Role.RadioButton,onClick={
+                                preferred=tier;store.preferences.edit().putString("qualityTier",tier.name).apply()
+                            }).heightIn(min=48.dp).testTag("download-preferred-${tier.name.lowercase()}"),contentAlignment=Alignment.Center) {
+                            Text(if(tier==DownloadQualityTier.HIGH)"Auto" else tier.label,color=if(selected)AliflixAccentSecondary else AliflixContentSecondary)
+                        }
                     }
                 }
                 HorizontalDivider(color = AliflixBorderSubtle)

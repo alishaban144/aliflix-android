@@ -63,24 +63,32 @@ internal fun dampOrbLook(current: Offset, target: Offset, deltaSeconds: Float, r
 
 /** Live Orb's capsule eyes and spherical projection, in Aliflix's pearl/lavender palette. */
 @Composable
-internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier = Modifier) {
+internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier = Modifier, conversing: Boolean = false, voiceCompanion: Boolean = false) {
     val motion = rememberMobileMotionEnabled()
     val resumed = rememberMobileResumed()
     var bounds by remember { mutableStateOf(Rect.Zero) }
     var look by remember { mutableStateOf(Offset(0f,.08f)) }
     var blink by remember { mutableFloatStateOf(0f) }
     val seconds = rememberMobileAnimationClock(motion && resumed)
-    LaunchedEffect(motion, resumed) {
+    var idleLook by remember { mutableStateOf(Offset(0f,.08f)) }
+    LaunchedEffect(conversing,motion,resumed) {
+        idleLook=Offset(0f,.08f)
+        if(conversing&&motion&&resumed)while(true) {
+            kotlinx.coroutines.delay(kotlin.random.Random.nextLong(1900,3500))
+            idleLook=Offset(kotlin.random.Random.nextFloat()*.7f-.35f,kotlin.random.Random.nextFloat()*.32f-.12f)
+        }
+    }
+    LaunchedEffect(motion, resumed, voiceCompanion) {
         if (!motion) { look = Offset(0f,.08f); blink = 0f }
         else if (resumed) {
             var previous = 0L
             while (true) withInfiniteAnimationFrameNanos { now ->
                 val idle = SystemClock.uptimeMillis() - tracker.lastTouchMillis > 1800L
-                val target = if (idle || tracker.point == null || bounds.width <= 0f) Offset(0f,.08f)
+                val target = if (idle || tracker.point == null || bounds.width <= 0f) idleLook
                     else boundedOrbLook(requireNotNull(tracker.point), bounds.center, bounds.width/2f)
                 if (previous != 0L) look = dampOrbLook(look,target,(now-previous)/1_000_000_000f,idle)
                 previous = now
-                val t = seconds.value % 4.2f
+                val t = seconds.value % if(voiceCompanion)2.9f else 4.2f
                 blink = when {
                     t < 2f || t >= 2.18f -> 0f
                     t < 2.055f -> (t-2f)/.055f

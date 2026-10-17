@@ -20,14 +20,15 @@ class TalkVoiceActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
-        setContent { AliflixMobileTheme { TalkVoiceScreen(voice, onStart = {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
-                lifecycleScope.launch { voice.connect() }
-            else permission.launch(Manifest.permission.RECORD_AUDIO)
-        }, onClose = ::finish) } }
+        setContent { AliflixMobileTheme { TalkVoiceScreen(voice, onStart = ::startListening, onClose = ::finish) } }
     }
-    // The microphone and sockets never survive the visible experience. Returning
-    // presents Resume explicitly; incoming calls or a locked phone cannot record.
+    private fun startListening() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+            lifecycleScope.launch { voice.connect() }
+        else permission.launch(Manifest.permission.RECORD_AUDIO)
+    }
+    // The microphone and sockets never survive the visible experience.
+    // Returning requires an explicit retry; a backgrounded phone cannot record.
     override fun onStop() { voice.suspendSession(); super.onStop() }
     override fun onDestroy() { voice.close(); super.onDestroy() }
 }

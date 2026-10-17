@@ -107,14 +107,17 @@ internal fun MobileSettingsDialog(
                     }
                     }
                     SettingsGroup("PLAYBACK") {
-                        var qualityMenu by remember { mutableStateOf(false) }
-                        Box {
-                            SettingsRow(Icons.Rounded.HighQuality,"Preferred quality","",onClick={qualityMenu=true}) {
-                                Text(playerSettings.preferredVideoQuality.label,color=AliflixAccentSecondary,fontSize=12.sp)
-                                Icon(Icons.Rounded.ExpandMore,null,tint=AliflixAccentSecondary)
-                            }
-                            SettingsMenu(qualityMenu,{qualityMenu=false},PreferredVideoQuality.entries,{it.label},playerSettings.preferredVideoQuality) {
-                                store.updatePreferredVideoQuality(it);qualityMenu=false
+                        Column(Modifier.padding(horizontal=13.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Text("Preferred quality",fontSize=13.sp,fontWeight=FontWeight.SemiBold,color=AliflixContentPrimary)
+                            AliflixSegmentedControl(Modifier.fillMaxWidth()) {
+                                PreferredVideoQuality.entries.forEach { quality ->
+                                    val selected=quality==playerSettings.preferredVideoQuality
+                                    Box(Modifier.weight(1f).aliflixSelection(selected,AliflixCorners.Card)
+                                        .selectable(selected,role=Role.RadioButton,onClick={store.updatePreferredVideoQuality(quality)})
+                                        .testTag("settings-quality-${quality.name.lowercase()}").heightIn(min=48.dp),contentAlignment=Alignment.Center) {
+                                        Text(quality.label,color=if(selected)AliflixAccentSecondary else AliflixContentSecondary,fontSize=13.sp)
+                                    }
+                                }
                             }
                         }
                         SettingsDivider()

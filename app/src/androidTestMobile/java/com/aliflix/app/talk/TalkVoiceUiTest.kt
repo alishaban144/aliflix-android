@@ -10,18 +10,14 @@ import org.junit.Assert.*
 
 class TalkVoiceUiTest {
     @get:Rule val compose=createComposeRule()
-    @Test fun conversationRequiresStartAndPrivacyControlsRemainReachable() {
+    @Test fun conversationStartsAutomaticallyAndPrivacyControlsRemainReachable() {
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
         val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope)
         var started=false;var closed=false
         try {
             compose.setContent { AliflixMobileTheme { TalkVoiceScreen(session,{started=true},{closed=true}) } }
-            Thread.sleep(900)
-            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
-                java.io.File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null),"talk-particle-screen.png")
-                    .outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }; bitmap.recycle()
-            }
-            compose.onNodeWithText("Start").assertIsDisplayed().performClick()
+            compose.onNodeWithText("Start").assertDoesNotExist()
+            compose.onNodeWithText("Resume").assertDoesNotExist()
             compose.runOnIdle { assertTrue(started);assertEquals("Ready",session.state.value.phase) }
             compose.onNodeWithContentDescription("Privacy").performClick()
             compose.onNodeWithText("Keep history").assertIsDisplayed()

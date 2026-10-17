@@ -22,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
@@ -57,6 +58,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     var privacy by remember { mutableStateOf(false) }
     val motion = rememberMobileMotionEnabled() && rememberMobileResumed()
     BackHandler { if (transcript) transcript = false else if (privacy) privacy = false else onClose() }
+    LaunchedEffect(Unit) { onStart() }
     val idle = state.phase in listOf("Ready", "Resume", "Reconnect", "Microphone permission", "Audio unavailable", "Try again later", "Opened elsewhere")
     Box(Modifier.fillMaxSize().background(AliflixBackgroundBase).testTag("talk-screen")) {
         TalkPixelField("", state.phase, { state.level }, motion, Modifier.fillMaxSize())
@@ -77,10 +79,8 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     if(motion)(fadeIn(tween(260))+slideInVertically{it/5}).togetherWith(fadeOut(tween(140)))
                     else EnterTransition.None.togetherWith(ExitTransition.None)
                 },label="clear-conversation-topic") { words->
-                    Text(words, color=AliflixContentPrimary,fontSize=if(words.length>24)24.sp else 30.sp,
-                        fontWeight=FontWeight.Medium,letterSpacing=1.sp,lineHeight=38.sp,maxLines=3,
-                        textAlign=androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp).testTag("talk-topic"))
+                    TalkAnimatedTopic(words,motion)
+
                 }
             }
             if(state.phase in listOf("Reconnect","Try again later","Audio unavailable","Microphone permission"))
@@ -91,18 +91,17 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     Icon(Icons.Rounded.Subtitles,"Transcript",tint=if(transcript)AliflixAccentSecondary else AliflixContentSecondary,modifier=Modifier.size(23.dp))
                 }
                 AliflixSurface(onClick={if(idle)onStart() else session.toggleMute()},
-                    modifier=Modifier.heightIn(min=60.dp).widthIn(min=if(idle)144.dp else 76.dp).then(if(motion)Modifier.animateContentSize()else Modifier),shape=CircleShape,level=AliflixSurfaceLevel.Content) {
-                    Row(Modifier.background(Brush.horizontalGradient(listOf(AliflixAccentPrimary.copy(alpha=.12f),Color.Transparent)))
-                        .padding(horizontal=24.dp,vertical=16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-                        AnimatedContent(if(idle)0 else if(state.muted)1 else 2,label="voice-control") { mode->
-                            Icon(if(mode==1)Icons.Rounded.MicOff else Icons.Rounded.Mic,
-                                if(idle)null else if(state.muted)"Unmute microphone" else "Mute microphone",tint=AliflixAccentSecondary,modifier=Modifier.size(24.dp))
+                    modifier=Modifier.size(64.dp),shape=CircleShape,level=AliflixSurfaceLevel.Content) {
+                    Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center) {
+                        AnimatedContent(if(idle)0 else if(state.muted)1 else 2,label="voice-control") { mode ->
+                            Icon(if(mode==0)Icons.Rounded.Refresh else if(mode==1)Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                                if(idle)"Retry connection" else if(state.muted)"Unmute microphone" else "Mute microphone",
+                                tint=AliflixAccentSecondary,modifier=Modifier.size(26.dp))
                         }
-                        if(idle)Text(if(state.phase=="Ready")"Start" else "Resume",color=AliflixContentPrimary,fontWeight=FontWeight.SemiBold)
                     }
                 }
-                AliflixIconButton(onClick=session::suspendSession,modifier=Modifier.size(52.dp)) {
-                    Icon(Icons.Rounded.Pause,"Pause conversation",tint=AliflixContentSecondary,modifier=Modifier.size(24.dp))
+                AliflixIconButton(onClick=onClose,modifier=Modifier.size(52.dp)) {
+                    Icon(Icons.Rounded.CallEnd,"End conversation",tint=AliflixContentSecondary,modifier=Modifier.size(24.dp))
                 }
             }
         }
@@ -246,22 +245,53 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     }
 }
 
-/** Live Orb's spherical projection with a rotating, audio-reactive glow. */
+/** Source-inspired moving light over settled, accessible type. Glyphs remain
+ * continuous; the particle lattice carries motion without sacrificing legibility. */
+@Composable private fun TalkAnimatedTopic(words:String,motion:Boolean) {
+    val clock=rememberMobileAnimationClock(motion)
+    val reveal=remember(words){Animatable(if(motion)0f else 1f)}
+    LaunchedEffect(words,motion) {if(motion)reveal.animateTo(1f,tween(1000))else reveal.snapTo(1f)}
+    Box(Modifier.fillMaxWidth().heightIn(min=112.dp),contentAlignment=Alignment.Center) {
+        if(motion&&reveal.value<1f)TalkPixelField(words,"Listening",{0f},true,
+            Modifier.matchParentSize().graphicsLayer {alpha=(1f-reveal.value)*.6f})
+        Text(words,color=AliflixContentPrimary,fontSize=if(words.length>24)24.sp else 30.sp,
+            fontWeight=FontWeight.Medium,letterSpacing=1.sp,lineHeight=38.sp,maxLines=3,
+            textAlign=androidx.compose.ui.text.style.TextAlign.Center,
+            modifier=Modifier.fillMaxWidth().padding(horizontal=14.dp).testTag("talk-topic")
+                .graphicsLayer { compositingStrategy=androidx.compose.ui.graphics.CompositingStrategy.Offscreen;alpha=.55f+reveal.value*.45f;translationY=(1f-reveal.value)*5.dp.toPx() }
+                .drawWithContent {
+                    drawContent()
+                    if(motion) {
+                        val x=((clock.value*.15f)%1.6f-.3f)*size.width
+                        drawRect(Brush.linearGradient(listOf(AliflixAccentSecondary,Color.White,AliflixAccentSecondary),
+                            Offset(x-size.width*.35f,0f),Offset(x+size.width*.35f,size.height)),
+                            blendMode=androidx.compose.ui.graphics.BlendMode.SrcAtop)
+                    }
+                })
+    }
+}
+
+/** Continuous orbiting diffuse light, with attack/release driven by real PCM. */
 @Composable private fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier) {
     val tracker=remember{DiscoverTouchTracker()}
     val seconds=rememberMobileAnimationClock(motion)
+    val energy by animateFloatAsState(if(motion)level().coerceIn(0f,1f) else 0f,tween(180),label="voice-energy")
+    val ready by animateFloatAsState(if(phase in listOf("Listening","Speaking","Thinking","Muted"))1f else .12f,tween(650),label="listening-light")
     Box(modifier.observeDiscoverTouches(tracker).semantics {contentDescription="Aliflix voice: $phase"},contentAlignment=Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            val energy=level().coerceIn(0f,1f)
-            val active=phase in listOf("Speaking","Listening","Thinking","Connecting","Reconnecting")
-            val radius=size.minDimension*(.32f+energy*.035f)
-            val theta=seconds.value*(if(phase=="Thinking")1.1f else .5f)
-            val offset=Offset(center.x+cos(theta)*radius*.28f,center.y+sin(theta)*radius*.28f)
-            for(i in 5 downTo 0) {
-                val alpha=(if(active).055f else .025f)*(1f+energy)
-                drawCircle(Brush.radialGradient(listOf(AliflixAccentPrimary.copy(alpha=alpha),AliflixAccentSecondary.copy(alpha=alpha*.4f),Color.Transparent),offset,radius*(1.3f+i*.07f)),radius*(1.3f+i*.07f),offset)
+            val radius=size.minDimension*.34f
+            val theta=seconds.value*.48f
+            val breath=1f+sin(seconds.value*1.5f)*.035f+energy*.13f
+            for(i in 0..2) {
+                val angle=theta+i*2.094f
+                val point=center+Offset(cos(angle),sin(angle))*radius*.22f
+                val color=if(i==1)AliflixAccentSecondary else AliflixAccentPrimary
+                val extent=radius*(1.55f+i*.06f)*breath
+                drawCircle(Brush.radialGradient(listOf(color.copy(alpha=ready*(.12f+energy*.14f)),color.copy(alpha=ready*.025f),Color.Transparent),
+                    point,extent),extent,point)
             }
         }
-        DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.69f).graphicsLayer {scaleX=1f+level()*.035f;scaleY=scaleX})
+        DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.66f).graphicsLayer {scaleX=1f+energy*.025f;scaleY=scaleX},
+            conversing=phase=="Speaking",voiceCompanion=true)
     }
 }

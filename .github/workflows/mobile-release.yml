@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "260"
-  RELEASE_VERSION_NAME: "3.1.170"
+  RELEASE_VERSION_CODE: "262"
+  RELEASE_VERSION_NAME: "3.1.172"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -378,7 +378,7 @@ jobs:
           import hashlib, json, os
           from pathlib import Path
           apk = Path('aliflix-mobile-compat.apk')
-          bridge = dict(versionCode=259, versionName='3.1.169', minimumSdk=29,
+          bridge = dict(versionCode=261, versionName='3.1.171', minimumSdk=29,
               apkUrl=f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['RELEASE_TAG']}/aliflix-mobile-compat.apk",
               sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), sizeBytes=apk.stat().st_size,
               notes='Update compatibility. ARM64 devices can then install the latest mobile release.')
@@ -392,15 +392,15 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile-only: Talk to Aliflix now uses Gemini 3.8 Live exclusively with the pinned Aoede voice, direct real-time speech, native interruption, context resumption and authenticated short-lived tokens. Film knowledge uses attributed Wikipedia / Wikidata / TVMaze evidence and bounded on-demand Tavily retrieval. Ending questions authorize the requested spoilers without a consent flow.
+            Mobile-only: Talk starts listening automatically after microphone permission. Teardown is idempotent and preserves the parent app. The simplified voice screen has continuous audio-reactive lighting, more expressive eyes, animated readable type and stable semantic conversation themes.
 
-            Filmo movies, Serienstream series and AniWorld Japanese anime retain priority with automatic recovery when unavailable. The source picker hides internal mirrors. Missing original-language Filmo editions are offered only after native track verification from an alternative source. Episode rating matching handles part-number variants; season changes animate, the entire Discover Ask card opens, and the compact next-episode card keeps its ring without Watch credits. Talk has a native audio-reactive orb, clear typography and moving particles.
+            Talk can use actual Aliflix viewing progress, completed episode ranges and saved/favorite identities, resolved through independent TVMaze/Wikidata sources on demand. Gemini 3.8 Live and Aoede remain the sole voice/model; no new speech engine or bundled model is introduced.
 
-            Sync with Audio remains local with the original Silero/ONNX/WebRTC binaries and unchanged confidence gates. Some short multilingual caption editions remain ambiguous and are rejected safely; see the validation report for exact passing and failed cases.
+            Playback and download preferences show two inline quality choices. IMDb season ratings merge partial host responses and accept verified parent/episode identity across localized titles. No ratings are fabricated when an upstream source has no score.
 
-            `aliflix-mobile.apk` is ARM64-only. Legacy clients receive the signed universal compatibility bridge via `update-mobile.json`; the architecture-aware updater reads `update-mobile-arm64.json`. Incompatible devices retain the installable bridge. `native-parity.json` records binary/model hashes and exact size reduction.
+            ARM64-only main APK with the existing signed universal compatibility bridge and architecture-aware updater. Native/model parity is verified by the workflow. TV is unchanged.
 
-            Validation: docs/mobile-170-validation.md. TV is unchanged; no TV APK is published.
+            Validation: docs/mobile-172-validation.md.
           files: |
             aliflix-mobile.apk
             update-mobile.json

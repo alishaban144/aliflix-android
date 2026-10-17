@@ -50,9 +50,23 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
   const existing=this.read<unknown>('viewing:'+session);if(existing)return existing;
   if(++state.calls>12)throw Error('TOOL_LIMIT');this.put('live:'+session,state,state.expires);
+  const signal=AbortSignal.timeout(3500);
+  // Catalogue cards need not carry IMDb IDs. Resolve only external identity,
+  // never catalogue titles/overviews, and only when personal context is asked for.
+  if(!state.context.imdbId&&state.context.id&&state.context.type) {
+   try {
+    const url=new URL(`https://api.themoviedb.org/3/${state.context.type}/${state.context.id}/external_ids`);
+    const headers:Record<string,string>={accept:'application/json'};
+    if(this.env.TMDB_READ_ACCESS_TOKEN)headers.Authorization='Bearer '+this.env.TMDB_READ_ACCESS_TOKEN;
+    else if(this.env.TMDB_API_KEY)url.searchParams.set('api_key',this.env.TMDB_API_KEY);
+    const external=await boundedJson(await fetch(url,{headers,signal}),8192) as {imdb_id?:unknown};
+    if(typeof external.imdb_id==='string'&&/^tt\d{1,12}$/.test(external.imdb_id)) {
+     state.context.imdbId=external.imdb_id;this.put('live:'+session,state,state.expires);
+    }
+   }catch{}
+  }
   const identities=[...(state.context.imdbId?[{imdbId:state.context.imdbId,type:state.context.type||'tv'}]:[]),
    ...(state.context.recentProgress||[]),...state.context.library].filter((v,i,a)=>a.findIndex(x=>x.imdbId===v.imdbId)===i).slice(0,8);
-  const signal=AbortSignal.timeout(3500);
   const titles=await Promise.all(identities.map(async item=>({imdbId:item.imdbId,...await resolveViewingTitle(item.imdbId,item.type,signal)})));
   const result={context:state.context,titles,boundary:'Only actual completed episodes are fully viewed. Position seconds are not timed plot evidence. Never assume missing history was watched.'};
   this.put('viewing:'+session,result,Math.min(state.expires,Date.now()+5*MINUTE));return result;

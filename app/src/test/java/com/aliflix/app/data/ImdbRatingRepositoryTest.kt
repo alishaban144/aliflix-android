@@ -13,6 +13,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImdbRatingRepositoryTest {
+    @Test fun localizedEpisodesAndPartialHostsMergeWithoutLosingVerifiedRatings() = runTest {
+        var calls=0
+        val repo=DefaultImdbRatingRepository(null,{ """{"d":[{"id":"tt5753856","l":"Dark","qid":"tvSeries","y":2017}]}""" },
+            ImdbGraphQlTransport { _,_,_ ->
+                calls++
+                val number=if(calls==1)1 else 2
+                val title=if(number==1)"Anfänge und Enden" else "Dunkle Materie"
+                """{"data":{"title":{"id":"tt5753856","titleText":{"text":"Dark"},"releaseYear":{"year":2017},"titleType":{"id":"tvSeries"},
+                    "episodes":{"episodes":{"edges":[{"node":{"id":"tt100000$number","titleText":{"text":"$title"},"series":{"episodeNumber":{"seasonNumber":2,"episodeNumber":$number}},"ratingsSummary":{"aggregateRating":8.8,"voteCount":123}}}]}}}}}"""
+            })
+        val result=repo.ratingsForEpisodes(Media(70523,MediaType.TV,"Dark",year="2017",imdbId="tt5753856"),2,
+            listOf(Episode(2,1,"Beginnings and Endings"),Episode(2,2,"Dark Matter")))
+        assertTrue(calls>=2)
+        assertEquals(RatingSourceState.VERIFIED,result[1]?.state)
+        assertEquals(RatingSourceState.VERIFIED,result[2]?.state)
+    }
     @Test
     fun episodeSeasonRatingsAreResolvedFromTheVerifiedParentSeries() = runTest {
         val repository = DefaultImdbRatingRepository(

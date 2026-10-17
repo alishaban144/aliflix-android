@@ -10,7 +10,7 @@ describe('Gemini-only live identity and security',()=>{
   const s=liveSetup(TalkContextSchema.parse({}));expect(s.model).toBe('models/gemini-3.8-live');
   expect(s.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Aoede');
   expect(s.realtimeInputConfig.automaticActivityDetection.disabled).toBe(false);
-  expect(s.tools[0].functionDeclarations[0].behavior).toBe('NON_BLOCKING');expect(s.contextWindowCompression.slidingWindow.targetTokens).toBe('4096');
+  expect(s.tools[0].functionDeclarations.map(t=>t.name)).toEqual(['film_knowledge']);expect(s.tools[0].functionDeclarations[0].behavior).toBe('NON_BLOCKING');expect(s.contextWindowCompression.slidingWindow.targetTokens).toBe('4096');
  });
  it('uses semantic visual themes and on-demand user progress without extra speech providers',()=>{
   const s=liveSetup(TalkContextSchema.parse({recentProgress:[{imdbId:'tt5753856',type:'tv',season:2,episode:1,position:120,duration:3000,completed:false}]}));
@@ -18,6 +18,30 @@ describe('Gemini-only live identity and security',()=>{
   expect(s.systemInstruction.parts[0].text).toContain('120');
   expect(s.systemInstruction.parts[0].text).toContain('never assume a started episode was finished');
   expect(TalkContextSchema.safeParse({recentProgress:Array(9).fill({imdbId:'tt1',type:'tv',season:1,episode:1,position:0,duration:100,completed:false})}).success).toBe(false);
+ });
+ it('resolves a current catalogue external ID without sending catalogue prose and caches the history tool',async()=>{
+  const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async u=>String(u).includes('external_ids')?
+   Response.json({imdb_id:'tt5753856'}):Response.json({name:'Dark',url:'https://www.tvmaze.com/shows/17861/dark',externals:{imdb:'tt5753856'}}));
+  const stub=env.TALK_SESSIONS.getByName('viewing-external-identity');
+  await runInDurableObject(stub,async(instance,state)=>{
+   const session=crypto.randomUUID(),expires=Date.now()+60000;
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context:TalkContextSchema.parse({id:70523,type:'tv',position:120,recentProgress:[]}),expires,calls:0,searches:0,grants:[]}),expires);
+   const result=await(instance as unknown as TalkSession).viewing(session);
+   expect((result as any).context.imdbId).toBe('tt5753856');expect((result as any).titles[0].title).toBe('Dark');
+   expect((result as any).context.position).toBe(120);
+   const count=spy.mock.calls.length;await(instance as unknown as TalkSession).viewing(session);expect(spy).toHaveBeenCalledTimes(count);
+  });
+ });
+ it('resolves a large movie entity with bounded identifier-only claims',async()=>{
+  const calls:string[]=[];vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{
+   const url=String(u);calls.push(url);
+   if(url.includes('list=search'))return Response.json({query:{search:[{title:'Q186341'}]}});
+   if(url.includes('props=labels'))return Response.json({entities:{Q186341:{labels:{en:{value:'The Shining'}}}}});
+   return Response.json({claims:{P345:[{mainsnak:{datavalue:{value:'tt0081505'}}}]}});
+  });
+  expect((await resolveViewingTitle('tt0081505','movie',new AbortController().signal))?.title).toBe('The Shining');
+  expect(calls.some(u=>u.includes('property=P345'))).toBe(true);
+  expect(calls.some(u=>u.includes('props=labels|claims'))).toBe(false);
  });
  it('resolves independent history titles only after matching exact IMDb identity',async()=>{
   vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({name:'Dark',url:'https://www.tvmaze.com/shows/17861/dark',premiered:'2017-12-01',externals:{imdb:'tt5753856'}}));

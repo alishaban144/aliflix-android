@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkTurnDetectorTest {
+    @Test fun semanticTopicsRejectAcknowledgementsAndPreserveFollowUpContext() {
+        assertNull(validatedTalkTopic("Okay"));assertNull(validatedTalkTopic("just just"))
+        assertNull(validatedTalkTopic("نعم"));assertNull(validatedTalkTopic("thank you"))
+        assertEquals("THE SHINING",validatedTalkTopic("The Shining"))
+        assertEquals("THE SHINING",topicWords("Okay, just tell me more","","THE SHINING"))
+        assertEquals("TIME LOOP",topicWords("Explain a time loop",""))
+        assertEquals("ALIFLIX",topicWords("Okay","just just"))
+    }
     @Test fun libraryCompletionCannotRevealTheUnwatchedLastTwentyPercent() {
         assertFalse(talkPlaybackCompleted(800.0,1000.0,true))
         assertFalse(talkPlaybackCompleted(997.0,1000.0,true))

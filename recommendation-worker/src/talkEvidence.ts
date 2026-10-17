@@ -138,12 +138,13 @@ export async function resolveViewingTitle(imdbId:string,kind:'movie'|'tv',signal
   const result=await json('https://www.wikidata.org/w/api.php?action=query&list=search&srnamespace=0&srlimit=2&format=json&srsearch='+encodeURIComponent('haswbstatement:P345='+imdbId),signal,32000);
   const ids=(result.query?.search||[]).map((v:any)=>v.title).filter((id:unknown)=>typeof id==='string'&&/^Q\d+$/.test(id));
   if(!ids.length)return;
-  const data=await json('https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=labels|claims&languages=en&ids='+ids.join('|'),signal,128000);
+  const labels=await json('https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=labels&languages=en&ids='+ids.join('|'),signal,16000);
   for(const id of ids) {
-   const entity=data.entities?.[id];const title=entity?.labels?.en?.value;
-   if(typeof title!=='string'||!entity.claims?.P345?.some((v:any)=>v.mainsnak?.datavalue?.value===imdbId))continue;
-   const year=Number(entity.claims?.P577?.[0]?.mainsnak?.datavalue?.value?.time?.slice(1,5))||undefined;
-   return {title:title.slice(0,120),year,url:'https://www.wikidata.org/wiki/'+id,license:'Wikidata · CC0'};
+   const title=labels.entities?.[id]?.labels?.en?.value;if(typeof title!=='string')continue;
+   // Fetch only this identifier claim, not every claim of a large film entity.
+   const claims=await json('https://www.wikidata.org/w/api.php?action=wbgetclaims&format=json&entity='+id+'&property=P345',signal,32000);
+   if(!claims.claims?.P345?.some((v:any)=>v.mainsnak?.datavalue?.value===imdbId))continue;
+   return {title:title.slice(0,120),url:'https://www.wikidata.org/wiki/'+id,license:'Wikidata · CC0'};
   }
  }catch{}
 }

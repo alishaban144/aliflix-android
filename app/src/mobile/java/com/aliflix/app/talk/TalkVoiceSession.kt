@@ -45,6 +45,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     val state = _state.asStateFlow()
     private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
+    @Volatile private var closed = false
     private var ws: WebSocket? = null
     private var capture: AudioRecord? = null
     private var captureJob: Job? = null
@@ -107,7 +108,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun event(type: String) = JSONObject().put("type", type)
 
     suspend fun connect() {
-        if (permitted || _state.value.phase == "Connecting") return
+        if (closed || permitted || _state.value.phase == "Connecting") return
         val account=FirebaseAuth.getInstance().currentUser?.uid?:"guest"
         if(prefs.getString("owner","")!=account){ephemeral=null;resumeHandle=null;prefs.edit().remove("history").apply();update{it.copy(lines=emptyList())}}
         reconnects = 0; permitted = true; startedAt = SystemClock.elapsedRealtime()
@@ -135,6 +136,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             .distinctBy { it.first.key }.take(8)
         conversationContext.put("library", JSONArray(identities.map { (item, kind) ->
             JSONObject().put("imdbId", item.imdbId).put("kind", kind).put("type", item.type.routeName) }))
+        conversationContext.put("recentProgress",JSONArray((context.applicationContext as AliflixApplication)
+            .playbackProgressStore.entries.value.values.sortedByDescending{it.updatedAtMillis}
+            .filter{it.media.imdbId?.matches(Regex("tt\\d{1,12}"))==true}.take(8).map { p ->
+                JSONObject().put("imdbId",p.media.imdbId).put("type",p.media.type.routeName)
+                    .put("season",p.seasonNumber?:1).put("episode",p.episodeNumber?:1)
+                    .put("position",p.positionSeconds).put("duration",p.durationSeconds)
+                    .put("completed",talkPlaybackCompleted(p.positionSeconds,p.durationSeconds,p.completed))
+            }))
         val completedEpisodes = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values
             .filter { it.media.key == progress?.media?.key && talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) }
             .map { (it.seasonNumber ?: 1) to (it.episodeNumber ?: 1) }
@@ -207,10 +216,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         } catch(cancelled:CancellationException){throw cancelled}
         catch(e:Exception){disconnected(ticket,e.message=="Limited")}
     }
+    private fun cancelSocket(socket:WebSocket?) {
+        if(socket!=null)http.dispatcher.executorService.execute {runCatching {socket.cancel()}}
+    }
     private suspend fun disconnected(ticket:Long,limited:Boolean) {
         if(ticket!=epoch||!permitted)return
         update{it.copy(phase="Reconnecting",level=0f)}
-        readyWatchdog?.cancel();stopAudio();ws?.cancel();ws=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
+        readyWatchdog?.cancel();stopAudio();cancelSocket(ws);ws=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
         if(limited||++reconnects>3||SystemClock.elapsedRealtime()-startedAt>1200000) {
             suspendSession();update {it.copy(phase=if(limited) "Try again later" else "Reconnect")};return
         }
@@ -243,16 +255,26 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         message.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls->
             for(i in 0 until calls.length()) {
                 val call=calls.getJSONObject(i);val id=call.getString("id")
-                if(call.optString("name")!="film_knowledge"||tools.size>=2)continue
+                if(call.optString("name")=="conversation_topic") {
+                    val topic=validatedTalkTopic(call.optJSONObject("args")?.optString("topic").orEmpty())
+                    if(topic!=null)update{it.copy(words=topic)}
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
+                        JSONObject().put("id",id).put("name","conversation_topic").put("response",JSONObject().put("accepted",topic!=null))))))
+                    continue
+                }
+                if(call.optString("name") !in setOf("film_knowledge","viewing_context")||tools.size>=2)continue
                 update{it.copy(phase=if(speaking)it.phase else "Thinking")}
                 tools[id]=scope.launch {
-                    val result=runCatching { post("knowledge",JSONObject().put("session",ephemeral!!.getString("session"))
-                        .put("question",(inputText.ifBlank {lastQuestion}).take(1600)).put("request",call.getJSONObject("args"))) }
+                    val result=runCatching {
+                        if(call.optString("name")=="viewing_context")post("viewing",JSONObject().put("session",ephemeral!!.getString("session")))
+                        else post("knowledge",JSONObject().put("session",ephemeral!!.getString("session"))
+                            .put("question",(inputText.ifBlank {lastQuestion}).take(1600)).put("request",call.getJSONObject("args")))
+                    }
                         .getOrElse { JSONObject().put("unavailable",true).put("evidence",JSONArray()) }
                     if(ticket==epoch&&permitted&&id !in cancelledTools) {
                         val references=result.optJSONArray("evidence")
                         finalReferences=references?.let {a->(0 until a.length()).map {n->a.getJSONObject(n).let {TalkReference(it.getString("title"),it.getString("url"),it.getString("license"))}}}.orEmpty()
-                        val response=JSONObject().put("id",id).put("name","film_knowledge").put("response",result.put("scheduling","WHEN_IDLE"))
+                        val response=JSONObject().put("id",id).put("name",call.getString("name")).put("response",result.put("scheduling","WHEN_IDLE"))
                         emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(response))))
                     }
                     tools.remove(id)
@@ -272,7 +294,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 update { v->
                     val lines=v.lines.toMutableList();val line=TalkLine("assistant",outputText,finalReferences)
                     if(assistantLine in lines.indices)lines[assistantLine]=line else{lines.add(line);assistantLine=minOf(lines.lastIndex,23)}
-                    v.copy(lines=lines.takeLast(24),words=topicWords(lastQuestion,outputText))
+                    v.copy(lines=lines.takeLast(24))
                 }
             }
             content.optJSONObject("modelTurn")?.optJSONArray("parts")?.let { parts->
@@ -292,6 +314,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             } }
             if(content.optBoolean("turnComplete")) {
                 debugTurnCompleteAt=SystemClock.elapsedRealtime();endOfAudio=true;assistantLine=-1;outputText="";finalReferences=emptyList()
+                update{it.copy(words=topicWords(lastQuestion,"",it.words))}
                 persistHistory()
             }
         }
@@ -371,7 +394,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     internal val debugPlayedSamples get() = writtenSamples
     internal fun debugInterrupt(){check(BuildConfig.DEBUG);sequence++;interruptOutput();emit(JSONObject().put("realtimeInput",JSONObject().put("text","Stop speaking.")))}
-    internal fun debugReconnect(){check(BuildConfig.DEBUG);update{it.copy(phase="Reconnecting")};ws?.cancel()}
+    internal fun debugReconnect(){check(BuildConfig.DEBUG);update{it.copy(phase="Reconnecting")};cancelSocket(ws)}
     internal suspend fun debugInjectText(text:String){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};lastQuestion=text;addLine(TalkLine("user",text));debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)))}
     internal suspend fun debugInjectUtterance(pcm:ByteArray){check(BuildConfig.DEBUG&&pcm.size in 6400..960000&&pcm.size%2==0);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;for(at in pcm.indices step 3200){sendPcm(pcm.copyOfRange(at,minOf(at+3200,pcm.size)));delay(100)};repeat(15){sendPcm(ByteArray(3200));delay(100)};emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)))}
     fun toggleMute(){muted=!muted;if(muted&&captureJob?.isActive==true)emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)));update{it.copy(muted=muted,phase=if(it.phase in listOf("Connecting","Reconnecting"))it.phase else if(muted) "Muted" else if(speaking) "Speaking" else "Listening")}}
@@ -380,32 +403,62 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         sequence++;interruptOutput();val session=ephemeral?.optString("session")
         resumeHandle=null;ephemeral=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
         prefs.edit().remove("history").apply();update{it.copy(lines=emptyList(),words="ALIFLIX")}
-        val next=++epoch;readyWatchdog?.cancel();reconnectJob?.cancel();stopAudio();ws?.cancel();ws=null
+        val next=++epoch;readyWatchdog?.cancel();reconnectJob?.cancel();stopAudio();cancelSocket(ws);ws=null
         scope.launch {
             if(!session.isNullOrBlank())runCatching{post("close",JSONObject().put("session",session).put("forget",true))}
             if(permitted&&next==epoch)openSocket(next)
         }
     }
     private fun stopAudio() {
-        captureJob?.cancel(); captureJob = null; runCatching { capture?.stop() }; capture?.release(); capture = null
-        echo?.release(); echo = null; noise?.release(); noise = null
-        audio?.chunks?.close(); audio = null; outputJob?.cancel(); outputJob = null
-        synchronized(outputLock) { runCatching { output?.pause(); output?.flush(); output?.release() }; output = null }
-        speaking = false; localVoice = false
-        tools.values.forEach { it.cancel() }; tools.clear()
+        captureJob?.cancel(); captureJob = null
+        val record=capture;capture=null
+        runCatching { record?.stop() };runCatching { record?.release() }
+        val aec=echo;echo=null;runCatching { aec?.release() }
+        val ns=noise;noise=null;runCatching { ns?.release() }
+        audio?.chunks?.close();audio=null;outputJob?.cancel();outputJob=null
+        synchronized(outputLock) {
+            val track=output;output=null
+            runCatching { track?.pause() };runCatching { track?.flush() };runCatching { track?.release() }
+        }
+        speaking=false;localVoice=false
+        tools.values.forEach {it.cancel()};tools.clear()
     }
     fun suspendSession() {
-        permitted = false; awaitingInterrupt = false; epoch++; readyWatchdog?.cancel(); readyWatchdog = null; reconnectJob?.cancel(); ws?.close(1000, "Paused"); ws = null
-        stopAudio(); manager.abandonAudioFocusRequest(focus)
-        if (android.os.Build.VERSION.SDK_INT >= 31 && routedSpeaker && manager.mode == AudioManager.MODE_IN_COMMUNICATION &&
-            manager.communicationDevice?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
-            oldCommunicationDevice?.let { runCatching { manager.setCommunicationDevice(it) } } ?: manager.clearCommunicationDevice()
+        // Detach ownership before focus/routing callbacks can re-enter teardown.
+        permitted=false;awaitingInterrupt=false;epoch++
+        readyWatchdog?.cancel();readyWatchdog=null;reconnectJob?.cancel();reconnectJob=null
+        val socket=ws;ws=null;runCatching {socket?.close(1000,"Paused")}
+        stopAudio()
+        val restoreMode=oldMode;oldMode=null
+        val restoreDevice=oldCommunicationDevice;oldCommunicationDevice=null
+        val restoreSpeaker=routedSpeaker;routedSpeaker=false
+        if(restoreMode!=null) {
+            runCatching {manager.abandonAudioFocusRequest(focus)}
+            runCatching {
+                if(android.os.Build.VERSION.SDK_INT>=31&&restoreSpeaker&&manager.mode==AudioManager.MODE_IN_COMMUNICATION&&
+                    manager.communicationDevice?.type==AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                    if(restoreDevice!=null)manager.setCommunicationDevice(restoreDevice) else manager.clearCommunicationDevice()
+                }
+            }
+            runCatching {if(manager.mode==AudioManager.MODE_IN_COMMUNICATION)manager.mode=restoreMode}
         }
-        routedSpeaker = false; oldCommunicationDevice = null
-        if (manager.mode == AudioManager.MODE_IN_COMMUNICATION) oldMode?.let { manager.mode = it }; oldMode = null
-        update { it.copy(phase = "Resume", level = 0f) }
+        update {it.copy(phase="Resume",level=0f)}
     }
-    override fun close() { suspendSession(); http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll() }
+    override fun close() {
+        if(closed)return
+        closed=true
+        val socket=ws
+        suspendSession()
+        http.dispatcher.executorService.execute {
+            // TLS close can write close_notify. Activity destruction must never
+            // do socket cancellation or connection-pool eviction on main.
+            runCatching { socket?.cancel() }
+            runCatching { http.dispatcher.cancelAll() }
+            runCatching { http.connectionPool.evictAll() }
+        }
+        // OkHttp owns in-flight WebSocket callbacks. Shutting its executor down
+        // here races their close/failure dispatch and can terminate the process.
+    }
 }
 
 /** Adaptive energy gate with attack, hysteresis, hangover and bounded utterances.
@@ -446,7 +499,20 @@ internal fun compactTalkViewedRanges(episodes: List<Pair<Int,Int>>): List<Triple
     return ranges.takeLast(120)
 }
 
-internal fun topicWords(question:String,answer:String):String {
-    val text=question.ifBlank {answer}.replace(Regex("(?i)\\b(explain|ending|what does|mean|can you|please|the|of|movie|film|series|erkläre|bitte|اشرح)\\b")," ").trim()
-    return text.split(Regex("\\s+")).filter{it.length>2}.take(2).joinToString(" ").take(38).ifBlank{"ALIFLIX"}
+/** Model-generated semantic labels, never raw streaming transcription. */
+internal fun validatedTalkTopic(value:String):String? {
+    val text=value.replace(Regex("[\\p{Cc}\\p{Cf}]"),"").trim().take(48)
+    val tokens=text.lowercase(Locale.ROOT).split(Regex("[^\\p{L}\\p{N}]+" )).filter{it.isNotBlank()}
+    val filler=setOf("okay","ok","just","yes","no","sure","alright","thanks","thank","you","hello","hallo","ja","nein","bitte","danke","نعم","حسنا","شكرا")
+    if(tokens.isEmpty()||tokens.size>6||tokens.all{it in filler}||tokens.distinct().size==1&&tokens.size>1)return null
+    return text.uppercase(Locale.ROOT)
+}
+internal fun topicWords(question:String,answer:String,previous:String="ALIFLIX"):String {
+    // Local fallback is deliberately conservative; the native semantic tool can
+    // identify arbitrary films and concepts without an extra model or request.
+    val text=question.ifBlank{answer}.lowercase(Locale.ROOT)
+    if(previous!="ALIFLIX")return previous
+    val themes=listOf("time loop" to "TIME LOOP","time travel" to "TIME TRAVEL","science fiction" to "SCI-FI",
+        "sci-fi" to "SCI-FI","zeitreise" to "ZEITREISE","السفر عبر الزمن" to "السفر عبر الزمن")
+    return themes.firstOrNull{it.first in text}?.second?:previous
 }
