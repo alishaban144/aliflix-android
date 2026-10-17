@@ -1,6 +1,6 @@
 import {env,runInDurableObject} from 'cloudflare:test';
 import {describe,it,expect,vi,afterEach} from 'vitest';
-import {TalkContextSchema,explicitlyRequestsSpoilers,permittedEpisode,reusableUrl,stripMarkup,wikipediaEvidence,requestedEpisodeBoundary,avoidsSpoilers} from '../src/talkEvidence';
+import {TalkContextSchema,explicitlyRequestsSpoilers,permittedEpisode,reusableUrl,stripMarkup,wikipediaEvidence,requestedEpisodeBoundary,avoidsSpoilers,tavilyEvidence} from '../src/talkEvidence';
 import {talkRoute,TalkSession} from '../src/talk';
 import {issueLiveToken,liveSetup,liveInstructions,TALK_MODEL,TALK_VOICE} from '../src/talkProviders';
 const config={...env,CURSOR_SIGNING_SECRET:'test-only',GEMINI_API_KEY:'test-only'};
@@ -23,6 +23,11 @@ describe('Gemini-only live identity and security',()=>{
   for(const path of ['session','knowledge','close'])expect((await talkRoute(new Request('https://test/v1/talk/'+path,{method:'POST',body:'{}'}),config))?.status).toBe(401);
  });
  it('bounds daily quotas and removes expired state',async()=>{const stub=env.TALK_SESSIONS.getByName('test-live-quota');await runInDurableObject(stub,async instance=>{const talk=instance as unknown as TalkSession;expect(await talk.reserve(2,2)).toBe(true);expect(await talk.reserve(1,2)).toBe(false);});});
+ it('excludes catalogue IDs from model prompts and deletes owner memory',async()=>{
+  expect(liveInstructions(TalkContextSchema.parse({id:987654321}))).not.toContain('987654321');
+  const stub=env.TALK_SESSIONS.getByName('delete-live-owner');
+  await runInDurableObject(stub,async(instance,state)=>{state.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES(?,?,?)','evidence:test','[]',Date.now()+60000);await(instance as unknown as TalkSession).close(crypto.randomUUID(),true);expect(state.storage.sql.exec<{n:number}>('SELECT COUNT(*) n FROM memory').one().n).toBe(0);});
+ });
  it('rejects playback URLs, TMDB text and credentials',()=>{for(const k of ['title','overview','subtitles','cookie','streamUrl','apiKey'])expect(TalkContextSchema.safeParse({[k]:'private'}).success).toBe(false);});
  it('does not require spoilers or mandatory evidence for familiar answers',()=>{const p=liveInstructions(TalkContextSchema.parse({}));expect(p).toContain('never ask permission');expect(p).toContain('reliable');expect(p).toContain('NEVER future episodes');expect(p).not.toContain('Groq');});
 });
@@ -32,6 +37,13 @@ describe('Evidence and spoiler intent',()=>{
  it('keeps exact episode numbers when tools request a different future episode',()=>{expect(requestedEpisodeBoundary('Explain Dark season 1 episode 1')).toEqual({season:1,episode:1});expect(requestedEpisodeBoundary('Dark S2E3')).toEqual({season:2,episode:3});expect(avoidsSpoilers('Is episode 5 good? No spoilers.')).toBe(true);});
  it('does not assume skipped episodes were watched',()=>{const c=TalkContextSchema.parse({season:2,episode:3,viewedRanges:[{season:2,first:1,last:1}]});expect(permittedEpisode(c,2,1)).toBe(true);expect(permittedEpisode(c,2,2)).toBe(false);expect(permittedEpisode(c,2,3)).toBe(false);});
  it('restricts reusable source URLs',()=>{expect(reusableUrl('https://en.wikipedia.org/wiki/The_Shining_(film)')).toBe(true);for(const u of ['https://themoviedb.org/film/1','https://en.wikipedia.org.evil.test/wiki/a','http://en.wikipedia.org/wiki/a','https://user@en.wikipedia.org/wiki/a'])expect(reusableUrl(u)).toBe(false);});
+ it('uses attributed reusable search evidence during a live Wikipedia outage',async()=>{
+  const calls:string[]=[];vi.spyOn(globalThis,'fetch').mockImplementation(async(u)=>{calls.push(String(u));
+   if(String(u)==='https://api.tavily.com/search')return Response.json({results:[{title:'The Shining (film)',url:'https://en.wikipedia.org/wiki/The_Shining_(film)',content:'The Shining is a 1980 film. Jack freezes in the maze; Wendy and Danny escape in the snowcat.'},{title:'Wrong source',url:'https://themoviedb.org/movie/694',content:'Do not use'}]});
+   return new Response('outage',{status:503});});
+  const result=await tavilyEvidence({...config,TAVILY_API_KEY:'test-only'},{title:'The Shining',year:1980,kind:'movie',query:'ending'},new AbortController().signal);
+  expect(result).toHaveLength(1);expect(result[0].license).toContain('CC BY-SA');expect(result[0].text).toContain('snowcat');expect(calls.filter(v=>v==='https://api.tavily.com/search')).toHaveLength(1);
+ });
  it('strips executable source markup',()=>expect(stripMarkup('<script>bad()</script><p>Jack &amp; Wendy</p>')).toBe('Jack & Wendy'));
  it('uses revision IDs from revisions and retrieves a frozen plot section',async()=>{
   const urls:string[]=[];vi.spyOn(globalThis,'fetch').mockImplementation(async(u)=>{const v=String(u);urls.push(v);

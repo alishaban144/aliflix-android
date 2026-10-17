@@ -23,7 +23,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
    if(!await env.TALK_SESSIONS.getByName('quota:ip:'+hash).reserve(1,12)||!await env.TALK_SESSIONS.getByName('quota:global').reserve(1,40))return json({error:'DAILY_LIMIT'},429);
    return json(await user.open(body.context));
   }
-  if(path.endsWith('/close')) {const body=z.object({session:z.string().uuid()}).strict().parse(bodyRaw);await user.close(body.session);return json({closed:true});}
+  if(path.endsWith('/close')) {const body=z.object({session:z.string().uuid(),forget:z.boolean().default(false)}).strict().parse(bodyRaw);await user.close(body.session,body.forget);return json({closed:true});}
   const body=requestSchema.parse(bodyRaw);return json(await user.knowledge(body.session,body.request,body.question));
  }catch(e) {
   const code=e instanceof Error?e.message:'';
@@ -45,7 +45,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
  async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const token=await issueLiveToken(this.env,context,expires);
   this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%'");this.put('live:'+session,{context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
   await this.ctx.storage.setAlarm(expires);return {...token,session};}
- async close(session:string){this.ctx.storage.sql.exec('DELETE FROM memory WHERE key=?','live:'+session);}
+ async close(session:string,forget=false){if(forget)this.ctx.storage.sql.exec('DELETE FROM memory');else this.ctx.storage.sql.exec('DELETE FROM memory WHERE key=?','live:'+session);}
  async knowledge(session:string,q:KnowledgeRequest,question:string) {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
   const key=JSON.stringify([q.title.toLowerCase(),q.year,q.kind,q.season,q.episode]);

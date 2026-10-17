@@ -27,7 +27,7 @@ export function avoidsSpoilers(text:string):boolean {return /\bno spoilers?(?!\s
 export function permittedEpisode(c:TalkContext,s:number,e:number):boolean {return s===c.season&&e===c.episode?c.completed:c.viewedRanges.some(r=>r.season===s&&e>=r.first&&e<=r.last);}
 const WIKI='https://en.wikipedia.org/w/api.php?format=json&origin=*&';
 async function json(url:string,signal:AbortSignal,limit=512000):Promise<any> {
- return boundedJson(await fetch(url,{signal,headers:{'user-agent':'Aliflix/3.1.170 (+https://github.com/alishaban144/aliflix-android)','accept':'application/json'},cf:{cacheTtl:3600}}),limit);
+ return boundedJson(await fetch(url,{signal:AbortSignal.any([signal,AbortSignal.timeout(2500)]),headers:{'user-agent':'Aliflix/3.1.170 (+https://github.com/alishaban144/aliflix-android)','accept':'application/json'},cf:{cacheTtl:3600}}),limit);
 }
 export function reusableUrl(value:string):boolean {try {const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.port===''&&
  (u.hostname==='en.wikipedia.org'&&u.pathname.startsWith('/wiki/')||u.hostname==='www.tvmaze.com'&&/^\/(shows|episodes)\/\d+/.test(u.pathname));}catch{return false;}}
@@ -87,18 +87,36 @@ export async function tavilyEvidence(env:RecommendationEnv,q:KnowledgeRequest,si
  // Search discovers sources, not licences. Fetch only independently validated
  // reusable pages; never pass third-party snippets, TMDB or arbitrary URLs.
  const results=(r as any).results||[];
- const articles=results.filter((v:any)=>reusableUrl(v.url)&&new URL(v.url).hostname==='en.wikipedia.org').slice(0,2);
- if(q.kind==='tv')return []; // No full-series plots past an episode boundary.
  const evidence:Evidence[]=[];
- for(const hit of articles){const title=decodeURIComponent(new URL(hit.url).pathname.slice(6)).replaceAll('_',' ');
+ for(const hit of results.filter((v:any)=>reusableUrl(v.url)).slice(0,2)) {
+  const u=new URL(hit.url);const content=stripMarkup(String(hit.content||'')).slice(0,3500);
+  if(q.kind==='tv') {
+   const label=(String(hit.title||'')+' '+content).toLowerCase();
+   const number=label.match(/(?:season|s)\s*(\d+)\s*[,.: -]*(?:episode|e)\s*(\d+)|(\d+)x(\d+)/i);
+   const values=number?.slice(1).filter((v:any)=>v!=null);
+   if(u.hostname==='www.tvmaze.com'&&u.pathname.startsWith('/episodes/')&&values&&Number(values[0])===q.season&&Number(values[1])===q.episode&&normalize(label).includes(normalize(q.title))&&content.length>40)
+    evidence.push({id:'tvmaze-cached-'+u.pathname.split('/')[2],title:String(hit.title),text:content,url:u.toString(),license:'TVmaze · CC BY-SA 4.0 · cached extract via Tavily',season:q.season,episode:q.episode});
+   continue;
+  }
+  if(u.hostname!=='en.wikipedia.org')continue;
+  const title=decodeURIComponent(u.pathname.slice(6)).replaceAll('_',' ');
   if(normalize(title)!==normalize(q.title))continue;
-  const exact=await wikipediaTitle({...q,title},signal);if(exact)evidence.push(...await wikipediaEvidence(exact.title,signal));}
+  try {const exact=await wikipediaTitle({...q,title},signal);if(exact)evidence.push(...await wikipediaEvidence(exact.title,signal));}catch{}
+  if(!evidence.length&&q.year&&content.includes(String(q.year))&&content.length>40)
+   evidence.push({id:'wikipedia-cached-'+encodeURIComponent(title),title,text:content,url:u.toString(),license:'Wikipedia contributors · CC BY-SA 4.0 · cached extract via Tavily'});
+ }
+
  return evidence;
 }
 export async function retrieveKnowledge(env:RecommendationEnv,q:KnowledgeRequest,allowPlot:boolean,signal:AbortSignal,allowSearch:boolean,context?:TalkContext,reserveSearch:()=>Promise<boolean>=async()=>true):Promise<Evidence[]> {
  let title:Awaited<ReturnType<typeof wikipediaTitle>>;
  try{title=await wikipediaTitle(q,signal);}catch{}
- if(q.kind==='tv') { const watched=!!context&&!!title?.imdbId&&title.imdbId===context.imdbId&&q.season!=null&&q.episode!=null&&permittedEpisode(context,q.season,q.episode); return tvEpisodeEvidence(allowPlot||watched?q:{...q,season:undefined,episode:undefined},title?.imdbId,signal); }
+ if(q.kind==='tv') {
+  const watched=!!context&&!!title?.imdbId&&title.imdbId===context.imdbId&&q.season!=null&&q.episode!=null&&permittedEpisode(context,q.season,q.episode);
+  let result:Evidence[]=[];try{result=await tvEpisodeEvidence(allowPlot||watched?q:{...q,season:undefined,episode:undefined},title?.imdbId,signal);}catch{}
+  if(!result.length&&(allowPlot||watched)&&q.episode!=null&&allowSearch&&await reserveSearch())try{result=await tavilyEvidence(env,q,signal);}catch{}
+  return result;
+ }
  if(!allowPlot)return title?[{id:'wikidata-title-'+title.pageid,title:title.title,text:JSON.stringify(title),url:'https://en.wikipedia.org/wiki/'+encodeURIComponent(title.title),license:'Wikidata · CC0; Wikipedia title · CC BY-SA 4.0'}]:[];
  let result:Evidence[]=[];if(title)try{result=await wikipediaEvidence(title.title,signal);}catch{}
  if(!result.length&&allowSearch&&await reserveSearch())try{result=await tavilyEvidence(env,q,signal);}catch{}
