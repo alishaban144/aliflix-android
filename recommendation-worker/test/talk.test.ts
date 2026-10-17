@@ -43,6 +43,15 @@ describe('Gemini-only live identity and security',()=>{
   expect(calls.some(u=>u.includes('property=P345'))).toBe(true);
   expect(calls.some(u=>u.includes('props=labels|claims'))).toBe(false);
  });
+ it('still identifies a series when TVMaze is unavailable',async()=>{
+  vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{
+   const url=String(u);if(url.includes('api.tvmaze.com'))return new Response('unavailable',{status:503});
+   if(url.includes('list=search'))return Response.json({query:{search:[{title:'Q24702309'}]}});
+   if(url.includes('props=labels'))return Response.json({entities:{Q24702309:{labels:{en:{value:'Dark'}}}}});
+   return Response.json({claims:{P345:[{mainsnak:{datavalue:{value:'tt5753856'}}}]}});
+  });
+  expect((await resolveViewingTitle('tt5753856','tv',new AbortController().signal))?.title).toBe('Dark');
+ });
  it('resolves independent history titles only after matching exact IMDb identity',async()=>{
   vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({name:'Dark',url:'https://www.tvmaze.com/shows/17861/dark',premiered:'2017-12-01',externals:{imdb:'tt5753856'}}));
   expect((await resolveViewingTitle('tt5753856','tv',new AbortController().signal))?.title).toBe('Dark');

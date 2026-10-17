@@ -130,11 +130,11 @@ export async function retrieveKnowledge(env:RecommendationEnv,q:KnowledgeRequest
 export async function resolveViewingTitle(imdbId:string,kind:'movie'|'tv',signal:AbortSignal):Promise<{title:string;year?:number;url:string;license:string}|undefined> {
  if(!/^tt\d{1,12}$/.test(imdbId))return;
  try {
-  if(kind==='tv') {
-   const show=await json('https://api.tvmaze.com/lookup/shows?imdb='+imdbId,signal,64000);
+  if(kind==='tv') {try {
+   const show=await json('https://api.tvmaze.com/lookup/shows?imdb='+imdbId,AbortSignal.any([signal,AbortSignal.timeout(1000)]),64000);
    if(show.externals?.imdb===imdbId&&typeof show.name==='string'&&/^https:\/\/www\.tvmaze\.com\/shows\/\d+/.test(show.url))
     return {title:show.name.slice(0,120),year:Number(show.premiered?.slice(0,4))||undefined,url:show.url,license:'TVMaze · CC BY-SA'};
-  }
+  }catch{ /* Wikidata can still resolve the same exact ID. */ }}
   const result=await json('https://www.wikidata.org/w/api.php?action=query&list=search&srnamespace=0&srlimit=2&format=json&srsearch='+encodeURIComponent('haswbstatement:P345='+imdbId),signal,32000);
   const ids=(result.query?.search||[]).map((v:any)=>v.title).filter((id:unknown)=>typeof id==='string'&&/^Q\d+$/.test(id));
   if(!ids.length)return;
