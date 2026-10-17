@@ -33,13 +33,18 @@ class TalkExitDeviceTest {
   val receipt=JSONArray()
   try {runBlocking {
    withTimeout(25000){while(session.state.value.phase!="Listening")delay(50)}
-   for(prompt in listOf("Let's discuss The Shining (1980). Describe its atmosphere in one sentence without plot spoilers.","Okay, just continue about that same atmosphere in one sentence.")) {
+   for((index,prompt) in listOf("Let's discuss The Shining (1980). Describe its atmosphere in one sentence without plot spoilers.","Okay, just continue about that same atmosphere in one sentence.","Why is Dark a German-language series? Answer briefly, with no plot spoilers.","Please answer in German now, one sentence about Dark.").withIndex()) {
     val began=android.os.SystemClock.elapsedRealtime()
     withContext(Dispatchers.Main){session.debugInjectText(prompt)}
     withTimeout(30000){while(session.debugFirstAudioAt==0L||session.debugTurnCompleteAt<session.debugFirstAudioAt||session.state.value.phase=="Speaking")delay(50)}
     assertEquals("Aoede",session.debugVoice);assertEquals("gemini-3.8-live",session.debugModel)
     assertNotEquals("ALIFLIX",session.state.value.words)
-    receipt.put(JSONObject().put("topic",session.state.value.words).put("firstAudioMs",session.debugFirstAudioAt-began).put("voice",session.debugVoice))
+    assertEquals(if(index==3)"de" else "en",session.debugResponseLanguage)
+    if(index>=2)assertTrue("New named subject must replace old topic",session.state.value.words.contains("DARK"))
+    val answer=session.state.value.lines.lastOrNull{it.role=="assistant"}?.text.orEmpty()
+    assertTrue(answer,if(index==3)Regex("(?i)\\b(ist|eine|die|der|und|wurde)\\b").containsMatchIn(answer)
+        else Regex("(?i)\\b(the|its|is|and|was|because|it)\\b").containsMatchIn(answer))
+    receipt.put(JSONObject().put("topic",session.state.value.words).put("firstAudioMs",session.debugFirstAudioAt-began).put("voice",session.debugVoice).put("language",session.debugResponseLanguage).put("answer",answer))
    }
    assertEquals(receipt.getJSONObject(0).getString("topic"),receipt.getJSONObject(1).getString("topic"))
    withContext(Dispatchers.Main){talk.finish()}

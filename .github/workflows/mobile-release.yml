@@ -392,7 +392,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile-only: Talk starts listening automatically after microphone permission. Teardown is idempotent and preserves the parent app. The simplified voice screen has continuous audio-reactive lighting, more expressive eyes, animated readable type and stable semantic conversation themes.
+            Mobile-only: Talk starts listening automatically after microphone permission. Teardown is idempotent and preserves the parent app. The simplified voice screen has continuous audio-reactive lighting, more expressive eyes, fine-dot particle lettering and stable semantic conversation themes. Response language stays locked until explicitly changed.
 
             Talk can use actual Aliflix viewing progress, completed episode ranges and saved/favorite identities, resolved through independent TVMaze/Wikidata sources on demand. Gemini 3.8 Live and Aoede remain the sole voice/model; no new speech engine or bundled model is introduced.
 

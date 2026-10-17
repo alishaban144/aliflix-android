@@ -70,6 +70,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     @Volatile private var localVoice = false
     private var ephemeral: JSONObject? = null
     private var resumeHandle: String? = null
+    @Volatile private var responseLanguage:String?=null
+    internal val debugResponseLanguage get()=responseLanguage
     private var inputText = ""
     private var outputText = ""
     private var lastQuestion = ""
@@ -110,12 +112,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     suspend fun connect() {
         if (closed || permitted || _state.value.phase == "Connecting") return
         val account=FirebaseAuth.getInstance().currentUser?.uid?:"guest"
-        if(prefs.getString("owner","")!=account){ephemeral=null;resumeHandle=null;prefs.edit().remove("history").apply();update{it.copy(lines=emptyList())}}
+        if(prefs.getString("owner","")!=account){ephemeral=null;resumeHandle=null;responseLanguage=null;prefs.edit().remove("history").apply();update{it.copy(lines=emptyList())}}
         reconnects = 0; permitted = true; startedAt = SystemClock.elapsedRealtime()
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
@@ -183,6 +185,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         update { it.copy(phase=if(reconnects==0) "Connecting" else "Reconnecting") }
         try {
             if(ephemeral==null || ephemeral!!.optLong("expires")<System.currentTimeMillis()+10000) {
+                responseLanguage?.let {conversationContext.put("responseLanguage",it)}
                 val minted=post("session",JSONObject().put("context",conversationContext))
                 if(ticket!=epoch||!permitted)return
                 ephemeral=minted;resumeHandle=null
@@ -255,11 +258,20 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         message.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls->
             for(i in 0 until calls.length()) {
                 val call=calls.getJSONObject(i);val id=call.getString("id")
+                if(call.optString("name")=="conversation_language") {
+                    val args=call.optJSONObject("args")?:JSONObject()
+                    responseLanguage=chooseTalkResponseLanguage(responseLanguage,args.optString("language"),args.optBoolean("explicitRequest"))
+                    val result=JSONObject().put("language",responseLanguage?:"und").put("locked",responseLanguage!=null).put("scheduling","SILENT")
+                        .put("instruction","Use this response language for every answer until the user explicitly requests a different one. Titles and quotations do not change it.")
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
+                        JSONObject().put("id",id).put("name","conversation_language").put("response",result)))))
+                    continue
+                }
                 if(call.optString("name")=="conversation_topic") {
                     val topic=validatedTalkTopic(call.optJSONObject("args")?.optString("topic").orEmpty())
                     if(topic!=null)update{it.copy(words=topic)}
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
-                        JSONObject().put("id",id).put("name","conversation_topic").put("response",JSONObject().put("accepted",topic!=null))))))
+                        JSONObject().put("id",id).put("name","conversation_topic").put("response",JSONObject().put("accepted",topic!=null).put("scheduling","SILENT"))))))
                     continue
                 }
                 if(call.optString("name") !in setOf("film_knowledge","viewing_context")||tools.size>=2)continue
@@ -515,4 +527,11 @@ internal fun topicWords(question:String,answer:String,previous:String="ALIFLIX")
     val themes=listOf("time loop" to "TIME LOOP","time travel" to "TIME TRAVEL","science fiction" to "SCI-FI",
         "sci-fi" to "SCI-FI","zeitreise" to "ZEITREISE","السفر عبر الزمن" to "السفر عبر الزمن")
     return themes.firstOrNull{it.first in text}?.second?:previous
+}
+
+/** A foreign title or a mixed-language phrase cannot unlock an established language. */
+internal fun chooseTalkResponseLanguage(current:String?,requested:String,explicitRequest:Boolean):String? {
+    if(current!=null&&!explicitRequest)return current
+    val code=requested.trim().lowercase(Locale.ROOT)
+    return code.takeIf{it.matches(Regex("[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}"))}?:current
 }

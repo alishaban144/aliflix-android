@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkTurnDetectorTest {
+    @Test fun establishedLanguageChangesOnlyForAnExplicitRequest() {
+        assertEquals("en",chooseTalkResponseLanguage(null,"en",false))
+        assertEquals("en",chooseTalkResponseLanguage("en","de",false))
+        assertEquals("de",chooseTalkResponseLanguage("en","de",true))
+        assertEquals("de",chooseTalkResponseLanguage("de","ar",false))
+        assertEquals("en",chooseTalkResponseLanguage("en","not a code",true))
+    }
     @Test fun semanticTopicsRejectAcknowledgementsAndPreserveFollowUpContext() {
         assertNull(validatedTalkTopic("Okay"));assertNull(validatedTalkTopic("just just"))
         assertNull(validatedTalkTopic("نعم"));assertNull(validatedTalkTopic("thank you"))
