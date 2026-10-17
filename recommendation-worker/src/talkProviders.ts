@@ -46,11 +46,12 @@ export async function issueLiveToken(env: RecommendationEnv, context: TalkContex
  const setup=liveSetup(context);
  // Lock model, voice, prompt, tools and budgets, while permitting ONLY the
  // session-resumption handle to change on a same-model reconnect.
+ const {sessionResumption: _resumption, ...lockedSetup}=setup;
  const mask=Object.keys(setup).filter(k=>k!=='sessionResumption').join(',');
  const response=await fetch('https://generativelanguage.googleapis.com/v1beta/auth_tokens',{
   method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'content-type':'application/json'},
   body:JSON.stringify({uses:1,expireTime:new Date(expires).toISOString(),newSessionExpireTime:new Date(Date.now()+60000).toISOString(),
-    bidiGenerateContentSetup:setup,fieldMask:mask}),signal:AbortSignal.timeout(8000) });
+    bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) });
  if(!response.ok){const reason=(await response.text()).replaceAll(env.GEMINI_API_KEY,'[key]').slice(0,500);console.warn('talk_live_token_status',response.status,reason);throw Error('LIVE_UNAVAILABLE');}
  const result=z.object({name:z.string().min(8).max(4096)}).parse(await boundedJson(response,16384));
  return {token:result.name,model:TALK_MODEL,voice:TALK_VOICE,expires,setup:{model:setup.model,sessionResumption:{}}};

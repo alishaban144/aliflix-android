@@ -15,7 +15,7 @@ describe('Gemini-only live identity and security',()=>{
  it('provisions single-use constrained ephemeral tokens and never returns the key',async()=>{
   let sent:any;vi.spyOn(globalThis,'fetch').mockImplementation(async(_,init)=>{sent=JSON.parse(String(init?.body));return Response.json({name:'auth_tokens/test-ephemeral'});});
   const r=await issueLiveToken(config,TalkContextSchema.parse({}),Date.now()+1200000);
-  expect(r.token).toBe('auth_tokens/test-ephemeral');expect(JSON.stringify(r)).not.toContain('test-only');expect(sent.uses).toBe(1);
+  expect(r.token).toBe('auth_tokens/test-ephemeral');expect(JSON.stringify(r)).not.toContain('test-only');expect(sent.uses).toBe(1);expect(sent.bidiGenerateContentSetup.sessionResumption).toBeUndefined();
   expect(sent.fieldMask).toContain('model');expect(sent.fieldMask).toContain('generationConfig');expect(sent.fieldMask).not.toContain('sessionResumption');
   expect(r.model).toBe(TALK_MODEL);expect(r.voice).toBe(TALK_VOICE);
  });
