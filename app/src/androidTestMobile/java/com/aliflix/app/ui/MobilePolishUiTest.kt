@@ -242,21 +242,31 @@ class MobilePolishUiTest {
         capture("sync-retry.png")
     }
 
-    @Test fun downloadTierMenuMigratesAndPersistsWithoutChangingStreamingQuality() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val preferences = context.getSharedPreferences("offline-downloads",android.content.Context.MODE_PRIVATE)
-        preferences.edit().remove("qualityTier").putInt("quality",720).commit()
-        compose.setContent { AliflixMobileTheme { Box(Modifier.width(320.dp)) { DownloadSettings() } } }
-        compose.onNodeWithText("Medium ▾").performClick()
-        listOf("Smaller file","Balanced","Best available").forEach { label ->
-            val layouts = mutableListOf<TextLayoutResult>()
-            compose.onNodeWithText(label).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-            assertEquals(1,layouts.single().lineCount)
+    @Test fun downloadQualityChoicesMigrateInlineAndPreserveStreamingQuality() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val preferences=context.getSharedPreferences("offline-downloads",android.content.Context.MODE_PRIVATE)
+        val savedTier=preferences.getString("qualityTier",null)
+        val savedQuality=preferences.getInt("quality",720)
+        val streaming=com.aliflix.app.player.PlayerSettingsStore(context).settings.value.preferredVideoQuality
+        try {
+            preferences.edit().remove("qualityTier").putInt("quality",720).commit()
+            compose.setContent {AliflixMobileTheme {Box(Modifier.width(320.dp)){DownloadSettings()}}}
+            compose.onNodeWithTag("download-preferred-high").assertIsDisplayed().assertIsSelected()
+            compose.onNodeWithText("Medium ▾").assertDoesNotExist()
+            compose.runOnIdle {assertEquals("MEDIUM",preferences.getString("qualityTier",null))}
+            compose.onNodeWithTag("download-preferred-low").performClick().assertIsSelected()
+            compose.runOnIdle {assertEquals("LOW",preferences.getString("qualityTier",null))}
+            compose.onNodeWithTag("download-preferred-high").performClick().assertIsSelected()
+            compose.runOnIdle {
+                assertEquals("HIGH",preferences.getString("qualityTier",null))
+                assertEquals(streaming,com.aliflix.app.player.PlayerSettingsStore(context).settings.value.preferredVideoQuality)
+            }
+            capture("download-quality-inline.png")
+        } finally {
+            preferences.edit().putInt("quality",savedQuality).apply {
+                if(savedTier==null)remove("qualityTier")else putString("qualityTier",savedTier)
+            }.commit()
         }
-        capture("download-quality-menu.png")
-        compose.onNodeWithText("High").performClick()
-        compose.onNodeWithText("High ▾").assertIsDisplayed()
-        compose.runOnIdle { assertEquals("HIGH",preferences.getString("qualityTier",null)) }
     }
     @Test fun libraryTabsAndLongGenresStayReadableOnNarrowScreensAtLargeFonts() {
         var selected by mutableIntStateOf(0)
