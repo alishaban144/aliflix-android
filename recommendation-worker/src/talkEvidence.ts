@@ -89,12 +89,12 @@ export async function tavilyEvidence(env:RecommendationEnv,q:KnowledgeRequest,si
   const exact=await wikipediaTitle({...q,title},signal);if(exact)evidence.push(...await wikipediaEvidence(exact.title,signal));}
  return evidence;
 }
-export async function retrieveKnowledge(env:RecommendationEnv,q:KnowledgeRequest,allowPlot:boolean,signal:AbortSignal,allowSearch:boolean,context?:TalkContext):Promise<Evidence[]> {
+export async function retrieveKnowledge(env:RecommendationEnv,q:KnowledgeRequest,allowPlot:boolean,signal:AbortSignal,allowSearch:boolean,context?:TalkContext,reserveSearch:()=>Promise<boolean>=async()=>true):Promise<Evidence[]> {
  let title:Awaited<ReturnType<typeof wikipediaTitle>>;
  try{title=await wikipediaTitle(q,signal);}catch{}
  if(q.kind==='tv') { const watched=!!context&&!!title?.imdbId&&title.imdbId===context.imdbId&&q.season!=null&&q.episode!=null&&permittedEpisode(context,q.season,q.episode); return tvEpisodeEvidence(allowPlot||watched?q:{...q,season:undefined,episode:undefined},title?.imdbId,signal); }
  if(!allowPlot)return title?[{id:'wikidata-title-'+title.pageid,title:title.title,text:JSON.stringify(title),url:'https://en.wikipedia.org/wiki/'+encodeURIComponent(title.title),license:'Wikidata · CC0; Wikipedia title · CC BY-SA 4.0'}]:[];
  let result:Evidence[]=[];if(title)try{result=await wikipediaEvidence(title.title,signal);}catch{}
- if(!result.length&&allowSearch)try{result=await tavilyEvidence(env,q,signal);}catch{}
+ if(!result.length&&allowSearch&&await reserveSearch())try{result=await tavilyEvidence(env,q,signal);}catch{}
  return result;
 }

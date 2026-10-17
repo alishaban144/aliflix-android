@@ -56,13 +56,14 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const cacheKey='evidence:'+JSON.stringify([key,allowPlot,state.context.imdbId,state.context.viewedRanges,state.context.completed]);const cached=this.read<Evidence[]>(cacheKey);
   if(cached)return {model:TALK_MODEL,voice:TALK_VOICE,evidence:cached,cached:true};
   if(++state.calls>12)throw Error('TOOL_LIMIT');
-  const allowSearch=state.searches<2&&!!this.env.TAVILY_API_KEY&&await this.env.TALK_SESSIONS.getByName('quota:search').reserve(1,20);
-  if(allowSearch)state.searches++;state.grants=state.grants.slice(-12);this.put('live:'+session,state,state.expires);
-  let evidence:Evidence[]=[];try{evidence=await retrieveKnowledge(this.env,q,allowPlot,AbortSignal.timeout(7000),allowSearch,state.context);}catch{}
+  const allowSearch=!!this.env.TAVILY_API_KEY;
+  state.grants=state.grants.slice(-12);this.put('live:'+session,state,state.expires);
+  let evidence:Evidence[]=[];try{evidence=await retrieveKnowledge(this.env,q,allowPlot,AbortSignal.timeout(7000),allowSearch,state.context,()=>this.searchBudget(session));}catch{}
   this.put(cacheKey,evidence,Date.now()+(evidence.length?DAY:30000));
   const count=this.ctx.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'evidence:%'").one().n;
   if(count>40)this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN(SELECT key FROM memory WHERE key LIKE 'evidence:%' ORDER BY expires LIMIT ?)",count-40);
   return {model:TALK_MODEL,voice:TALK_VOICE,evidence,cached:false,boundary:allowPlot?'requested title/episode only':'No unviewed plot details; answer reliable general knowledge naturally',unavailable:!evidence.length};
  }
+ private async searchBudget(session:string){const current=this.read<Session>('live:'+session);if(!current||current.searches>=2)return false;current.searches++;this.put('live:'+session,current,current.expires);return this.env.TALK_SESSIONS.getByName('quota:search').reserve(1,20);}
  async alarm(){this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<=?',Date.now());const row=this.ctx.storage.sql.exec<{next:number}>('SELECT MIN(expires) next FROM memory').one();if(row.next)await this.ctx.storage.setAlarm(row.next);}
 }
