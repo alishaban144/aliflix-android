@@ -61,7 +61,8 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
     else if(this.env.TMDB_API_KEY)url.searchParams.set('api_key',this.env.TMDB_API_KEY);
     const external=await boundedJson(await fetch(url,{headers,signal}),8192) as {imdb_id?:unknown};
     if(typeof external.imdb_id==='string'&&/^tt\d{1,12}$/.test(external.imdb_id)) {
-     state.context.imdbId=external.imdb_id;this.put('live:'+session,state,state.expires);
+     const current=this.read<Session>('live:'+session);if(!current)throw Error('SESSION_EXPIRED');
+     current.context.imdbId=external.imdb_id;state.context=current.context;this.put('live:'+session,current,current.expires);
     }
    }catch{}
   }
@@ -69,7 +70,10 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
    ...(state.context.recentProgress||[]),...state.context.library].filter((v,i,a)=>a.findIndex(x=>x.imdbId===v.imdbId)===i).slice(0,8);
   const titles=await Promise.all(identities.map(async item=>({imdbId:item.imdbId,...await resolveViewingTitle(item.imdbId,item.type,signal)})));
   const result={context:state.context,titles,boundary:'Only actual completed episodes are fully viewed. Position seconds are not timed plot evidence. Never assume missing history was watched.'};
-  this.put('viewing:'+session,result,Math.min(state.expires,Date.now()+5*MINUTE));return result;
+  // An asynchronous lookup must not restore context after the owner closes it.
+  if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
+  const ttl=titles.every(t=>!!t.title)?5*MINUTE:30000;
+  this.put('viewing:'+session,result,Math.min(state.expires,Date.now()+ttl));return result;
  }
  async close(session:string,forget=false){if(forget)this.ctx.storage.sql.exec('DELETE FROM memory');else this.ctx.storage.sql.exec('DELETE FROM memory WHERE key IN (?,?)','live:'+session,'viewing:'+session);}
  async knowledge(session:string,q:KnowledgeRequest,question:string) {

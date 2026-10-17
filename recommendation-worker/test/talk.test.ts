@@ -20,16 +20,35 @@ describe('Gemini-only live identity and security',()=>{
   expect(TalkContextSchema.safeParse({recentProgress:Array(9).fill({imdbId:'tt1',type:'tv',season:1,episode:1,position:0,duration:100,completed:false})}).success).toBe(false);
  });
  it('resolves a current catalogue external ID without sending catalogue prose and caches the history tool',async()=>{
-  const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async u=>String(u).includes('external_ids')?
-   Response.json({imdb_id:'tt5753856'}):Response.json({name:'Dark',url:'https://www.tvmaze.com/shows/17861/dark',externals:{imdb:'tt5753856'}}));
+  let duringLookup=()=>{};
+  const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{
+   if(String(u).includes('external_ids')){duringLookup();return Response.json({imdb_id:'tt5753856'});}
+   return Response.json({name:'Dark',url:'https://www.tvmaze.com/shows/17861/dark',externals:{imdb:'tt5753856'}});
+  });
   const stub=env.TALK_SESSIONS.getByName('viewing-external-identity');
   await runInDurableObject(stub,async(instance,state)=>{
    const session=crypto.randomUUID(),expires=Date.now()+60000;
    state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context:TalkContextSchema.parse({id:70523,type:'tv',position:120,recentProgress:[]}),expires,calls:0,searches:0,grants:[]}),expires);
+   duringLookup=()=>{
+    const current=JSON.parse(state.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?','live:'+session).one().value);
+    current.calls=5;current.grants=['retained'];state.storage.sql.exec('UPDATE memory SET value=? WHERE key=?',JSON.stringify(current),'live:'+session);
+   };
    const result=await(instance as unknown as TalkSession).viewing(session);
+   const persisted=JSON.parse(state.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?','live:'+session).one().value);
+   expect(persisted.calls).toBe(5);expect(persisted.grants).toEqual(['retained']);
    expect((result as any).context.imdbId).toBe('tt5753856');expect((result as any).titles[0].title).toBe('Dark');
    expect((result as any).context.position).toBe(120);
    const count=spy.mock.calls.length;await(instance as unknown as TalkSession).viewing(session);expect(spy).toHaveBeenCalledTimes(count);
+  });
+ });
+ it('does not restore erased context when an in-flight lookup completes',async()=>{
+  const stub=env.TALK_SESSIONS.getByName('viewing-close-race');
+  await runInDurableObject(stub,async(instance,state)=>{
+   const session=crypto.randomUUID(),expires=Date.now()+60000;
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context:TalkContextSchema.parse({imdbId:'tt5753856',type:'tv',recentProgress:[]}),expires,calls:0,searches:0,grants:[]}),expires);
+   vi.spyOn(globalThis,'fetch').mockImplementation(async()=>{state.storage.sql.exec('DELETE FROM memory');return Response.json({name:'Dark',url:'https://www.tvmaze.com/shows/17861/dark',externals:{imdb:'tt5753856'}});});
+   await expect((instance as unknown as TalkSession).viewing(session)).rejects.toThrow('SESSION_EXPIRED');
+   expect(state.storage.sql.exec<{n:number}>('SELECT COUNT(*) n FROM memory').one().n).toBe(0);
   });
  });
  it('resolves a large movie entity with bounded identifier-only claims',async()=>{
