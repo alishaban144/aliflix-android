@@ -1,0 +1,74 @@
+{
+  "aliflix-mobile.apk": {
+    "bytes": 26093391,
+    "sha256": "5200587732fc86d0e7f52d82ff9415a220c77aa8d3af142af534cc8bfeaf9ef9",
+    "versionCode": 262,
+    "versionName": "3.1.172",
+    "abis": [
+      "arm64-v8a"
+    ],
+    "signer": "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47",
+    "zipValid": true,
+    "manifestMatches": true
+  },
+  "aliflix-mobile-compat.apk": {
+    "bytes": 66475965,
+    "sha256": "861a4c7874b03cd97c081d57ed6eeccb593de7b80a91408201a767edc8e456a8",
+    "versionCode": 261,
+    "versionName": "3.1.171",
+    "abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86",
+      "x86_64"
+    ],
+    "signer": "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47",
+    "zipValid": true,
+    "manifestMatches": true
+  },
+  "nativeParity": {
+    "baselineBytes": 66266641,
+    "apkBytes": 26093391,
+    "reductionBytes": 40173250,
+    "reductionPercent": 60.6236401811886,
+    "sha256": "5200587732fc86d0e7f52d82ff9415a220c77aa8d3af142af534cc8bfeaf9ef9",
+    "parity": {
+      "assets/silero-vad-8k.onnx": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+      "lib/arm64-v8a/libandroidx.graphics.path.so": "41e9a793c43a0f4fddb19e33f346bace464f30f888ba7b9eaf96294ea115bfb6",
+      "lib/arm64-v8a/libdatastore_shared_counter.so": "d3e48717c9aa147e0ab21063ba0e8e0211cabf8bf40b222640829519edbf58e1",
+      "lib/arm64-v8a/libonnxruntime.so": "df5d25c72a868dca773597c71e2000756d43fe4d70ade516d3693c54e12e0ada",
+      "lib/arm64-v8a/libonnxruntime4j_jni.so": "0695257178815f8c58c1719ba07d6d5d91a2b339634328cca2a0a98aa7ff2952",
+      "lib/arm64-v8a/libvad_jni.so": "4aed666f40c46824c4a165362b2374823fc9456cada04421ea0b916bd613a58a"
+    },
+    "compatibilityBridge": {
+      "versionCode": 261,
+      "abis": [
+        "arm64-v8a",
+        "armeabi-v7a",
+        "x86",
+        "x86_64"
+      ],
+      "nativeAndModelParity": true,
+      "sizeBytes": 66475965,
+      "sha256": "861a4c7874b03cd97c081d57ed6eeccb593de7b80a91408201a767edc8e456a8"
+    },
+    "abiPackagingReductionBytes": 40382574,
+    "abiPackagingReductionPercent": 60.747631117502394
+  },
+  "growthFromV170Bytes": 8012,
+  "releaseUrl": "https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.172",
+  "workflow": "https://github.com/alishaban144/aliflix-android/actions/runs/39073764353",
+  "latestUpdaterUrlsMatch": true,
+  "physicalDevice": {
+    "earlierPixelChecksPassed": true,
+    "publishedPayloadInstallAttempt": "ADB reported no devices after GitHub build; no installation performed",
+    "productionSignerUpgradeProven": false
+  },
+  "preparedPrivateValidationPayload": {
+    "publicSha256": "5200587732fc86d0e7f52d82ff9415a220c77aa8d3af142af534cc8bfeaf9ef9",
+    "privateSha256": "758b094a04fb06ba972d679842fbbfd90cadf5c9a3da3367cd6aba5391f4c830",
+    "payloadEntriesCompared": 1055,
+    "allNonSignaturePayloadBytesIdentical": true,
+    "productionSignerUpgradeProven": false
+  }
+}
