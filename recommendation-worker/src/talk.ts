@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 import { verifyIdentity } from './watchParty';
 import type { RecommendationEnv } from './types';
-import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence, requestedEpisodeBoundary, avoidsSpoilers } from './talkEvidence';
+import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence, requestedEpisodeBoundary, avoidsSpoilers, resolveViewingTitle } from './talkEvidence';
 import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProviders';
 const MINUTE=60000,DAY=86400000;
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
@@ -10,7 +10,7 @@ const sessionSchema=z.object({context:TalkContextSchema.default(()=>TalkContextS
 const requestSchema=z.object({session:z.string().uuid(),question:z.string().max(1600),request:KnowledgeSchema}).strict();
 export async function talkRoute(request:Request,env:RecommendationEnv):Promise<Response|null> {
  const path=new URL(request.url).pathname;if(!path.startsWith('/v1/talk'))return null;
- if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/knowledge','/v1/talk/close'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
+ if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/knowledge','/v1/talk/close','/v1/talk/viewing'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
  try {
   const owner=await verifyIdentity(request.headers.get('Authorization')?.replace(/^Bearer /,'')||'',env.CURSOR_SIGNING_SECRET);
   if(Number(request.headers.get('Content-Length')||0)>24000)return json({error:'REQUEST_LIMIT'},413);
@@ -23,6 +23,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
    if(!await env.TALK_SESSIONS.getByName('quota:ip:'+hash).reserve(1,12)||!await env.TALK_SESSIONS.getByName('quota:global').reserve(1,40))return json({error:'DAILY_LIMIT'},429);
    return json(await user.open(body.context));
   }
+  if(path.endsWith('/viewing')) {const body=z.object({session:z.string().uuid()}).strict().parse(bodyRaw);return json(await user.viewing(body.session));}
   if(path.endsWith('/close')) {const body=z.object({session:z.string().uuid(),forget:z.boolean().default(false)}).strict().parse(bodyRaw);await user.close(body.session,body.forget);return json({closed:true});}
   const body=requestSchema.parse(bodyRaw);return json(await user.knowledge(body.session,body.request,body.question));
  }catch(e) {
@@ -43,9 +44,20 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?',key).toArray()[0];const n=Number(r?.value||0);if(n+amount>limit)return false;
   this.ctx.storage.sql.exec('INSERT OR REPLACE INTO memory VALUES(?,?,?)',key,String(n+amount),(day+2)*DAY);await this.ctx.storage.setAlarm((day+2)*DAY);return true;}
  async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const token=await issueLiveToken(this.env,context,expires);
-  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%'");this.put('live:'+session,{context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
+  this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%' OR key LIKE 'viewing:%'");this.put('live:'+session,{context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
   await this.ctx.storage.setAlarm(expires);return {...token,session};}
- async close(session:string,forget=false){if(forget)this.ctx.storage.sql.exec('DELETE FROM memory');else this.ctx.storage.sql.exec('DELETE FROM memory WHERE key=?','live:'+session);}
+ async viewing(session:string) {
+  const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
+  const existing=this.read<unknown>('viewing:'+session);if(existing)return existing;
+  if(++state.calls>12)throw Error('TOOL_LIMIT');this.put('live:'+session,state,state.expires);
+  const identities=[...(state.context.imdbId?[{imdbId:state.context.imdbId,type:state.context.type||'tv'}]:[]),
+   ...(state.context.recentProgress||[]),...state.context.library].filter((v,i,a)=>a.findIndex(x=>x.imdbId===v.imdbId)===i).slice(0,8);
+  const signal=AbortSignal.timeout(3500);
+  const titles=await Promise.all(identities.map(async item=>({imdbId:item.imdbId,...await resolveViewingTitle(item.imdbId,item.type,signal)})));
+  const result={context:state.context,titles,boundary:'Only actual completed episodes are fully viewed. Position seconds are not timed plot evidence. Never assume missing history was watched.'};
+  this.put('viewing:'+session,result,Math.min(state.expires,Date.now()+5*MINUTE));return result;
+ }
+ async close(session:string,forget=false){if(forget)this.ctx.storage.sql.exec('DELETE FROM memory');else this.ctx.storage.sql.exec('DELETE FROM memory WHERE key IN (?,?)','live:'+session,'viewing:'+session);}
  async knowledge(session:string,q:KnowledgeRequest,question:string) {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
   const key=JSON.stringify([q.title.toLowerCase(),q.year,q.kind,q.season,q.episode]);

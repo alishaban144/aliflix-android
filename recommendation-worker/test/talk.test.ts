@@ -1,6 +1,6 @@
 import {env,runInDurableObject} from 'cloudflare:test';
 import {describe,it,expect,vi,afterEach} from 'vitest';
-import {TalkContextSchema,explicitlyRequestsSpoilers,permittedEpisode,reusableUrl,stripMarkup,wikipediaEvidence,requestedEpisodeBoundary,avoidsSpoilers,tavilyEvidence} from '../src/talkEvidence';
+import {TalkContextSchema,explicitlyRequestsSpoilers,permittedEpisode,reusableUrl,stripMarkup,wikipediaEvidence,requestedEpisodeBoundary,avoidsSpoilers,tavilyEvidence,resolveViewingTitle} from '../src/talkEvidence';
 import {talkRoute,TalkSession} from '../src/talk';
 import {issueLiveToken,liveSetup,liveInstructions,TALK_MODEL,TALK_VOICE} from '../src/talkProviders';
 const config={...env,CURSOR_SIGNING_SECRET:'test-only',GEMINI_API_KEY:'test-only'};
@@ -12,6 +12,18 @@ describe('Gemini-only live identity and security',()=>{
   expect(s.realtimeInputConfig.automaticActivityDetection.disabled).toBe(false);
   expect(s.tools[0].functionDeclarations[0].behavior).toBe('NON_BLOCKING');expect(s.contextWindowCompression.slidingWindow.targetTokens).toBe('4096');
  });
+ it('uses semantic visual themes and on-demand user progress without extra speech providers',()=>{
+  const s=liveSetup(TalkContextSchema.parse({recentProgress:[{imdbId:'tt5753856',type:'tv',season:2,episode:1,position:120,duration:3000,completed:false}]}));
+  expect(s.tools[0].functionDeclarations.map(t=>t.name)).toEqual(['conversation_topic','viewing_context','film_knowledge']);
+  expect(s.systemInstruction.parts[0].text).toContain('120');
+  expect(s.systemInstruction.parts[0].text).toContain('never assume a started episode was finished');
+  expect(TalkContextSchema.safeParse({recentProgress:Array(9).fill({imdbId:'tt1',type:'tv',season:1,episode:1,position:0,duration:100,completed:false})}).success).toBe(false);
+ });
+ it('resolves independent history titles only after matching exact IMDb identity',async()=>{
+  vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({name:'Dark',url:'https://www.tvmaze.com/shows/17861/dark',premiered:'2017-12-01',externals:{imdb:'tt5753856'}}));
+  expect((await resolveViewingTitle('tt5753856','tv',new AbortController().signal))?.title).toBe('Dark');
+  expect(await resolveViewingTitle('not-an-id','tv',new AbortController().signal)).toBeUndefined();
+ });
  it('provisions single-use constrained ephemeral tokens and never returns the key',async()=>{
   let sent:any;vi.spyOn(globalThis,'fetch').mockImplementation(async(_,init)=>{sent=JSON.parse(String(init?.body));return Response.json({name:'auth_tokens/test-ephemeral'});});
   const r=await issueLiveToken(config,TalkContextSchema.parse({}),Date.now()+1200000);
@@ -20,7 +32,7 @@ describe('Gemini-only live identity and security',()=>{
   expect(r.model).toBe(TALK_MODEL);expect(r.voice).toBe(TALK_VOICE);
  });
  it('requires authenticated identity for token issuance and tools',async()=>{
-  for(const path of ['session','knowledge','close'])expect((await talkRoute(new Request('https://test/v1/talk/'+path,{method:'POST',body:'{}'}),config))?.status).toBe(401);
+  for(const path of ['session','knowledge','close','viewing'])expect((await talkRoute(new Request('https://test/v1/talk/'+path,{method:'POST',body:'{}'}),config))?.status).toBe(401);
  });
  it('bounds daily quotas and removes expired state',async()=>{const stub=env.TALK_SESSIONS.getByName('test-live-quota');await runInDurableObject(stub,async instance=>{const talk=instance as unknown as TalkSession;expect(await talk.reserve(2,2)).toBe(true);expect(await talk.reserve(1,2)).toBe(false);});});
  it('excludes catalogue IDs from model prompts and deletes owner memory',async()=>{

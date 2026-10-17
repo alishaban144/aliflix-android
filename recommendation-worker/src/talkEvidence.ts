@@ -5,6 +5,9 @@ export const TalkContextSchema=z.object({id:z.number().int().positive().optional
  imdbId:z.string().regex(/^tt\d{1,12}$/).optional(),season:z.number().int().min(0).max(1000).default(1),episode:z.number().int().min(1).max(10000).default(1),
  position:z.number().finite().min(0).max(604800).default(0),completed:z.boolean().default(false),
  library:z.array(z.object({imdbId:z.string().regex(/^tt\d{1,12}$/),kind:z.enum(['saved','favorite','watched']),type:z.enum(['movie','tv'])}).strict()).max(8).default([]),
+ recentProgress:z.array(z.object({imdbId:z.string().regex(/^tt\d{1,12}$/),type:z.enum(['movie','tv']),
+ season:z.number().int().min(0).max(1000),episode:z.number().int().min(1).max(10000),position:z.number().finite().min(0).max(604800),
+ duration:z.number().finite().min(0).max(604800),completed:z.boolean()}).strict()).max(8).optional(),
  viewedRanges:z.array(z.object({season:z.number().int().min(0).max(1000),first:z.number().int().min(1).max(10000),last:z.number().int().min(1).max(10000)}).strict().refine(r=>r.last>=r.first)).max(120).default([])}).strict();
 export type TalkContext=z.infer<typeof TalkContextSchema>;
 export type Evidence={id:string;title:string;text:string;url:string;license:string;season?:number;episode?:number};
@@ -121,4 +124,26 @@ export async function retrieveKnowledge(env:RecommendationEnv,q:KnowledgeRequest
  let result:Evidence[]=[];if(title)try{result=await wikipediaEvidence(title.title,signal);}catch{}
  if(!result.length&&allowSearch&&await reserveSearch())try{result=await tavilyEvidence(env,q,signal);}catch{}
  return result;
+}
+
+/** Independent title identity only: TVMaze CC BY-SA and Wikidata CC0. No TMDB prose. */
+export async function resolveViewingTitle(imdbId:string,kind:'movie'|'tv',signal:AbortSignal):Promise<{title:string;year?:number;url:string;license:string}|undefined> {
+ if(!/^tt\d{1,12}$/.test(imdbId))return;
+ try {
+  if(kind==='tv') {
+   const show=await json('https://api.tvmaze.com/lookup/shows?imdb='+imdbId,signal,64000);
+   if(show.externals?.imdb===imdbId&&typeof show.name==='string'&&/^https:\/\/www\.tvmaze\.com\/shows\/\d+/.test(show.url))
+    return {title:show.name.slice(0,120),year:Number(show.premiered?.slice(0,4))||undefined,url:show.url,license:'TVMaze · CC BY-SA'};
+  }
+  const result=await json('https://www.wikidata.org/w/api.php?action=query&list=search&srnamespace=0&srlimit=2&format=json&srsearch='+encodeURIComponent('haswbstatement:P345='+imdbId),signal,32000);
+  const ids=(result.query?.search||[]).map((v:any)=>v.title).filter((id:unknown)=>typeof id==='string'&&/^Q\d+$/.test(id));
+  if(!ids.length)return;
+  const data=await json('https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=labels|claims&languages=en&ids='+ids.join('|'),signal,128000);
+  for(const id of ids) {
+   const entity=data.entities?.[id];const title=entity?.labels?.en?.value;
+   if(typeof title!=='string'||!entity.claims?.P345?.some((v:any)=>v.mainsnak?.datavalue?.value===imdbId))continue;
+   const year=Number(entity.claims?.P577?.[0]?.mainsnak?.datavalue?.value?.time?.slice(1,5))||undefined;
+   return {title:title.slice(0,120),year,url:'https://www.wikidata.org/wiki/'+id,license:'Wikidata · CC0'};
+  }
+ }catch{}
 }
