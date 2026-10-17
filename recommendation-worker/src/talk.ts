@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 import { verifyIdentity } from './watchParty';
 import type { RecommendationEnv } from './types';
-import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence } from './talkEvidence';
+import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence, requestedEpisodeBoundary, avoidsSpoilers } from './talkEvidence';
 import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProviders';
 const MINUTE=60000,DAY=86400000;
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
@@ -48,10 +48,15 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
  async close(session:string){this.ctx.storage.sql.exec('DELETE FROM memory WHERE key=?','live:'+session);}
  async knowledge(session:string,q:KnowledgeRequest,question:string) {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
-  const key=JSON.stringify([q.title.toLowerCase(),q.year,q.kind,q.season,q.episode]);const explicit=explicitlyRequestsSpoilers(question);
-  if(explicit&&!state.grants.includes(key))state.grants.push(key);
-  const episodeRequested=q.kind==='tv'&&q.season!=null&&q.episode!=null&&/\bs\d+\s*e\d+\b|\bepisode\s*\d+|\bfolge\s*\d+|الحلقة\s*\d+/i.test(question);
-  const allowPlot=q.kind==='movie'?explicit||state.grants.includes(key):episodeRequested||state.grants.includes(key);
+  const key=JSON.stringify([q.title.toLowerCase(),q.year,q.kind,q.season,q.episode]);
+  const boundary=requestedEpisodeBoundary(question);
+  const exactEpisode=!!boundary&&boundary.episode===q.episode&&(boundary.season==null||boundary.season===q.season);
+  const avoids=avoidsSpoilers(question);
+  if(avoids)state.grants=[];
+  const explicit=!avoids&&explicitlyRequestsSpoilers(question)&&(q.kind==='movie'||!boundary||exactEpisode);
+  const episodeRequested=!avoids&&exactEpisode&&/explain|recap|summari[sz]e|what.*(?:happen|know)|end|erkl[aä]r|zusammenfass|اشرح|ملخص|ماذا/i.test(question);
+  if((explicit||episodeRequested)&&!state.grants.includes(key))state.grants.push(key);
+  const allowPlot=!avoids&&(explicit||episodeRequested||state.grants.includes(key));
   this.put('live:'+session,state,state.expires);
   const cacheKey='evidence:'+JSON.stringify([key,allowPlot,state.context.imdbId,state.context.viewedRanges,state.context.completed]);const cached=this.read<Evidence[]>(cacheKey);
   if(cached)return {model:TALK_MODEL,voice:TALK_VOICE,evidence:cached,cached:true};

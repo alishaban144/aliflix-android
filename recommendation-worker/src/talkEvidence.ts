@@ -18,6 +18,12 @@ export function explicitlyRequestsSpoilers(text:string):boolean {
  if(/\b(no spoilers?|without spoilers?|spoiler.?free|nicht spoilern|keine spoiler)\b|بدون حرق|لا تحرق/i.test(text)) return false;
  return /\b(ending|ends?|finale|final (scene|photograph|photo)|twist|dies?|death|killer|spoilers?|schluss|ende|stirbt|tod|aufl[oö]sung|finale)\b|نهاية|النهايه|يموت|موت|القاتل|الصورة الأخيرة|الصوره الاخيره/i.test(text);
 }
+export function requestedEpisodeBoundary(text:string):{season?:number;episode:number}|undefined {
+ const both=text.match(/\bs(\d+)\s*e(\d+)\b|\bseason\s*(\d+)\s*[,.: -]*episode\s*(\d+)|\bstaffel\s*(\d+)\s*[,.: -]*folge\s*(\d+)/i);
+ if(both){const values=both.slice(1).filter(v=>v!=null);return {season:Number(values[0]),episode:Number(values[1])};}
+ const one=text.match(/\bepisode\s*(\d+)|\bfolge\s*(\d+)|الحلقة\s*(\d+)/i);if(one)return {episode:Number(one.slice(1).find(v=>v!=null))};
+}
+export function avoidsSpoilers(text:string):boolean {return /\bno spoilers?(?!\s+(?:after|beyond|past))|\bwithout spoilers?|\bspoiler.?free|keine spoiler|nicht spoilern|بدون حرق|لا تحرق/i.test(text);}
 export function permittedEpisode(c:TalkContext,s:number,e:number):boolean {return s===c.season&&e===c.episode?c.completed:c.viewedRanges.some(r=>r.season===s&&e>=r.first&&e<=r.last);}
 const WIKI='https://en.wikipedia.org/w/api.php?format=json&origin=*&';
 async function json(url:string,signal:AbortSignal,limit=512000):Promise<any> {

@@ -1,6 +1,6 @@
 import {env,runInDurableObject} from 'cloudflare:test';
 import {describe,it,expect,vi,afterEach} from 'vitest';
-import {TalkContextSchema,explicitlyRequestsSpoilers,permittedEpisode,reusableUrl,stripMarkup,wikipediaEvidence} from '../src/talkEvidence';
+import {TalkContextSchema,explicitlyRequestsSpoilers,permittedEpisode,reusableUrl,stripMarkup,wikipediaEvidence,requestedEpisodeBoundary,avoidsSpoilers} from '../src/talkEvidence';
 import {talkRoute,TalkSession} from '../src/talk';
 import {issueLiveToken,liveSetup,liveInstructions,TALK_MODEL,TALK_VOICE} from '../src/talkProviders';
 const config={...env,CURSOR_SIGNING_SECRET:'test-only',GEMINI_API_KEY:'test-only'};
@@ -29,6 +29,7 @@ describe('Gemini-only live identity and security',()=>{
 describe('Evidence and spoiler intent',()=>{
  it.each(['Explain the ending of The Shining (1980)','What does the final photograph mean?','Erkläre das Ende von Shining','اشرح نهاية الفيلم'])('authorizes an explicitly requested ending: %s',q=>expect(explicitlyRequestsSpoilers(q)).toBe(true));
  it.each(['No spoilers: is Dark good?','ohne Ende bitte, keine Spoiler','بدون حرق النهاية'])('honours explicit spoiler limits: %s',q=>expect(explicitlyRequestsSpoilers(q)).toBe(false));
+ it('keeps exact episode numbers when tools request a different future episode',()=>{expect(requestedEpisodeBoundary('Explain Dark season 1 episode 1')).toEqual({season:1,episode:1});expect(requestedEpisodeBoundary('Dark S2E3')).toEqual({season:2,episode:3});expect(avoidsSpoilers('Is episode 5 good? No spoilers.')).toBe(true);});
  it('does not assume skipped episodes were watched',()=>{const c=TalkContextSchema.parse({season:2,episode:3,viewedRanges:[{season:2,first:1,last:1}]});expect(permittedEpisode(c,2,1)).toBe(true);expect(permittedEpisode(c,2,2)).toBe(false);expect(permittedEpisode(c,2,3)).toBe(false);});
  it('restricts reusable source URLs',()=>{expect(reusableUrl('https://en.wikipedia.org/wiki/The_Shining_(film)')).toBe(true);for(const u of ['https://themoviedb.org/film/1','https://en.wikipedia.org.evil.test/wiki/a','http://en.wikipedia.org/wiki/a','https://user@en.wikipedia.org/wiki/a'])expect(reusableUrl(u)).toBe(false);});
  it('strips executable source markup',()=>expect(stripMarkup('<script>bad()</script><p>Jack &amp; Wendy</p>')).toBe('Jack & Wendy'));
