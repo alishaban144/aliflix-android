@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { boundedJson } from './talkProviders';
 import type { RecommendationEnv } from './types';
-export const TalkContextSchema=z.object({id:z.number().int().positive().optional(),type:z.enum(['movie','tv']).optional(),
+export const TalkContextSchema=z.object({stickyLanguage:z.boolean().optional(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional(),id:z.number().int().positive().optional(),type:z.enum(['movie','tv']).optional(),
  imdbId:z.string().regex(/^tt\d{1,12}$/).optional(),season:z.number().int().min(0).max(1000).default(1),episode:z.number().int().min(1).max(10000).default(1),
  position:z.number().finite().min(0).max(604800).default(0),completed:z.boolean().default(false),
  library:z.array(z.object({imdbId:z.string().regex(/^tt\d{1,12}$/),kind:z.enum(['saved','favorite','watched']),type:z.enum(['movie','tv'])}).strict()).max(8).default([]),

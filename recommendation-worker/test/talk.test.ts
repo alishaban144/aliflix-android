@@ -19,6 +19,13 @@ describe('Gemini-only live identity and security',()=>{
   expect(s.systemInstruction.parts[0].text).toContain('never assume a started episode was finished');
   expect(TalkContextSchema.safeParse({recentProgress:Array(9).fill({imdbId:'tt1',type:'tv',season:1,episode:1,position:0,duration:100,completed:false})}).success).toBe(false);
  });
+ it('locks conversation language without enabling unknown controls on older clients',()=>{
+  const s=liveSetup(TalkContextSchema.parse({recentProgress:[],stickyLanguage:true,responseLanguage:'en'}));
+  expect(s.tools[0].functionDeclarations.map(t=>t.name)).toContain('conversation_language');
+  expect(s.systemInstruction.parts[0].text).toContain('already locked response language is en');
+  expect(s.systemInstruction.parts[0].text).toContain('foreign titles');
+  expect(liveSetup(TalkContextSchema.parse({recentProgress:[]})).tools[0].functionDeclarations.map(t=>t.name)).not.toContain('conversation_language');
+ });
  it('resolves a current catalogue external ID without sending catalogue prose and caches the history tool',async()=>{
   let duringLookup=()=>{};
   const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{
