@@ -73,7 +73,7 @@ class NativeSkipControlsTest {
             compose.onNodeWithText("Next episode").assertIsDisplayed()
             compose.runOnIdle { position = 90_000; playbackState = Player.STATE_ENDED; revision.intValue++ }
             compose.onNodeWithText("Next episode").assertIsDisplayed()
-            compose.onNodeWithText("Watch credits").performClick()
+            compose.onNodeWithContentDescription("Dismiss next episode").performClick()
             compose.onNodeWithText("Next episode").assertDoesNotExist()
             compose.runOnIdle { episode.intValue = 2; revision.intValue++ }
             compose.onNodeWithText("Next episode").assertDoesNotExist() // The last episode has no successor.

@@ -1,17 +1,11 @@
 package com.aliflix.app.player
-
-import com.aliflix.app.model.*
-import org.junit.Assert.*
+import com.aliflix.app.model.MobilePlaybackProvider
 import org.junit.Test
-
+import org.junit.Assert.*
 class PrioritySourcePolicyTest {
-    @Test fun networkParsingAndHostFailuresCannotCertifyAbsenceOnAnyPrioritySite() {
-        for(provider in listOf(MobilePlaybackProvider.SERIENSTREAM,MobilePlaybackProvider.FILMO,MobilePlaybackProvider.ANIWORLD)) {
-            for(error in listOf(java.net.SocketTimeoutException(),java.io.IOException(),IllegalArgumentException("Missing site metadata"),NoNativeServersException()))
-                assertFalse(provider.name,mayAutomaticallyLeaveSource(provider,error))
-            assertTrue(mayAutomaticallyLeaveSource(provider,ProviderItemUnavailable(provider)))
-            assertFalse(mayAutomaticallyLeaveSource(provider,ProviderItemUnavailable(MobilePlaybackProvider.FLIXER)))
-        }
-        assertTrue(mayAutomaticallyLeaveSource(MobilePlaybackProvider.FLIXER,java.io.IOException()))
-    }
+ @Test fun failuresAllowBoundedAutomaticFallbackAfterPrimaryMirrors(){
+  for(provider in listOf(MobilePlaybackProvider.FILMO,MobilePlaybackProvider.SERIENSTREAM,MobilePlaybackProvider.ANIWORLD))
+   for(error in listOf(java.io.IOException("network"),IllegalStateException("catalogue"),ProviderItemUnavailable(provider)))
+    assertTrue(mayAutomaticallyLeaveSource(provider,error))
+ }
 }

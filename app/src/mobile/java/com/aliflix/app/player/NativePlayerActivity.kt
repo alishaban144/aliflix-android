@@ -687,6 +687,15 @@ class NativePlayerActivity : FragmentActivity() {
     ) {
         val current = selection ?: return
         if (!provider.isAvailableFor(current.media) || serverName.isBlank()) return
+        if(serverName == "Auto") {
+            if(provider == current.source.identity && ui.ready) return
+            val preferences = com.aliflix.app.data.PlaybackProviderRepository(this).preferences.value
+            exhaustedSources.remove(provider);triedServers.clear();recordCurrentProgress(urgent=true)
+            selection=current.copy(source=preferences.sourceFor(current.media,provider))
+            ui=ui.copy(server="Auto",message=null)
+            prepareSelection()
+            return
+        }
         val known = if (provider == current.source.identity) ui.availableServers else discoveredServers[provider].orEmpty().flatMap { listOf(it.label, it.key) }
         if (serverName !in known) return
         if (provider == current.source.identity) {
@@ -739,10 +748,8 @@ class NativePlayerActivity : FragmentActivity() {
                 availableServers = servers,
                 availableProviders = availableProvidersFor(it),
                 playbackSelection = it,
-                sourceAudioOptions = if (it.source.identity.hasSourceEditions)
-                    active?.sourceAudioChoices() ?: ui.sourceAudioOptions else emptyList(),
-                sourceAudioLanguage = if (it.source.identity.hasSourceEditions)
-                    active?.sourceAudioLanguage ?: ui.sourceAudioLanguage else "",
+                sourceAudioOptions = active?.let(::mergedAudioChoices) ?: ui.sourceAudioOptions,
+                sourceAudioLanguage = active?.sourceAudioLanguage ?: ui.sourceAudioLanguage,
             )
         }
     }
@@ -756,13 +763,51 @@ class NativePlayerActivity : FragmentActivity() {
 
     private var audioEditionJob: Job? = null
     private var audioEditionRollback: NativePlaybackRequest? = null
+    private data class PreparedAudioEdition(val selection:PlaybackSelection,val server:String,val request:NativePlaybackRequest,val expires:Long)
+    private val alternativeAudio=mutableMapOf<String,PreparedAudioEdition>()
+    private var alternativeAudioOwner=""
+    private var originalAudioWarmup:Job?=null
+    private fun mergedAudioChoices(request:NativePlaybackRequest):List<SourceAudioOption> =
+        (request.sourceAudioChoices()+if(alternativeAudioOwner==selection?.key)alternativeAudio.map{(code,edition)->SourceAudioOption(code,formatAudioTrackLabel(code,null)+if(edition.selection.source!=selection?.source)" · ${edition.selection.source.identity.displayName}" else "")} else emptyList()).distinctBy{it.language}
+    private fun warmOriginalAudio(current:PlaybackSelection,server:String){
+        if(current.source.identity!=MobilePlaybackProvider.FILMO)return
+        val base=NativePlaybackService.activeRequest?:return
+        val wanted=current.media.originalLanguage.ifBlank{"en"}.substringBefore('-')
+        if(base.sourceAudioChoices().any{it.language==wanted})return
+        originalAudioWarmup?.cancel();alternativeAudio.clear();alternativeAudioOwner=current.key
+        originalAudioWarmup=lifecycleScope.launch {
+            val preferences=com.aliflix.app.data.PlaybackProviderRepository(this@NativePlayerActivity).preferences.value
+            for(provider in listOf<PlaybackProvider>(MobilePlaybackProvider.FLIXER,com.aliflix.app.model.PlaybackProviderId.CINEJOY)){
+                if(!isActive||selection?.key!=current.key)return@launch
+                val target=current.copy(source=preferences.sourceFor(current.media,provider))
+                val adapter=NativeStreamResolver(this@NativePlayerActivity,progress,resolverHost)
+                try {
+                    var chosen="Auto"
+                    val request=withTimeout(30000){adapter.resolve(target,0,emptySet()){chosen=it}}
+                    if(com.aliflix.app.BuildConfig.DEBUG)android.util.Log.i("AliflixOriginalAudio", "Resolved ${provider.name}")
+                    if(!hasVerifiedAudioLanguage(this@NativePlayerActivity,request,wanted))continue
+                    if(selection?.key!=current.key||selection?.source!=current.source)return@launch
+                    val until=android.os.SystemClock.elapsedRealtime()+180000
+                    base.sourceAudioLanguage.takeIf{it.isNotBlank()}?.let{alternativeAudio[it]=PreparedAudioEdition(current,server,base,until)}
+                    alternativeAudio[wanted]=PreparedAudioEdition(target,chosen,request.copy(sourceAudioLanguage=wanted),until)
+                    ui=ui.copy(sourceAudioOptions=mergedAudioChoices(base))
+                    return@launch
+                }catch(cancelled:CancellationException){throw cancelled}
+                catch(error:Exception){if(com.aliflix.app.BuildConfig.DEBUG)android.util.Log.i("AliflixOriginalAudio","${provider.name}: ${error.javaClass.simpleName}");ensureActive()}
+                finally{adapter.close()}
+            }
+        }
+    }
+
     internal fun selectSourceAudio(language: String) {
         val current = selection ?: return
-        if (!current.source.identity.hasSourceEditions || ui.external ||
+        if ((!current.source.identity.hasSourceEditions && language !in alternativeAudio) || ui.external ||
             NativePlaybackService.activeRequest?.offlineDownloadId?.isNotBlank() == true ||
             ui.sourceAudioOptions.none { it.language == language }) return
         if (ui.pendingSourceAudioLanguage == language || (ui.pendingSourceAudioLanguage == null && ui.sourceAudioLanguage == language)) return
         val active = NativePlaybackService.activeRequest ?: return
+        val alternative=alternativeAudio[language]?.takeIf{alternativeAudioOwner==current.key}
+        val target=alternative?.selection?:current
         if (audioEditionRollback == null) audioEditionRollback = active
         audioEditionJob?.cancel()
         var position = controller?.currentPosition?.takeIf { it > 0L } ?: active.positionMs
@@ -774,7 +819,10 @@ class NativePlayerActivity : FragmentActivity() {
             var replaced = false
             try {
                 var resolvedServer=ui.server
-                val resolved = withTimeout(60000) { adapter.resolve(current, position, emptySet(), audioLanguage = language) { resolvedServer=it } }
+                val resolved = alternative?.takeIf{it.expires>android.os.SystemClock.elapsedRealtime()}?.request?.also{resolvedServer=alternative.server}
+                    ?: withTimeout(60000) { adapter.resolve(target, position, emptySet(), audioLanguage = language) { resolvedServer=it } }
+                if(alternative!=null && !target.source.identity.hasSourceEditions)
+                    check(hasVerifiedAudioLanguage(this@NativePlayerActivity,resolved,language)){"Audio unavailable"}
                 ensureActive()
                 if (selection?.key != owner || selection?.source != current.source) return@launch
                 position = controller?.currentPosition?.takeIf { it > 0L } ?: NativePlaybackService.activeRequest?.positionMs ?: position
@@ -782,7 +830,7 @@ class NativePlayerActivity : FragmentActivity() {
                 val captions = NativePlaybackService.activeRequest ?: active
                 val originalCaptions = activeSubtitleCuesJson
                 val originalCues = activeSubtitleCues
-                val attempt = startNative(resolved.copy(positionMs = position, playing = playing && !party.state.value.active, selectionJson = current.nativeJson(),
+                val attempt = startNative(resolved.copy(positionMs = position, playing = playing && !party.state.value.active, selectionJson = target.nativeJson(), sourceAudioLanguage = language,
                     subtitlesVtt = captions.subtitlesVtt, subtitleLanguage = captions.subtitleLanguage,
                     subtitleLabel = captions.subtitleLabel))
                 // The new soundtrack invalidates its old automatic clock, not
@@ -805,7 +853,8 @@ class NativePlayerActivity : FragmentActivity() {
                 if (party.state.value.active) resumePreparedPlayback()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
-                if (selection?.key == owner && selection?.source == current.source) {
+                if(alternative!=null) alternativeAudio.remove(language)
+                if (selection?.key == owner && (selection?.source == current.source || selection?.source == target.source)) {
                     val previous = audioEditionRollback
                     if (replaced && previous != null) {
                         position = controller?.currentPosition?.takeIf { it > 0L } ?: position
@@ -951,6 +1000,7 @@ class NativePlayerActivity : FragmentActivity() {
                         resumePreparedPlayback()
                         if (auto) loadAutomaticSubtitles(restored, language, request.url)
                         warmNextEpisode(restored, savedRoute.server)
+                        warmOriginalAudio(restored,savedRoute.server)
                         return@launch
                     } catch (error: Exception) {
                         ensureActive()
@@ -1072,6 +1122,7 @@ class NativePlayerActivity : FragmentActivity() {
                         reconcileSyncedCaptions()
                         resumePreparedPlayback()
                         warmNextEpisode(candidate, server)
+                        warmOriginalAudio(candidate,server)
                         return@launch
                     } catch (error: Exception) {
                         ensureActive()
@@ -1254,7 +1305,7 @@ class NativePlayerActivity : FragmentActivity() {
         invalidateSubtitleWork()
         automaticAttemptKey = null
         selection = runCatching { nativeSelection(request.selectionJson) }.getOrNull() ?: selection
-        ui = ui.copy(sourceAudioOptions = if (request.offlineDownloadId.isBlank()) request.sourceAudioChoices()
+        ui = ui.copy(sourceAudioOptions = if (request.offlineDownloadId.isBlank()) mergedAudioChoices(request)
             else request.sourceAudioChoices().filter { it.language == request.sourceAudioLanguage },
             sourceAudioLanguage = request.sourceAudioLanguage)
         updateSelectionUi()
@@ -1979,6 +2030,7 @@ class NativePlayerActivity : FragmentActivity() {
         super.onStop()
     }
     override fun onDestroy() {
+        originalAudioWarmup?.cancel()
         audioEditionJob?.cancel()
         germanWarmup?.cancel()
         audioSyncJob?.cancel()

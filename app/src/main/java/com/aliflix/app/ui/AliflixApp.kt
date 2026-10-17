@@ -4654,6 +4654,7 @@ internal fun DetailScreen(
                     key = { episode -> "${episode.seasonNumber}:${episode.number}" },
                 ) { episode ->
                     EpisodeRow(
+                        modifier = if(!BuildConfig.IS_TV && rememberMobileMotionEnabled()) Modifier.animateItem(fadeInSpec=tween(220),fadeOutSpec=tween(120)) else Modifier,
                         media = item,
                         episode = episode,
                         current = mainEpisode?.let { it.seasonNumber == episode.seasonNumber && it.number == episode.number } == true,
@@ -5491,13 +5492,14 @@ private fun EpisodeRow(
     progress: PlaybackProgress?,
     current: Boolean,
     onPlay: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var expanded by rememberSaveable(media.key, episode.seasonNumber, episode.number) { mutableStateOf(false) }
     val chevronRotation by animateFloatAsState(
         if (expanded) 180f else 0f, tween(200), label = "episodeDisclosure",
     )
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
             .padding(horizontal = AliflixSpacing.Medium, vertical = 5.dp)
             .aliflixSurface(

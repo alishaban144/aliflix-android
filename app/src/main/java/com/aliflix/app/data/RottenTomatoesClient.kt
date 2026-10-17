@@ -456,8 +456,18 @@ class RottenTomatoesClient internal constructor(
                 normalizeText(returnedSeries),
             ) >= 65
             val episodeMatches = episode.title.equals("Episode ${episode.number}", ignoreCase = true) ||
-                titleIdentityScore(normalizeText(episode.title), normalizeText(returnedTitle)) >= 55
-            if (returnedNumber == episode.number && seriesMatches && episodeMatches) {
+                titleIdentityScore(
+                    if(com.aliflix.app.BuildConfig.IS_TV) normalizeText(episode.title) else normalizedEpisodeRatingTitle(episode.title),
+                    if(com.aliflix.app.BuildConfig.IS_TV) normalizeText(returnedTitle) else normalizedEpisodeRatingTitle(returnedTitle)) >= 55
+            // Current RT episode JSON-LD can omit episodeNumber and the part
+            // suffix. The exact canonical S/E path plus primary series/season
+            // identity still distinguishes adjacent parts without guessing.
+            val exactEpisodePath = canonicalPath == runCatching { URI(finalUrl).path.trimEnd('/') }.getOrNull()
+            val returnedSeason = json.optJSONObject("partOfSeason")?.optString("seasonNumber")?.toIntOrNull()
+            val mobilePrimaryMatch = !BuildConfig.IS_TV && returnedNumber == null && exactEpisodePath &&
+                returnedSeason == episode.seasonNumber &&
+                normalizedEpisodeRatingTitle(returnedTitle) == episodeRatingTitleBase(episode.title)
+            if (seriesMatches && ((returnedNumber == episode.number && episodeMatches) || mobilePrimaryMatch)) {
                 jsonIdentityMatches = true
             }
         }
@@ -467,7 +477,8 @@ class RottenTomatoesClient internal constructor(
         return pageTitle.contains(normalizeText(series.title)) &&
             (
                 episode.title.equals("Episode ${episode.number}", ignoreCase = true) ||
-                    pageTitle.contains(normalizeText(episode.title))
+                    (if(com.aliflix.app.BuildConfig.IS_TV) pageTitle.contains(normalizeText(episode.title))
+                    else normalizedEpisodeRatingTitle(document.title()).contains(episodeRatingTitleBase(episode.title)))
                 )
     }
 

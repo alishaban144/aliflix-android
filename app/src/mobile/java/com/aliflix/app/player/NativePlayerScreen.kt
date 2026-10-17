@@ -542,7 +542,7 @@ internal fun NativePlayerScreen(
                         ) {
                             Icon(Icons.Default.Dns, null, modifier = Modifier.size(16.dp), tint = Color.White)
                             Spacer(Modifier.width(6.dp))
-                            Text("Switch Server", color = Color.White, fontSize = 13.sp)
+                            Text("Streaming source", color = Color.White, fontSize = 13.sp)
                         }
                         Button(
                             onClick = if (state.verificationRequired) onVerifyProvider else onRetry,
@@ -847,7 +847,7 @@ internal fun NativePlayerScreen(
             servers = serverOptions,
             providers = providerOptions,
             providerDiscovery = state.providerDiscovery,
-            onSelectProvider = onBrowseProvider,
+            onSelectProvider = { provider -> onSelectProviderServer(provider, "Auto") },
             onRetryProviderServers = onRetryProviderServers,
             onSelectProviderServer = { option ->
                 onSelectProviderServer(state.providerDiscovery.provider ?: activeProvider, option.key)
@@ -946,8 +946,10 @@ internal fun NativePlayerScreen(
                     "Audio & subtitles", "Languages & subtitles", "Subtitles" -> {
                         if (sheet != "Subtitles") {
                         Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        if (state.sourceAudioOptions.isNotEmpty() && player?.currentTracks?.groups.orEmpty().filter { it.type == C.TRACK_TYPE_AUDIO }.sumOf { it.length } <= 1) {
-                            state.sourceAudioOptions.forEach { audio ->
+                        if (state.sourceAudioOptions.isNotEmpty()) {
+                            val nativeGroups=player?.currentTracks?.groups.orEmpty().filter{it.type==C.TRACK_TYPE_AUDIO}
+                            val nativeLanguages=nativeGroups.flatMap{g->(0 until g.length).mapNotNull{g.getTrackFormat(it).language?.substringBefore('-')}}
+                            state.sourceAudioOptions.filter{nativeGroups.sumOf{it.length}<=1||it.language !in nativeLanguages}.forEach { audio ->
                                 SheetOption(audio.label,
                                     if (audio.language.equals(state.playbackSelection?.media?.originalLanguage, true)) "Original" else "",
                                     selected = audio.language == state.sourceAudioLanguage && state.pendingSourceAudioLanguage == null,
@@ -955,6 +957,7 @@ internal fun NativePlayerScreen(
                                     onSourceAudioSelected(audio.language)
                                 }
                             }
+                            if(nativeGroups.sumOf{it.length}>1) TrackOptions(player,C.TRACK_TYPE_AUDIO,trackRevision,pendingAudio=audioSelection.pending,confirmedAudio=audioSelection.selected.takeUnless{state.external},onTrackSelected=onAudioSelected){_,_->}
                         } else TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, pendingAudio = audioSelection.pending, confirmedAudio = audioSelection.selected.takeUnless { state.external }, onTrackSelected = onAudioSelected) { _, _ -> }
                         Spacer(Modifier.height(4.dp))
                         }

@@ -56,6 +56,7 @@ class PrioritySitesDeviceTest {
         grantNativeFixtureNetworkPermission()
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val cases=listOf(
+            Media(694,MediaType.MOVIE,"The Shining",year="1980",imdbId="tt0081505",originalLanguage="en"),
             Media(157336,MediaType.MOVIE,"Interstellar",year="2014",imdbId="tt0816692",originalLanguage="en"),
             Media(490132,MediaType.MOVIE,"Green Book",year="2018",imdbId="tt6966692",originalLanguage="en"),
             Media(109445,MediaType.MOVIE,"Frozen",year="2013",imdbId="tt2294629",originalLanguage="en"),
@@ -106,6 +107,12 @@ class PrioritySitesDeviceTest {
                         };ready }
                         scenario.onActivity { assertEquals(provider.identity,nativeSelection(NativePlaybackService.activeRequest!!.selectionJson).source.identity) }
                         receipt.put("selectedServer",server)
+                    }
+                    if(media.id==694 && args.getString("requireOriginalAudio")=="true") {
+                        await("Verified original English alternative",65000){var found=false;scenario.onActivity {found=it.playbackUiState.sourceAudioOptions.any{o->o.language=="en"}};found}
+                        scenario.onActivity{it.selectSourceAudio("en")}
+                        await("English native source ready",30000){var ready=false;scenario.onActivity{ready=it.playbackUiState.pendingSourceAudioLanguage==null&&it.playbackUiState.sourceAudioLanguage=="en"&&it.playbackController?.isPlaying==true};ready}
+                        scenario.onActivity{assertNull(it.playbackController!!.playerError);receipt.put("englishAlternative",it.playbackUiState.playbackSelection?.source?.identity?.displayName).put("englishVerified",true)}
                     }
                     if(media.id==157336) {
                         var nativeGerman=false

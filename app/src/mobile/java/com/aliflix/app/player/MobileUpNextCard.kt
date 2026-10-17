@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,10 +42,13 @@ internal fun MobileUpNextCard(episode: Episode, progress: Float, onPlay: () -> U
                         color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Next episode", color = AliflixAccentSecondary, fontSize = 10.sp,
+                    Text("Next episode", color = AliflixAccentSecondary, fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold, letterSpacing = .6.sp)
                     Text(episode.title, color = AliflixContentPrimary, fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                IconButton(onClick=onCredits,modifier=Modifier.size(48.dp)) {
+                    Icon(Icons.Rounded.Close,"Dismiss next episode",tint=AliflixContentSecondary,modifier=Modifier.size(19.dp))
                 }
                 IconButton(onClick = onPlay, modifier = Modifier.size(48.dp)) {
                     Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
@@ -57,10 +61,7 @@ internal fun MobileUpNextCard(episode: Episode, progress: Float, onPlay: () -> U
                     }
                 }
             }
-            TextButton(onClick = onCredits, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), shape = RoundedCornerShape(14.dp)) {
-                Text("Watch credits", color = AliflixContentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-            }
+
         }
     }
 }

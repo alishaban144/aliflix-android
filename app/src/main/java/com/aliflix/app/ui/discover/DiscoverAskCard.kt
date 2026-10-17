@@ -5,6 +5,7 @@ import com.aliflix.app.ui.common.AliflixSurface
 
 import android.animation.ValueAnimator
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -36,7 +37,8 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
         value
     } else 0f
     AliflixSurface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small)
+            .then(if(!com.aliflix.app.BuildConfig.IS_TV)Modifier.clickable { onMode(0) } else Modifier),
         shape = AliflixCorners.Panel,
         level = AliflixSurfaceLevel.Content,
     ) {

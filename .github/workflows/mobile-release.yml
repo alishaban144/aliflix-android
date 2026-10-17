@@ -350,7 +350,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Talk to Aliflix, priority Filmo / Serienstream / AniWorld playback and audio, compact mobile controls, all-season episodes and update indicators. ARM64 packaging preserves the original speech model and native binaries."
+          RELEASE_NOTES="Talk now uses one Gemini Live voice with native interruption, multilingual conversation, secure direct streaming and verified film knowledge. Automatic source recovery, original-language audio alternatives, episode rating matching and refined mobile controls."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -392,9 +392,9 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile-only: Talk to Aliflix within Ask Aliflix, with continuous voice interaction, streaming speech, interruption, private history controls and attributed, spoiler-aware retrieval.
+            Mobile-only: Talk to Aliflix now uses Gemini 3.8 Live exclusively with the pinned Aoede voice, direct real-time speech, native interruption, context resumption and authenticated short-lived tokens. Film knowledge uses attributed Wikipedia / Wikidata / TVMaze evidence and bounded on-demand Tavily retrieval. Ending questions authorize the requested spoilers without a consent flow.
 
-            Filmo movies, Serienstream series and AniWorld Japanese anime are prioritized. Audio switching confirms the actual native track; downloads expose available audio editions. Details restores its original actions, episodes includes all seasons/IMDb ratings, Streaming sources is a collapsed catalogue, and new updates have a small indicator. The next-episode card is redesigned while retaining its moving ring.
+            Filmo movies, Serienstream series and AniWorld Japanese anime retain priority with automatic recovery when unavailable. The source picker hides internal mirrors. Missing original-language Filmo editions are offered only after native track verification from an alternative source. Episode rating matching handles part-number variants; season changes animate, the entire Discover Ask card opens, and the compact next-episode card keeps its ring without Watch credits. Talk has a native audio-reactive orb, clear typography and moving particles.
 
             Sync with Audio remains local with the original Silero/ONNX/WebRTC binaries and unchanged confidence gates. Some short multilingual caption editions remain ambiguous and are rejected safely; see the validation report for exact passing and failed cases.
 

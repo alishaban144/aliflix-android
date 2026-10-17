@@ -184,7 +184,7 @@ internal fun MobilePlayerMoreSheet(
                         }
                         Spacer(Modifier.height(8.dp))
                         MoreOptionRow(Icons.Rounded.Dns, "Streaming source",
-                            listOfNotNull(activeProvider.displayName, selectedServer?.takeUnless { it == activeProvider.displayName }).joinToString(" · "),
+                            if(com.aliflix.app.BuildConfig.IS_TV) listOfNotNull(activeProvider.displayName, selectedServer?.takeUnless { it == activeProvider.displayName }).joinToString(" · ") else activeProvider.displayName,
                             onClick = { page = MorePage.SOURCES })
                         onCast?.let { action ->
                             MoreOptionRow(Icons.Rounded.Cast, "Cast", if (castActive) "Connected" else "",
@@ -203,12 +203,13 @@ internal fun MobilePlayerMoreSheet(
                     MorePage.SOURCES -> {
                         sources.forEach { option ->
                             MoreOptionRow(Icons.Rounded.Dns, option.provider.displayName,
-                                if (option.selected) "Playing now" else "",
+                                if (com.aliflix.app.BuildConfig.IS_TV && option.selected) "Playing now" else "",
                                 selected = option.selected,
+                                showChevron = com.aliflix.app.BuildConfig.IS_TV,
                                 onClick = {
-                                    drilledProvider = option.provider
-                                    page = MorePage.SERVERS
-                                    onSelectProvider(option.provider)
+                                    if(com.aliflix.app.BuildConfig.IS_TV) {
+                                        drilledProvider = option.provider;page = MorePage.SERVERS;onSelectProvider(option.provider)
+                                    } else { if(!option.selected)onSelectProvider(option.provider);onDismiss() }
                                 })
                         }
                     }

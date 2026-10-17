@@ -82,11 +82,11 @@ class NativeUpNextDeviceTest {
                             assertTrue("Emulator system overlay could not be dismissed",
                                 action.performAction(AccessibilityNodeInfo.ACTION_CLICK))
                         }
-                        node("Watch credits") != null && node("Next episode") != null
+                        node("Dismiss next episode") != null && node("Next episode") != null
                     } }
                     catch (error: AssertionError) { diagnostics(scenario, name); throw error }
                     Thread.sleep(500)
-                    val bounds = android.graphics.Rect().also { node("Watch credits")!!.getBoundsInScreen(it) }
+                    val bounds = android.graphics.Rect().also { node("Dismiss next episode")!!.getBoundsInScreen(it) }
                     scenario.onActivity {
                         assertTrue(bounds.bottom < it.window.decorView.height)
                         if (orientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
@@ -105,10 +105,10 @@ class NativeUpNextDeviceTest {
                     } catch (error: AssertionError) { diagnostics(scenario, "ended"); throw error }
                     await { node("Next episode") != null }
                 }
-                var action = requireNotNull(node("Watch credits"))
+                var action = requireNotNull(node("Dismiss next episode"))
                 while (!action.isClickable && action.parent != null) action = action.parent
                 assertTrue(action.performAction(AccessibilityNodeInfo.ACTION_CLICK))
-                await { node("Watch credits") == null }
+                await { node("Dismiss next episode") == null }
                 scenario.onActivity { assertEquals(selection.key, it.playbackUiState.playbackSelection?.key) }
             }
         } finally {
@@ -125,7 +125,7 @@ class NativeUpNextDeviceTest {
         automation.clearCache()
         fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
             if (node == null) return null
-            if (node.text?.toString() == text) return node
+            if (node.text?.toString() == text || node.contentDescription?.toString() == text) return node
             for (i in 0 until node.childCount) find(node.getChild(i))?.let { return it }
             return null
         }

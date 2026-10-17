@@ -77,10 +77,13 @@ import com.aliflix.app.ui.theme.*
                         TextButton(onClick={onSeasonSelected(selectedSeason)},modifier=Modifier.heightIn(min=48.dp)) {
                             Icon(Icons.Rounded.Refresh,null,Modifier.size(18.dp));Spacer(Modifier.width(8.dp));Text(if(seasonError!=null) "Retry" else "Load episodes")
                         }
-                    } else key(selectedSeason) {
-                        val listState=rememberLazyListState(initialFirstVisibleItemIndex=rows.indexOfFirst { it.seasonNumber==currentSeason && it.number==currentEpisode }.coerceAtLeast(0))
-                        LazyColumn(Modifier.fillMaxWidth().weight(1f),state=listState,contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        items(rows,key={"${it.seasonNumber}:${it.number}"}) { episode ->
+                    } else AnimatedContent(targetState=selectedSeason,modifier=Modifier.fillMaxWidth().weight(1f),
+                        transitionSpec={ if(motion)(fadeIn(androidx.compose.animation.core.tween(220))+slideInHorizontally{it/12}).togetherWith(fadeOut(androidx.compose.animation.core.tween(100))) else EnterTransition.None.togetherWith(ExitTransition.None) },
+                        label="episode-season") { shownSeason ->
+                        val shownRows=episodes.filter{it.seasonNumber==shownSeason}.sortedBy{it.number}
+                        val listState=rememberLazyListState(initialFirstVisibleItemIndex=shownRows.indexOfFirst { it.seasonNumber==currentSeason && it.number==currentEpisode }.coerceAtLeast(0))
+                        LazyColumn(Modifier.fillMaxSize(),state=listState,contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        items(shownRows,key={"${it.seasonNumber}:${it.number}"}) { episode ->
                             val current=episode.seasonNumber==currentSeason && episode.number==currentEpisode
                             AliflixSurface(shape=AliflixCorners.Card,level=if(current) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content) {
                                 Row(Modifier.fillMaxWidth().heightIn(min=88.dp).clickable { onSelectEpisode(episode);onDismiss() }

@@ -18,58 +18,28 @@ class PlayerMoreMenuTest {
     private val selection = PlaybackSelection(Media(101, MediaType.MOVIE, "Fixture"),
         source = PlaybackSource(MobilePlaybackProvider.FLIXER))
 
-    @Test fun browsingSourcesDoesNotSwitchAndReopeningStartsAtMore() {
-        var visible by mutableStateOf(true)
-        var switches = 0
-        var browsed: PlaybackProvider? = null
+    @Test fun choosingSourceIsOneTapAndNeverExposesMirrors() {
+        var visible by mutableStateOf(true);var selected:PlaybackProvider?=null;var mirrorCalls=0
         compose.setContent { AliflixMobileTheme {
-            MobilePlayerMoreSheet(
-                visible, selection, listOf(MoviepireServerOption("current", "Current server", true)),
-                false, null, {}, {}, { switches++ }, {}, { visible = false },
-                providers = listOf(StreamingSourceOption(MobilePlaybackProvider.FLIXER, true),
-                    StreamingSourceOption(PlaybackProviderId.CINEJOY)),
-                onSelectProvider = { browsed = it },
-                providerDiscovery = ProviderServerDiscovery(PlaybackProviderId.CINEJOY,
-                    servers = listOf(MoviepireServerOption("other", "Other server", false))),
-                onSelectProviderServer = { switches++ },
-                onAudioBoostChange = {},
-                onCast = {},
-                onOpenWirelessDisplay = {},
-                onStopPlayback = {},
-            )
+            MobilePlayerMoreSheet(visible,selection,listOf(MoviepireServerOption("current","Current server",true)),
+                false,null,{},{},{mirrorCalls++},{},{visible=false},
+                providers=listOf(StreamingSourceOption(MobilePlaybackProvider.FLIXER,true),StreamingSourceOption(PlaybackProviderId.CINEJOY)),
+                onSelectProvider={selected=it},providerDiscovery=ProviderServerDiscovery(PlaybackProviderId.CINEJOY,
+                    servers=listOf(MoviepireServerOption("other","Other server",false))),onSelectProviderServer={mirrorCalls++})
         } }
-        captureMenu("player-more-home.png")
-        compose.onNodeWithText("CineJoy").assertDoesNotExist()
         compose.onNodeWithText("Streaming source").performScrollTo().performClick()
-        captureMenu("player-more-sources.png")
+        compose.onNodeWithText("Other server").assertDoesNotExist();compose.onNodeWithText("Current server").assertDoesNotExist()
         compose.onNodeWithText("CineJoy").performClick()
-        compose.onNodeWithText("Other server").assertIsDisplayed()
-        compose.runOnIdle { assertEquals(0, switches); assertEquals(PlaybackProviderId.CINEJOY, browsed) }
-        pressBack()
-        compose.onNodeWithText("CineJoy").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Back to More").performClick()
-        compose.onNodeWithContentDescription("Close More").performClick()
-        compose.runOnIdle { visible = true }
+        compose.runOnIdle { assertEquals(PlaybackProviderId.CINEJOY,selected);assertFalse(visible);assertEquals(0,mirrorCalls);visible=true }
         compose.onNodeWithText("Audio & subtitles").assertIsDisplayed()
-        compose.onNodeWithText("CineJoy").assertDoesNotExist()
-        compose.onNodeWithText("Streaming source").performScrollTo().performClick()
-        compose.onNodeWithText("CineJoy").performClick()
-        compose.onNodeWithText("Other server").performClick()
-        compose.runOnIdle { assertEquals(1, switches); assertFalse(visible) }
     }
-
-    @Test fun choosingCurrentServerDoesNotRestartPlayback() {
-        var switches = 0
-        var dismissed = false
-        compose.setContent { AliflixMobileTheme {
-            MobilePlayerMoreSheet(true, selection,
-                listOf(MoviepireServerOption("current", "Current server", true)),
-                false, null, {}, {}, { switches++ }, {}, { dismissed = true })
-        } }
-        compose.onNodeWithText("Streaming source").performScrollTo().performClick()
-        compose.onNodeWithText("Flixer").performClick()
-        compose.onNodeWithText("Current server").performClick()
-        compose.runOnIdle { assertEquals(0, switches); assertTrue(dismissed) }
+    @Test fun choosingCurrentSourceDoesNotRestartPlayback() {
+        var switches=0;var dismissed=false
+        compose.setContent { AliflixMobileTheme { MobilePlayerMoreSheet(true,selection,
+            listOf(MoviepireServerOption("current","Current server",true)),false,null,{},{},{switches++},{},{dismissed=true},
+            onSelectProvider={switches++}) } }
+        compose.onNodeWithText("Streaming source").performScrollTo().performClick();compose.onNodeWithText("Flixer").performClick()
+        compose.runOnIdle {assertEquals(0,switches);assertTrue(dismissed)}
     }
 
     @Test fun audioBoostSwitchReflectsPreferenceAndOutputAvailability() {
