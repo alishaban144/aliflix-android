@@ -3,7 +3,8 @@ import { boundedJson } from './talkProviders';
 import type { RecommendationEnv } from './types';
 export const TalkLibraryItemSchema=z.object({id:z.number().int().positive().optional(),imdbId:z.string().regex(/^tt\d{1,12}$/).optional(),kind:z.enum(['saved','favorite','watched']),type:z.enum(['movie','tv'])}).strict().refine(v=>!!v.id||!!v.imdbId);
 export const TalkViewingPageSchema=z.object({collection:z.enum(['taste','favorite','saved','watched']),offset:z.number().int().min(0).max(100000),total:z.number().int().min(0).max(100000)}).strict();
-export const TalkContextSchema=z.object({companionVersion:z.union([z.literal(2),z.literal(3)]).optional(),
+export const TalkContextSchema=z.object({companionVersion:z.union([z.literal(2),z.literal(3)]).optional(),voice:z.enum(['Aoede','Kore','Puck','Charon']).optional(),
+ rejected:z.array(z.object({id:z.number().int().positive(),type:z.enum(['movie','tv'])}).strict()).max(16).optional(),
  libraryCounts:z.object({favorite:z.number().int().min(0).max(100000),saved:z.number().int().min(0).max(100000),watched:z.number().int().min(0).max(100000)}).strict().optional(),
  recentSuggestions:z.array(z.string().min(1).max(48)).max(24).optional(),stickyLanguage:z.boolean().optional(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional(),id:z.number().int().positive().optional(),type:z.enum(['movie','tv']).optional(),
  imdbId:z.string().regex(/^tt\d{1,12}$/).optional(),season:z.number().int().min(0).max(1000).default(1),episode:z.number().int().min(1).max(10000).default(1),

@@ -58,7 +58,7 @@ User-owned viewing context (opaque IDs and progress only; not the default subjec
 export function liveSetup(context: TalkContext) {
  return { model: 'models/'+TALK_MODEL,
   generationConfig: { responseModalities: ['AUDIO'], maxOutputTokens: 2048,
-    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: TALK_VOICE } } } },
+    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: context.voice || TALK_VOICE } } } },
   systemInstruction: { parts: [{ text: liveInstructions(context) }] },
   // Legacy installed clients cannot answer the new local topic/history tools.
   tools: [{functionDeclarations:LIVE_TOOLS[0].functionDeclarations.filter(t=>context.recentProgress===undefined?t.name==='film_knowledge':(!['aliflix_app','remember_recommendations'].includes(t.name)||(context.companionVersion||0)>=2)&&(t.name!=='conversation_language'||context.stickyLanguage===true)&&(!['web_research','recommendations'].includes(t.name)||context.companionVersion===3))}], inputAudioTranscription: {}, outputAudioTranscription: {},
@@ -90,5 +90,5 @@ export async function issueLiveToken(env: RecommendationEnv, context: TalkContex
     bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) });
  if(!response.ok){const reason=(await response.text()).replaceAll(env.GEMINI_API_KEY,'[key]').slice(0,500);console.warn('talk_live_token_status',response.status,reason);throw Error('LIVE_UNAVAILABLE');}
  const result=z.object({name:z.string().min(8).max(4096)}).parse(await boundedJson(response,16384));
- return {token:result.name,model:TALK_MODEL,voice:TALK_VOICE,expires,setup:{model:setup.model,sessionResumption:{}}};
+ return {token:result.name,model:TALK_MODEL,voice:context.voice||TALK_VOICE,expires,setup:{model:setup.model,sessionResumption:{}}};
 }
