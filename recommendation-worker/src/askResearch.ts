@@ -138,6 +138,58 @@ export function planFilters(raw: unknown) {
     ),
   );
 }
+/** Preserve explicit catalogue constraints independently of model phrasing. */
+export function researchFilters(
+  type: MediaType,
+  request: z.infer<typeof RecommendationFiltersSchema>,
+  planned: z.infer<typeof RecommendationFiltersSchema>,
+  query: string,
+) {
+  const filters = mergeFilters(request, planned);
+  const declared =
+    /^(?:science fiction|sci[- ]?fi)\s+(?:films?|movies?|series|shows?)\b|^science[- ]fiction[- ]filme|^أفلام\s+خيال\s+علمي/i.test(
+      query.trim(),
+    )
+      ? "Science Fiction"
+      : undefined;
+  const canonical = (genre: string) => {
+    if (type !== "tv") return genre;
+    const key = normalize(genre);
+    return [
+      "science fiction",
+      "sci fi",
+      "fantasy",
+      "science fiction fantasy",
+      "sci fi fantasy",
+    ].includes(key)
+      ? "Sci-Fi & Fantasy"
+      : ["action", "adventure", "action adventure"].includes(key)
+        ? "Action & Adventure"
+        : ["war", "politics", "war politics"].includes(key)
+          ? "War & Politics"
+          : genre;
+  };
+  filters.includedGenres = [
+    ...new Set(
+      [...filters.includedGenres, ...(declared ? [declared] : [])].map(
+        canonical,
+      ),
+    ),
+  ];
+  filters.excludedGenres = [...new Set(filters.excludedGenres.map(canonical))];
+  if (
+    filters.includedGenres.some((v) =>
+      filters.excludedGenres.some((e) => normalize(v) === normalize(e)),
+    )
+  )
+    throw new ServiceError(
+      "CONTRADICTORY_FILTERS",
+      "Conflicting genre filters",
+      400,
+      false,
+    );
+  return filters;
+}
 export function researchFailure(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   const match = /ASK_SERVICE:([A-Z_]+):(\d{3})/.exec(message);
@@ -307,7 +359,7 @@ const PLAN_JSON = {
         includedGenres: { type: "array", items: { type: "string" } },
         excludedGenres: { type: "array", items: { type: "string" } },
       },
-      required: [],
+      required: ["includedGenres", "excludedGenres"],
     },
   },
   required: ["intent", "search", "hardFilters"],
@@ -680,7 +732,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
   private async build(request: AskRequest, signal: AbortSignal) {
     const started = Date.now(),
       key =
-        "results-v9:" +
+        "results-v10:" +
         (await digest({ ...request, requestId: undefined, cursor: undefined }));
     const existing = this.read<{
       results: RecommendationResult[];
@@ -908,7 +960,12 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
           ),
         );
       remaining(signal);
-      const filters = mergeFilters(request.filters, plan.hardFilters);
+      const filters = researchFilters(
+        request.mediaType,
+        request.filters,
+        plan.hardFilters,
+        context,
+      );
       const research = await this.web(
         {
           query: plan.search,
@@ -1269,7 +1326,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
             filters: {
               minimumYear: year - 3,
               maximumYear: year,
-              excludedTmdbIds: old[i].results.slice(0, 8).map((v) => v.tmdbId),
+              excludedTmdbIds: old[i].results.slice(0, 32).map((v) => v.tmdbId),
             },
             pageSize: 24,
           }),

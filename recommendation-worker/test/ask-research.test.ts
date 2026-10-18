@@ -8,6 +8,7 @@ import {
   clefVerdict,
   safeResearchUrl,
   planFilters,
+  researchFilters,
 } from "../src/askResearch";
 import { liveSetup, liveInstructions } from "../src/talkProviders";
 import { TalkContextSchema } from "../src/talkEvidence";
@@ -112,20 +113,18 @@ describe("unified authenticated research", () => {
     expect(clefProbability({ type: "noul", noul: 0.9301 })).toBe(0.9301);
   });
   it("researches once, returns real citations and cached findings without further credits", async () => {
-    const fetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async () =>
-        Response.json({
-          results: [
-            {
-              title: "Official release",
-              url: "https://www.sony.com/film",
-              content: "A film opens in December 2026.",
-            },
-          ],
-          usage: { credits: 1 },
-        }),
-      );
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        results: [
+          {
+            title: "Official release",
+            url: "https://www.sony.com/film",
+            content: "A film opens in December 2026.",
+          },
+        ],
+        usage: { credits: 1 },
+      }),
+    );
     await runInDurableObject(
       env.ASK_RESEARCH.getByName("test-web"),
       async (instance) => {
@@ -283,92 +282,130 @@ describe("unified authenticated research", () => {
       env.ASK_RESEARCH.getByName("pipeline-complete"),
       async (instance) => {
         const e = (instance as any).env;
-        const original={AI:e.AI,ASK_RESEARCH:e.ASK_RESEARCH,TAVILY_API_KEY:e.TAVILY_API_KEY};try {
-        e.TAVILY_API_KEY = "test-only";
-        const ai = vi.fn(async (model: string, input: any) =>
-          model.includes("clef")
-            ? {
-                answers: Object.fromEntries(
-                  Object.keys(input.questions).map((key, i) => [
-                    key,
-                    {
-                      type: "choice",
-                      choice: i === 0 ? "weak" : "strong",
-                      probabilities: {
-                        strong: i === 0 ? 0.1 : 0.9,
-                        relevant: 0.05,
-                        weak: 0.05,
-                        unsupported: 0,
-                      },
-                    },
-                  ]),
-                ),
-              }
-            : {
-                response: JSON.stringify(
-                  input.messages[0].content.startsWith("Interpret")
-                    ? {
-                        intent: "Memory and identity",
-                        search: "memory identity film list",
-                        hardFilters: {},
-                      }
-                    : { candidates: titles },
-                ),
-              },
-        );
-        e.AI = { run: ai };
-        const identity = async (_type: string, title: string) => ({
-          tmdbId: Number(title.split(" ")[1]) + 1,
-          mediaType: "movie",
-          title,
-          releaseDate: "2025-01-01",
-          genres: ["Science Fiction"],
-          originCountries: ["US"],
-          originalLanguage: "en",
-          runtimeMinutes: 110,
-          matchLevel: "Relevant",
-          finalScore: 0,
-          matchReasons: [],
-          retrievalSources: [],
-        });
-        e.ASK_RESEARCH = {
-          getByName: () => ({
-            identity,
-            resolveBatch: async (
-              type: string,
-              items: Array<{ title: string }>,
-            ) => Promise.all(items.map((p) => identity(type, p.title))),
-            evidenceBatch: async () => [],
-          }),
+        const original = {
+          AI: e.AI,
+          ASK_RESEARCH: e.ASK_RESEARCH,
+          TAVILY_API_KEY: e.TAVILY_API_KEY,
         };
-        const result = await (instance as unknown as AskResearch).recommend(
-          "user",
-          request({ filters: { minimumYear: 2024, originalLanguage: "en" } }),
-        );
-        expect(result.results).toHaveLength(24);
-        expect(new Set(result.results.map((v) => v.tmdbId)).size).toBe(24);
-        expect(result.results.some((v) => v.tmdbId === 1)).toBe(false);
-        expect(
-          result.results.every((v) =>
-            v.retrievalSources[0].startsWith("https://www.bfi.org.uk"),
-          ),
-        ).toBe(true);
-        expect(ai.mock.calls.map((c) => c[0])).toEqual([
-          "@cf/openai/gpt-oss-120b",
-          "@cf/openai/gpt-oss-120b",
-          "@cf/cloudflare/clef-flash",
-          "@cf/cloudflare/clef-flash",
-        ]);
-        expect(result.metrics).toMatchObject({
-          gptCalls: 2,
-          clefCalls: 2,
-          verified: 30,
-          tavilyCredits: 1,
-          neurons: null,
-        });
-        }finally{Object.assign(e,original);}
+        try {
+          e.TAVILY_API_KEY = "test-only";
+          const ai = vi.fn(async (model: string, input: any) =>
+            model.includes("clef")
+              ? {
+                  answers: Object.fromEntries(
+                    Object.keys(input.questions).map((key, i) => [
+                      key,
+                      {
+                        type: "choice",
+                        choice: i === 0 ? "weak" : "strong",
+                        probabilities: {
+                          strong: i === 0 ? 0.1 : 0.9,
+                          relevant: 0.05,
+                          weak: 0.05,
+                          unsupported: 0,
+                        },
+                      },
+                    ]),
+                  ),
+                }
+              : {
+                  response: JSON.stringify(
+                    input.messages[0].content.startsWith("Interpret")
+                      ? {
+                          intent: "Memory and identity",
+                          search: "memory identity film list",
+                          hardFilters: {},
+                        }
+                      : { candidates: titles },
+                  ),
+                },
+          );
+          e.AI = { run: ai };
+          const identity = async (_type: string, title: string) => ({
+            tmdbId: Number(title.split(" ")[1]) + 1,
+            mediaType: "movie",
+            title,
+            releaseDate: "2025-01-01",
+            genres: ["Science Fiction"],
+            originCountries: ["US"],
+            originalLanguage: "en",
+            runtimeMinutes: 110,
+            matchLevel: "Relevant",
+            finalScore: 0,
+            matchReasons: [],
+            retrievalSources: [],
+          });
+          e.ASK_RESEARCH = {
+            getByName: () => ({
+              identity,
+              resolveBatch: async (
+                type: string,
+                items: Array<{ title: string }>,
+              ) => Promise.all(items.map((p) => identity(type, p.title))),
+              evidenceBatch: async () => [],
+            }),
+          };
+          const result = await (instance as unknown as AskResearch).recommend(
+            "user",
+            request({ filters: { minimumYear: 2024, originalLanguage: "en" } }),
+          );
+          expect(result.results).toHaveLength(24);
+          expect(new Set(result.results.map((v) => v.tmdbId)).size).toBe(24);
+          expect(result.results.some((v) => v.tmdbId === 1)).toBe(false);
+          expect(
+            result.results.every((v) =>
+              v.retrievalSources[0].startsWith("https://www.bfi.org.uk"),
+            ),
+          ).toBe(true);
+          expect(ai.mock.calls.map((c) => c[0])).toEqual([
+            "@cf/openai/gpt-oss-120b",
+            "@cf/openai/gpt-oss-120b",
+            "@cf/cloudflare/clef-flash",
+            "@cf/cloudflare/clef-flash",
+          ]);
+          expect(result.metrics).toMatchObject({
+            gptCalls: 2,
+            clefCalls: 2,
+            verified: 30,
+            tavilyCredits: 1,
+            neurons: null,
+          });
+        } finally {
+          Object.assign(e, original);
+        }
       },
     );
   });
 });
 
+it("enforces declared genres and maps TV catalogue genres without weakening hard filters", () => {
+  const empty = planFilters({});
+  expect(
+    researchFilters(
+      "movie",
+      empty,
+      empty,
+      "Science fiction films about identity",
+    ).includedGenres,
+  ).toEqual(["Science Fiction"]);
+  expect(
+    researchFilters(
+      "tv",
+      empty,
+      planFilters({ includedGenres: ["Science Fiction", "Action"] }),
+      "",
+    ).includedGenres,
+  ).toEqual(["Sci-Fi & Fantasy", "Action & Adventure"]);
+  expect(
+    researchFilters("movie", empty, empty, "أفلام خيال علمي عن الهوية")
+      .includedGenres,
+  ).toEqual(["Science Fiction"]);
+  expect(() =>
+    researchFilters(
+      "movie",
+      planFilters({ excludedGenres: ["Science Fiction"] }),
+      empty,
+      "Science fiction films",
+    ),
+  ).toThrow();
+});
