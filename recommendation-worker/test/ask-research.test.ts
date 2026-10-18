@@ -22,7 +22,7 @@ describe('unified authenticated research',()=>{
  it('validates bounded multilingual queries, anchors and explicit feedback',()=>{
   expect(AskRequestSchema.parse(request({query:'أفلام عن الذاكرة والهوية',library:[{id:1,type:'movie',kind:'dislike'}]})).library[0].kind).toBe('dislike');
   expect(AskRequestSchema.safeParse(request({anchors:Array(5).fill({tmdbId:1,title:'A',mediaType:'movie'})})).success).toBe(false);
-  expect(()=>clefProbability('90%')).toThrow();expect(clefProbability(.8)).toBe(.8);
+  expect(()=>clefProbability('90%')).toThrow();expect(clefProbability(.8)).toBe(.8);expect(clefProbability({type:'noul',noul:.9301})).toBe(.9301);
  });
  it('researches once, returns real citations and cached findings without further credits',async()=>{
   const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>Response.json({results:[{title:'Official release',url:'https://www.sony.com/film',content:'A film opens in December 2026.'}],usage:{credits:1}}));
@@ -62,7 +62,7 @@ describe('unified authenticated research',()=>{
   vi.spyOn(globalThis,'fetch').mockImplementation(async()=>Response.json({results:[{title:'Research collection',url:'https://www.bfi.org.uk/lists/memory',content:titles.map(t=>t.title+': memory and identity story.').join(' ')}]}));
   await runInDurableObject(env.ASK_RESEARCH.getByName('pipeline-complete'),async(instance)=>{
    const e=(instance as any).env;e.TAVILY_API_KEY='test-only';
-   const ai=vi.fn(async(model:string,input:any)=>model.includes('clef')?{answers:Object.fromEntries(Object.keys(input.questions).map((key,i)=>[key,i===0?.1:.9]))}:{response:JSON.stringify(input.messages[0].content.startsWith('Interpret')?{intent:'Memory and identity',search:'memory identity film list',hardFilters:{}}:{candidates:titles})});e.AI={run:ai};
+   const ai=vi.fn(async(model:string,input:any)=>model.includes('clef')?{answers:Object.fromEntries(Object.keys(input.questions).map((key,i)=>[key,{type:'noul',noul:i===0?.1:.9}]))}:{response:JSON.stringify(input.messages[0].content.startsWith('Interpret')?{intent:'Memory and identity',search:'memory identity film list',hardFilters:{}}:{candidates:titles})});e.AI={run:ai};
    e.ASK_RESEARCH={getByName:()=>({identity:async(_type:string,title:string)=>({tmdbId:Number(title.split(' ')[1])+1,mediaType:'movie',title,releaseDate:'2025-01-01',genres:['Science Fiction'],originCountries:['US'],originalLanguage:'en',runtimeMinutes:110,matchLevel:'Relevant',finalScore:0,matchReasons:[],retrievalSources:[]})})};
    const result=await(instance as unknown as AskResearch).recommend('user',request({filters:{minimumYear:2024,originalLanguage:'en'}}));
    expect(result.results).toHaveLength(24);expect(new Set(result.results.map(v=>v.tmdbId)).size).toBe(24);expect(result.results.some(v=>v.tmdbId===1)).toBe(false);expect(result.results.every(v=>v.retrievalSources[0].startsWith('https://www.bfi.org.uk'))).toBe(true);
