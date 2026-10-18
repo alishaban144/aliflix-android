@@ -97,12 +97,18 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
     return {...item,...(imdbId?{imdbId}:{}),...resolved};
    })));
   }
-  const result={context:state.context,titles,...(page?{page:{...page,nextOffset:page.offset+identities.length,hasMore:page.offset+identities.length<page.total}}:{}),
+  // Taste pages must not hide the current viewing item when it is not a Favorite.
+  const currentIdentity=state.context.imdbId;
+  const currentTitle=currentIdentity?(titles.find(t=>t.imdbId===currentIdentity)||
+   {imdbId:currentIdentity,...await resolveViewingTitle(currentIdentity,state.context.type||'tv',signal).catch(()=>({}))}):undefined;
+  const current=currentTitle?{...currentTitle,season:state.context.season,episode:state.context.episode,
+   position:state.context.position,completed:state.context.completed}:null;
+  const result={context:state.context,current,titles,...(page?{page:{...page,nextOffset:page.offset+identities.length,hasMore:page.offset+identities.length<page.total}}:{}),
    tastePriority:'Favorites are the strongest explicit taste signal; saved/My List is secondary intent. Recent playback is evidence of starting, not necessarily finishing. Do not recommend already favored/watched titles as new discoveries. Request further library pages when needed.',
    boundary:'Only actual completed episodes are fully viewed. Position seconds are not timed plot evidence. Never assume missing history was watched.'};
   // An asynchronous lookup must not restore context after the owner closes it.
   if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
-  const ttl=titles.every(t=>!!t.title)?5*MINUTE:30000;
+  const ttl=titles.every(t=>!!t.title)&&(!currentIdentity||!!currentTitle?.title)?5*MINUTE:30000;
   this.put(cacheKey,result,Math.min(state.expires,Date.now()+ttl));return result;
  }
  async close(session:string,forget=false){if(forget)this.ctx.storage.sql.exec('DELETE FROM memory');else {this.ctx.storage.sql.exec('DELETE FROM memory WHERE key=?','live:'+session);this.ctx.storage.sql.exec('DELETE FROM memory WHERE key LIKE ?','viewing:'+session+':%');}}

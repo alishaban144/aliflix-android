@@ -44,7 +44,7 @@ describe('Gemini-only live identity and security',()=>{
    const persisted=JSON.parse(state.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=?','live:'+session).one().value);
    expect(persisted.calls).toBe(5);expect(persisted.grants).toEqual(['retained']);
    expect((result as any).context.imdbId).toBe('tt5753856');expect((result as any).titles[0].title).toBe('Dark');
-   expect((result as any).context.position).toBe(120);
+   expect((result as any).context.position).toBe(120);expect((result as any).current).toMatchObject({title:'Dark',position:120});
    const count=spy.mock.calls.length;await(instance as unknown as TalkSession).viewing(session);expect(spy).toHaveBeenCalledTimes(count);
   });
  });
@@ -120,6 +120,18 @@ describe('Gemini-only live identity and security',()=>{
    await talk.viewing(session,items,{...page,offset:8});
    expect(spy.mock.calls.filter(c=>String(c[0]).includes('external_ids'))).toHaveLength(1);
    await talk.close(session);expect(state.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'viewing:%'").one().n).toBe(0);
+  });
+ });
+ it('returns independently identified current viewing alongside a different favorite page',async()=>{
+  vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{
+   const current=String(u).includes('tt0944947');
+   return Response.json({name:current?'Game of Thrones':'Dark',url:current?'https://www.tvmaze.com/shows/82/game-of-thrones':'https://www.tvmaze.com/shows/17861/dark',externals:{imdb:current?'tt0944947':'tt5753856'}});
+  });
+  await runInDurableObject(env.TALK_SESSIONS.getByName('current-outside-taste-page'),async(instance,state)=>{
+   const session=crypto.randomUUID(),expires=Date.now()+60000;
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context:TalkContextSchema.parse({imdbId:'tt0944947',type:'tv',season:2,episode:4,position:100,recentProgress:[]}),expires,calls:0,searches:0,grants:[]}),expires);
+   const result=await(instance as unknown as TalkSession).viewing(session,[{imdbId:'tt5753856',type:'tv',kind:'favorite'}]) as any;
+   expect(result.titles[0].title).toBe('Dark');expect(result.current).toMatchObject({title:'Game of Thrones',season:2,episode:4,position:100,completed:false});
   });
  });
  it('does not recreate knowledge cache after owner deletion during source retrieval',async()=>{
