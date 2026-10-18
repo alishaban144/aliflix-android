@@ -64,6 +64,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var reconnects = 0
     private var reconnectJob: Job? = null
     private var readyWatchdog: Job? = null
+    private val answerDeadline=TalkResponseDeadline(scope) {
+        if(permitted&&!speaking) {suspendSession();update{it.copy(phase="Reconnect",level=0f)}}
+    }
     @Volatile private var permitted = false
     @Volatile private var speaking = false
     @Volatile private var muted = false
@@ -213,6 +216,15 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     if(ticket==epoch && response?.code in listOf(401,403)){ephemeral=null;resumeHandle=null}
                     disconnected(ticket,response?.code==429)
                 } }
+                override fun onClosing(webSocket:WebSocket,code:Int,reason:String) {
+                    // onClosed requires BOTH peers to close. Without this acknowledgement
+                    // a remote graceful close can leave the UI waiting indefinitely.
+                    webSocket.close(if(code==1005)1000 else code,null)
+                    scope.launch {
+                        if(ticket==epoch&&(reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
+                        disconnected(ticket,false)
+                    }
+                }
                 override fun onClosed(webSocket:WebSocket,code:Int,reason:String) { scope.launch {
                     if(ticket==epoch && (reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
                     disconnected(ticket,false)
@@ -333,7 +345,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 tools.forEach {(id,job)->cancelledTools.add(id);job.cancel()};tools.clear()
                 update{it.copy(phase=if(muted) "Muted" else "Listening")}
             }
-            content.optJSONObject("inputTranscription")?.optString("text")?.let { inputText=appendTranscript(inputText,it);update{v->v.copy(phase=if(speaking) v.phase else "Thinking")} }
+            content.optJSONObject("inputTranscription")?.optString("text")?.let { inputText=appendTranscript(inputText,it);answerDeadline.awaiting();update{v->v.copy(phase=if(speaking) v.phase else "Thinking")} }
             content.optJSONObject("outputTranscription")?.optString("text")?.let { text->
                 outputText=appendTranscript(outputText,text)
                 commitQuestion()
@@ -349,6 +361,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 val data=parts.getJSONObject(i).optJSONObject("inlineData")?:continue
                 if(!data.optString("mimeType").startsWith("audio/pcm"))continue
                 val bytes=Base64.decode(data.getString("data"),Base64.NO_WRAP)
+                if(bytes.isNotEmpty())answerDeadline.clear()
                 require(bytes.size<=192000&&bytes.size%2==0)
                 val buffer=audio?:continue
                 val reserved=buffer.bytes.addAndGet(bytes.size)
@@ -452,7 +465,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal val debugPlayedSamples get() = writtenSamples
     internal fun debugInterrupt(){check(BuildConfig.DEBUG);sequence++;interruptOutput();emit(JSONObject().put("realtimeInput",JSONObject().put("text","Stop speaking.")))}
     internal fun debugReconnect(){check(BuildConfig.DEBUG);update{it.copy(phase="Reconnecting")};cancelSocket(ws)}
-    internal suspend fun debugInjectText(text:String){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};inputText=text;commitQuestion();debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)))}
+    internal suspend fun debugInjectText(text:String){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};inputText=text;commitQuestion();answerDeadline.awaiting();debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)))}
     internal suspend fun debugInjectUtterance(pcm:ByteArray){check(BuildConfig.DEBUG&&pcm.size in 6400..960000&&pcm.size%2==0);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;for(at in pcm.indices step 3200){sendPcm(pcm.copyOfRange(at,minOf(at+3200,pcm.size)));delay(100)};repeat(15){sendPcm(ByteArray(3200));delay(100)};emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)))}
     fun toggleMute(){muted=!muted;if(muted&&captureJob?.isActive==true)emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)));update{it.copy(muted=muted,phase=if(it.phase in listOf("Connecting","Reconnecting"))it.phase else if(muted) "Muted" else if(speaking) "Speaking" else "Listening")}}
     fun setHistory(keep:Boolean){prefs.edit().putBoolean("keep-history",keep).apply();update{it.copy(keepHistory=keep)};if(keep)persistHistory()else prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()}
@@ -467,6 +480,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         }
     }
     private fun stopAudio() {
+        answerDeadline.clear()
         captureJob?.cancel(); captureJob = null
         val record=capture;capture=null
         runCatching { record?.stop() };runCatching { record?.release() }

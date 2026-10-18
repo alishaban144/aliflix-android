@@ -27,7 +27,7 @@ class TalkCompanionDeviceTest {
   try {runBlocking {
    withTimeout(25000){while(session.state.value.phase!="Listening")delay(50)}
    val fixture=File(context.getExternalFilesDir(null),"talk-validation")
-   val turns=listOf("shining","follow-up","dark","app","favorites","another")
+   val turns=if(InstrumentationRegistry.getArguments().getString("companionFocus")=="true")listOf("app","favorites","another") else listOf("shining","follow-up","dark","app","favorites","another")
    for((index,name) in turns.withIndex()) {
     val began=SystemClock.elapsedRealtime()
     withContext(Dispatchers.Main) {
@@ -41,13 +41,22 @@ class TalkCompanionDeviceTest {
     File(context.getExternalFilesDir(null),"talk-companion-progress-174.json").writeText(JSONObject().put("turn",name).put("topic",session.state.value.words).put("lines",JSONArray(session.state.value.lines.map{JSONObject().put("role",it.role).put("text",it.text)})).toString(2))
     assertEquals("Aoede",session.debugVoice);assertEquals("gemini-3.8-live",session.debugModel)
     assertNotEquals("ALIFLIX",session.state.value.words);assertEquals("en",session.debugResponseLanguage)
-    if(index==0)assertTrue(session.state.value.words,session.state.value.words.contains("SHINING"))
-    if(index==1)assertEquals(receipt.getJSONObject(0).getString("topic"),session.state.value.words)
-    if(index==3) {assertNotEquals("BRIEFLY",session.state.value.words);assertTrue("App answers must read native feature context",(session.debugToolCalls["aliflix_app"]?:0)>0)}
-    if(index==4)assertTrue("Recommendations must read actual taste",(session.debugToolCalls["viewing_context"]?:0)>0)
-    if(index==2)assertTrue(session.state.value.words,session.state.value.words.contains("DARK"))
+    if(name=="shining")assertTrue(session.state.value.words,session.state.value.words.contains("SHINING"))
+    if(name=="follow-up")assertEquals(receipt.getJSONObject(0).getString("topic"),session.state.value.words)
+    if(name=="app") {assertNotEquals("BRIEFLY",session.state.value.words);assertTrue("App answers must read native feature context",(session.debugToolCalls["aliflix_app"]?:0)>0)}
+    if(name=="favorites")assertTrue("Recommendations must read actual taste",(session.debugToolCalls["viewing_context"]?:0)>0)
+    if(name=="dark")assertTrue(session.state.value.words,session.state.value.words.contains("DARK"))
     val answer=session.state.value.lines.lastOrNull{it.role=="assistant"}?.text.orEmpty()
     assertTrue(answer,answer.length>30)
+    if(name=="favorites"&&InstrumentationRegistry.getArguments().getString("companionReconnect")=="true") {
+     assertTrue("Native resumption handle",session.debugResumeAvailable)
+     val generation=session.debugReadyGeneration
+     val before=(session.javaClass.getDeclaredField("ephemeral").apply{isAccessible=true}.get(session) as JSONObject).getString("session")
+     withContext(Dispatchers.Main){session.debugReconnect()}
+     withTimeout(25000){while(session.debugReadyGeneration<=generation)delay(50)}
+     val after=(session.javaClass.getDeclaredField("ephemeral").apply{isAccessible=true}.get(session) as JSONObject).getString("session")
+     assertEquals("Same issued session survives native resumption",before,after)
+    }
     receipt.put(JSONObject().put("turn",name).put("topic",session.state.value.words)
      .put("firstAudioMs",session.debugFirstAudioAt-began).put("totalMs",SystemClock.elapsedRealtime()-began)
      .put("voice",session.debugVoice).put("language",session.debugResponseLanguage).put("answer",answer).put("toolCalls",JSONObject(session.debugToolCalls.toMap()))
@@ -59,6 +68,14 @@ class TalkCompanionDeviceTest {
    withTimeout(10000){while(resumed()!==main)delay(50)};delay(1000)
    assertEquals("Resume",session.state.value.phase);assertFalse(main.isFinishing)
    File(context.getExternalFilesDir(null),"talk-companion-174.json").writeText(receipt.toString(2))
-  }} finally {i.runOnMainSync {if(!talk.isFinishing)talk.finish()}}
+  }} finally {
+   fun field(name:String)=runCatching {session.javaClass.getDeclaredField(name).apply{isAccessible=true}.get(session)?.toString()}.getOrNull()
+   File(context.getExternalFilesDir(null),"talk-companion-diagnostics-174.json").writeText(JSONObject()
+    .put("phase",session.state.value.phase).put("topic",session.state.value.words).put("tools",JSONObject(session.debugToolCalls.toMap()))
+    .put("inputText",field("inputText")).put("outputText",field("outputText")).put("lastQuestion",field("lastQuestion"))
+    .put("pendingTools",field("tools")).put("firstAudio",session.debugFirstAudioAt).put("turnComplete",session.debugTurnCompleteAt)
+    .put("lines",JSONArray(session.state.value.lines.map{JSONObject().put("role",it.role).put("text",it.text)})).toString(2))
+   i.runOnMainSync {if(!talk.isFinishing)talk.finish()}
+  }
  }
 }
