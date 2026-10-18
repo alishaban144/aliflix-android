@@ -71,7 +71,8 @@ describe('unified authenticated research',()=>{
   await runInDurableObject(env.ASK_RESEARCH.getByName('pipeline-complete'),async(instance)=>{
    const e=(instance as any).env;e.TAVILY_API_KEY='test-only';
    const ai=vi.fn(async(model:string,input:any)=>model.includes('clef')?{answers:Object.fromEntries(Object.keys(input.questions).map((key,i)=>[key,{type:'noul',noul:i===0?.1:.9}]))}:{response:JSON.stringify(input.messages[0].content.startsWith('Interpret')?{intent:'Memory and identity',search:'memory identity film list',hardFilters:{}}:{candidates:titles})});e.AI={run:ai};
-   e.ASK_RESEARCH={getByName:()=>({identity:async(_type:string,title:string)=>({tmdbId:Number(title.split(' ')[1])+1,mediaType:'movie',title,releaseDate:'2025-01-01',genres:['Science Fiction'],originCountries:['US'],originalLanguage:'en',runtimeMinutes:110,matchLevel:'Relevant',finalScore:0,matchReasons:[],retrievalSources:[]})})};
+   const identity=async(_type:string,title:string)=>({tmdbId:Number(title.split(' ')[1])+1,mediaType:'movie',title,releaseDate:'2025-01-01',genres:['Science Fiction'],originCountries:['US'],originalLanguage:'en',runtimeMinutes:110,matchLevel:'Relevant',finalScore:0,matchReasons:[],retrievalSources:[]});
+   e.ASK_RESEARCH={getByName:()=>({identity,resolveBatch:async(type:string,items:Array<{title:string}>)=>Promise.all(items.map(p=>identity(type,p.title))),evidenceBatch:async()=>[]})};
    const result=await(instance as unknown as AskResearch).recommend('user',request({filters:{minimumYear:2024,originalLanguage:'en'}}));
    expect(result.results).toHaveLength(24);expect(new Set(result.results.map(v=>v.tmdbId)).size).toBe(24);expect(result.results.some(v=>v.tmdbId===1)).toBe(false);expect(result.results.every(v=>v.retrievalSources[0].startsWith('https://www.bfi.org.uk'))).toBe(true);
    expect(ai.mock.calls.map(c=>c[0])).toEqual(['@cf/openai/gpt-oss-120b','@cf/openai/gpt-oss-120b','@cf/cloudflare/clef-flash']);

@@ -76,12 +76,20 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
   const result:RecommendationResult={tmdbId:c.tmdbId,mediaType:type,title:c.title,originalTitle:c.originalTitle,posterPath:c.posterPath,backdropPath:c.backdropPath,releaseDate:c.releaseDate,genres:c.genres,runtimeMinutes:c.runtimeMinutes,originalLanguage:c.originalLanguage,originCountries:c.originCountries,tmdbRating:c.tmdbRating,tmdbVoteCount:c.tmdbVoteCount,status:c.status,matchLevel:'Relevant',finalScore:0,matchReasons:[],retrievalSources:[]};
   const value={...result,imdbId:d.imdb_id||d.external_ids?.imdb_id||undefined,productionCompanyIds:c.productionCompanyIds,collectionId:c.collectionId};this.put(key,value,7*DAY);return value;
  }
+ async resolveBatch(type:MediaType,items:Array<{title:string;year:number}>,deadline:number):Promise<Array<ResearchMedia|null>> {
+  if(items.length>40)throw new Error('REQUEST_LIMIT');
+  return lanes(items,4,async p=>{const shard=await digest([type,p.title,p.year]);return this.env.ASK_RESEARCH.getByName('identity:'+shard).identity(type,p.title,p.year,undefined,deadline).catch(()=>null);});
+ }
+ async evidenceBatch(items:Array<{title:string;year:number;imdbId?:string}>,deadline:number):Promise<Array<{title:string;finding:WebFinding}>> {
+  if(items.length>40)throw new Error('REQUEST_LIMIT');const key='evidence-v2:'+await digest(items),cached=this.read<Array<{title:string;finding:WebFinding}>>(key);if(cached)return cached;
+  const facts=await candidateEvidence(items,AbortSignal.timeout(Math.max(1,Math.min(9000,deadline-Date.now()))));const values=[...facts].map(([title,finding])=>({title,finding}));this.put(key,values,values.length?7*DAY:60000);return values;
+ }
  async recommend(owner:string,raw:unknown){const request=AskRequestSchema.parse(raw),controller=new AbortController(),job=owner+':'+request.requestId;
   this.controllers.set(job,controller);const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(65000)]);
   try{return await this.build(request,signal);}catch(error){throw wireFailure(error);}finally{this.controllers.delete(job);}
  }
  private async build(request:AskRequest,signal:AbortSignal){
-  const started=Date.now(),key='results-v5:'+await digest({...request,requestId:undefined,cursor:undefined});const existing=this.read<{results:RecommendationResult[];metrics:Usage}>(key);if(existing)return {...existing,metrics:{...existing.metrics,elapsedMs:Date.now()-started,tavilyCredits:0,gptCalls:0,clefCalls:0,researchCached:true,neurons:0,neuronEstimate:0,aiUsage:[]},cached:true};
+  const started=Date.now(),key='results-v6:'+await digest({...request,requestId:undefined,cursor:undefined});const existing=this.read<{results:RecommendationResult[];metrics:Usage}>(key);if(existing)return {...existing,metrics:{...existing.metrics,elapsedMs:Date.now()-started,tavilyCredits:0,gptCalls:0,clefCalls:0,researchCached:true,neurons:0,neuronEstimate:0,aiUsage:[]},cached:true};
   return this.single(key,async()=>{
    const usage:Usage={elapsedMs:0,tavilyCredits:0,researchCached:false,gptCalls:0,clefCalls:0,generated:0,verified:0,accepted:0,neurons:null,aiUsage:[]};
    const binding=this.env.AI;
@@ -113,14 +121,17 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
      {intent:plan.intent,mediaType:request.mediaType,filters,anchors,taste:library.filter(Boolean),sources:evidence.map((v,i)=>({index:i,...v})),excluded:[...filters.excludedTitles,...generatedTitles]},PICK_JSON,'Ask researched candidates',1536,.2));
     usage.generated+=generated.candidates.length;
     const fresh=generated.candidates.filter(p=>!generatedTitles.includes(normalize(p.title)));generatedTitles.push(...fresh.map(p=>normalize(p.title)));
-    const resolved=await lanes(fresh,4,async p=>{remaining(signal);const shard=await digest([request.mediaType,p.title,p.year]);const m=await this.env.ASK_RESEARCH.getByName('identity:'+shard).identity(request.mediaType,p.title,p.year,undefined,started+60000).catch(()=>null);if(!m||seen.has(m.tmdbId))return null;const c=toCandidate({id:m.tmdbId,title:m.title,name:m.title},request.mediaType,new Map())!;Object.assign(c,{...m,detailsLoaded:true,hardFiltersVerified:true});if(!passesHardFilters(c,filters))return null;return {pick:p,media:m};});
+    const media=await boundedInference(this.env.ASK_RESEARCH.getByName('resolver-v1').resolveBatch(request.mediaType,fresh.map(p=>({title:p.title,year:p.year})),started+60000),signal,15000);
+    const resolved=fresh.map((p,i)=>{const m=media[i];if(!m||seen.has(m.tmdbId))return null;const c=toCandidate({id:m.tmdbId,title:m.title,name:m.title},request.mediaType,new Map())!;Object.assign(c,{...m,detailsLoaded:true,hardFiltersVerified:true});if(!passesHardFilters(c,filters))return null;return {pick:p,media:m};});
     const identities=resolved.filter((v):v is NonNullable<typeof v>=>!!v);
-    const independentlyVerified=await candidateEvidence(identities.map(p=>({title:p.pick.title,year:p.pick.year,imdbId:p.media.imdbId})),signal);
+    const wiki=await boundedInference(this.env.ASK_RESEARCH.getByName('licensed-evidence-v2').evidenceBatch(identities.map(p=>({title:p.pick.title,year:p.pick.year,imdbId:p.media.imdbId})),started+60000),signal,10000);
+    const independentlyVerified=new Map(wiki.map(v=>[v.title,v.finding]));
     const missing=identities.filter(p=>!independentlyVerified.has(p.pick.title)&&!evidence.some(e=>normalize(e.title+' '+e.text).includes(normalize(p.pick.title))));
     // Direct Wikimedia APIs sometimes deny edge traffic. Search its licensed
     // indexed pages in batches, never one charged query per candidate.
     const batches:typeof missing[]=[];for(let i=0;i<missing.length;i+=16)batches.push(missing.slice(i,i+16));
-    const recovered=await lanes(batches,2,async batch=>this.web({query:(batch.map(p=>'"'+p.pick.title.replaceAll('"','')+'"').join(' OR ')+' film series plot synopsis').slice(0,600),recent:false},signal,true));
+    const sourced=identities.length-missing.length;
+    const recovered=sourced>=Math.min(24,request.pageSize)?[]:await lanes(batches.slice(0,2),2,async batch=>this.web({query:(batch.map(p=>'"'+p.pick.title.replaceAll('"','')+'"').join(' OR ')+' film series plot synopsis').slice(0,600),recent:false},signal,true).catch(error=>{if(sourced>=20)return {evidence:[],cached:false,credits:0,retrievedAt:Date.now()};throw error;}));
     recovered.forEach(r=>{usage.tavilyCredits+=r.credits;evidence.push(...r.evidence);});
     const candidates=identities.filter(p=>{
      p.pick.evidence=evidence.flatMap((e,i)=>(i<research.evidence.length?normalize(e.title+' '+e.text).includes(normalize(p.pick.title)):normalize(e.title.replace(/\([^)]*\)/g,'')).startsWith(normalize(p.pick.title))&&new RegExp('\\b'+p.pick.year+'\\b').test(e.title+' '+e.text))?[i]:[]).slice(0,3);

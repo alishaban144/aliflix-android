@@ -10,8 +10,8 @@ export async function candidateEvidence(items:ResearchIdentity[],signal:AbortSig
  const pages:Array<{title:string;extract?:string;pageprops?:{wikibase_item?:string};pageid:number}>=[];
  async function json(url:URL){const response=await fetch(url,{signal:AbortSignal.any([signal,AbortSignal.timeout(4500)]),headers:{'user-agent':'AliflixResearch/1.0 (+https://github.com/alishaban144/aliflix-android)'},cf:{cacheTtl:86400}});if(!response.ok)console.warn('ask_wikimedia_status',url.hostname,response.status);return boundedJson(response,400000) as Promise<any>;}
  // At most four batched requests instead of one search per title.
- const batches:Array<string[]>=[];for(let i=0;i<titles.length;i+=48)batches.push(titles.slice(i,i+48));
- const responses=await Promise.allSettled(batches.map(async batch=>{const url=new URL('https://en.wikipedia.org/w/api.php');url.search=new URLSearchParams({action:'query',format:'json',redirects:'1',prop:'extracts|pageprops',explaintext:'1',exchars:'1900',exsectionformat:'plain',titles:batch.join('|')}).toString();return json(url);}));
+ const batches:Array<string[]>=[];for(let i=0;i<titles.length;i+=32)batches.push(titles.slice(i,i+32));
+ const responses=await Promise.allSettled(batches.map(async batch=>{const url=new URL('https://en.wikipedia.org/w/api.php');url.search=new URLSearchParams({action:'query',format:'json',redirects:'1',prop:'extracts|pageprops',explaintext:'1',exchars:'1200',exintro:'1',exlimit:'max',exsectionformat:'plain',titles:batch.join('|')}).toString();return json(url);}));
  responses.forEach(r=>{if(r.status==='fulfilled')pages.push(...Object.values(r.value.query?.pages||{}) as typeof pages);});
  const ids=[...new Set(pages.map(p=>p.pageprops?.wikibase_item).filter((v):v is string=>!!v&&/^Q\d+$/.test(v)))];
  if(!ids.length){console.warn('ask_wikimedia_empty',wanted.length,pages.length);return result;}
