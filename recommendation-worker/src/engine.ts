@@ -125,7 +125,7 @@ async function optionalTmdbCall<T>(operation: string, call: () => Promise<T>): P
   }
 }
 
-function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<number, string>): Candidate | undefined {
+export function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<number, string>): Candidate | undefined {
   const title = (mediaType === 'movie' ? item.title : item.name)?.trim();
   if (!item.id || !title) return undefined;
   return {
@@ -143,7 +143,7 @@ function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<n
   };
 }
 
-function mergeDetails(candidate: Candidate, details: TmdbDetails): void {
+export function mergeDetails(candidate: Candidate, details: TmdbDetails): void {
   candidate.title = (candidate.mediaType === 'movie' ? details.title : details.name) || candidate.title;
   candidate.originalTitle = (candidate.mediaType === 'movie' ? details.original_title : details.original_name) || candidate.originalTitle;
   candidate.overview = details.overview || candidate.overview;

@@ -1,3 +1,5 @@
+import { AskResearch, askRoute } from './askResearch';
+export { AskResearch };
 import { talkRoute } from './talk';
 export { TalkSession } from './talk';
 import { watchPartyRoute } from './watchParty';
@@ -239,6 +241,8 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
 export default {
   async fetch(request: Request, env: RecommendationEnv, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const ask = await askRoute(request, env, ctx);
+    if (ask) return ask;
     const talk = await talkRoute(request, env);
     if (talk) return talk;
     const party = await watchPartyRoute(request, env);
@@ -346,5 +350,11 @@ export default {
       await enforceRateLimit(request, env);
       return await routeRecommendation(request, env);
     } catch (error) { return errorResponse(error); }
+  },
+  async scheduled(_event: ScheduledController, env: RecommendationEnv, ctx: ExecutionContext) {
+    ctx.waitUntil(env.ASK_RESEARCH.getByName('shared-v1').refreshDaily().catch(error => {
+      console.warn('ask_daily_retained', error instanceof Error ? error.name : 'error');
+      throw error;
+    }));
   },
 } satisfies ExportedHandler<RecommendationEnv>;

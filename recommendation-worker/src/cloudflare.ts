@@ -141,7 +141,7 @@ function parseSchema<T>(operation: string, parse: () => T): T {
   }
 }
 
-async function cloudflareStructuredContent<T>(
+export async function cloudflareStructuredContent<T>(
   env: RecommendationEnv,
   systemInstruction: string,
   input: unknown,

@@ -34,6 +34,10 @@
       {
         "name": "TALK_SESSIONS",
         "class_name": "TalkSession"
+      },
+      {
+        "name": "ASK_RESEARCH",
+        "class_name": "AskResearch"
       }
     ]
   },
@@ -54,6 +58,12 @@
       "tag": "v3-talk",
       "new_sqlite_classes": [
         "TalkSession"
+      ]
+    },
+    {
+      "tag": "v4-ask-research",
+      "new_sqlite_classes": [
+        "AskResearch"
       ]
     }
   ],
