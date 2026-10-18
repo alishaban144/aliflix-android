@@ -22,8 +22,7 @@
   "vars": {
     "AI_GENERATION_MODEL": "cloudflare-gpt-oss-120b",
     "GEMINI_GENERATION_MODEL": "gemini-3.8-flash",
-    "GEMINI_EMBEDDING_MODEL": "gemini-embedding-001",
-    "ASK_NEURON_RECONCILIATION": "{\"day\": \"2026-10-18\", \"asOf\": 1792355997828, \"ceiling\": 7000}"
+    "GEMINI_EMBEDDING_MODEL": "gemini-embedding-001"
   },
   "durable_objects": {
     "bindings": [

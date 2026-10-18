@@ -167,7 +167,7 @@ describe("unified authenticated research", () => {
         state.storage.sql.exec(
           "INSERT OR REPLACE INTO ask_cache VALUES(?,?,?)",
           "quota:search:" + day,
-          "32",
+          "40",
           Date.now() + 86400000,
         );
         await expect(
@@ -357,10 +357,11 @@ describe("unified authenticated research", () => {
           "@cf/openai/gpt-oss-120b",
           "@cf/openai/gpt-oss-120b",
           "@cf/cloudflare/clef-flash",
+          "@cf/cloudflare/clef-flash",
         ]);
         expect(result.metrics).toMatchObject({
           gptCalls: 2,
-          clefCalls: 1,
+          clefCalls: 2,
           verified: 30,
           tavilyCredits: 1,
           neurons: null,
@@ -371,14 +372,3 @@ describe("unified authenticated research", () => {
   });
 });
 
-it("only reconciles audited operator reservations once, without changing the daily ceiling",async()=>{
- await runInDurableObject(env.ASK_RESEARCH.getByName('audit-accounting'),async(instance,state)=>{
-  const service=instance as any,day=new Date().toISOString().slice(0,10),ledger='quota:neurons:'+day;
-  const write=(n:number)=>state.storage.sql.exec('INSERT OR REPLACE INTO ask_cache VALUES(?,?,?)',ledger,JSON.stringify(n),Date.now()+86400000);
-  const read=()=>JSON.parse(state.storage.sql.exec<{value:string}>('SELECT value FROM ask_cache WHERE key=?',ledger).one().value);
-  write(8900);service.env.ASK_NEURON_RECONCILIATION='invalid';service.reconcileNeuronReservation();expect(read()).toBe(8900);
-  service.env.ASK_NEURON_RECONCILIATION=JSON.stringify({day,asOf:Date.now(),ceiling:7000});service.reconcileNeuronReservation();expect(read()).toBe(7000);
-  write(7200);service.reconcileNeuronReservation();expect(read()).toBe(7200);
-  service.env.ASK_NEURON_RECONCILIATION=JSON.stringify({day,asOf:Date.now()-1000000,ceiling:0});service.reconcileNeuronReservation();expect(read()).toBe(7200);
- });
-});

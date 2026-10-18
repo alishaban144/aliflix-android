@@ -89,6 +89,9 @@ export async function tvEpisodeEvidence(q:KnowledgeRequest,imdb:string|undefined
 }
 export async function tavilyEvidence(env:RecommendationEnv,q:KnowledgeRequest,signal:AbortSignal):Promise<Evidence[]> {
  if(!env.TAVILY_API_KEY)return [];
+ // Plot fallback shares the same account-wide free-tier reservation as general
+ // research; per-session limits alone cannot protect a shared Tavily account.
+ if(env.ASK_RESEARCH)await env.ASK_RESEARCH.getByName('shared-v1').reserveExternalSearch();
  const query=`${q.title} ${q.year||''} ${q.kind==='tv'?`season ${q.season||1} episode ${q.episode||1}`:'film'} ${q.query}`.slice(0,400);
  const r=await boundedJson(await fetch('https://api.tavily.com/search',{method:'POST',signal,headers:{'authorization':'Bearer '+env.TAVILY_API_KEY,'content-type':'application/json'},
   body:JSON.stringify({query,search_depth:'basic',max_results:3,include_domains:['en.wikipedia.org','tvmaze.com'],include_answer:false,include_raw_content:false})}));
