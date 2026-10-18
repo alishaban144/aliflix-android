@@ -112,12 +112,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     suspend fun connect() {
         if (closed || permitted || _state.value.phase == "Connecting") return
         val account=FirebaseAuth.getInstance().currentUser?.uid?:"guest"
-        if(prefs.getString("owner","")!=account){ephemeral=null;resumeHandle=null;responseLanguage=null;prefs.edit().remove("history").apply();update{it.copy(lines=emptyList())}}
+        if(prefs.getString("owner","")!=account){ephemeral=null;resumeHandle=null;responseLanguage=null;prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply();update{it.copy(lines=emptyList())}}
         reconnects = 0; permitted = true; startedAt = SystemClock.elapsedRealtime()
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("companionVersion",2).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
@@ -133,15 +133,16 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             }
         }
         val library = (context.applicationContext as AliflixApplication).libraryStore
-        val identities = (library.myList.value.map { it to "saved" } + library.likes.value.map { it to "favorite" } +
-            library.recent.value.map { it to "watched" }).filter { it.first.imdbId?.matches(Regex("tt\\d{1,12}")) == true }
-            .distinctBy { it.first.key }.take(8)
-        conversationContext.put("library", JSONArray(identities.map { (item, kind) ->
-            JSONObject().put("imdbId", item.imdbId).put("kind", kind).put("type", item.type.routeName) }))
+        val identities = (library.likes.value.map { it to "favorite" } + library.myList.value.map { it to "saved" } +
+            library.recent.value.map { it to "watched" }).distinctBy { it.first.key }.take(48)
+        conversationContext.put("library", JSONArray(identities.map { (item, kind) -> talkLibraryIdentity(item,kind) }))
+        conversationContext.put("libraryCounts",JSONObject().put("favorite",library.likes.value.size)
+            .put("saved",library.myList.value.size).put("watched",library.recent.value.size))
+        if(state.value.keepHistory)conversationContext.put("recentSuggestions",JSONArray(readSuggestions()))
         conversationContext.put("recentProgress",JSONArray((context.applicationContext as AliflixApplication)
             .playbackProgressStore.entries.value.values.sortedByDescending{it.updatedAtMillis}
-            .filter{it.media.imdbId?.matches(Regex("tt\\d{1,12}"))==true}.take(8).map { p ->
-                JSONObject().put("imdbId",p.media.imdbId).put("type",p.media.type.routeName)
+            .take(8).map { p ->
+                JSONObject().put("id",p.media.id).put("imdbId",p.media.imdbId).put("type",p.media.type.routeName)
                     .put("season",p.seasonNumber?:1).put("episode",p.episodeNumber?:1)
                     .put("position",p.positionSeconds).put("duration",p.durationSeconds)
                     .put("completed",talkPlaybackCompleted(p.positionSeconds,p.durationSeconds,p.completed))
@@ -267,6 +268,19 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         JSONObject().put("id",id).put("name","conversation_language").put("response",result)))))
                     continue
                 }
+                if(call.optString("name") in setOf("aliflix_app","remember_recommendations")) {
+                    val result=if(call.optString("name")=="aliflix_app")talkAppContext(context) else {
+                        val a=call.optJSONObject("args")?.optJSONArray("titles")?:JSONArray()
+                        val titles=(0 until minOf(a.length(),8)).mapNotNull{validatedTalkTopic(a.optString(it))}
+                        if(state.value.keepHistory)prefs.edit().putString("suggestions",JSONArray((titles+readSuggestions()).distinct().take(24)).toString())
+                            .putLong("suggestions-at",System.currentTimeMillis()).apply()
+                        JSONObject().put("accepted",true)
+                    }
+                    result.put("scheduling",if(call.optString("name")=="aliflix_app")"WHEN_IDLE" else "SILENT")
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
+                        JSONObject().put("id",id).put("name",call.getString("name")).put("response",result)))))
+                    continue
+                }
                 if(call.optString("name")=="conversation_topic") {
                     val topic=validatedTalkTopic(call.optJSONObject("args")?.optString("topic").orEmpty())
                     if(topic!=null)update{it.copy(words=topic)}
@@ -274,11 +288,29 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         JSONObject().put("id",id).put("name","conversation_topic").put("response",JSONObject().put("accepted",topic!=null).put("scheduling","SILENT"))))))
                     continue
                 }
+                if(call.optString("name")=="film_knowledge") {
+                    validatedTalkTopic(call.optJSONObject("args")?.optString("title").orEmpty())?.let{topic->update{it.copy(words=topic)}}
+                }
                 if(call.optString("name") !in setOf("film_knowledge","viewing_context")||tools.size>=2)continue
                 update{it.copy(phase=if(speaking)it.phase else "Thinking")}
                 tools[id]=scope.launch {
                     val result=runCatching {
-                        if(call.optString("name")=="viewing_context")post("viewing",JSONObject().put("session",ephemeral!!.getString("session")))
+                        if(call.optString("name")=="viewing_context") {
+                            val args=call.optJSONObject("args")?:JSONObject()
+                            val library=(context.applicationContext as AliflixApplication).libraryStore
+                            val collection=args.optString("collection","taste")
+                            val items=when(collection) {
+                                "saved"->library.myList.value.map{it to "saved"}
+                                "watched"->library.recent.value.map{it to "watched"}
+                                "favorite"->library.likes.value.map{it to "favorite"}
+                                else->(library.likes.value.map{it to "favorite"}+library.myList.value.map{it to "saved"}+
+                                    library.recent.value.map{it to "watched"}).distinctBy{it.first.key}
+                            }
+                            val offset=args.optInt("offset",0).coerceIn(0,100000)
+                            post("viewing",JSONObject().put("session",ephemeral!!.getString("session"))
+                                .put("items",JSONArray(items.drop(offset).take(8).map{(m,k)->talkLibraryIdentity(m,k)}))
+                                .put("page",JSONObject().put("collection",collection).put("offset",offset).put("total",items.size)))
+                        }
                         else post("knowledge",JSONObject().put("session",ephemeral!!.getString("session"))
                             .put("question",(inputText.ifBlank {lastQuestion}).take(1600)).put("request",call.getJSONObject("args")))
                     }
@@ -302,7 +334,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             content.optJSONObject("inputTranscription")?.optString("text")?.let { inputText=appendTranscript(inputText,it);update{v->v.copy(phase=if(speaking) v.phase else "Thinking")} }
             content.optJSONObject("outputTranscription")?.optString("text")?.let { text->
                 outputText=appendTranscript(outputText,text)
-                if(inputText.isNotBlank()){lastQuestion=inputText;addLine(TalkLine("user",inputText));inputText=""}
+                commitQuestion()
                 update { v->
                     val lines=v.lines.toMutableList();val line=TalkLine("assistant",outputText,finalReferences)
                     if(assistantLine in lines.indices)lines[assistantLine]=line else{lines.add(line);assistantLine=minOf(lines.lastIndex,23)}
@@ -310,7 +342,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
             }
             content.optJSONObject("modelTurn")?.optJSONArray("parts")?.let { parts->
-                if(parts.length()>0){endOfAudio=false;if(inputText.isNotBlank()){lastQuestion=inputText;addLine(TalkLine("user",inputText));inputText=""}}
+                if(parts.length()>0){endOfAudio=false;commitQuestion()}
                 for(i in 0 until parts.length()) {
                 val data=parts.getJSONObject(i).optJSONObject("inlineData")?:continue
                 if(!data.optString("mimeType").startsWith("audio/pcm"))continue
@@ -326,10 +358,21 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             } }
             if(content.optBoolean("turnComplete")) {
                 debugTurnCompleteAt=SystemClock.elapsedRealtime();endOfAudio=true;assistantLine=-1;outputText="";finalReferences=emptyList()
-                update{it.copy(words=topicWords(lastQuestion,"",it.words))}
+                commitQuestion()
                 persistHistory()
             }
         }
+    }
+    private fun readSuggestions():List<String> = runCatching {
+        if(System.currentTimeMillis()-prefs.getLong("suggestions-at",0)>7*86400000L)emptyList() else {
+            val a=JSONArray(prefs.getString("suggestions","[]"));(0 until minOf(a.length(),24)).map{a.getString(it)}
+        }
+    }.getOrDefault(emptyList())
+    private fun commitQuestion() {
+        if(inputText.isBlank())return
+        lastQuestion=inputText;inputText=""
+        addLine(TalkLine("user",lastQuestion))
+        update{it.copy(words=topicWords(lastQuestion,"",it.words))}
     }
     private fun addLine(line:TalkLine){if(line.text.isNotBlank())update{it.copy(lines=(it.lines+line).takeLast(24))}}
     private fun persistHistory(){if(state.value.keepHistory)prefs.edit().putString("history",JSONArray(state.value.lines.takeLast(12).map {JSONObject().put("role",it.role).put("text",it.text.take(1200))}).toString()).apply()}
@@ -407,14 +450,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal val debugPlayedSamples get() = writtenSamples
     internal fun debugInterrupt(){check(BuildConfig.DEBUG);sequence++;interruptOutput();emit(JSONObject().put("realtimeInput",JSONObject().put("text","Stop speaking.")))}
     internal fun debugReconnect(){check(BuildConfig.DEBUG);update{it.copy(phase="Reconnecting")};cancelSocket(ws)}
-    internal suspend fun debugInjectText(text:String){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};lastQuestion=text;addLine(TalkLine("user",text));debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)))}
+    internal suspend fun debugInjectText(text:String){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};inputText=text;commitQuestion();debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)))}
     internal suspend fun debugInjectUtterance(pcm:ByteArray){check(BuildConfig.DEBUG&&pcm.size in 6400..960000&&pcm.size%2==0);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;for(at in pcm.indices step 3200){sendPcm(pcm.copyOfRange(at,minOf(at+3200,pcm.size)));delay(100)};repeat(15){sendPcm(ByteArray(3200));delay(100)};emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)))}
     fun toggleMute(){muted=!muted;if(muted&&captureJob?.isActive==true)emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)));update{it.copy(muted=muted,phase=if(it.phase in listOf("Connecting","Reconnecting"))it.phase else if(muted) "Muted" else if(speaking) "Speaking" else "Listening")}}
-    fun setHistory(keep:Boolean){prefs.edit().putBoolean("keep-history",keep).apply();update{it.copy(keepHistory=keep)};if(keep)persistHistory()else prefs.edit().remove("history").apply()}
+    fun setHistory(keep:Boolean){prefs.edit().putBoolean("keep-history",keep).apply();update{it.copy(keepHistory=keep)};if(keep)persistHistory()else prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()}
     fun clearHistory(){
         sequence++;interruptOutput();val session=ephemeral?.optString("session")
         resumeHandle=null;ephemeral=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
-        prefs.edit().remove("history").apply();update{it.copy(lines=emptyList(),words="ALIFLIX")}
+        prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply();update{it.copy(lines=emptyList(),words="ALIFLIX")}
         val next=++epoch;readyWatchdog?.cancel();reconnectJob?.cancel();stopAudio();cancelSocket(ws);ws=null
         scope.launch {
             if(!session.isNullOrBlank())runCatching{post("close",JSONObject().put("session",session).put("forget",true))}
@@ -519,15 +562,8 @@ internal fun validatedTalkTopic(value:String):String? {
     if(tokens.isEmpty()||tokens.size>6||tokens.all{it in filler}||tokens.distinct().size==1&&tokens.size>1)return null
     return text.uppercase(Locale.ROOT)
 }
-internal fun topicWords(question:String,answer:String,previous:String="ALIFLIX"):String {
-    // Local fallback is deliberately conservative; the native semantic tool can
-    // identify arbitrary films and concepts without an extra model or request.
-    val text=question.ifBlank{answer}.lowercase(Locale.ROOT)
-    if(previous!="ALIFLIX")return previous
-    val themes=listOf("time loop" to "TIME LOOP","time travel" to "TIME TRAVEL","science fiction" to "SCI-FI",
-        "sci-fi" to "SCI-FI","zeitreise" to "ZEITREISE","السفر عبر الزمن" to "السفر عبر الزمن")
-    return themes.firstOrNull{it.first in text}?.second?:previous
-}
+internal fun topicWords(question:String,answer:String,previous:String="ALIFLIX"):String =
+    talkUtteranceTopic(question.ifBlank{answer})?:previous
 
 /** A foreign title or a mixed-language phrase cannot unlock an established language. */
 internal fun chooseTalkResponseLanguage(current:String?,requested:String,explicitRequest:Boolean):String? {

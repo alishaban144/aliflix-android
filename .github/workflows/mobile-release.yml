@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "262"
-  RELEASE_VERSION_NAME: "3.1.172"
+  RELEASE_VERSION_CODE: "264"
+  RELEASE_VERSION_NAME: "3.1.174"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -378,7 +378,7 @@ jobs:
           import hashlib, json, os
           from pathlib import Path
           apk = Path('aliflix-mobile-compat.apk')
-          bridge = dict(versionCode=261, versionName='3.1.171', minimumSdk=29,
+          bridge = dict(versionCode=263, versionName='3.1.173', minimumSdk=29,
               apkUrl=f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['RELEASE_TAG']}/aliflix-mobile-compat.apk",
               sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), sizeBytes=apk.stat().st_size,
               notes='Update compatibility. ARM64 devices can then install the latest mobile release.')
@@ -400,7 +400,7 @@ jobs:
 
             ARM64-only main APK with the existing signed universal compatibility bridge and architecture-aware updater. Native/model parity is verified by the workflow. TV is unchanged.
 
-            Validation: docs/mobile-172-validation.md.
+            Validation: docs/mobile-174-validation.md.
           files: |
             aliflix-mobile.apk
             update-mobile.json

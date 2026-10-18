@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 import { verifyIdentity } from './watchParty';
 import type { RecommendationEnv } from './types';
-import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence, requestedEpisodeBoundary, avoidsSpoilers, resolveViewingTitle } from './talkEvidence';
+import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence, requestedEpisodeBoundary, avoidsSpoilers, resolveViewingTitle, TalkLibraryItemSchema, TalkViewingPageSchema } from './talkEvidence';
 import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProviders';
 const MINUTE=60000,DAY=86400000;
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
@@ -23,7 +23,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
    if(!await env.TALK_SESSIONS.getByName('quota:ip:'+hash).reserve(1,12)||!await env.TALK_SESSIONS.getByName('quota:global').reserve(1,40))return json({error:'DAILY_LIMIT'},429);
    return json(await user.open(body.context));
   }
-  if(path.endsWith('/viewing')) {const body=z.object({session:z.string().uuid()}).strict().parse(bodyRaw);return json(await user.viewing(body.session));}
+  if(path.endsWith('/viewing')) {const body=z.object({session:z.string().uuid(),items:z.array(TalkLibraryItemSchema).max(8).optional(),page:TalkViewingPageSchema.optional()}).strict().parse(bodyRaw);return json(await user.viewing(body.session,body.items,body.page));}
   if(path.endsWith('/close')) {const body=z.object({session:z.string().uuid(),forget:z.boolean().default(false)}).strict().parse(bodyRaw);await user.close(body.session,body.forget);return json({closed:true});}
   const body=requestSchema.parse(bodyRaw);return json(await user.knowledge(body.session,body.request,body.question));
  }catch(e) {
@@ -46,9 +46,10 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
  async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const token=await issueLiveToken(this.env,context,expires);
   this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%' OR key LIKE 'viewing:%'");this.put('live:'+session,{context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
   await this.ctx.storage.setAlarm(expires);return {...token,session};}
- async viewing(session:string) {
+ async viewing(session:string,items?:z.infer<typeof TalkLibraryItemSchema>[],page?:z.infer<typeof TalkViewingPageSchema>) {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
-  const existing=this.read<unknown>('viewing:'+session);if(existing)return existing;
+  const cacheKey='viewing:'+session+':'+JSON.stringify([items||null,page||null]);
+  const existing=this.read<unknown>(cacheKey);if(existing)return existing;
   if(++state.calls>12)throw Error('TOOL_LIMIT');this.put('live:'+session,state,state.expires);
   const signal=AbortSignal.timeout(3500);
   // Catalogue cards need not carry IMDb IDs. Resolve only external identity,
@@ -66,16 +67,45 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
     }
    }catch{}
   }
-  const identities=[...(state.context.imdbId?[{imdbId:state.context.imdbId,type:state.context.type||'tv'}]:[]),
-   ...(state.context.recentProgress||[]),...state.context.library].filter((v,i,a)=>a.findIndex(x=>x.imdbId===v.imdbId)===i).slice(0,8);
-  const titles=await Promise.all(identities.map(async item=>({imdbId:item.imdbId,...await resolveViewingTitle(item.imdbId,item.type,signal)})));
-  const result={context:state.context,titles,boundary:'Only actual completed episodes are fully viewed. Position seconds are not timed plot evidence. Never assume missing history was watched.'};
+  const identities=(items||[...(state.context.companionVersion===2?state.context.library:[]),
+   ...(state.context.imdbId?[{imdbId:state.context.imdbId,type:state.context.type||'tv',id:state.context.id}]:[]),
+   ...(state.context.recentProgress||[]),...(state.context.companionVersion===2?[]:state.context.library)])
+   .filter((v,i,a)=>a.findIndex(x=>x.imdbId&&v.imdbId?x.imdbId===v.imdbId:!!x.id&&x.id===v.id&&x.type===v.type)===i).slice(0,8);
+  const titles:Record<string,unknown>[]=[];
+  // Bound fan-out to four lookups; the shared deadline also bounds partial outages.
+  for(let at=0;at<identities.length;at+=4) {
+   titles.push(...await Promise.all(identities.slice(at,at+4).map(async item=>{
+    let imdbId=item.imdbId;
+    if(!imdbId&&item.id&&!signal.aborted) {
+     const key=`identity:${item.type}:${item.id}`;
+     imdbId=this.read<string>(key);
+     if(!imdbId)try {
+      const url=new URL(`https://api.themoviedb.org/3/${item.type}/${item.id}/external_ids`);
+      const headers:Record<string,string>={accept:'application/json'};
+      if(this.env.TMDB_READ_ACCESS_TOKEN)headers.Authorization='Bearer '+this.env.TMDB_READ_ACCESS_TOKEN;
+      else if(this.env.TMDB_API_KEY)url.searchParams.set('api_key',this.env.TMDB_API_KEY);
+      const external=await boundedJson(await fetch(url,{headers,signal}),8192) as {imdb_id?:unknown};
+      if(typeof external.imdb_id==='string'&&/^tt\d{1,12}$/.test(external.imdb_id)) {
+       imdbId=external.imdb_id;
+       if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
+       this.put(key,imdbId,Date.now()+7*DAY);
+       this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'identity:%' AND key NOT IN (SELECT key FROM memory WHERE key LIKE 'identity:%' ORDER BY expires DESC LIMIT 96)");
+      }
+     }catch{}
+    }
+    const resolved=imdbId?await resolveViewingTitle(imdbId,item.type,signal).catch(()=>({})):{};
+    return {...item,...(imdbId?{imdbId}:{}),...resolved};
+   })));
+  }
+  const result={context:state.context,titles,...(page?{page:{...page,nextOffset:page.offset+identities.length,hasMore:page.offset+identities.length<page.total}}:{}),
+   tastePriority:'Favorites are the strongest explicit taste signal; saved/My List is secondary intent. Recent playback is evidence of starting, not necessarily finishing. Do not recommend already favored/watched titles as new discoveries. Request further library pages when needed.',
+   boundary:'Only actual completed episodes are fully viewed. Position seconds are not timed plot evidence. Never assume missing history was watched.'};
   // An asynchronous lookup must not restore context after the owner closes it.
   if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
   const ttl=titles.every(t=>!!t.title)?5*MINUTE:30000;
-  this.put('viewing:'+session,result,Math.min(state.expires,Date.now()+ttl));return result;
+  this.put(cacheKey,result,Math.min(state.expires,Date.now()+ttl));return result;
  }
- async close(session:string,forget=false){if(forget)this.ctx.storage.sql.exec('DELETE FROM memory');else this.ctx.storage.sql.exec('DELETE FROM memory WHERE key IN (?,?)','live:'+session,'viewing:'+session);}
+ async close(session:string,forget=false){if(forget)this.ctx.storage.sql.exec('DELETE FROM memory');else {this.ctx.storage.sql.exec('DELETE FROM memory WHERE key=?','live:'+session);this.ctx.storage.sql.exec('DELETE FROM memory WHERE key LIKE ?','viewing:'+session+':%');}}
  async knowledge(session:string,q:KnowledgeRequest,question:string) {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
   const key=JSON.stringify([q.title.toLowerCase(),q.year,q.kind,q.season,q.episode]);

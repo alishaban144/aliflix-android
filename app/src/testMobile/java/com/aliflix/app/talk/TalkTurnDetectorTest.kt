@@ -19,6 +19,17 @@ class TalkTurnDetectorTest {
         assertEquals("TIME LOOP",topicWords("Explain a time loop",""))
         assertEquals("ALIFLIX",topicWords("Okay","just just"))
     }
+    @Test fun topicsUpdateFromCompletedSpeechEvenWhenTheVisualToolIsMissing() {
+        assertEquals("THE SHINING",topicWords("Explain the ending of the movie The Shining (1980).",""))
+        assertEquals("DARK",topicWords("Let's discuss Dark season 2 episode 1.","","THE SHINING"))
+        assertEquals("DARK",topicWords("What does that mean?","","DARK"))
+        assertEquals("DARK",topicWords("Okay, just just","","DARK"))
+        assertEquals("SCI-FI",topicWords("Can you recommend a science fiction series?","","DARK"))
+        assertEquals("INCEPTION",topicWords("Erkläre das Ende von Inception.","","SCI-FI"))
+        assertEquals("دارك",topicWords("اشرح نهاية مسلسل دارك","","SCI-FI"))
+        assertEquals("FAVORITES",topicWords("What are my favorites?","","ALIFLIX"))
+        assertEquals("SUBTITLES",topicWords("How do subtitles work?","","FAVORITES"))
+    }
     @Test fun libraryCompletionCannotRevealTheUnwatchedLastTwentyPercent() {
         assertFalse(talkPlaybackCompleted(800.0,1000.0,true))
         assertFalse(talkPlaybackCompleted(997.0,1000.0,true))

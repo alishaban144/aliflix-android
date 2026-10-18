@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.AddCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -71,7 +71,7 @@ fun AskAliflixHeader(
             AliflixIconButton(onClick = {
                 context.startActivity(android.content.Intent().setClassName(context, "com.aliflix.app.talk.TalkVoiceActivity"))
             }) {
-                Icon(androidx.compose.material.icons.Icons.Rounded.GraphicEq, "Talk to Aliflix",
+                Icon(androidx.compose.material.icons.Icons.Rounded.Mic, "Talk to Aliflix",
                     tint = com.aliflix.app.ui.theme.AliflixAccentSecondary, modifier = Modifier.size(24.dp))
             }
         }

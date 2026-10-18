@@ -28,7 +28,7 @@ if a.bridge:
         assert names=={n for n in bridge.namelist() if n.startswith('lib/') and n.endswith('.so')}, 'Compatibility bridge lost a device ABI'
         assert {n.split('/')[1] for n in names}=={'arm64-v8a','armeabi-v7a','x86','x86_64'}
         for n in names | models: assert hashlib.sha256(old.read(n)).digest()==hashlib.sha256(bridge.read(n)).digest(), f'Bridge native/model bytes changed: {n}'
-        report['compatibilityBridge']={'versionCode':261,'abis':sorted({n.split('/')[1] for n in names}),'nativeAndModelParity':True,'sizeBytes':Path(a.bridge).stat().st_size,'sha256':hashlib.sha256(Path(a.bridge).read_bytes()).hexdigest()}
+        report['compatibilityBridge']={'versionCode':263,'abis':sorted({n.split('/')[1] for n in names}),'nativeAndModelParity':True,'sizeBytes':Path(a.bridge).stat().st_size,'sha256':hashlib.sha256(Path(a.bridge).read_bytes()).hexdigest()}
 if a.bridge:
     report['abiPackagingReductionBytes'] = Path(a.bridge).stat().st_size-current
     report['abiPackagingReductionPercent'] = report['abiPackagingReductionBytes']*100/Path(a.bridge).stat().st_size

@@ -245,50 +245,40 @@ private class TalkParticleField(private val width: Int, private val height: Int,
     }
 }
 
-/** Continuous orbiting diffuse light, with attack/release driven by real PCM. */
+/** Native adaptation of Unlumen Glow's five-second, linear conic rotation.
+ * A feathered radial alpha replaces CSS blur: no rings, clipped layers or resets
+ * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
 @Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier) {
     val tracker=remember{DiscoverTouchTracker()}
     val seconds=rememberMobileAnimationClock(motion)
-    val energy by animateFloatAsState(if(motion)level().coerceIn(0f,1f) else 0f,tween(180),label="voice-energy")
+    val energy by animateFloatAsState(if(motion)level().coerceIn(0f,1f) else 0f,tween(240),label="voice-energy")
     val ready by animateFloatAsState(if(phase in listOf("Listening","Speaking","Thinking","Muted"))1f else .12f,tween(650),label="listening-light")
     var bounds by remember {mutableStateOf(IntSize.Zero)}
     val light=remember(bounds) {
         if(bounds.width<=0||bounds.height<=0)null else {
             val cx=bounds.width/2f;val cy=bounds.height/2f
-            val extent=min(bounds.width,bounds.height)*.3102f*1.52f
+            val extent=min(bounds.width,bounds.height)*.475f
             val sweep=android.graphics.SweepGradient(cx,cy,intArrayOf(
-                AliflixAccentPrimary.copy(alpha=.45f).toArgb(),AliflixAccentSecondary.toArgb(),
-                Color(0xFFECE3FF).copy(alpha=.9f).toArgb(),AliflixAccentPrimary.copy(alpha=.22f).toArgb(),
-                AliflixAccentPrimary.copy(alpha=.45f).toArgb()),null)
-            val mask=android.graphics.RadialGradient(cx,cy,extent,intArrayOf(0,0,-1,0x59ffffff,0),
-                floatArrayOf(0f,.48f,.66f,.82f,1f),android.graphics.Shader.TileMode.CLAMP)
+                Color(0xFFA177F5).toArgb(),Color(0xFFE5C5FA).toArgb(),
+                Color(0xFF8275D9).toArgb(),Color(0xFF85B4DC).toArgb(),
+                Color(0xFFA177F5).toArgb()),floatArrayOf(0f,.25f,.5f,.75f,1f))
+            val mask=android.graphics.RadialGradient(cx,cy,extent,intArrayOf(
+                0xffffffff.toInt(),0xffffffff.toInt(),0xd9ffffff.toInt(),0x70ffffff,0x18ffffff,0),
+                floatArrayOf(0f,.52f,.64f,.77f,.9f,1f),android.graphics.Shader.TileMode.CLAMP)
             ShaderBrush(android.graphics.ComposeShader(sweep,mask,android.graphics.PorterDuff.Mode.DST_IN))
         }
     }
     Box(modifier.onSizeChanged{bounds=it}.observeDiscoverTouches(tracker).semantics {contentDescription="Aliflix voice: $phase"},contentAlignment=Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            val radius=size.minDimension*.3102f
-            val theta=seconds.value*.48f
-            val breath=1f+sin(seconds.value*1.4f)*.025f+energy*.08f
-            val extent=radius*1.65f*breath
-            // A continuous feathered corona remains visibly outside the sphere.
-            drawCircle(Brush.radialGradient(
-                0f to Color.Transparent,.48f to Color.Transparent,
-                .62f to AliflixAccentSecondary.copy(alpha=ready*(.22f+energy*.14f)),
-                .78f to AliflixAccentPrimary.copy(alpha=ready*(.14f+energy*.14f)),
-                1f to Color.Transparent,center=center,radius=extent),extent)
-        }
-        // Android combines conic light and radial alpha in one shader pass;
-        // there is no rotated square, offscreen surface or stepped ring edge.
-        Canvas(Modifier.fillMaxSize()) {
-            val extent=size.minDimension*.3102f*1.52f
-            light?.let {brush->rotate(seconds.value*.48f*180f/PI.toFloat()) {
-                scale(1f+energy*.045f) {
-                    drawCircle(brush,extent,alpha=ready*(.38f+energy*.24f))
-                }
+            // A full, softly feathered light rotates behind the sphere. Its edge
+            // stays inside these bounds at maximum amplitude, so it never clips.
+            val extent=size.minDimension*.475f
+            val breath=1f+sin(seconds.value*.82f)*.008f+energy*.025f
+            light?.let {brush->rotate(seconds.value*72f) {
+                scale(breath) {drawCircle(brush,extent,alpha=ready*(.64f+energy*.30f))}
             }}
         }
-        DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.66f).graphicsLayer {scaleX=1f+energy*.025f;scaleY=scaleX},
+        DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.66f).graphicsLayer {scaleX=1f+energy*.018f;scaleY=scaleX},
             conversing=phase=="Speaking",voiceCompanion=true)
     }
 }

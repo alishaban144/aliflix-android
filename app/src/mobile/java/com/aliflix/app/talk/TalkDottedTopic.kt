@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -36,12 +37,18 @@ import kotlin.math.*
 @Composable
 internal fun TalkDottedTopic(words:String, level:()->Float, motion:Boolean) {
     val density=LocalDensity.current
-    val fontSize=with(density){(if(words.length>26)28.sp else 36.sp).toPx()}
+    val assets=LocalContext.current.applicationContext.assets
+    val font by produceState<Typeface?>(null,assets) {
+        value=withContext(Dispatchers.IO) {runCatching {
+            Typeface.create(Typeface.createFromAsset(assets,"fonts/Nunito.ttf"),600,false)
+        }.getOrDefault(Typeface.create("sans-serif",Typeface.NORMAL))}
+    }
+    val fontSize=with(density){(if(words.length>26)32.sp else 42.sp).toPx()}
     val step=with(density){1.15.dp.toPx()}.coerceAtLeast(1.5f)
     var size by remember {mutableStateOf(IntSize.Zero)}
-    val glyph by produceState<TalkDotGlyph?>(null,words,size,fontSize,step) {
-        if(size.width>0&&size.height>0)value=withContext(Dispatchers.Default) {
-            TalkDotGlyph(size.width,size.height,words,fontSize,step)
+    val glyph by produceState<TalkDotGlyph?>(null,words,size,fontSize,step,font) {
+        if(size.width>0&&size.height>0&&font!=null)value=withContext(Dispatchers.Default) {
+            TalkDotGlyph(size.width,size.height,words,fontSize,step,requireNotNull(font))
         }
     }
     val clock=rememberMobileAnimationClock(motion)
@@ -54,7 +61,7 @@ internal fun TalkDottedTopic(words:String, level:()->Float, motion:Boolean) {
     }
 }
 
-internal class TalkDotGlyph(width:Int,height:Int,words:String,fontSize:Float,private val step:Float) {
+internal class TalkDotGlyph(width:Int,height:Int,words:String,fontSize:Float,private val step:Float,font:Typeface=Typeface.create("sans-serif",Typeface.NORMAL)) {
     private val x:FloatArray
     private val y:FloatArray
     private val coverage:FloatArray
@@ -66,9 +73,9 @@ internal class TalkDotGlyph(width:Int,height:Int,words:String,fontSize:Float,pri
         val bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888)
         val paint=TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color=android.graphics.Color.WHITE
-            typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
+            typeface=font
             textSize=fontSize
-            letterSpacing=if(words.any{it in '\u0600'..'\u06ff'})0f else .035f
+            letterSpacing=if(words.any{it in '\u0600'..'\u06ff'})0f else .005f
         }
         fun layoutText()=StaticLayout.Builder.obtain(words,0,words.length,paint,(width*.94f).toInt().coerceAtLeast(1))
             .setAlignment(Layout.Alignment.ALIGN_CENTER).setIncludePad(false)

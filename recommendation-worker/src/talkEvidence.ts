@@ -1,11 +1,15 @@
 import { z } from 'zod';
 import { boundedJson } from './talkProviders';
 import type { RecommendationEnv } from './types';
-export const TalkContextSchema=z.object({stickyLanguage:z.boolean().optional(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional(),id:z.number().int().positive().optional(),type:z.enum(['movie','tv']).optional(),
+export const TalkLibraryItemSchema=z.object({id:z.number().int().positive().optional(),imdbId:z.string().regex(/^tt\d{1,12}$/).optional(),kind:z.enum(['saved','favorite','watched']),type:z.enum(['movie','tv'])}).strict().refine(v=>!!v.id||!!v.imdbId);
+export const TalkViewingPageSchema=z.object({collection:z.enum(['taste','favorite','saved','watched']),offset:z.number().int().min(0).max(100000),total:z.number().int().min(0).max(100000)}).strict();
+export const TalkContextSchema=z.object({companionVersion:z.literal(2).optional(),
+ libraryCounts:z.object({favorite:z.number().int().min(0).max(100000),saved:z.number().int().min(0).max(100000),watched:z.number().int().min(0).max(100000)}).strict().optional(),
+ recentSuggestions:z.array(z.string().min(1).max(48)).max(24).optional(),stickyLanguage:z.boolean().optional(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional(),id:z.number().int().positive().optional(),type:z.enum(['movie','tv']).optional(),
  imdbId:z.string().regex(/^tt\d{1,12}$/).optional(),season:z.number().int().min(0).max(1000).default(1),episode:z.number().int().min(1).max(10000).default(1),
  position:z.number().finite().min(0).max(604800).default(0),completed:z.boolean().default(false),
- library:z.array(z.object({imdbId:z.string().regex(/^tt\d{1,12}$/),kind:z.enum(['saved','favorite','watched']),type:z.enum(['movie','tv'])}).strict()).max(8).default([]),
- recentProgress:z.array(z.object({imdbId:z.string().regex(/^tt\d{1,12}$/),type:z.enum(['movie','tv']),
+ library:z.array(TalkLibraryItemSchema).max(48).default([]),
+ recentProgress:z.array(z.object({id:z.number().int().positive().optional(),imdbId:z.string().regex(/^tt\d{1,12}$/).optional(),type:z.enum(['movie','tv']),
  season:z.number().int().min(0).max(1000),episode:z.number().int().min(1).max(10000),position:z.number().finite().min(0).max(604800),
  duration:z.number().finite().min(0).max(604800),completed:z.boolean()}).strict()).max(8).optional(),
  viewedRanges:z.array(z.object({season:z.number().int().min(0).max(1000),first:z.number().int().min(1).max(10000),last:z.number().int().min(1).max(10000)}).strict().refine(r=>r.last>=r.first)).max(120).default([])}).strict();

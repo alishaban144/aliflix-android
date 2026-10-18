@@ -93,6 +93,35 @@ describe('Gemini-only live identity and security',()=>{
  it('requires authenticated identity for token issuance and tools',async()=>{
   for(const path of ['session','knowledge','close','viewing'])expect((await talkRoute(new Request('https://test/v1/talk/'+path,{method:'POST',body:'{}'}),config))?.status).toBe(401);
  });
+ it('keeps new companion tools opt-in and makes favorite-first taste mandatory',()=>{
+  const setup=liveSetup(TalkContextSchema.parse({companionVersion:2,recentProgress:[],library:[{id:694,type:'movie',kind:'favorite'}]}));
+  expect(setup.tools[0].functionDeclarations.map(t=>t.name)).toContain('aliflix_app');
+  expect(setup.tools[0].functionDeclarations.map(t=>t.name)).toContain('remember_recommendations');
+  expect(setup.systemInstruction.parts[0].text).toContain('Favorites FIRST');
+  expect(setup.systemInstruction.parts[0].text).toContain('Before giving any movie/series recommendation');
+  expect(TalkContextSchema.safeParse({library:[{type:'movie',kind:'favorite'}]}).success).toBe(false);
+ });
+ it('resolves favorite pages without IMDb IDs, separates page caches and preserves counts',async()=>{
+  const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{
+   const url=String(u);
+   if(url.includes('external_ids'))return Response.json({imdb_id:'tt5753856'});
+   return Response.json({name:'Dark',url:'https://www.tvmaze.com/shows/17861/dark',externals:{imdb:'tt5753856'}});
+  });
+  await runInDurableObject(env.TALK_SESSIONS.getByName('paged-favorite'),async(instance,state)=>{
+   const session=crypto.randomUUID(),expires=Date.now()+60000;
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context:TalkContextSchema.parse({companionVersion:2,recentProgress:[]}),expires,calls:0,searches:0,grants:[]}),expires);
+   const talk=instance as unknown as TalkSession;
+   const items=[{id:70523,type:'tv' as const,kind:'favorite' as const}];
+   const page={collection:'favorite' as const,offset:0,total:19};
+   const result=await talk.viewing(session,items,page) as any;
+   expect(result.titles[0]).toMatchObject({title:'Dark',kind:'favorite',id:70523,imdbId:'tt5753856'});
+   expect(result.page).toMatchObject({total:19,nextOffset:1,hasMore:true});
+   const count=spy.mock.calls.length;await talk.viewing(session,items,page);expect(spy).toHaveBeenCalledTimes(count);
+   await talk.viewing(session,items,{...page,offset:8});
+   expect(spy.mock.calls.filter(c=>String(c[0]).includes('external_ids'))).toHaveLength(1);
+   await talk.close(session);expect(state.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'viewing:%'").one().n).toBe(0);
+  });
+ });
  it('bounds daily quotas and removes expired state',async()=>{const stub=env.TALK_SESSIONS.getByName('test-live-quota');await runInDurableObject(stub,async instance=>{const talk=instance as unknown as TalkSession;expect(await talk.reserve(2,2)).toBe(true);expect(await talk.reserve(1,2)).toBe(false);});});
  it('excludes catalogue IDs from model prompts and deletes owner memory',async()=>{
   expect(liveInstructions(TalkContextSchema.parse({id:987654321}))).not.toContain('987654321');

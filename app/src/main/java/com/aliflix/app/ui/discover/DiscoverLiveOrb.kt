@@ -71,11 +71,32 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
     var blink by remember { mutableFloatStateOf(0f) }
     val seconds = rememberMobileAnimationClock(motion && resumed)
     var idleLook by remember { mutableStateOf(Offset(0f,.08f)) }
-    LaunchedEffect(conversing,motion,resumed) {
-        idleLook=Offset(0f,.08f)
-        if(conversing&&motion&&resumed)while(true) {
-            kotlinx.coroutines.delay(kotlin.random.Random.nextLong(1900,3500))
-            idleLook=Offset(kotlin.random.Random.nextFloat()*.7f-.35f,kotlin.random.Random.nextFloat()*.32f-.12f)
+    val speaking by rememberUpdatedState(conversing)
+    // Attentive focus with brief thinking glances, not continuous random wandering.
+    // Keep this loop alive across turn boundaries to avoid a visible gaze snap.
+    LaunchedEffect(voiceCompanion,motion,resumed) {
+        idleLook=Offset(0f,if(voiceCompanion).06f else .08f)
+        if(voiceCompanion&&motion&&resumed)while(true) {
+            kotlinx.coroutines.delay(if(speaking)kotlin.random.Random.nextLong(2300,4300) else kotlin.random.Random.nextLong(4300,6800))
+            val glance=speaking&&kotlin.random.Random.nextFloat()<.72f
+            idleLook=if(glance)Offset((if(kotlin.random.Random.nextBoolean())1f else -1f)*(.12f+kotlin.random.Random.nextFloat()*.09f),
+                .02f+kotlin.random.Random.nextFloat()*.1f)
+                else Offset(kotlin.random.Random.nextFloat()*.05f-.025f,.04f+kotlin.random.Random.nextFloat()*.035f)
+            if(glance) {
+                kotlinx.coroutines.delay(kotlin.random.Random.nextLong(380,750))
+                idleLook=Offset(0f,.06f)
+            }
+        }
+    }
+    LaunchedEffect(voiceCompanion,motion,resumed) {
+        if(voiceCompanion&&motion&&resumed)while(true) {
+            kotlinx.coroutines.delay(kotlin.random.Random.nextLong(2600,5100))
+            blink=1f
+            kotlinx.coroutines.delay(105)
+            blink=0f
+            if(kotlin.random.Random.nextFloat()<.12f) {
+                kotlinx.coroutines.delay(180);blink=1f;kotlinx.coroutines.delay(90);blink=0f
+            }
         }
     }
     LaunchedEffect(motion, resumed, voiceCompanion) {
@@ -89,7 +110,7 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
                 if (previous != 0L) look = dampOrbLook(look,target,(now-previous)/1_000_000_000f,idle)
                 previous = now
                 val t = seconds.value % if(voiceCompanion)2.9f else 4.2f
-                blink = when {
+                if(!voiceCompanion)blink = when {
                     t < 2f || t >= 2.18f -> 0f
                     t < 2.055f -> (t-2f)/.055f
                     t < 2.10f -> 1f
@@ -98,6 +119,8 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
             }
         }
     }
+    val companionBlink by androidx.compose.animation.core.animateFloatAsState(blink,
+        androidx.compose.animation.core.tween(if(blink>0f)55 else 100),label="companion-blink")
     Canvas(modifier.onGloballyPositioned { bounds = it.boundsInRoot() }) {
         val radius = size.minDimension * .47f
         drawCircle(Brush.radialGradient(
@@ -105,8 +128,9 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
             center = center - Offset(radius * .28f, radius * .35f), radius = radius * 1.7f), radius)
         val yaw = look.x * .92f
         val pitch = -look.y * .78f
-        val halfH = .128f + (.012f-.128f) * blink
-        val rad = .054f + (.062f-.054f) * blink
+        val lid=if(voiceCompanion)companionBlink else blink
+        val halfH = .128f + (.012f-.128f) * lid
+        val rad = .054f + (.062f-.054f) * lid
         val norm = sqrt(.32f*.32f+.08f*.08f+1f)
         listOf(-1f,1f).forEach { side ->
             val path = Path()
