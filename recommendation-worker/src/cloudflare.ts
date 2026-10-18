@@ -192,6 +192,7 @@ export async function cloudflareStructuredContent<T>(
         reasoningEffort,
         maxTokens: attemptMaxTokens,
         elapsedMs: Date.now() - startedAt,
+        usage: (output as { usage?: unknown })?.usage,
       }));
       return parseStructuredOutput<T>(operation, output);
     } catch (error) {

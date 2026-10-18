@@ -90,5 +90,5 @@ export async function issueLiveToken(env: RecommendationEnv, context: TalkContex
     bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) });
  if(!response.ok){const reason=(await response.text()).replaceAll(env.GEMINI_API_KEY,'[key]').slice(0,500);console.warn('talk_live_token_status',response.status,reason);throw Error('LIVE_UNAVAILABLE');}
  const result=z.object({name:z.string().min(8).max(4096)}).parse(await boundedJson(response,16384));
- return {token:result.name,model:TALK_MODEL,voice:context.voice||TALK_VOICE,expires,setup:{model:setup.model,sessionResumption:{}}};
+ return {token:result.name,model:TALK_MODEL,voice:context.voice||TALK_VOICE,expires,setup:{model:setup.model,generationConfig:setup.generationConfig,sessionResumption:{}}};
 }
