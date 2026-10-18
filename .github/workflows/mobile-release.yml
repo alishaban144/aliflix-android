@@ -392,13 +392,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile-only: Talk starts listening automatically after microphone permission. Teardown is idempotent and preserves the parent app. The simplified voice screen has continuous audio-reactive lighting, more expressive eyes, fine-dot particle lettering and stable semantic conversation themes. Response language stays locked until explicitly changed.
+            Mobile-only: Talk has a continuous audio-reactive conic glow, attentive gaze with brief glances, a clearer microphone entry icon, and larger rounded fine-dot lettering. Spoken questions and verified title tools update the visual subject without depending solely on optional model calls; formatting requests and acknowledgements preserve the subject.
 
-            Talk can use actual Aliflix viewing progress, completed episode ranges and saved/favorite identities, resolved through independent TVMaze/Wikidata sources on demand. Gemini 3.8 Live and Aoede remain the sole voice/model; no new speech engine or bundled model is introduced.
+            Recommendations read Favorites before My List, resolve library items that lack IMDb IDs, and can page through the actual library on demand. Saved intent and completed viewing remain distinct. With Keep history enabled, recent recommendations can be remembered to reduce repetition. Talk can explain real Aliflix features and current player settings through a read-only app context tool.
 
-            Playback and download preferences show two inline quality choices. IMDb season ratings merge partial host responses and accept verified parent/episode identity across localized titles. No ratings are fabricated when an upstream source has no score.
+            Gemini 3.8 Live / Aoede and sticky conversation language remain unchanged. No new speech engine or neural model. Bounded cached context, existing quotas and authenticated tokens remain in place; closing/deleting a session prevents in-flight lookups from recreating its context.
 
-            ARM64-only main APK with the existing signed universal compatibility bridge and architecture-aware updater. Native/model parity is verified by the workflow. TV is unchanged.
+            ARM64-only main APK with the existing signed universal compatibility bridge and architecture-aware updater. Original native/model bytes are verified by the workflow. TV is unchanged.
 
             Validation: docs/mobile-174-validation.md.
           files: |

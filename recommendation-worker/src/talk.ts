@@ -124,6 +124,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const allowSearch=!!this.env.TAVILY_API_KEY;
   state.grants=state.grants.slice(-12);this.put('live:'+session,state,state.expires);
   let evidence:Evidence[]=[];try{evidence=await retrieveKnowledge(this.env,q,allowPlot,AbortSignal.timeout(7000),allowSearch,state.context,()=>this.searchBudget(session));}catch{}
+  if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
   this.put(cacheKey,evidence,Date.now()+(evidence.length?DAY:30000));
   const count=this.ctx.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'evidence:%'").one().n;
   if(count>40)this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN(SELECT key FROM memory WHERE key LIKE 'evidence:%' ORDER BY expires LIMIT ?)",count-40);

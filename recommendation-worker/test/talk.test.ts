@@ -122,6 +122,15 @@ describe('Gemini-only live identity and security',()=>{
    await talk.close(session);expect(state.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'viewing:%'").one().n).toBe(0);
   });
  });
+ it('does not recreate knowledge cache after owner deletion during source retrieval',async()=>{
+  await runInDurableObject(env.TALK_SESSIONS.getByName('knowledge-delete-race'),async(instance,state)=>{
+   const session=crypto.randomUUID(),expires=Date.now()+60000;
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context:TalkContextSchema.parse({}),expires,calls:0,searches:0,grants:[]}),expires);
+   vi.spyOn(globalThis,'fetch').mockImplementation(async()=>{state.storage.sql.exec('DELETE FROM memory');return new Response('',{status:503});});
+   await expect((instance as unknown as TalkSession).knowledge(session,{title:'Some Film',kind:'movie',query:'genre'},'What genre is it?')).rejects.toThrow('SESSION_EXPIRED');
+   expect(state.storage.sql.exec<{n:number}>('SELECT COUNT(*) n FROM memory').one().n).toBe(0);
+  });
+ });
  it('bounds daily quotas and removes expired state',async()=>{const stub=env.TALK_SESSIONS.getByName('test-live-quota');await runInDurableObject(stub,async instance=>{const talk=instance as unknown as TalkSession;expect(await talk.reserve(2,2)).toBe(true);expect(await talk.reserve(1,2)).toBe(false);});});
  it('excludes catalogue IDs from model prompts and deletes owner memory',async()=>{
   expect(liveInstructions(TalkContextSchema.parse({id:987654321}))).not.toContain('987654321');

@@ -77,6 +77,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var lastQuestion = ""
     private var assistantLine = -1
     private val tools = java.util.concurrent.ConcurrentHashMap<String,Job>()
+    internal val debugToolCalls=java.util.concurrent.ConcurrentHashMap<String,Int>()
     private val cancelledTools = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     @Volatile internal var debugReadyGeneration=0L
     @Volatile internal var debugInterruptions = 0
@@ -142,7 +143,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         conversationContext.put("recentProgress",JSONArray((context.applicationContext as AliflixApplication)
             .playbackProgressStore.entries.value.values.sortedByDescending{it.updatedAtMillis}
             .take(8).map { p ->
-                JSONObject().put("id",p.media.id).put("imdbId",p.media.imdbId).put("type",p.media.type.routeName)
+                talkLibraryIdentity(p.media,"watched").apply{remove("kind")}
                     .put("season",p.seasonNumber?:1).put("episode",p.episodeNumber?:1)
                     .put("position",p.positionSeconds).put("duration",p.durationSeconds)
                     .put("completed",talkPlaybackCompleted(p.positionSeconds,p.durationSeconds,p.completed))
@@ -259,6 +260,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         message.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls->
             for(i in 0 until calls.length()) {
                 val call=calls.getJSONObject(i);val id=call.getString("id")
+                if(BuildConfig.DEBUG)debugToolCalls.merge(call.optString("name"),1){a,b->a+b}
                 if(call.optString("name")=="conversation_language") {
                     val args=call.optJSONObject("args")?:JSONObject()
                     responseLanguage=chooseTalkResponseLanguage(responseLanguage,args.optString("language"),args.optBoolean("explicitRequest"))
@@ -558,7 +560,7 @@ internal fun compactTalkViewedRanges(episodes: List<Pair<Int,Int>>): List<Triple
 internal fun validatedTalkTopic(value:String):String? {
     val text=value.replace(Regex("[\\p{Cc}\\p{Cf}]"),"").trim().take(48)
     val tokens=text.lowercase(Locale.ROOT).split(Regex("[^\\p{L}\\p{N}]+" )).filter{it.isNotBlank()}
-    val filler=setOf("okay","ok","just","yes","no","sure","alright","thanks","thank","you","hello","hallo","ja","nein","bitte","danke","نعم","حسنا","شكرا")
+    val filler=setOf("okay","ok","just","yes","no","sure","alright","thanks","thank","you","tell","me","more","continue","please","one","two","sentence","brief","briefly","succinctly","quickly","shortly","in","a","an","the","detail","details","about","that","this","short","answer","weiter","kurz","satz","فقط","باختصار","جملة","hello","hallo","ja","nein","bitte","danke","نعم","حسنا","شكرا")
     if(tokens.isEmpty()||tokens.size>6||tokens.all{it in filler}||tokens.distinct().size==1&&tokens.size>1)return null
     return text.uppercase(Locale.ROOT)
 }

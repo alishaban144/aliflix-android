@@ -12,7 +12,7 @@ class TalkTurnDetectorTest {
         assertEquals("en",chooseTalkResponseLanguage("en","not a code",true))
     }
     @Test fun semanticTopicsRejectAcknowledgementsAndPreserveFollowUpContext() {
-        assertNull(validatedTalkTopic("Okay"));assertNull(validatedTalkTopic("just just"))
+        assertNull(validatedTalkTopic("Briefly"));assertNull(validatedTalkTopic("One sentence"));assertNull(validatedTalkTopic("Okay"));assertNull(validatedTalkTopic("just just"))
         assertNull(validatedTalkTopic("نعم"));assertNull(validatedTalkTopic("thank you"))
         assertEquals("THE SHINING",validatedTalkTopic("The Shining"))
         assertEquals("THE SHINING",topicWords("Okay, just tell me more","","THE SHINING"))
@@ -24,11 +24,20 @@ class TalkTurnDetectorTest {
         assertEquals("DARK",topicWords("Let's discuss Dark season 2 episode 1.","","THE SHINING"))
         assertEquals("DARK",topicWords("What does that mean?","","DARK"))
         assertEquals("DARK",topicWords("Okay, just just","","DARK"))
+        assertEquals("THE SHINING",topicWords("Okay, just tell me more about that atmosphere in one sentence.","","THE SHINING"))
         assertEquals("SCI-FI",topicWords("Can you recommend a science fiction series?","","DARK"))
         assertEquals("INCEPTION",topicWords("Erkläre das Ende von Inception.","","SCI-FI"))
         assertEquals("دارك",topicWords("اشرح نهاية مسلسل دارك","","SCI-FI"))
         assertEquals("FAVORITES",topicWords("What are my favorites?","","ALIFLIX"))
         assertEquals("SUBTITLES",topicWords("How do subtitles work?","","FAVORITES"))
+        assertEquals("SUBTITLES",topicWords("How are subtitles sync with audio? audio language and my download quality connected in AllOflex? Explain briefly.","","DARK"))
+    }
+    @Test fun incompleteLibraryMetadataKeepsTheCatalogueIdentityWithoutInvalidImdbValues() {
+        val media=com.aliflix.app.model.Media(70523,com.aliflix.app.model.MediaType.TV,"not sent",imdbId="")
+        val missing=talkLibraryIdentity(media,"favorite")
+        assertEquals(70523,missing.getInt("id"));assertFalse(missing.has("imdbId"));assertFalse(missing.has("title"))
+        assertEquals("favorite",missing.getString("kind"))
+        assertEquals("tt5753856",talkLibraryIdentity(media.copy(imdbId="tt5753856"),"favorite").getString("imdbId"))
     }
     @Test fun libraryCompletionCannotRevealTheUnwatchedLastTwentyPercent() {
         assertFalse(talkPlaybackCompleted(800.0,1000.0,true))
