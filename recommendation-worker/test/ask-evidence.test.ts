@@ -68,16 +68,22 @@ it("requests actual multi-title extracts and checks every Wikipedia identity thr
         },
       });
     }
+    if (url.hostname === "query.wikidata.org")
+      throw new Error("Query service unavailable");
+    expect(url.searchParams.get("property")).toBe("P345");
+    expect(url.searchParams.get("action")).toBe("wbgetclaims");
+    const id = url.searchParams.get("entity");
     return Response.json({
-      results: {
-        bindings: [
-          ["Q1", "tt1"],
-          ["Q2", "tt2"],
-          ["Q3", "tt999"],
-        ].map(([id, imdb]) => ({
-          item: { value: "http://www.wikidata.org/entity/" + id },
-          imdb: { value: imdb },
-        })),
+      claims: {
+        P345: [
+          {
+            mainsnak: {
+              datavalue: {
+                value: id === "Q1" ? "tt1" : id === "Q2" ? "tt2" : "tt999",
+              },
+            },
+          },
+        ],
       },
     });
   });
@@ -92,5 +98,5 @@ it("requests actual multi-title extracts and checks every Wikipedia identity thr
   expect(facts.get("Film A (2000)")?.attribution).toContain("CC BY-SA");
   expect(facts.get("Film A (2000)")?.text).toContain("simulated city");
   expect(facts.get("Film A (2000)")?.url).toContain("oldid=501");
-  expect(calls).toHaveLength(3);
+  expect(calls).toHaveLength(5);
 });

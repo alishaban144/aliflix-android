@@ -401,7 +401,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       this.flights.delete(key);
     }
   }
-  async reserveExternalSearch(){this.reserve("search");}
+  async reserveExternalSearch() {
+    this.reserve("search");
+  }
   async cancel(owner: string, id: string) {
     this.controllers.get(owner + ":" + id)?.abort();
   }
@@ -794,7 +796,12 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                     error instanceof ServiceError &&
                     error.code === "AI_TIMEOUT"
                   )
-                    throw new ServiceError(error.code,error.message,error.status,false);
+                    throw new ServiceError(
+                      error.code,
+                      error.message,
+                      error.status,
+                      false,
+                    );
                   throw error;
                 });
                 const metering = (result as { usage?: Record<string, number> })
@@ -1127,10 +1134,10 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                   "c" + i,
                   {
                     type: "choice",
-                    instructions: `Classify "${p.pick.title}" (${p.pick.year}), candidate c${i}, against the complete intent, anchors and its cited narrative evidence. Use the actual story, not title words or genre alone. Literal compound-premise requirements are mandatory. Abstract thematic requests allow a coherent blend, not every motif equally central.`,
+                    instructions: `Classify "${p.pick.title}" (${p.pick.year}), candidate c${i}, against the complete intent, anchors and its cited narrative evidence. Use the actual story, not title words or genre alone. For editorial/current discovery, evaluate reported prominence and verified structured release/vote metadata instead of inventing a narrative requirement. Literal compound-premise requirements are mandatory. Abstract thematic requests allow a coherent blend, not every motif equally central.`,
                     criteria: {
                       strong:
-                        "Central narrative mechanisms or a coherent thematic blend match the requested intent, supported by independent evidence.",
+                        "Central narrative mechanisms, a coherent thematic blend, or the expressly requested editorial criteria match the intent, supported by independent evidence and verified structured metadata.",
                       relevant:
                         "A sustained, meaningful narrative or atmospheric connection to the requested intent and anchors is supported by evidence.",
                       weak: "Only generic genre overlap, incidental connections, or an incomplete literal compound premise.",
@@ -1156,6 +1163,10 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                       id: "c" + i,
                       title: p.pick.title,
                       year: p.pick.year,
+                      genres: p.media.genres,
+                      releaseDate: p.media.releaseDate,
+                      voteCount: p.media.tmdbVoteCount,
+                      catalogueRating: p.media.tmdbRating,
                       connection: p.pick.reason,
                       evidence: p.pick.evidence,
                     })),

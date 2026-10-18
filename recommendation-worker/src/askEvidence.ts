@@ -27,9 +27,9 @@ export async function candidateEvidence(
     pageprops?: { wikibase_item?: string };
     pageid: number;
   }> = [];
-  async function json(url: URL, limit = 400000) {
+  async function json(url: URL, limit = 400000, timeout = 4500) {
     const response = await fetch(url, {
-      signal: AbortSignal.any([signal, AbortSignal.timeout(4500)]),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]),
       headers: {
         "user-agent":
           "AliflixResearch/1.0 (+https://github.com/alishaban144/aliflix-android)",
@@ -88,7 +88,7 @@ export async function candidateEvidence(
       format: "json",
       query: `SELECT ?item ?imdb WHERE { VALUES ?item { ${ids.map((id) => " <http://www.wikidata.org/entity/" + id + ">").join(" ")} } ?item <http://www.wikidata.org/prop/direct/P345> ?imdb }`,
     }).toString();
-    const data = await json(url);
+    const data = await json(url, 400000, 1200);
     for (const row of data.results?.bindings || []) {
       const id = String(row.item?.value || "")
           .split("/")
@@ -106,24 +106,61 @@ export async function candidateEvidence(
     );
   }
   if (!Object.keys(entities).length) {
-    // Bounded non-SPARQL recovery, still batched and cached by the public API.
-    for (let i = 0; i < ids.length; i += 10) {
-      try {
-        const url = new URL("https://www.wikidata.org/w/api.php");
-        url.search = new URLSearchParams({
-          action: "wbgetentities",
-          format: "json",
-          props: "claims",
-          ids: ids.slice(i, i + 10).join("|"),
-        }).toString();
-        Object.assign(entities, (await json(url, 2000000)).entities);
-      } catch (error) {
-        console.warn(
-          "ask_wikidata_unavailable",
-          error instanceof Error ? error.message : "error",
-        );
-      }
-    }
+    // P345-only recovery avoids both a slow query service and multi-megabyte
+    // full entity records. At most40 IDs +4 extracts +4 revisions +1 SPARQL
+    // attempt stay within the free runtime's50-subrequest ceiling.
+    const normalized = (s: string) =>
+      s
+        .replace(/\([^)]*\)/g, "")
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+    const choices = wanted.map((item) =>
+      pages
+        .filter(
+          (p) =>
+            p.extract &&
+            p.pageid > 0 &&
+            /^Q\d+$/.test(p.pageprops?.wikibase_item || "") &&
+            normalized(p.title) === normalized(item.title),
+        )
+        .sort((a, b) => {
+          const score = (p: (typeof pages)[number]) =>
+            (p.title.includes(String(item.year)) ? 10 : 0) +
+            (p.extract?.includes(String(item.year)) ? 3 : 0);
+          return score(b) - score(a);
+        }),
+    );
+    const chosen = new Map<number, (typeof pages)[number]>();
+    for (const list of choices)
+      if (list[0]) chosen.set(list[0].pageid, list[0]);
+    for (const list of choices)
+      for (const p of list.slice(1))
+        if (chosen.size < 40) chosen.set(p.pageid, p);
+    const selected = [
+      ...new Set([...chosen.values()].map((p) => p.pageprops!.wikibase_item!)),
+    ].slice(0, 40);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(6, selected.length) }, async () => {
+        while (next < selected.length) {
+          const id = selected[next++];
+          try {
+            const url = new URL("https://www.wikidata.org/w/api.php");
+            url.search = new URLSearchParams({
+              action: "wbgetclaims",
+              format: "json",
+              entity: id,
+              property: "P345",
+            }).toString();
+            entities[id] = {
+              claims: (await json(url, 64000, 2200)).claims || {},
+            };
+          } catch {}
+        }
+      }),
+    );
   }
   const byImdb = new Map(wanted.map((v) => [v.imdbId!, v]));
   for (const page of pages) {
