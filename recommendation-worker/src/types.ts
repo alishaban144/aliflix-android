@@ -220,6 +220,7 @@ export type RecommendationEnv = Omit<Env, 'GEMINI_GENERATION_MODEL' | 'AI_GENERA
   AI?: WorkersAiBinding;
   GEMINI_GENERATION_MODEL?: GeminiAiModel;
   AI_GENERATION_MODEL?: RecommendationAiModel;
+  ASK_NEURON_RECONCILIATION?: string;
 } & SecretBindings;
 
 export class ServiceError extends Error {

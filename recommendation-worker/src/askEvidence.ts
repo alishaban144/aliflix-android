@@ -133,7 +133,7 @@ export async function candidateEvidence(
       .find((v: unknown) => typeof v === "string" && byImdb.has(v));
     if (!imdb || !page.extract || page.pageid <= 0) continue;
     const item = byImdb.get(imdb)!;
-    result.set(item.title, {
+    result.set(`${item.title} (${item.year})`, {
       title: page.title,
       url: "https://en.wikipedia.org/?curid=" + page.pageid,
       text: page.extract.slice(0, 1900),

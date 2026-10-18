@@ -88,9 +88,9 @@ it("requests actual multi-title extracts and checks every Wikipedia identity thr
     ],
     AbortSignal.timeout(1000),
   );
-  expect([...facts.keys()]).toEqual(["Film A", "Film B"]);
-  expect(facts.get("Film A")?.attribution).toContain("CC BY-SA");
-  expect(facts.get("Film A")?.text).toContain("simulated city");
-  expect(facts.get("Film A")?.url).toContain("oldid=501");
+  expect([...facts.keys()]).toEqual(["Film A (2000)", "Film B (2010)"]);
+  expect(facts.get("Film A (2000)")?.attribution).toContain("CC BY-SA");
+  expect(facts.get("Film A (2000)")?.text).toContain("simulated city");
+  expect(facts.get("Film A (2000)")?.url).toContain("oldid=501");
   expect(calls).toHaveLength(3);
 });

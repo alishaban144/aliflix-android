@@ -283,6 +283,7 @@ describe("unified authenticated research", () => {
       env.ASK_RESEARCH.getByName("pipeline-complete"),
       async (instance) => {
         const e = (instance as any).env;
+        const original={AI:e.AI,ASK_RESEARCH:e.ASK_RESEARCH,TAVILY_API_KEY:e.TAVILY_API_KEY};try {
         e.TAVILY_API_KEY = "test-only";
         const ai = vi.fn(async (model: string, input: any) =>
           model.includes("clef")
@@ -364,7 +365,20 @@ describe("unified authenticated research", () => {
           tavilyCredits: 1,
           neurons: null,
         });
+        }finally{Object.assign(e,original);}
       },
     );
   });
+});
+
+it("only reconciles audited operator reservations once, without changing the daily ceiling",async()=>{
+ await runInDurableObject(env.ASK_RESEARCH.getByName('audit-accounting'),async(instance,state)=>{
+  const service=instance as any,day=new Date().toISOString().slice(0,10),ledger='quota:neurons:'+day;
+  const write=(n:number)=>state.storage.sql.exec('INSERT OR REPLACE INTO ask_cache VALUES(?,?,?)',ledger,JSON.stringify(n),Date.now()+86400000);
+  const read=()=>JSON.parse(state.storage.sql.exec<{value:string}>('SELECT value FROM ask_cache WHERE key=?',ledger).one().value);
+  write(8900);service.env.ASK_NEURON_RECONCILIATION='invalid';service.reconcileNeuronReservation();expect(read()).toBe(8900);
+  service.env.ASK_NEURON_RECONCILIATION=JSON.stringify({day,asOf:Date.now(),ceiling:7000});service.reconcileNeuronReservation();expect(read()).toBe(7000);
+  write(7200);service.reconcileNeuronReservation();expect(read()).toBe(7200);
+  service.env.ASK_NEURON_RECONCILIATION=JSON.stringify({day,asOf:Date.now()-1000000,ceiling:0});service.reconcileNeuronReservation();expect(read()).toBe(7200);
+ });
 });

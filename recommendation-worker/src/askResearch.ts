@@ -333,7 +333,11 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     const row = this.ctx.storage.sql
       .exec<{
         value: string;
-      }>("SELECT value FROM ask_cache WHERE key=? AND expires>?", key, Date.now())
+      }>(
+        "SELECT value FROM ask_cache WHERE key=? AND expires>?",
+        key,
+        Date.now(),
+      )
       .toArray()[0];
     return row ? JSON.parse(row.value) : undefined;
   }
@@ -367,6 +371,52 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     if (next)
       await this.ctx.storage.setAlarm(Math.max(Date.now() + 60000, next));
     else this.cleanupScheduled = false;
+  }
+  /** Operator-only reconciliation after an audited upstream usage export.
+   * The one-shot record is dated, expires after 15 minutes, cannot increase the
+   * daily limit, and includes an intentionally conservative account-wide floor.
+   * Never exposed through a client route or derived from user request data. */
+  private reconcileNeuronReservation() {
+    if (!this.env.ASK_NEURON_RECONCILIATION) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(this.env.ASK_NEURON_RECONCILIATION);
+    } catch {
+      return;
+    }
+    const audit = z
+      .object({
+        day: z.string(),
+        asOf: z.number(),
+        ceiling: z.number().int().min(0).max(9000),
+      })
+      .safeParse(raw);
+    if (!audit.success) return;
+    const { day, asOf, ceiling } = audit.data,
+      now = Date.now(),
+      key = "quota:audited:" + day + ":" + asOf;
+    if (
+      day !== new Date().toISOString().slice(0, 10) ||
+      now < asOf ||
+      now - asOf > 900000 ||
+      this.read(key)
+    )
+      return;
+    const ledger = "quota:neurons:" + day,
+      held = this.read<number>(ledger) || 0;
+    this.put(ledger, Math.min(held, ceiling), 2 * DAY);
+    this.put(
+      key,
+      { previousReservation: held, auditedCeiling: ceiling },
+      2 * DAY,
+    );
+    console.log(
+      JSON.stringify({
+        event: "ask_usage_reconciled",
+        previousReservation: held,
+        auditedCeiling: ceiling,
+      }),
+    );
   }
   private reserve(kind: "search" | "ai", count = 1) {
     const now = new Date(),
@@ -610,7 +660,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     deadline: number,
   ): Promise<Array<{ title: string; finding: WebFinding }>> {
     if (items.length > 40) throw new Error("REQUEST_LIMIT");
-    const key = "evidence-v3:" + (await digest(items)),
+    const key = "evidence-v4:" + (await digest(items)),
       cached = this.read<Array<{ title: string; finding: WebFinding }>>(key);
     if (cached) return cached;
     const facts = await candidateEvidence(
@@ -618,7 +668,11 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       AbortSignal.timeout(Math.max(1, Math.min(16000, deadline - Date.now()))),
     );
     const values = [...facts].map(([title, finding]) => ({ title, finding }));
-    this.put(key, values, values.length ? 7 * DAY : 60000);
+    this.put(
+      key,
+      values,
+      values.length >= Math.ceil(items.length * 0.8) ? 7 * DAY : 60000,
+    );
     return values;
   }
   async recommend(owner: string, raw: unknown) {
@@ -648,6 +702,12 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         65000,
       );
     } catch (error) {
+      console.warn(
+        "ask_pipeline_failed",
+        error instanceof Error
+          ? error.name + ": " + error.message.slice(0, 180)
+          : "unknown",
+      );
       throw wireFailure(error);
     } finally {
       this.controllers.delete(job);
@@ -720,6 +780,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                     Number(input.max_tokens || 0) * outputRate) /
                     1000000,
                 );
+                this.reconcileNeuronReservation();
                 const ledger =
                     "quota:neurons:" + new Date().toISOString().slice(0, 10),
                   held = this.read<number>(ledger) || 0;
@@ -976,7 +1037,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
           (v): v is NonNullable<typeof v> => !!v,
         );
         const wiki = await boundedInference(
-          this.env.ASK_RESEARCH.getByName("licensed-evidence-v3").evidenceBatch(
+          this.env.ASK_RESEARCH.getByName("licensed-evidence-v4").evidenceBatch(
             identities.map((p) => ({
               title: p.pick.title,
               year: p.pick.year,
@@ -987,12 +1048,19 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
           signal,
           17000,
         );
+        console.log(
+          JSON.stringify({
+            event: "ask_evidence_coverage",
+            resolved: identities.length,
+            independent: wiki.length,
+          }),
+        );
         const independentlyVerified = new Map(
           wiki.map((v) => [v.title, v.finding]),
         );
         const missing = identities.filter(
           (p) =>
-            !independentlyVerified.has(p.pick.title) &&
+            !independentlyVerified.has(`${p.pick.title} (${p.pick.year})`) &&
             !evidence.some((e) =>
               normalize(e.title + " " + e.text).includes(
                 normalize(p.pick.title),
@@ -1056,7 +1124,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                 : [],
             )
             .slice(0, 3);
-          const wiki = independentlyVerified.get(p.pick.title);
+          const wiki = independentlyVerified.get(
+            `${p.pick.title} (${p.pick.year})`,
+          );
           if (wiki) {
             const index = evidence.findIndex((e) => e.url === wiki.url);
             p.pick.evidence.push(index >= 0 ? index : evidence.push(wiki) - 1);
