@@ -57,6 +57,14 @@ describe('unified authenticated research',()=>{
    await expect(service.refreshDaily()).rejects.toThrow();expect(await service.daily('movie')).toEqual(original);expect(await service.daily('tv')).toEqual(original);
   });
  });
+ it('one cancelled listener does not abort another viewer sharing the same research',async()=>{
+  const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>{await new Promise(r=>setTimeout(r,80));return Response.json({results:[{title:'Official films',url:'https://www.bfi.org.uk/new',content:'New independent films announced in 2026.'}]});});
+  await runInDurableObject(env.ASK_RESEARCH.getByName('shared-cancellation'),async(instance)=>{
+   (instance as any).env.TAVILY_API_KEY='test-only';const service=instance as unknown as AskResearch;
+   const a=service.research('a','1',{query:'new independent films',recent:true}),b=service.research('b','2',{query:'new independent films',recent:true});
+   const failure=expect(a).rejects.toThrow();await new Promise(r=>setTimeout(r,25));await service.cancel('a','1');await failure;expect((await b).evidence).toHaveLength(1);expect(fetch).toHaveBeenCalledTimes(1);
+  });
+ });
  it('returns 24 distinct genuine identities only after evidence, hard constraints and independent Clef acceptance',async()=>{
   const titles=Array.from({length:30},(_,i)=>({title:'Film '+i,year:2025,evidence:[0],reason:'Memory and identity are central to its narrative.'}));
   vi.spyOn(globalThis,'fetch').mockImplementation(async()=>Response.json({results:[{title:'Research collection',url:'https://www.bfi.org.uk/lists/memory',content:titles.map(t=>t.title+': memory and identity story.').join(' ')}]}));

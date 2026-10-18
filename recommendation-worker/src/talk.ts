@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 import { verifyIdentity } from './watchParty';
 import type { RecommendationEnv } from './types';
-import { AskRequestSchema, WebResearchSchema } from './askResearch';
+import { AskRequestSchema, WebResearchSchema, researchFailure } from './askResearch';
 import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence, requestedEpisodeBoundary, avoidsSpoilers, resolveViewingTitle, TalkLibraryItemSchema, TalkViewingPageSchema } from './talkEvidence';
 import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProviders';
 const MINUTE=60000,DAY=86400000;
@@ -32,6 +32,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
   if(path.endsWith('/close')) {const body=z.object({session:z.string().uuid(),forget:z.boolean().default(false)}).strict().parse(bodyRaw);await user.close(body.session,body.forget);return json({closed:true});}
   const body=requestSchema.parse(bodyRaw);return json(await user.knowledge(body.session,body.request,body.question));
  }catch(e) {
+  const remote=researchFailure(e);if(remote)return json({error:remote.code},remote.status);
   const code=e instanceof Error?e.message:'';
   if(e && typeof e==='object' && 'code' in e && 'status' in e)return json({error:String(e.code)},Number(e.status));
   if(e instanceof z.ZodError||e instanceof SyntaxError)return json({error:'INVALID_REQUEST'},400);
@@ -145,7 +146,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const allowPlot=!avoids&&(explicit||episodeRequested||state.grants.includes(key));
   this.put('live:'+session,state,state.expires);
   const cacheKey='evidence:'+JSON.stringify([key,allowPlot,state.context.imdbId,state.context.viewedRanges,state.context.completed]);const cached=this.read<Evidence[]>(cacheKey);
-  if(cached)return {model:TALK_MODEL,voice:TALK_VOICE,evidence:cached,cached:true};
+  if(cached)return {model:TALK_MODEL,voice:state.context.voice||TALK_VOICE,evidence:cached,cached:true};
   if(++state.calls>24)throw Error('TOOL_LIMIT');
   const allowSearch=!!this.env.TAVILY_API_KEY;
   state.grants=state.grants.slice(-12);this.put('live:'+session,state,state.expires);
@@ -154,7 +155,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   this.put(cacheKey,evidence,Date.now()+(evidence.length?DAY:30000));
   const count=this.ctx.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'evidence:%'").one().n;
   if(count>40)this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN(SELECT key FROM memory WHERE key LIKE 'evidence:%' ORDER BY expires LIMIT ?)",count-40);
-  return {model:TALK_MODEL,voice:TALK_VOICE,evidence,cached:false,boundary:allowPlot?'requested title/episode only':'No unviewed plot details; answer reliable general knowledge naturally',unavailable:!evidence.length};
+  return {model:TALK_MODEL,voice:state.context.voice||TALK_VOICE,evidence,cached:false,boundary:allowPlot?'requested title/episode only':'No unviewed plot details; answer reliable general knowledge naturally',unavailable:!evidence.length};
  }
  private async searchBudget(session:string){const current=this.read<Session>('live:'+session);if(!current||current.searches>=2)return false;current.searches++;this.put('live:'+session,current,current.expires);return this.env.TALK_SESSIONS.getByName('quota:search').reserve(1,20);}
  async alarm(){this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<=?',Date.now());const row=this.ctx.storage.sql.exec<{next:number}>('SELECT MIN(expires) next FROM memory').one();if(row.next)await this.ctx.storage.setAlarm(row.next);}

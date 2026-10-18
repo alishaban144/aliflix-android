@@ -83,7 +83,7 @@ export class TmdbClient {
   // Filters use the conservative default. Generated Describe/Similar requests
   // explicitly raise this to 40 while capping their AI calls so even the
   // provider-retry path stays below Cloudflare Free's 50-subrequest ceiling.
-  constructor(private readonly env: RecommendationEnv, private readonly budget = 38) {}
+  constructor(private readonly env: RecommendationEnv, private readonly budget = 38, private readonly deadline?: AbortSignal) {}
   get callsUsed(): number { return this.used; }
   get callsRemaining(): number { return this.budget - this.used; }
 
@@ -113,10 +113,12 @@ export class TmdbClient {
     applyTmdbAuthentication(this.env, url, headers);
 
     for (let attempt = 0; attempt < 3; attempt++) {
+      this.deadline?.throwIfAborted();
       let retryDelayMs = 100 * (attempt + 1);
       if (++this.used > this.budget) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request budget exhausted', 503, true);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8_000);
+      if (this.deadline) this.deadline.addEventListener('abort', () => controller.abort(), { once: true });
       try {
         const response = await fetch(url, { headers, signal: controller.signal,
           ...(cacheTtl ? { cf: { cacheTtl, cacheEverything: true } } : {}) });
