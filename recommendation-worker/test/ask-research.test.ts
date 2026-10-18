@@ -1,6 +1,6 @@
 import {env,runInDurableObject} from 'cloudflare:test';
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {AskResearch,AskRequestSchema,askRoute,clefProbability,safeResearchUrl} from '../src/askResearch';
+import {AskResearch,AskRequestSchema,askRoute,clefProbability,safeResearchUrl,planFilters} from '../src/askResearch';
 import {liveSetup,liveInstructions} from '../src/talkProviders';
 import {TalkContextSchema} from '../src/talkEvidence';
 afterEach(()=>vi.restoreAllMocks());
@@ -14,6 +14,7 @@ describe('unified authenticated research',()=>{
   expect(current.model).toBe('models/gemini-3.8-live');expect(current.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Aoede');
   expect(liveInstructions(TalkContextSchema.parse({companionVersion:3,recentProgress:[]}))).toContain('real authenticated Tavily');
  });
+ it('normalizes omitted optional model constraints without removing real constraints',()=>{expect(planFilters({originalLanguage:'',minimumYear:0,maximumRuntimeMinutes:null}).originalLanguage).toBeUndefined();expect(planFilters({minimumYear:2023,originalLanguage:'de'})).toMatchObject({minimumYear:2023,originalLanguage:'de'});expect(()=>planFilters({minimumYear:2500})).toThrow();});
  it('requires a signed identity before daily or research access',async()=>{
   const r=await askRoute(new Request('https://example.com/v4/ask/daily?type=movie'),{...env,CURSOR_SIGNING_SECRET:'test'});expect(r?.status).toBe(401);
  });
