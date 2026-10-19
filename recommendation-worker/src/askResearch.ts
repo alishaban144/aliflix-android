@@ -390,6 +390,19 @@ const PLAN_JSON = {
 
 /** One global coordinator owns free-tier reservations and atomic editorial publication.
  * Identity shards isolate TMDB fan-out; every persisted row is bounded and expires. */
+export async function editorialSeedCandidates(tmdb:TmdbClient,type:MediaType,minimumYear:number,maximumYear:number) {
+  const pages=await lanes([1,2,3],2,page=>tmdb.discover(type,{
+    page,sort_by:"popularity.desc",...(type==="tv"?{"first_air_date.gte":`${minimumYear}-01-01`,"first_air_date.lte":`${maximumYear}-12-31`}:{"primary_release_date.gte":`${minimumYear}-01-01`,"primary_release_date.lte":`${maximumYear}-12-31`})
+  }));
+  const seen=new Set<number>();
+  return pages.flatMap(p=>p.results).flatMap(item=>{
+    const title=(type==="tv"?item.name:item.title)?.trim();
+    const year=Number((type==="tv"?item.first_air_date:item.release_date)?.slice(0,4));
+    if(!title||!item.id||seen.has(item.id)||!Number.isInteger(year)||year<minimumYear||year>maximumYear)return [];
+    seen.add(item.id);return [{title,year,id:item.id,evidence:[] as number[],reason:""}];
+  }).slice(0,60);
+}
+
 export class AskResearch extends DurableObject<RecommendationEnv> {
   private flights = new Map<string, Promise<unknown>>();
   private controllers = new Map<string, AbortController>();
@@ -721,14 +734,14 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
   }
   async resolveBatch(
     type: MediaType,
-    items: Array<{ title: string; year: number }>,
+    items: Array<{ title: string; year: number; id?:number }>,
     deadline: number,
   ): Promise<Array<ResearchMedia | null>> {
     if (items.length > 40) throw new Error("REQUEST_LIMIT");
     return lanes(items, 4, async (p) => {
       const shard = await digest([type, p.title, p.year]);
       return this.env.ASK_RESEARCH.getByName("identity:" + shard)
-        .identity(type, p.title, p.year, undefined, deadline)
+        .identity(type, p.title, p.year, p.id, deadline)
         .catch(() => null);
     });
   }
@@ -774,6 +787,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         this.build(
           request,
           AbortSignal.any([shared.signal, AbortSignal.timeout(65000)]),
+          owner === "scheduled",
         ),
         controller.signal,
         65000,
@@ -797,10 +811,10 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       } else this.recommendationWaiters.set(key, count);
     }
   }
-  private async build(request: AskRequest, signal: AbortSignal) {
+  private async build(request: AskRequest, signal: AbortSignal, editorial=false) {
     const started = Date.now(),
       key =
-        "results-v11:" +
+        (editorial?"editorial-results-v12:":"results-v11:") +
         (await digest({ ...request, requestId: undefined, cursor: undefined }));
     const existing = this.read<{
       results: RecommendationResult[];
@@ -1069,6 +1083,8 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       request.library
         .filter((v) => v.type === request.mediaType && v.kind !== "saved")
         .forEach((v) => seen.add(v.id));
+      const editorialSeeds=editorial ? await editorialSeedCandidates(new TmdbClient(this.env,5,AbortSignal.timeout(7000)),request.mediaType,filters.minimumYear||new Date().getUTCFullYear()-3,filters.maximumYear||new Date().getUTCFullYear()) : [];
+      const seedIds=new Map(editorialSeeds.map(p=>[normalize(p.title)+":"+p.year,p.id]));
       const generatedTitles: string[] = [];
       const franchises = new Map<number, number>();
       for (
@@ -1108,9 +1124,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
           ),
         );
         usage.generated += generated.candidates.length;
-        const fresh = generated.candidates.filter(
-          (p) => !generatedTitles.includes(normalize(p.title)),
-        );
+        const proposed=[...editorialSeeds.slice(pass*40,(pass+1)*40),...generated.candidates];
+        const unique=new Set(generatedTitles);
+        const fresh=proposed.filter(p=>{const key=normalize(p.title);if(unique.has(key))return false;unique.add(key);return true;}).slice(0,64);
         generatedTitles.push(...fresh.map((p) => normalize(p.title)));
         const chunks: Array<typeof fresh> = [];
         for (let i = 0; i < fresh.length; i += 32)
@@ -1122,7 +1138,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                 "resolver-v2:" + index,
               ).resolveBatch(
                 request.mediaType,
-                chunk.map((p) => ({ title: p.title, year: p.year })),
+                chunk.map((p) => ({ title: p.title, year: p.year, id:seedIds.get(normalize(p.title)+":"+p.year) })),
                 started + 60000,
               ),
               signal,
