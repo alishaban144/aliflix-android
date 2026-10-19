@@ -325,7 +325,9 @@ const PickSchema = z.object({
   evidence: z.array(z.number().int().min(0).max(15)).max(4).default([]),
   reason: z.string().max(140).default(""),
 });
-const PicksSchema = z.object({ candidates: z.array(PickSchema).max(64) });
+export const PicksSchema = z.object({ candidates: z.array(z.unknown()).max(64).transform(items=>items.flatMap(item=>{
+  const valid=PickSchema.safeParse(item);return valid.success?[valid.data]:[];
+})) });
 const PICK_JSON = {
   type: "object",
   properties: {
@@ -334,7 +336,7 @@ const PICK_JSON = {
       maxItems: 64,
       items: {
         type: "object",
-        properties: { title: { type: "string" }, year: { type: "integer" } },
+        properties: { title: { type: "string",minLength:1,maxLength:180 }, year: { type: "integer",minimum:1870,maximum:2200 } },
         required: ["title", "year"],
         additionalProperties: false,
       },

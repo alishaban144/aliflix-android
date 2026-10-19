@@ -2,6 +2,7 @@ import { env, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AskResearch,
+  PicksSchema,
   AskRequestSchema,
   askRoute,
   clefProbability,
@@ -420,4 +421,10 @@ it("enforces declared genres and maps TV catalogue genres without weakening hard
       "Science fiction films",
     ),
   ).toThrow();
+});
+
+it("rejects malformed individual identities without discarding valid researched candidates",()=>{
+ const parsed=PicksSchema.parse({candidates:[{title:"Arrival",year:2016},{title:"Unknown date",year:0},{title:"Wrong type",year:"2024"},{title:"",year:2023},{title:"Dark",year:2017}]});
+ expect(parsed.candidates.map(p=>p.title)).toEqual(["Arrival","Dark"]);
+ expect(()=>PicksSchema.parse({candidates:Array(65).fill({title:"A",year:2023})})).toThrow();
 });

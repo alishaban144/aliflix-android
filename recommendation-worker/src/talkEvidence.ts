@@ -42,10 +42,10 @@ export function reusableUrl(value:string):boolean {try {const u=new URL(value);r
 export async function wikipediaTitle(q:KnowledgeRequest,signal:AbortSignal):Promise<{title:string;imdbId?:string;pageid:number;year?:number}|undefined> {
  const query=`${q.title} ${q.year||''} ${q.kind==='movie'?'film':'television series'}`;
  const r=await json(WIKI+'action=query&generator=search&gsrnamespace=0&gsrlimit=4&gsrsearch='+encodeURIComponent(query)+'&prop=pageprops',signal);
- const pages=Object.values(r.query?.pages||{}) as any[];
+ const pages=(Object.values(r.query?.pages||{}) as any[]).filter(p=>normalize(p.title||'')===normalize(q.title));
  const ids=pages.map(p=>p.pageprops?.wikibase_item).filter((x:unknown)=>typeof x==='string'&&/^Q\d+$/.test(x));
  if(!ids.length)return;
- const entities=await json('https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=claims|sitelinks&ids='+ids.join('|'),signal);
+ const entities=await json('https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=claims&ids='+ids.join('|'),signal);
  for(const page of pages) {
   const item=entities.entities?.[page.pageprops?.wikibase_item];if(!item)continue;
   const values=(key:string)=>(item.claims?.[key]||[]).map((v:any)=>v.mainsnak?.datavalue?.value);
@@ -163,10 +163,13 @@ export async function retrieveKnowledge(env:RecommendationEnv,q:KnowledgeRequest
  try{title=await wikipediaTitle(q,signal);}catch{}
  if(q.kind==='tv') {
   const watched=!!context&&!!title?.imdbId&&title.imdbId===context.imdbId&&q.season!=null&&q.episode!=null&&permittedEpisode(context,q.season,q.episode);
+  // Fetch the small exact-episode fallback concurrently, so a slow Wikipedia
+  // section cannot consume the entire deadline before the fallback even starts.
+  const fallback=tvEpisodeEvidence(allowPlot||watched?q:{...q,season:undefined,episode:undefined},title?.imdbId,signal).catch(()=>[] as Evidence[]);
   if((allowPlot||watched)&&title&&q.season!=null&&q.episode!=null) {
    try{const detailed=await wikipediaEpisodeEvidence(title.title,q,signal);if(detailed.length)return detailed;}catch{}
   }
-  let result:Evidence[]=[];try{result=await tvEpisodeEvidence(allowPlot||watched?q:{...q,season:undefined,episode:undefined},title?.imdbId,signal);}catch{}
+  let result:Evidence[]=await fallback;
   if(!result.length&&(allowPlot||watched)&&q.episode!=null&&allowSearch&&await reserveSearch())try{result=await tavilyEvidence(env,q,signal);}catch{}
   return result;
  }
