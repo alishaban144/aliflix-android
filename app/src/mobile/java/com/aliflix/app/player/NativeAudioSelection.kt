@@ -9,6 +9,20 @@ internal data class AudioSelectionState(val pending: String? = null, val failed:
 internal fun nativeAudioKey(format: Format): String = listOf(format.id, format.language, format.label,
     format.sampleMimeType, format.codecs, format.channelCount, format.sampleRate).joinToString("|")
 
+/** HLS declarations and decoder formats enrich IDs, codec strings and unknown
+ * channel/rate fields differently. Verify the soundtrack identity, not byte
+ * equality of these two different metadata representations. */
+internal fun nativeAudioDecoderMatches(expected:Format,actual:Format):Boolean {
+    if(expected.sampleMimeType!=null&&actual.sampleMimeType!=null&&expected.sampleMimeType!=actual.sampleMimeType)return false
+    if(expected.channelCount>0&&actual.channelCount>0&&expected.channelCount!=actual.channelCount)return false
+    if(expected.sampleRate>0&&actual.sampleRate>0&&expected.sampleRate!=actual.sampleRate)return false
+    fun language(value:String?)=value?.takeIf{it.isNotBlank()&&it!="und"}?.let{canonicalSubtitleLanguageCode(it)}
+    val a=language(expected.language);val b=language(actual.language)
+    if(a!=null&&b!=null)return a==b
+    if(!expected.label.isNullOrBlank()&&!actual.label.isNullOrBlank())return expected.label==actual.label
+    return !expected.id.isNullOrBlank()&&expected.id==actual.id
+}
+
 /** A service-owned transaction survives sheets/activity recreation and commits only the applied choice. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal class NativeAudioSelection(
@@ -44,7 +58,7 @@ internal class NativeAudioSelection(
         val format = pending.mediaTrackGroup.getFormat(pending.trackIndices.first())
         val evidence = decoded()
         val decodedNewAudio = evidence.second > 0 && (evidence.first != baseline.first || evidence.second > baseline.second)
-        val decoderMatches = inputFormat()?.let { nativeAudioKey(it) == nativeAudioKey(format) } == true
+        val decoderMatches = inputFormat()?.let { nativeAudioDecoderMatches(format,it) } == true
         if (selected() == pending && player.playbackState == Player.STATE_READY &&
             (!player.playWhenReady || (decoderMatches && decodedNewAudio) ||
                 (decoderMatches && SystemClock.elapsedRealtime() - started >= 800))) {

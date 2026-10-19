@@ -32,6 +32,8 @@ class TalkRenderDeviceTest {
    Thread.sleep(50)
   }
   val activity=requireNotNull(main)
+  val previousOrientation=activity.requestedOrientation
+  i.runOnMainSync{activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
   var energy by mutableFloatStateOf(.2f)
   var words by mutableStateOf("THE SHINING")
   i.runOnMainSync {activity.setContent {AliflixMobileTheme {
@@ -56,6 +58,6 @@ class TalkRenderDeviceTest {
     Thread.sleep(70)
    }
    File(context.getExternalFilesDir(null),"talk-render-172.txt").writeText(shell("dumpsys gfxinfo ${context.packageName}"))
-  } finally {i.runOnMainSync {activity.recreate()}}
+  } finally {i.runOnMainSync {activity.requestedOrientation=previousOrientation;activity.recreate()}}
  }
 }

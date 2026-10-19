@@ -40,15 +40,20 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
         val response=SerienstreamHttp.get(url,url)
         return Jsoup.parse(String(response.bytes,Charsets.UTF_8),response.finalUrl.ifBlank { url })
     }
+    private suspend fun moviePage(url:String):Document {
+        val first=page(url)
+        if(first.selectFirst("html")?.attr("lang")?.substringBefore('-')=="en")return first
+        // Locale cookies can expire or be cleared while the process survives.
+        // Inspect the actual document rather than caching a permanent Boolean.
+        localeLock.withLock { page("https://filmo.to/lang/en?redirect=%2F") }
+        return page(url)
+    }
     suspend fun links(selection: PlaybackSelection): Pair<Document,List<SitePlaybackLink>> = withTimeout(30_000) {
         if (selection.source.identity == MobilePlaybackProvider.FILMO) {
-            localeLock.withLock {
-                if (!englishSession) { page("https://filmo.to/lang/en?redirect=%2F");englishSession=true }
-            }
             val base=selection.source.baseUrl.trimEnd('/')
             val cached=titles["filmo:${selection.media.key}"]
             val direct=cached ?: "$base/movies/${selection.media.title.lowercase().replace(Regex("[^a-z0-9]+"),"-").trim('-')}"
-            val first=(try { page(direct) } catch(cancelled:CancellationException) { throw cancelled }
+            val first=(try { moviePage(direct) } catch(cancelled:CancellationException) { throw cancelled }
                 catch(_:Exception) { currentCoroutineContext().ensureActive();null })?.takeIf { filmoTitleMatches(it,selection.media) }
             val document=first ?: run {
                 val response=SerienstreamHttp.get("$base/search/suggest?q=${encoded(selection.media.title)}",base)
@@ -58,7 +63,7 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
                     ownedSiteUrl(results.getJSONObject(index).optString("url"),base,Regex("/movies/[^/]+"))
                 }.distinct().take(12)
                 firstSuccessful(candidates.map { url -> suspend {
-                    page(url).also { require(filmoTitleMatches(it,selection.media)) { "Filmo title/year mismatch" } }
+                    moviePage(url).also { require(filmoTitleMatches(it,selection.media)) { "Filmo title/year mismatch" } }
                 } },parallelism=2)
             }
             titles["filmo:${selection.media.key}"]=document.location()
@@ -105,7 +110,7 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
 
     suspend fun resolve(selection:PlaybackSelection,position:Long,excluded:Set<String>,preferred:String?,strict:Boolean,
         audio:String?,onServers:(List<String>)->Unit,onServer:(String)->Unit,
-        embedded:suspend (String,String)->NativePlaybackRequest):NativePlaybackRequest {
+        embedded:suspend (String,String)->NativePlaybackRequest):NativePlaybackRequest = withTimeout(if(selection.source.identity==MobilePlaybackProvider.FILMO)18_000 else 30_000) {
         val (document,links)=links(selection)
         android.util.Log.i("AliflixSite","${selection.source.identity.name}: catalogue links=${links.size}")
         require(links.isNotEmpty()) { "No playable site links" }
@@ -120,6 +125,7 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
         var last:Exception?=null
         for (link in ordered) {
             try {
+                val resolved=withTimeout(8_000) {
                 val action=if(link.token.isNotBlank()) {
                     val csrf=document.selectFirst("meta[name=csrf-token]")?.attr("content") ?: error("Missing site session")
                     val result=JSONObject(SerienstreamHttp.post("https://filmo.to/n",document.location(),
@@ -136,10 +142,12 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
                     }
                     else embedded(link.label,target)
                 StartupStreamCache.awaitPlayable(activity,request.copy(sourceAudioLanguage=link.language.substringBefore('-')))
-                onServer(link.label)
-                return request.copy(sourceAudioLanguage=link.language,sourceAudioOptions=JSONArray().apply {
+                request.copy(sourceAudioLanguage=link.language,sourceAudioOptions=JSONArray().apply {
                     links.distinctBy { it.language }.forEach { put(JSONObject().put("language",it.language).put("label",it.audioLabel)) }
                 }.toString())
+                }
+                onServer(link.label)
+                return@withTimeout resolved
             } catch(timeout:TimeoutCancellationException) {
                 currentCoroutineContext().ensureActive();last=timeout
             } catch(cancelled:CancellationException) { throw cancelled }
@@ -151,15 +159,7 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
         throw last ?: NoNativeServersException()
     }
     private suspend fun publicVoeRequest(selection:PlaybackSelection,url:String,position:Long):NativePlaybackRequest {
-        var document=page(url)
-        repeat(3) {
-            val target=Regex("window\\.location\\.href\\s*=\\s*['\"](https://[^'\"]+)['\"]").find(document.html())?.groupValues?.get(1)
-            if(target!=null) {
-                val uri=URI(target)
-                require(isProviderSiteRedirect(uri) && uri.host in setOf("voe.sx","megankiddifference.com"))
-                document=page(target)
-            }
-        }
+        val document=followPublicVoeRelay(page(url),url)
         val config=decodeVoeConfig(document)
         val source=config.optString("source").takeIf(::isNativeStreamUrl) ?: error("Video host has no stream")
         return NativePlaybackRequest(source,if(source.substringBefore('?').endsWith(".m3u8")) "application/x-mpegURL" else "video/mp4",
@@ -169,7 +169,6 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
     companion object {
         private val titles=ConcurrentHashMap<String,String>()
         private val localeLock=Mutex()
-        private var englishSession=false
     }
 }
 

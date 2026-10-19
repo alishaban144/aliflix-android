@@ -31,6 +31,7 @@ class TalkEpisodeGroundingDeviceTest {
    File(c.getExternalFilesDir(null),"talk-episode-grounding-176.json").writeText(JSONObject().put("answer",answer).put("firstAudioAt",session.debugFirstAudioAt).put("evidenceAppliedAt",session.debugKnowledgeAppliedAt).put("request",session.debugKnowledgeRequest).put("evidence",session.debugEpisodeEvidence).toString(2))
    assertTrue("Verified episode row",session.debugEpisodeEvidence.contains("wikipedia-episode-")&&session.debugEpisodeEvidence.contains("2053"))
    assertTrue("Substantive recap: $answer",answer.length>70)
+   assertFalse("Source character names: $answer",answer.contains("Johanna",true))
    assertFalse("Wrong/future timeline: $answer",Regex("2052|1987|1954").containsMatchIn(answer))
    assertFalse("Future Claudia meeting: $answer",Regex("(?i)Claudia.{0,60}(?:älter|Bibliothek|reist|trifft)").containsMatchIn(answer))
   }}finally{i.runOnMainSync{talk.finish()};runBlocking{withTimeout(12000){while(activity() !is MainActivity)delay(50)}}}

@@ -66,7 +66,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var reconnectJob: Job? = null
     private var readyWatchdog: Job? = null
     private val answerDeadline=TalkResponseDeadline(scope) {
-        if(permitted&&!speaking) {suspendSession();update{it.copy(phase="Reconnect",level=0f)}}
+        if(permitted&&!speaking) {
+            if(stalledRecoveries++<1){debugStallRecoveries++;commitQuestion();continueAfterReconnect=true;scope.launch{disconnected(epoch,false)}}
+            else {suspendSession();update{it.copy(phase="Reconnect",level=0f)}}
+        }
     }
     @Volatile private var permitted = false
     @Volatile private var speaking = false
@@ -122,6 +125,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     @Volatile private var lastOutputAt=0L
     private var stalledRecoveries=0
     private var continueAfterReconnect=false
+    private var turnHasAudio=false
     private var startedAt = 0L
     @Volatile private var awaitingInterrupt = false
     private val outputLock = Any()
@@ -298,10 +302,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             readyWatchdog?.cancel();reconnects=0
             if(continueAfterReconnect){
                 continueAfterReconnect=false
-                scope.launch {delay(750);if(ticket==epoch&&permitted&&!speaking)emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text","The audio connection briefly stalled. Continue the interrupted answer from the last complete sentence, keeping the established language, title and spoiler boundaries. Avoid repeating what was already said."))))).put("turnComplete",true)))}
+                scope.launch {delay(750);if(ticket==epoch&&permitted&&!speaking)emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text","Continue answering the latest user question in the restored dialogue. If audio was interrupted, continue from the last complete sentence. Keep the established language, title and spoiler boundaries. Avoid repeating completed speech or acknowledging this reconnection."))))).put("turnComplete",true)))}
             }
-            if(!resuming&&state.value.lines.isNotEmpty()) {
-                val history=JSONArray(state.value.lines.takeLast(12).map { JSONObject().put("role",if(it.role=="assistant") "model" else "user").put("parts",JSONArray().put(JSONObject().put("text",it.text.take(800)))) })
+            if(state.value.lines.isNotEmpty()) {
+                val history=talkContinuityTurns(state.value.lines,resuming)
                 emit(JSONObject().put("clientContent",JSONObject().put("turns",history).put("turnComplete",false)))
             }
             try { startAudio(ticket);debugReadyGeneration=ticket;update{it.copy(phase="Listening",provider="gemini-3.8-live · ${it.voice}")} }
@@ -316,16 +320,18 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         } }
         message.optJSONObject("toolCallCancellation")?.optJSONArray("ids")?.let { a->for(i in 0 until a.length()){val id=a.getString(i);cancelledTools.add(id);tools.remove(id)?.cancel()} }
         message.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls->
+            val names=(0 until calls.length()).map{calls.getJSONObject(it).optString("name")}
             for(i in 0 until calls.length()) {
                 val call=calls.getJSONObject(i);val id=call.getString("id")
+                val controlScheduling=talkControlScheduling(names,i,speaking||outputText.isNotBlank(),tools.isNotEmpty())
                 if(BuildConfig.DEBUG)debugToolCalls.merge(call.optString("name"),1){a,b->a+b}
                 if(call.optString("name")=="conversation_language") {
                     val args=call.optJSONObject("args")?:JSONObject()
                     responseLanguage=chooseTalkResponseLanguage(responseLanguage,args.optString("language"),args.optBoolean("explicitRequest"),inputText.ifBlank{lastQuestion})
-                    val result=JSONObject().put("language",responseLanguage?:"und").put("locked",responseLanguage!=null).put("scheduling","SILENT")
-                        .put("instruction","Use this response language for every answer until the user explicitly requests a different one. Titles and quotations do not change it.")
+                    val result=JSONObject().put("language",responseLanguage?:"und").put("locked",responseLanguage!=null)
+                        .put("instruction","Use this response language for every answer until the user explicitly requests a different one. Titles and quotations do not change it. Continue answering the user's question directly; never acknowledge this control.")
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
-                        JSONObject().put("id",id).put("name","conversation_language").put("response",result)))))
+                        talkFunctionResponse(id,"conversation_language",result,controlScheduling)))))
                     continue
                 }
                 if(call.optString("name") in setOf("aliflix_app","remember_recommendations")) {
@@ -336,16 +342,16 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                             .putLong("suggestions-at",System.currentTimeMillis()).apply()
                         JSONObject().put("accepted",true)
                     }
-                    result.put("scheduling",if(call.optString("name")=="aliflix_app")"WHEN_IDLE" else "SILENT")
+                    val scheduling=if(call.optString("name")=="aliflix_app")"WHEN_IDLE" else "SILENT"
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
-                        JSONObject().put("id",id).put("name",call.getString("name")).put("response",result)))))
+                        talkFunctionResponse(id,call.getString("name"),result,scheduling)))))
                     continue
                 }
                 if(call.optString("name")=="conversation_topic") {
                     val topic=validatedTalkTopic(call.optJSONObject("args")?.optString("topic").orEmpty())
                     if(topic!=null)update{it.copy(words=topic)}
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
-                        JSONObject().put("id",id).put("name","conversation_topic").put("response",JSONObject().put("accepted",topic!=null).put("scheduling","SILENT"))))))
+                        talkFunctionResponse(id,"conversation_topic",JSONObject().put("accepted",topic!=null).put("instruction","This changes only the visual theme. Continue the user's question directly, without announcing this control."),controlScheduling)))))
                     continue
                 }
                 if(call.optString("name")=="film_knowledge") {
@@ -354,7 +360,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     validatedTalkTopic(title)?.let{topic->update{it.copy(words=topic)}}
                 }
                 if(call.optString("name") !in setOf("film_knowledge","viewing_context","web_research","recommendations")||tools.size>=2) {
-                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(JSONObject().put("id",id).put("name",call.optString("name")).put("response",JSONObject().put("unavailable",true).put("retryable",true).put("scheduling","WHEN_IDLE"))))))
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,call.optString("name"),JSONObject().put("unavailable",true).put("retryable",true),"WHEN_IDLE")))))
                     continue
                 }
                 update{it.copy(phase=if(speaking)it.phase else "Thinking")}
@@ -401,21 +407,24 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         finalReferences=references?.let {a->(0 until a.length()).map {n->a.getJSONObject(n).let {TalkReference(it.getString("title"),it.getString("url"),it.optString("license",it.optString("attribution","Source")))}}}.orEmpty()
                         // Episode facts must inform this answer, not arrive after an
                         // ungrounded recap has already finished. Lookup remains async.
-                        val response=JSONObject().put("id",id).put("name",call.getString("name")).put("response",result.put("scheduling",if(call.optString("name")=="film_knowledge")"INTERRUPT" else "WHEN_IDLE"))
+                        val response=talkFunctionResponse(id,call.getString("name"),result,if(call.optString("name")=="film_knowledge"||!turnHasAudio)"INTERRUPT" else "WHEN_IDLE")
                         if(BuildConfig.DEBUG&&call.optString("name")=="film_knowledge")debugKnowledgeAppliedAt=SystemClock.elapsedRealtime()
                         emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(response))))
                     }
                     tools.remove(id)
+                    if(tools.isEmpty()&&!turnHasAudio)answerDeadline.awaiting(12000)
                 }
             }
         }
         message.optJSONObject("serverContent")?.let { content->
             if(content.optBoolean("interrupted")) {
                 debugInterruptions++;sequence++;interruptOutput();assistantLine=-1;outputText="";finalReferences=emptyList()
-                tools.forEach {(id,job)->cancelledTools.add(id);job.cancel()};tools.clear()
+                // FunctionResponse INTERRUPT can also interrupt model output.
+                // Gemini's explicit toolCallCancellation IDs own tool cancellation;
+                // a late audio interruption must not cancel a newer lookup.
                 update{it.copy(phase=if(muted) "Muted" else "Listening")}
             }
-            content.optJSONObject("inputTranscription")?.optString("text")?.let { inputText=appendTranscript(inputText,it);answerDeadline.awaiting();update{v->v.copy(phase=if(speaking) v.phase else "Thinking")} }
+            content.optJSONObject("inputTranscription")?.optString("text")?.let { if(inputText.isBlank())turnHasAudio=false;inputText=appendTranscript(inputText,it);answerDeadline.awaiting();update{v->v.copy(phase=if(speaking) v.phase else "Thinking")} }
             content.optJSONObject("outputTranscription")?.optString("text")?.let { text->
                 outputText=appendTranscript(outputText,text)
                 commitQuestion()
@@ -432,7 +441,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(!data.optString("mimeType").startsWith("audio/pcm"))continue
                 val bytes=Base64.decode(data.getString("data"),Base64.NO_WRAP)
                 if(bytes.isNotEmpty())lastOutputAt=SystemClock.elapsedRealtime()
-                if(bytes.isNotEmpty())answerDeadline.clear()
+                if(bytes.isNotEmpty()){turnHasAudio=true;answerDeadline.clear()}
                 require(bytes.size<=192000&&bytes.size%2==0)
                 val buffer=audio?:continue
                 val reserved=buffer.bytes.addAndGet(bytes.size)
@@ -444,7 +453,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             } }
             // Native generation completion can precede turnComplete while tools
             // settle. It is a finished audio stream, never a stalled answer.
-            if(content.optBoolean("generationComplete")){endOfAudio=true;answerDeadline.clear()}
+            if(content.optBoolean("generationComplete")){endOfAudio=true;if(turnHasAudio)answerDeadline.clear()}
             if(content.optBoolean("turnComplete")) {
                 update{it.copy(words=completedTalkTopic(outputText,it.words,synchronized(knownFilmTopics){knownFilmTopics.toList()}))}
                 debugTurnCompleteAt=SystemClock.elapsedRealtime();endOfAudio=true;assistantLine=-1;outputText="";finalReferences=emptyList()
@@ -461,7 +470,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun commitQuestion() {
         if(inputText.isBlank())return
         stalledRecoveries=0
-        lastQuestion=inputText;inputText=""
+        lastQuestion=inputText;inputText="";turnHasAudio=false
         explicitRequestedTalkLanguage(lastQuestion)?.let{responseLanguage=it}
         addLine(TalkLine("user",lastQuestion))
         val subject=topicWords(lastQuestion,"",state.value.words);rememberFilmTopic(subject)

@@ -151,15 +151,7 @@ internal object SerienstreamNativeCatalog {
             val title = titles["${selection.source.baseUrl.trimEnd('/')}:${selection.media.key}"] ?: error("Missing provider title")
             throw SerienstreamVerificationRequired(selection, "$title/staffel-${selection.seasonNumber ?: 1}/episode-${selection.episodeNumber ?: 1}", link.language, link.url)
         }
-        // VOE rotates its embed hostname through a same-file HTTPS document redirect.
-        repeat(2) {
-            val redirect = Regex("window\\.location\\.href\\s*=\\s*['\"](https://[^'\"]+)['\"]")
-                .find(document.html())?.groupValues?.get(1)
-            if (redirect != null) {
-                require(URI(redirect).path.matches(Regex("/e/[A-Za-z0-9]+"))) { "Unexpected video document redirect" }
-                document = page(redirect, link.url)
-            }
-        }
+        document = followPublicVoeRelay(document, link.url)
         if (document.select("script[type=application/json]").isEmpty()) {
             android.util.Log.w("AliflixSerienstream", "Host configuration absent: host=${URI(document.location()).host}, title=${document.title()}")
         }

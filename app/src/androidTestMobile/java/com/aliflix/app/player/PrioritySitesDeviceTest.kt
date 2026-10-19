@@ -132,6 +132,17 @@ class PrioritySitesDeviceTest {
                             };done
                         }
                         scenario.onActivity { assertEquals("de",NativePlaybackService.selectedAudioLanguage());receipt.put("germanSelectionConfirmed",true) }
+                        // Switch back through the real MediaSession track metadata,
+                        // then ensure the transaction does not roll back later.
+                        scenario.onActivity { activity ->
+                            val english=activity.playbackController!!.currentTracks.groups.filter{it.type==androidx.media3.common.C.TRACK_TYPE_AUDIO}
+                                .flatMap{g->(0 until g.length).map{g to it}}.first{(g,n)->g.getTrackFormat(n).language in setOf("en","eng")}
+                            NativePlaybackService.selectAudio(english.first.mediaTrackGroup,english.second)
+                        }
+                        await("English soundtrack is confirmed again",20000){var ready=false;scenario.onActivity{
+                            ready=NativePlaybackService.selectedAudioLanguage() in setOf("en","eng")&&NativePlaybackService.audioSelectionState?.value?.pending==null&&it.playbackController?.isPlaying==true
+                        };ready}
+                        scenario.onActivity { assertNull(NativePlaybackService.audioSelectionState?.value?.failed);receipt.put("englishReselectionConfirmed",true) }
                     }
                 }
                 receipt.put("passed",true)

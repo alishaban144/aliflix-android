@@ -967,7 +967,7 @@ class NativePlayerActivity : FragmentActivity() {
                 val savedRoute = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { routeStore.load(current) }
                     ?.takeIf { preferredServer == null &&
                         current.source.identity != com.aliflix.app.model.PlaybackProviderId.CINEJOY &&
-                        it.selection.source.identity == current.source.identity &&
+                        it.selection.source == current.source &&
                         (!animeSeries || it.selection.source.identity.isAnimeNative || preferredServer != null) &&
                         it.selection.source.identity !in exhaustedSources &&
                         (!current.source.identity.isAnimeNative || it.selection.source.identity == current.source.identity) }

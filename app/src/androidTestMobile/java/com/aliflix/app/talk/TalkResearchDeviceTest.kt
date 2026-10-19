@@ -25,6 +25,7 @@ class TalkResearchDeviceTest {
   runBlocking{withTimeout(20000){while(activity() !is TalkVoiceActivity)delay(50)}}
   val talk=activity() as TalkVoiceActivity;val session=talk.voice;val receipt=JSONArray()
   val originalVoice=session.state.value.voice
+  File(context.getExternalFilesDir(null),"talk-research-176.json").writeText(JSONObject().put("turns",receipt).put("inProgress",true).toString())
   val continuityOnly=InstrumentationRegistry.getArguments().getString("voiceContinuityOnly")=="true"
   val prompts=listOf(
    "In one sentence, how can Aliflix help me find films based on my Favorites?",
@@ -77,6 +78,7 @@ class TalkResearchDeviceTest {
    assertEquals("Kore",session.debugVoice)
    val resumed=session.debugReadyGeneration;withContext(Dispatchers.Main){session.debugReconnect()};withTimeout(25000){while(session.debugReadyGeneration<=resumed)delay(50)};assertEquals("Kore",session.debugVoice)
   }}finally{
+   File(context.getExternalFilesDir(null),"talk-research-last-state-176.json").writeText(JSONObject().put("phase",session.state.value.phase).put("tools",JSONObject(session.debugToolCalls as Map<*,*>)).put("lineCount",session.state.value.lines.size).put("firstAudioAt",session.debugFirstAudioAt).put("completeAt",session.debugTurnCompleteAt).put("connectionIssue",session.debugConnectionIssue).toString())
    context.getSharedPreferences("aliflix-talk",0).edit().putString("voice",originalVoice).apply()
    i.runOnMainSync{talk.finish()};runBlocking{withTimeout(12000){while(activity() !is MainActivity)delay(50)}}
   }

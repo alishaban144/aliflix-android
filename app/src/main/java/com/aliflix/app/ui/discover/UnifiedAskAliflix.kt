@@ -40,6 +40,7 @@ import com.aliflix.app.model.*
 import com.aliflix.app.recommendation.*
 import com.aliflix.app.ui.common.*
 import com.aliflix.app.ui.theme.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -71,6 +72,8 @@ internal fun UnifiedAskAliflix(
     var dailyRetry by remember{mutableIntStateOf(0)}
     var dailyLoading by remember{mutableStateOf(false)}
     var dailyError by remember{mutableStateOf(false)}
+    var dailyState by remember{mutableStateOf("loading")}
+    var dailyRetryAt by remember{mutableLongStateOf(0L)}
     val type=editor.mediaType
     var rememberedSeriesStatus by rememberSaveable{mutableStateOf(editor.spec.requiredStatus)}
     LaunchedEffect(type,editor.spec.requiredStatus){if(type==MediaType.TV)rememberedSeriesStatus=editor.spec.requiredStatus}
@@ -102,11 +105,42 @@ internal fun UnifiedAskAliflix(
         dailyLoading=true;dailyError=false
         if(dailyProvider!=null){daily=dailyProvider(type);dailyLoading=false;return@LaunchedEffect}
         val file=java.io.File(context.cacheDir,"ask-daily-${type.routeName}.json")
-        fun parse(json:JSONObject):List<Media> {val a=json.optJSONArray("results")?:return emptyList();return (0 until a.length()).map{V3RecommendationResult.fromJson(a.getJSONObject(it))}.map{v->Media(v.tmdbId,MediaType.from(v.mediaType),v.title,posterPath=v.posterPath,backdropPath=v.backdropPath,year=v.releaseDate?.take(4).orEmpty(),rating=v.tmdbRating?:0.0,genres=v.genres)}}
-        daily=withContext(Dispatchers.IO){runCatching{parse(JSONObject(file.readText()))}.getOrDefault(emptyList())}
-        try {val json=research.request("daily?type=${type.routeName}");val items=parse(json);if(items.isNotEmpty()){daily=items;withContext(Dispatchers.IO){runCatching{file.writeText(json.toString())}}}else dailyError=daily.isEmpty()}
-        catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){dailyError=daily.isEmpty()}
+        fun parse(json:JSONObject):List<Media> {
+            val a=json.optJSONArray("results")?:return emptyList()
+            return (0 until a.length()).mapNotNull { n->runCatching {
+                val v=V3RecommendationResult.fromJson(a.getJSONObject(n))
+                require(v.tmdbId>0&&v.title.isNotBlank()&&MediaType.from(v.mediaType)==type)
+                Media(v.tmdbId,type,v.title,posterPath=v.posterPath,backdropPath=v.backdropPath,year=v.releaseDate?.take(4).orEmpty(),rating=v.tmdbRating?:0.0,genres=v.genres)
+            }.getOrNull() }.distinctBy{it.key}.take(32)
+        }
+        daily=withContext(Dispatchers.IO){runCatching{android.util.AtomicFile(file).openRead().bufferedReader().use{parse(JSONObject(it.readText()))}}.getOrDefault(emptyList())}
+        try {
+            for(attempt in 0 until 18) {
+                val json=research.request("daily?type=${type.routeName}");val items=parse(json)
+                dailyState=json.optString("state",if(items.isNotEmpty())"ready" else "unavailable")
+                dailyRetryAt=json.optLong("retryAt",0L)
+                if(items.isNotEmpty()) {
+                    daily=items
+                    withContext(Dispatchers.IO){runCatching{
+                        val atomic=android.util.AtomicFile(file);val output=atomic.startWrite()
+                        try{output.write(json.toString().toByteArray(Charsets.UTF_8));atomic.finishWrite(output)}
+                        catch(error:Throwable){atomic.failWrite(output);throw error}
+                    }}
+                    break
+                }
+                if(dailyState!="warming"||daily.isNotEmpty()||attempt==17)break
+                delay(5000)
+            }
+            dailyError=daily.isEmpty()
+        }
+        catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){dailyError=daily.isEmpty();dailyState="unavailable"}
         finally{dailyLoading=false}
+    }
+    LaunchedEffect(dailyState,dailyRetryAt,type) {
+        if(dailyState=="limited"&&dailyRetryAt>System.currentTimeMillis()) {
+            delay((dailyRetryAt-System.currentTimeMillis()).coerceAtMost(86_400_000))
+            dailyRetry++
+        }
     }
     LaunchedEffect(state,surprisePending) {if(surprisePending&&!busy){surprisePending=false;results.firstOrNull()?.media?.let(onOpen)}}
     BackHandler(sheet){sheet=false}
@@ -174,6 +208,7 @@ internal fun UnifiedAskAliflix(
                         if(collection.isNotEmpty())LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp),modifier=Modifier.fillMaxWidth().testTag("ask-daily")){
                             items(collection,key={it.key}){m->Column(Modifier.width(112.dp).clip(RoundedCornerShape(16.dp)).clickable{onOpen(m)}){AskAliflixPoster(m,Modifier.width(112.dp).height(168.dp),cornerRadius=16.dp);Text(m.title,Modifier.padding(top=8.dp),color=AliflixContentPrimary,fontSize=13.sp,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis);Text(m.year,Modifier.padding(top=3.dp),color=AliflixContentSecondary,fontSize=11.sp)}}
                         }else if(dailyLoading)AskResearchProgress(Modifier.fillMaxWidth().height(180.dp),motion)
+                        else if(dailyError&&dailyState=="limited")Text("Daily limit",color=AliflixContentSecondary,fontSize=13.sp,modifier=Modifier.padding(vertical=20.dp))
                         else if(dailyError)AskAction("Retry",Icons.Rounded.Refresh,false,Modifier.fillMaxWidth()){dailyRetry++}
                     }}
                 }

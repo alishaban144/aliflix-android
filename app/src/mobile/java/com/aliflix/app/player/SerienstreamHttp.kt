@@ -20,7 +20,7 @@ internal object SerienstreamHttp {
             if (response.redirect == null) return AnimeCatalogueHttp.Response(response.bytes, response.type, next)
             val target = URI(next).resolve(response.redirect)
             require(target.scheme == "https" && target.userInfo == null && target.host != null)
-            require(isProviderSiteRedirect(target)) { "Unexpected provider redirect: ${target.host}, path segments=${target.path.split('/').filter { it.isNotBlank() }.map { it.length }}" }
+            require(isProviderSiteRedirect(target) || sameProviderOrigin(URI(next),target)) { "Unexpected provider redirect: ${target.host}, path segments=${target.path.split('/').filter { it.isNotBlank() }.map { it.length }}" }
             next = target.toString()
         }
         error("Too many provider redirects")
@@ -76,6 +76,10 @@ internal object SerienstreamHttp {
         continuation.invokeOnCancellation { task.cancel(true); connection.disconnect() }
     }
 }
+
+internal fun sameProviderOrigin(from:URI,to:URI):Boolean = to.scheme=="https" && from.scheme=="https" &&
+    to.userInfo==null && from.userInfo==null && to.port in setOf(-1,443) && from.port in setOf(-1,443) &&
+    !from.host.isNullOrBlank() && from.host.equals(to.host,true)
 
 /** Video hosts use both public file documents and tokenized player routes.
  * Authorize the inspected HTTPS origins instead of guessing their URL paths;
