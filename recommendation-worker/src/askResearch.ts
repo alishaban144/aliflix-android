@@ -137,6 +137,13 @@ export function researchQuotaRetryAt(now:number):number {
  const midnight=Date.parse(new Date(now).toISOString().slice(0,10));
  return now-midnight<900000?now+900000:midnight+86400000+60000;
 }
+export function researchBudgetState(counts:{aiDay:number;aiMonth:number;searchDay:number;searchMonth:number;neurons:number},now=Date.now()) {
+ const day=Date.parse(new Date(now).toISOString().slice(0,10))+DAY+60000;
+ const date=new Date(now);const month=Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,1)+60000;
+ const remaining={aiDay:Math.max(0,96-counts.aiDay),aiMonth:Math.max(0,2400-counts.aiMonth),searchDay:Math.max(0,40-counts.searchDay),searchMonth:Math.max(0,800-counts.searchMonth),neurons:Math.max(0,9000-counts.neurons)};
+ const retryAt=Math.max(remaining.aiDay===0||remaining.searchDay===0||remaining.neurons===0?day:0,remaining.aiMonth===0||remaining.searchMonth===0?month:0);
+ return {remaining,limited:retryAt>now,retryAt};
+}
 export function planFilters(raw: unknown) {
   const value =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -457,7 +464,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     if(refreshAt && refreshAt<=Date.now()) {
       this.ctx.storage.sql.exec("DELETE FROM ask_cache WHERE key='daily:refreshAt'");
       await this.recoverQuotaCircuit();
-      const blocked=this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10));
+      const blocked=this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10))||this.researchBudget().limited;
       const key='daily:bootstrap:'+new Date().toISOString().slice(0,10);
       const attempts=this.read<number>(key)||0;
       if(blocked)this.put('daily:refreshAt',this.quotaRetryAt(),2*DAY);
@@ -465,7 +472,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         this.put(key,attempts+1,2*DAY);
         try { await this.refreshDaily(); }
         catch(error) {
-          const quota=researchFailure(error)?.code==='AI_QUOTA';
+          const quota=['AI_QUOTA','RESEARCH_QUOTA'].includes(researchFailure(error)?.code||'');
           if(quota || attempts<2)this.put('daily:refreshAt',quota?this.quotaRetryAt():Date.now()+300000,2*DAY);
           console.warn(JSON.stringify({event:'ask_bootstrap_retained',code:researchFailure(error)?.code||'RESEARCH_UNAVAILABLE'}));
         }
@@ -478,6 +485,10 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     if (next || pending)
       await this.ctx.storage.setAlarm(Math.max(Date.now()+1000,Math.min(next||Infinity,pending||Infinity)));
     else this.cleanupScheduled = false;
+  }
+  private researchBudget() {
+    const date=new Date().toISOString(),day=date.slice(0,10),month=date.slice(0,7);
+    return researchBudgetState({aiDay:this.read<number>('quota:ai:'+day)||0,aiMonth:this.read<number>('quota:ai:'+month)||0,searchDay:this.read<number>('quota:search:'+day)||0,searchMonth:this.read<number>('quota:search:'+month)||0,neurons:this.read<number>('quota:neurons:'+day)||0});
   }
   private reserve(kind: "search" | "ai", count = 1) {
     const now = new Date(),
@@ -816,10 +827,8 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       key =
         (editorial?"editorial-results-v12:":"results-v11:") +
         (await digest({ ...request, requestId: undefined, cursor: undefined }));
-    const existing = this.read<{
-      results: RecommendationResult[];
-      metrics: Usage;
-    }>(key);
+    const approvedPrevious=editorial?this.read<{results:RecommendationResult[];metrics:Usage}>("results-v11:"+(await digest({...request,requestId:undefined,cursor:undefined}))):undefined;
+    const existing = this.read<{results:RecommendationResult[];metrics:Usage}>(key)||(approvedPrevious&&approvedPrevious.results.length>=20?approvedPrevious:undefined);
     if (existing)
       return {
         ...existing,
@@ -1407,14 +1416,15 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     );
   }
   private nextResearchDay(){return Date.parse(new Date().toISOString().slice(0,10))+DAY+60000;}
-  private quotaRetryAt(){return this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':retryAt')||this.nextResearchDay();}
+  private quotaRetryAt(){return Math.max(this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':retryAt')||0,this.researchBudget().retryAt)||this.nextResearchDay();}
   /** First installation must bootstrap without an operator POST. The alarm owns
    * long research work; GET stays fast and never starts an unbounded waitUntil. */
   async dailyForClient(type:MediaType) {
     const collection=await this.daily(type);
-    const limited=!!this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10));
+    const budget=this.researchBudget();
+    const limited=!!this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10))||budget.limited;
     let pending=this.read<number>('daily:refreshAt');
-    if(!collection.results.length && limited && (this.read<number>('quota:neurons:'+new Date().toISOString().slice(0,10))||0)+10<=9000 && Date.now()-(this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':checkedAt')||0)>=3600000) {
+    if(!collection.results.length && limited && !budget.limited && (this.read<number>('quota:neurons:'+new Date().toISOString().slice(0,10))||0)+10<=9000 && Date.now()-(this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':checkedAt')||0)>=3600000) {
       pending=Date.now()+1000;this.put('daily:refreshAt',pending,2*DAY);await this.ctx.storage.setAlarm(pending);
       return {...collection,state:'warming',retryAt:pending};
     }
@@ -1426,7 +1436,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         await this.ctx.storage.setAlarm(pending);
       }
     }
-    return {...collection,state:collection.results.length?'ready':limited?'limited':pending?'warming':'unavailable',retryAt:pending||0,lastFailure:this.read('daily:lastFailure'),lastEvaluation:this.read('daily:lastEvaluation')};
+    return {...collection,state:collection.results.length?'ready':limited?'limited':pending?'warming':'unavailable',retryAt:pending||0,budget,lastFailure:this.read('daily:lastFailure'),lastEvaluation:this.read('daily:lastEvaluation')};
   }
   async refreshDaily() {
     return this.single("daily-refresh", async () => {

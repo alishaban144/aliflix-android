@@ -12,6 +12,7 @@ import {
   researchFilters,
   researchTaste,
   researchQuotaRetryAt,
+  researchBudgetState,
 } from "../src/askResearch";
 import { liveSetup, liveInstructions } from "../src/talkProviders";
 import { TalkContextSchema } from "../src/talkEvidence";
@@ -512,4 +513,12 @@ it("keeps Favorites first even after many rejections, with saved intent and play
  expect(snapshot.filter(v=>v.kind==="favorite").length).toBeGreaterThanOrEqual(4);
  expect(snapshot.some(v=>v.kind==="saved")).toBe(true);expect(snapshot.some(v=>v.kind==="watched")).toBe(true);
  expect(snapshot.filter(v=>v.id===100)).toEqual([{id:100,type:"movie",kind:"dislike"}]);
+});
+
+it('quota recovery respects both daily and monthly ledgers without resetting counters',()=>{
+ const now=Date.UTC(2026,9,19,23,40);const counts={aiDay:96,aiMonth:300,searchDay:12,searchMonth:200,neurons:1200};
+ const day=researchBudgetState(counts,now);expect(day.limited).toBe(true);expect(day.remaining.aiDay).toBe(0);expect(day.retryAt).toBe(Date.UTC(2026,9,20,0,1));
+ expect(researchBudgetState({...counts,aiDay:0},now).limited).toBe(false);
+ const month=researchBudgetState({...counts,aiMonth:2400},now);expect(month.retryAt).toBe(Date.UTC(2026,10,1,0,1));
+ expect(counts.aiDay).toBe(96);
 });
