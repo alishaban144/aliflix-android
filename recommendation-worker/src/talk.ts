@@ -174,10 +174,14 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const key=JSON.stringify([q.title.toLowerCase(),q.year,q.kind,q.season,q.episode]);
   const boundary=requestedEpisodeBoundary(question);
   const exactEpisode=!!boundary&&boundary.episode===q.episode&&(boundary.season==null||boundary.season===q.season);
+  // A previous grant or completed history cannot override the episode named in
+  // this question. Reject a mismatched tool call before reading any plot cache.
+  if(q.kind==='tv'&&boundary&&!exactEpisode)return {evidence:[],unavailable:true,requestedEpisode:boundary,
+   instruction:'The tool requested a different episode. Silently call film_knowledge for requestedEpisode; do not narrate or retrieve any other episode.'};
   const avoids=avoidsSpoilers(question);
   if(avoids)state.grants=[];
   const explicit=!avoids&&explicitlyRequestsSpoilers(question)&&(q.kind==='movie'||!boundary||exactEpisode);
-  const episodeRequested=!avoids&&exactEpisode&&/explain|recap|summari[sz]e|what.*(?:happen|know)|end|erkl[aä]r|zusammenfass|اشرح|ملخص|ماذا/i.test(question);
+  const episodeRequested=!avoids&&exactEpisode&&/explain|recap|summari[sz]e|what.*(?:happen|know)|end|erkl[aä]r|zusammenfass|explic|resum|qu[eé].*pas|اشرح|ملخص|ماذا/i.test(question);
   if((explicit||episodeRequested)&&!state.grants.includes(key))state.grants.push(key);
   const allowPlot=!avoids&&(explicit||episodeRequested||state.grants.includes(key));
   this.put('live:'+session,state,state.expires);

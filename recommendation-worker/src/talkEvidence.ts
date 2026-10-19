@@ -23,15 +23,19 @@ export type KnowledgeRequest=z.infer<typeof KnowledgeSchema>;
 export function stripMarkup(s:string) {return s.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi,'').replace(/<[^>]*>/g,' ').replace(/&amp;/g,'&').replace(/&#39;|&apos;/g,"'").replace(/&quot;/g,'"').replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n))).replace(/\[\d+\]/g,'').replace(/\s+/g,' ').trim().slice(0,6500);}
 const normalize=(s:string)=>s.normalize('NFKD').toLowerCase().replace(/\p{M}/gu,'').replace(/\([^)]*\)/g,'').replace(/^(the|a|an)\s+/,'').replace(/[^\p{L}\p{N}]/gu,'');
 export function explicitlyRequestsSpoilers(text:string):boolean {
- if(/\b(no spoilers?|without spoilers?|spoiler.?free|nicht spoilern|keine spoiler)\b|بدون حرق|لا تحرق/i.test(text)) return false;
+ if(/\b(no spoilers?|without spoilers?|spoiler.?free|spoilerfrei|sin spoilers?|nicht spoilern|keine spoiler)\b|بدون حرق|لا تحرق/i.test(text)) return false;
+ if(/\b(?:explic[aá]\w*|analiz[aá]\w*|qu[eé] significa)\b.{0,80}\b(?:final|desenlace)\b/i.test(text))return true;
  return /\b(ending|ends?|finale|final (scene|photograph|photo)|twist|dies?|death|killer|spoilers?|schluss|ende|stirbt|tod|aufl[oö]sung|finale)\b|نهاية|النهايه|يموت|موت|القاتل|الصورة الأخيرة|الصوره الاخيره/i.test(text);
 }
 export function requestedEpisodeBoundary(text:string):{season?:number;episode:number}|undefined {
- const both=text.match(/\bs(\d+)\s*e(\d+)\b|\bseason\s*(\d+)\s*[,.: -]*episode\s*(\d+)|\bstaffel\s*(\d+)\s*[,.: -]*folge\s*(\d+)/i);
+ const normalized=text.replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-0x660)).replace(/[۰-۹]/g,c=>String(c.charCodeAt(0)-0x6f0));
+ const both=normalized.match(/\bs(\d+)\s*e(\d+)\b|\bseason\s*(\d+)\s*[,.: -]*episode\s*(\d+)|\bstaffel\s*(\d+)\s*[,.: -]*folge\s*(\d+)|(?:الموسم|موسم)\s*(\d+)\s*[،,.: -]*(?:الحلقة|حلقة)\s*(\d+)|temporada\s*(\d+)\s*[,.: -]*(?:episodio|cap[ií]tulo)\s*(\d+)/i);
  if(both){const values=both.slice(1).filter(v=>v!=null);return {season:Number(values[0]),episode:Number(values[1])};}
- const one=text.match(/\bepisode\s*(\d+)|\bfolge\s*(\d+)|الحلقة\s*(\d+)/i);if(one)return {episode:Number(one.slice(1).find(v=>v!=null))};
+ const reverse=normalized.match(/(?:الحلقة|حلقة)\s*(\d+)\s*(?:من\s*)?(?:الموسم|موسم)\s*(\d+)/);
+ if(reverse)return {season:Number(reverse[2]),episode:Number(reverse[1])};
+ const one=normalized.match(/\bepisode\s*(\d+)|\bfolge\s*(\d+)|الحلقة\s*(\d+)|(?:episodio|cap[ií]tulo)\s*(\d+)/i);if(one)return {episode:Number(one.slice(1).find(v=>v!=null))};
 }
-export function avoidsSpoilers(text:string):boolean {return /\bno spoilers?(?!\s+(?:after|beyond|past))|\bwithout spoilers?|\bspoiler.?free|keine spoiler|nicht spoilern|بدون حرق|لا تحرق/i.test(text);}
+export function avoidsSpoilers(text:string):boolean {return /\bno spoilers?(?!\s+(?:after|beyond|past))|\bwithout spoilers?|\bspoiler.?free|spoilerfrei|sin spoilers?|keine spoiler|nicht spoilern|بدون حرق|لا تحرق/i.test(text);}
 export function permittedEpisode(c:TalkContext,s:number,e:number):boolean {return s===c.season&&e===c.episode?c.completed:c.viewedRanges.some(r=>r.season===s&&e>=r.first&&e<=r.last);}
 const WIKI='https://en.wikipedia.org/w/api.php?format=json&origin=*&';
 async function json(url:string,signal:AbortSignal,limit=512000):Promise<any> {

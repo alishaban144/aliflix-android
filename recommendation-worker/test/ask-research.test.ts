@@ -11,6 +11,7 @@ import {
   planFilters,
   researchFilters,
   researchTaste,
+  researchQuotaRetryAt,
 } from "../src/askResearch";
 import { liveSetup, liveInstructions } from "../src/talkProviders";
 import { TalkContextSchema } from "../src/talkEvidence";
@@ -206,6 +207,35 @@ describe("unified authenticated research", () => {
       },
     );
   });
+  it("allows one delayed reset-propagation recovery without resetting any quota",()=>{
+    const early=Date.parse('2026-10-20T00:02:00Z');expect(researchQuotaRetryAt(early)).toBe(early+900000);
+    expect(researchQuotaRetryAt(Date.parse('2026-10-20T12:00:00Z'))).toBe(Date.parse('2026-10-21T00:01:00Z'));
+  });
+  it("a successful same-model probe removes only a stale circuit flag, preserving real quotas",async()=>{
+    await runInDurableObject(env.ASK_RESEARCH.getByName("stale-quota-reopens"),async(instance,state)=>{
+      const service=instance as unknown as AskResearch,e=(instance as any).env,original=e.AI;
+      const day=new Date().toISOString().slice(0,10),blocked='quota:provider-blocked:'+day;
+      const put=(key:string,value:unknown)=>state.storage.sql.exec('INSERT OR REPLACE INTO ask_cache VALUES(?,?,?)',key,JSON.stringify(value),Date.now()+86400000);
+      put(blocked,true);put('quota:ai:'+day,7);put('quota:search:'+day,4);put('quota:neurons:'+day,100);
+      const run=vi.fn(async()=>({response:'OK',usage:{neurons:3}}));e.AI={run};
+      try{
+        expect((await service.dailyForClient('movie')).state).toBe('warming');
+        await (service as any).recoverQuotaCircuit();await (service as any).recoverQuotaCircuit();
+        expect(run).toHaveBeenCalledTimes(1);expect(run.mock.calls[0]).toEqual(['@cf/openai/gpt-oss-120b',expect.objectContaining({max_tokens:16})]);
+        expect(state.storage.sql.exec('SELECT value FROM ask_cache WHERE key=?',blocked).toArray()).toHaveLength(0);
+        for(const[key,value]of [['quota:ai:'+day,7],['quota:search:'+day,4],['quota:neurons:'+day,103]])expect(JSON.parse(state.storage.sql.exec<{value:string}>('SELECT value FROM ask_cache WHERE key=?',key).one().value)).toBe(value);
+      }finally{e.AI=original;}
+    });
+  });
+  it("an unavailable probe keeps the circuit closed and cannot repeat within an hour",async()=>{
+    await runInDurableObject(env.ASK_RESEARCH.getByName("stale-quota-still-unavailable"),async(instance,state)=>{
+      const service=instance as unknown as AskResearch,e=(instance as any).env,original=e.AI,key='quota:provider-blocked:'+new Date().toISOString().slice(0,10);
+      state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)',key,'true',Date.now()+86400000);
+      const run=vi.fn(async()=>{throw Error('4006 daily free allocation');});e.AI={run};
+      try{await (service as any).recoverQuotaCircuit();await (service as any).recoverQuotaCircuit();expect(run).toHaveBeenCalledTimes(1);expect(state.storage.sql.exec('SELECT value FROM ask_cache WHERE key=?',key).toArray()).toHaveLength(1);}
+      finally{e.AI=original;}
+    });
+  });
   it("schedules one bounded empty bootstrap and serves its published result instantly",async()=>{
     await runInDurableObject(env.ASK_RESEARCH.getByName("self-healing-editorial"),async(instance,state)=>{
       const service=instance as unknown as AskResearch;
@@ -223,6 +253,7 @@ describe("unified authenticated research", () => {
     await runInDurableObject(env.ASK_RESEARCH.getByName("quota-bootstrap-day"),async(instance,state)=>{
       const service=instance as unknown as AskResearch;
       state.storage.sql.exec("INSERT INTO ask_cache VALUES(?,?,?)","quota:provider-blocked:"+new Date().toISOString().slice(0,10),'true',Date.now()+86400000);
+      state.storage.sql.exec("INSERT INTO ask_cache VALUES(?,?,?)","quota:provider-blocked:"+new Date().toISOString().slice(0,10)+':checkedAt',JSON.stringify(Date.now()),Date.now()+86400000);
       const refresh=vi.spyOn(service,"refreshDaily");const result=await service.dailyForClient("tv");
       expect(result.state).toBe("limited");expect(result.retryAt).toBeGreaterThan(Date.now());expect(new Date(result.retryAt).getUTCDate()).not.toBe(new Date().getUTCDate());
       expect(refresh).not.toHaveBeenCalled();expect(await state.storage.getAlarm()).toBe(result.retryAt);

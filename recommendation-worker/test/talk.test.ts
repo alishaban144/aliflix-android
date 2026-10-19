@@ -153,9 +153,15 @@ describe('Gemini-only live identity and security',()=>{
  it('does not require spoilers or mandatory evidence for familiar answers',()=>{const p=liveInstructions(TalkContextSchema.parse({}));expect(p).toContain('never ask permission');expect(p).toContain('reliable');expect(p).toContain('NEVER future episodes');expect(p).not.toContain('Groq');});
 });
 describe('Evidence and spoiler intent',()=>{
- it.each(['Explain the ending of The Shining (1980)','What does the final photograph mean?','Erkläre das Ende von Shining','اشرح نهاية الفيلم'])('authorizes an explicitly requested ending: %s',q=>expect(explicitlyRequestsSpoilers(q)).toBe(true));
- it.each(['No spoilers: is Dark good?','ohne Ende bitte, keine Spoiler','بدون حرق النهاية'])('honours explicit spoiler limits: %s',q=>expect(explicitlyRequestsSpoilers(q)).toBe(false));
+ it.each(['Explica el final de The Shining (1980)','Explain the ending of The Shining (1980)','What does the final photograph mean?','Erkläre das Ende von Shining','اشرح نهاية الفيلم'])('authorizes an explicitly requested ending: %s',q=>expect(explicitlyRequestsSpoilers(q)).toBe(true));
+ it.each(['Sin spoilers: explica el final','Bitte spoilerfrei','No spoilers: is Dark good?','ohne Ende bitte, keine Spoiler','بدون حرق النهاية'])('honours explicit spoiler limits: %s',q=>expect(explicitlyRequestsSpoilers(q)).toBe(false));
  it('keeps exact episode numbers when tools request a different future episode',()=>{expect(requestedEpisodeBoundary('Explain Dark season 1 episode 1')).toEqual({season:1,episode:1});expect(requestedEpisodeBoundary('Dark S2E3')).toEqual({season:2,episode:3});expect(avoidsSpoilers('Is episode 5 good? No spoilers.')).toBe(true);});
+ it.each([
+  ['اشرح دارك الموسم ٢ الحلقة ١',{season:2,episode:1}],
+  ['الحلقة ۱ من الموسم ۲',{season:2,episode:1}],
+  ['Dark temporada 2 episodio 1',{season:2,episode:1}],
+  ['DarK temporada 2 capítulo 3',{season:2,episode:3}],
+ ])('preserves the exact multilingual episode boundary: %s',(question,expected)=>expect(requestedEpisodeBoundary(question as string)).toEqual(expected));
  it('does not assume skipped episodes were watched',()=>{const c=TalkContextSchema.parse({season:2,episode:3,viewedRanges:[{season:2,first:1,last:1}]});expect(permittedEpisode(c,2,1)).toBe(true);expect(permittedEpisode(c,2,2)).toBe(false);expect(permittedEpisode(c,2,3)).toBe(false);});
  it('restricts reusable source URLs',()=>{expect(reusableUrl('https://en.wikipedia.org/wiki/The_Shining_(film)')).toBe(true);for(const u of ['https://themoviedb.org/film/1','https://en.wikipedia.org.evil.test/wiki/a','http://en.wikipedia.org/wiki/a','https://user@en.wikipedia.org/wiki/a'])expect(reusableUrl(u)).toBe(false);});
  it('uses attributed reusable search evidence during a live Wikipedia outage',async()=>{

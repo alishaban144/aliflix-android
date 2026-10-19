@@ -19,6 +19,16 @@ describe('exact episode evidence fences',()=>{
   });
  });
 
+ it('a new explicit episode boundary overrides older spoiler grants and cached future plots',async()=>{
+  await runInDurableObject(env.TALK_SESSIONS.getByName('earlier-episode-after-grant'),async(instance,state)=>{
+   const service=instance as unknown as TalkSession,session=crypto.randomUUID(),expires=Date.now()+60000;
+   const context=TalkContextSchema.parse({season:2,episode:2,completed:true});const key=JSON.stringify(['dark',2017,'tv',2,2]);
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context,expires,calls:0,searches:0,grants:[key]}),expires);
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','evidence:v4:'+JSON.stringify([key,true,context.imdbId,context.viewedRanges,context.completed]),JSON.stringify([{id:'future',text:'Future secret'}]),expires);
+   const result=await service.knowledge(session,{title:'Dark',year:2017,kind:'tv',season:2,episode:2,query:'recap'},'Explain Dark season 2 episode 1.');
+   expect(result).toMatchObject({evidence:[],unavailable:true,requestedEpisode:{season:2,episode:1}});
+  });
+ });
  it('reuses public revision evidence across sessions and source outages without caching private questions',async()=>{
   const claim=(value:unknown)=>({mainsnak:{datavalue:{value}}});
   const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{

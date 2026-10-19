@@ -130,6 +130,13 @@ const digest = async (v: unknown) =>
   )
     .map((v) => v.toString(16).padStart(2, "0"))
     .join("");
+
+/** A provider still reporting yesterday's quota shortly after midnight gets
+ * one delayed recovery probe, rather than being latched unavailable all day. */
+export function researchQuotaRetryAt(now:number):number {
+ const midnight=Date.parse(new Date(now).toISOString().slice(0,10));
+ return now-midnight<900000?now+900000:midnight+86400000+60000;
+}
 export function planFilters(raw: unknown) {
   const value =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -436,14 +443,17 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     const refreshAt=this.read<number>('daily:refreshAt');
     if(refreshAt && refreshAt<=Date.now()) {
       this.ctx.storage.sql.exec("DELETE FROM ask_cache WHERE key='daily:refreshAt'");
+      await this.recoverQuotaCircuit();
+      const blocked=this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10));
       const key='daily:bootstrap:'+new Date().toISOString().slice(0,10);
       const attempts=this.read<number>(key)||0;
-      if(attempts<3) {
+      if(blocked)this.put('daily:refreshAt',this.quotaRetryAt(),2*DAY);
+      else if(attempts<3) {
         this.put(key,attempts+1,2*DAY);
         try { await this.refreshDaily(); }
         catch(error) {
           const quota=researchFailure(error)?.code==='AI_QUOTA';
-          if(quota || attempts<2)this.put('daily:refreshAt',quota?this.nextResearchDay():Date.now()+300000,2*DAY);
+          if(quota || attempts<2)this.put('daily:refreshAt',quota?this.quotaRetryAt():Date.now()+300000,2*DAY);
           console.warn(JSON.stringify({event:'ask_bootstrap_retained',code:researchFailure(error)?.code||'RESEARCH_UNAVAILABLE'}));
         }
       }
@@ -487,6 +497,32 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
   }
   async reserveExternalSearch() {
     this.reserve("search");
+  }
+  /** A quota rejection is a circuit breaker, not proof of a full-day outage.
+   * One tiny same-model probe per hour can reopen it. Only its availability
+   * flag is removed; all real daily/monthly/neuron counters remain intact. */
+  private async recoverQuotaCircuit() {
+    return this.single('quota-recovery',async()=>{
+      const day=new Date().toISOString().slice(0,10),key='quota:provider-blocked:'+day;
+      if(!this.read<boolean>(key)||!this.env.AI||Date.now()-(this.read<number>(key+':checkedAt')||0)<3600000)return;
+      const ledger='quota:neurons:'+day,held=this.read<number>(ledger)||0;
+      if(held+10>9000)return;
+      this.put(key+':checkedAt',Date.now(),2*DAY);this.put(ledger,held+10,2*DAY);
+      const run=this.env.AI.run('@cf/openai/gpt-oss-120b',{messages:[{role:'user',content:'Reply OK.'}],max_tokens:16,reasoning_effort:'low'});
+      const settle=run.then(result=>{
+        const n=(result as {usage?:{neurons?:number}})?.usage?.neurons;
+        this.put(ledger,Math.max(0,(this.read<number>(ledger)||0)-10)+(typeof n==='number'&&Number.isFinite(n)?n:10),2*DAY);
+      },()=>{this.put(ledger,Math.max(0,(this.read<number>(ledger)||0)-10),2*DAY);});
+      this.ctx.waitUntil(settle);
+      try {
+        await boundedInference(run,new AbortController().signal,8000);
+        this.ctx.storage.sql.exec('DELETE FROM ask_cache WHERE key IN (?,?)',key,key+':retryAt');
+        console.log(JSON.stringify({event:'ask_quota_circuit_reopened'}));
+      }catch{
+        const retryAt=Math.min(this.nextResearchDay(),Date.now()+3600000);
+        this.put(key+':retryAt',retryAt,2*DAY);
+      }
+    });
   }
   async cancel(owner: string, id: string) {
     this.controllers.get(owner + ":" + id)?.abort();
@@ -788,6 +824,8 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         cached: true,
       };
     return this.single(key, async () => {
+      if(this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)))
+        throw new ServiceError('AI_QUOTA','Daily research limit reached',429,false);
       const usage: Usage = {
         elapsedMs: 0,
         tavilyCredits: 0,
@@ -836,7 +874,10 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                 this.put(ledger, held + upper, 2 * DAY);
                 const inference = binding.run(model, input).catch(error=>{
                   if(/\b4006\b|daily free allocation/i.test(error instanceof Error?error.message:'')){
-                    this.put(providerDay,true,2*DAY);
+                    const retryAt=researchQuotaRetryAt(Date.now());
+                    this.put(providerDay,true,retryAt-Date.now());
+                    this.put(providerDay+':retryAt',retryAt,retryAt-Date.now());
+                    this.put(providerDay+':checkedAt',Date.now(),2*DAY);
                     throw new ServiceError('AI_QUOTA','Daily research limit reached',429,false);
                   }
                   throw error;
@@ -1350,16 +1391,21 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     );
   }
   private nextResearchDay(){return Date.parse(new Date().toISOString().slice(0,10))+DAY+60000;}
+  private quotaRetryAt(){return this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':retryAt')||this.nextResearchDay();}
   /** First installation must bootstrap without an operator POST. The alarm owns
    * long research work; GET stays fast and never starts an unbounded waitUntil. */
   async dailyForClient(type:MediaType) {
     const collection=await this.daily(type);
     const limited=!!this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10));
     let pending=this.read<number>('daily:refreshAt');
+    if(!collection.results.length && limited && (this.read<number>('quota:neurons:'+new Date().toISOString().slice(0,10))||0)+10<=9000 && Date.now()-(this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':checkedAt')||0)>=3600000) {
+      pending=Date.now()+1000;this.put('daily:refreshAt',pending,2*DAY);await this.ctx.storage.setAlarm(pending);
+      return {...collection,state:'warming',retryAt:pending};
+    }
     if(!collection.results.length && !pending) {
       const attempts=this.read<number>('daily:bootstrap:'+new Date().toISOString().slice(0,10))||0;
       if(limited || attempts<3 && await this.needsRefresh()) {
-        pending=limited?this.nextResearchDay():Date.now()+1000;
+        pending=limited?this.quotaRetryAt():Date.now()+1000;
         this.put('daily:refreshAt',pending,2*DAY);
         await this.ctx.storage.setAlarm(pending);
       }
@@ -1368,6 +1414,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
   }
   async refreshDaily() {
     return this.single("daily-refresh", async () => {
+      await this.recoverQuotaCircuit();
       const date = new Date(),
         year = date.getUTCFullYear();
       const old = await Promise.all([this.daily("movie"), this.daily("tv")]);
