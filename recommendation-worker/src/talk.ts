@@ -11,7 +11,7 @@ const sessionSchema=z.object({context:TalkContextSchema.default(()=>TalkContextS
 const requestSchema=z.object({session:z.string().uuid(),question:z.string().max(1600),request:KnowledgeSchema}).strict();
 export async function talkRoute(request:Request,env:RecommendationEnv):Promise<Response|null> {
  const path=new URL(request.url).pathname;if(!path.startsWith('/v1/talk'))return null;
- if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/knowledge','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
+ if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/renew','/v1/talk/knowledge','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
  try {
   const owner=await verifyIdentity(request.headers.get('Authorization')?.replace(/^Bearer /,'')||'',env.CURSOR_SIGNING_SECRET);
   if(Number(request.headers.get('Content-Length')||0)>24000)return json({error:'REQUEST_LIMIT'},413);
@@ -23,6 +23,10 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
    const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ip+env.CURSOR_SIGNING_SECRET)))).map(x=>x.toString(16).padStart(2,'0')).join('');
    if(!await env.TALK_SESSIONS.getByName('quota:ip:'+hash).reserve(1,12)||!await env.TALK_SESSIONS.getByName('quota:global').reserve(1,40))return json({error:'DAILY_LIMIT'},429);
    return json(await user.open(body.context));
+  }
+  if(path.endsWith('/renew')){
+   const b=z.object({session:z.string().uuid(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional()}).strict().parse(bodyRaw);
+   return json(await user.renew(b.session,b.responseLanguage));
   }
   if(path.endsWith('/research')||path.endsWith('/recommendations')||path.endsWith('/cancel')) {
    const b=z.object({session:z.string().uuid(),requestId:z.string().uuid(),request:z.unknown().optional()}).strict().parse(bodyRaw);
@@ -42,7 +46,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
   return json({error:'UNAUTHORIZED'},401);
  }
 }
-type Session={context:TalkContext;expires:number;calls:number;searches:number;grants:string[]};
+type Session={context:TalkContext;expires:number;calls:number;searches:number;grants:string[];renewals?:number};
 export class TalkSession extends DurableObject<RecommendationEnv> {
  constructor(ctx:DurableObjectState,env:RecommendationEnv){super(ctx,env);ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS memory (key TEXT PRIMARY KEY,value TEXT NOT NULL,expires INTEGER NOT NULL)');for(const ws of ctx.getWebSockets())ws.close(1012,'Update');}
  private read<T>(key:string):T|undefined {const r=this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM memory WHERE key=? AND expires>?',key,Date.now()).toArray()[0];return r?JSON.parse(r.value):undefined;}
@@ -53,6 +57,16 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
  async open(context:TalkContext) {const expires=Date.now()+20*MINUTE,session=crypto.randomUUID();const token=await issueLiveToken(this.env,context,expires);
   this.ctx.storage.sql.exec("DELETE FROM memory WHERE key LIKE 'live:%' OR key LIKE 'viewing:%'");this.put('live:'+session,{context,expires,calls:0,searches:0,grants:[]} satisfies Session,expires);
   await this.ctx.storage.setAlarm(expires);return {...token,session};}
+ async renew(session:string,responseLanguage?:string){
+  const state=this.read<Session>('live:'+session);if(!state||state.expires<Date.now()+10000)throw Error('SESSION_EXPIRED');
+  if((state.renewals||0)>=6)throw Error('TOOL_LIMIT');
+  state.renewals=(state.renewals||0)+1;if(responseLanguage)state.context.responseLanguage=responseLanguage;
+  this.put('live:'+session,state,state.expires);
+  const token=await issueLiveToken(this.env,state.context,state.expires);
+  if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
+  // No expiry extension, new voice/model or reset of knowledge/search budgets.
+  return {...token,session};
+ }
  async viewing(session:string,items?:z.infer<typeof TalkLibraryItemSchema>[],page?:z.infer<typeof TalkViewingPageSchema>) {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
   const cacheKey='viewing:'+session+':'+JSON.stringify([items||null,page||null]);

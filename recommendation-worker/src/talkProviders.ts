@@ -86,7 +86,7 @@ export async function issueLiveToken(env: RecommendationEnv, context: TalkContex
  const mask=Object.keys(setup).filter(k=>k!=='sessionResumption').join(',');
  const response=await fetch('https://generativelanguage.googleapis.com/v1beta/auth_tokens',{
   method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'content-type':'application/json'},
-  body:JSON.stringify({uses:1,expireTime:new Date(expires).toISOString(),newSessionExpireTime:new Date(Date.now()+60000).toISOString(),
+  body:JSON.stringify({uses:1,expireTime:new Date(expires).toISOString(),newSessionExpireTime:new Date(Math.min(expires-1000,Date.now()+60000)).toISOString(),
     bidiGenerateContentSetup:lockedSetup,fieldMask:mask}),signal:AbortSignal.timeout(8000) });
  if(!response.ok){const reason=(await response.text()).replaceAll(env.GEMINI_API_KEY,'[key]').slice(0,500);console.warn('talk_live_token_status',response.status,reason);throw Error('LIVE_UNAVAILABLE');}
  const result=z.object({name:z.string().min(8).max(4096)}).parse(await boundedJson(response,16384));

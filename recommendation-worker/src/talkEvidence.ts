@@ -65,6 +65,7 @@ export async function wikipediaTitle(q:KnowledgeRequest,signal:AbortSignal):Prom
   if(!exact||requestedYear&&!year.includes(requestedYear))continue;
   // Reject a remake/television adaptation that happens to share a title.
   const types=values('P31').map((v:any)=>v?.id);
+  if(!imdb&&!types.some((v:string)=>['Q11424','Q5398426','Q581714','Q15416','Q506240'].includes(v)))continue;
   if(q.kind==='movie'&&types.some((v:string)=>['Q5398426','Q581714','Q15416'].includes(v)))continue;
   if(q.kind==='tv'&&types.includes('Q11424'))continue;
   matches.push({title:page.title,imdbId:imdb,pageid:page.pageid,year:requestedYear||year[0]});
@@ -91,7 +92,8 @@ export async function tvEpisodeEvidence(q:KnowledgeRequest,imdb:string|undefined
  if(imdb) {try{show=await json('https://api.tvmaze.com/lookup/shows?imdb='+imdb,signal);}catch{}}
  if(!show) {
   const matches=await json('https://api.tvmaze.com/search/shows?q='+encodeURIComponent(q.title),signal);
-  show=matches.map((v:any)=>v.show).find((s:any)=>normalize(s.name)===normalize(q.title)&&(!q.year||s.premiered?.startsWith(String(q.year))));
+  const exact=matches.map((v:any)=>v.show).filter((s:any)=>normalize(s.name)===normalize(q.title)&&(!q.year||s.premiered?.startsWith(String(q.year))));
+  if(exact.length!==1)return [];show=exact[0];
  }
  if(!show)return [];
  if(q.season==null||q.episode==null)return [{id:'tvmaze-show-'+show.id,title:show.name,text:JSON.stringify({name:show.name,year:show.premiered?.slice(0,4),genres:show.genres,imdbId:show.externals?.imdb}),url:show.url,license:'TVmaze · CC BY-SA 4.0'}];
