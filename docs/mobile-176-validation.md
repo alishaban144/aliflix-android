@@ -24,7 +24,7 @@ Inspected the exact v3.1.174 public APK (code 264, 26,238,353 bytes) and source 
 - Worker typecheck and 195 tests across 23 files passed. GitHub backend-only workflows repeat these checks before deployment.
 - Pixel 7a: inline status serialization, shared composer/anchors/filters and filtered Surprise Me passed in 4.252 s. Latest complete UI check includes the quota state and explicit voice picker; final receipt is recorded below.
 - Real earlier four-turn Talk/exit test passed in 46.532 s, returning to the existing MainActivity. Closing the experience no longer shuts down OkHttp's executor under active callbacks.
-- Pixel render fixture passed in 14.751 s. Actual Latin/Arabic frames were reviewed. 1,046 frames, 13 modern frame-deadline misses (1.24%), legacy classifier 1,014/1,046 (96.94%), six missed vsyncs; frame p50/p90/p95/p99: 19/20/24/29 ms; GPU: 6/6/6/7 ms. Debug-device evidence, not a universal 60 fps claim.
+- Pixel render fixture passed in 14.751 s. The fixture exercised Latin and Arabic; the captured Latin frames were reviewed. Arabic screenshot review is recorded separately if completed. 1,046 frames, 13 modern frame-deadline misses (1.24%), legacy classifier 1,014/1,046 (96.94%), six missed vsyncs; frame p50/p90/p95/p99: 19/20/24/29 ms; GPU: 6/6/6/7 ms. Debug-device evidence, not a universal 60 fps claim.
 - All six ARM64 native/model entries in the latest debug candidate match the original v3.1.164 release byte-for-byte. Production APK parity remains a release gate.
 
 ## Real research measurements
@@ -53,7 +53,7 @@ The deployed provider returned Cloudflare error **4006**, explicitly reporting t
 
 The Worker now returns AI_QUOTA/HTTP 429 and stops queueing additional inference for that UTC day after this error. Cached verified results and ordinary Gemini conversation remain separate. Both daily collections are currently unpublished/empty. The new read-only GitHub publication gate correctly fails until each has at least 20 verified, distinct, evidence-backed identities under one atomic publication timestamp.
 
-Existing Cloudflare bindings, secrets and deployment infrastructure are reused; no new secret is required. The only external prerequisite is restoration of the provider's free allocation, followed by successful real daily refresh and the remaining acceptance/publication gates. Cloudflare documents a daily 00:00 UTC reset, but the observed analytics/allocation mismatch prevents promising a specific recovery time.
+Existing Cloudflare bindings, secrets and deployment infrastructure are reused; no new secret is required. The external prerequisite is restoration of the provider's free allocation, followed by successful real daily refresh. Spoken episode accuracy and the remaining acceptance/publication gates must also pass before release. Cloudflare documents a daily 00:00 UTC reset, but the observed analytics/allocation mismatch prevents promising a specific recovery time.
 
 ## Evidence boundaries
 
@@ -86,3 +86,17 @@ The final mobile unit/assembly gate passed in 36 seconds; final mobile lint pass
 ## Manual factual review after protocol acceptance
 
 Manual review of the ten-turn receipt found an unsupported Claudia meeting in 1987 in the Dark S2E1 answer. That detail is outside the retrieved episode row. The protocol PASS therefore does not constitute a pass for all spoken plot claims. Cached episode responses previously omitted the fresh response's boundary metadata. Both paths now return identical strict episode grounding instructions, including the distinction between a person being mentioned as an object's owner and that person performing an action. A separate targeted physical regression checks the observed future-timeline leakage; its final result is recorded below.
+
+
+## Targeted episode acceptance
+
+The dedicated Pixel Dark S2E1 regression failed after cached grounding metadata was repaired: Gemini introduced 1954/1987 events outside the exact retrieved source. Immediate INTERRUPT scheduling alone also failed and said 2052 despite the tool returning 2053. These are actual spoken factual failures, separate from the ten-turn protocol pass. The failing tests were retained rather than relaxed.
+
+The next change adds a generic episodeScope with the exact requested title/season/episode and years derived only from that episode's text, not publication dates or adjacent episodes. The tool description and session instructions explicitly require waiting for evidence and paraphrasing it. Retrieval remains NON_BLOCKING, with immediate result application. No alternate model, voice engine or paid quota was enabled. Source-anchor Worker typecheck and all 195 tests passed; backend-only deployment [39188472393](https://github.com/alishaban144/aliflix-android/actions/runs/39188472393) succeeded. Final physical results follow below.
+
+
+The final source-anchor Pixel run failed in **27.439 seconds**: its spoken answer introduced unsupported 2018/2019 dates and an older-Claudia encounter. The detailed source was applied **834 ms before first rendered audio**, so source delivery latency does not explain this failure. This remains an unresolved model-grounding acceptance failure; stronger instructions and structured anchors did not establish reliable spoken episode accuracy. The Android client continues using the requested single Gemini model and selected voice.
+
+Final mobile unit/debug/instrumentation assembly and lint passed in **3 min 26 s**, with 677 JVM tests unchanged. A further synthetic-energy render fixture passed in 14.737 s. A captured Arabic fixture frame was landscape in MainActivity and is not accepted as portrait Talk layout proof; production TalkVoiceActivity is portrait. Previously reviewed Latin portrait frames and the separate UI/voice-picker receipts remain valid for their tested scope.
+
+The read-only publication gate was rerun after deployment: movie=0 and TV=0, publishedAt=0. Latest public GitHub release was independently rechecked as [v3.1.174](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.174), published 2026-10-18T15:08:34Z. Backend: https://aliflix-recommendations.equable-equipment.workers.dev. Candidate source is on codex/ask-unified-v3.1.176. No v3.1.176 APK was published. No TV build or release was run.

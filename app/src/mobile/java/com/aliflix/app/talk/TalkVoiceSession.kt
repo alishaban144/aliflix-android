@@ -94,6 +94,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal var debugConnectionIssue=""
     internal var debugStallRecoveries=0
     internal var debugKnowledgeRequest=""
+    @Volatile internal var debugKnowledgeAppliedAt=0L
     internal val debugVoice get() = ephemeral?.optString("voice").orEmpty()
     internal val debugModel get() = ephemeral?.optString("model").orEmpty()
     private val manager = context.getSystemService(AudioManager::class.java)
@@ -398,7 +399,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         result.optJSONArray("results")?.let{a->for(n in 0 until minOf(8,a.length()))rememberFilmTopic(a.optJSONObject(n)?.optString("title").orEmpty())}
                         val references=result.optJSONArray("evidence")
                         finalReferences=references?.let {a->(0 until a.length()).map {n->a.getJSONObject(n).let {TalkReference(it.getString("title"),it.getString("url"),it.optString("license",it.optString("attribution","Source")))}}}.orEmpty()
-                        val response=JSONObject().put("id",id).put("name",call.getString("name")).put("response",result.put("scheduling","WHEN_IDLE"))
+                        // Episode facts must inform this answer, not arrive after an
+                        // ungrounded recap has already finished. Lookup remains async.
+                        val response=JSONObject().put("id",id).put("name",call.getString("name")).put("response",result.put("scheduling",if(call.optString("name")=="film_knowledge")"INTERRUPT" else "WHEN_IDLE"))
+                        if(BuildConfig.DEBUG&&call.optString("name")=="film_knowledge")debugKnowledgeAppliedAt=SystemClock.elapsedRealtime()
                         emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(response))))
                     }
                     tools.remove(id)
