@@ -23,8 +23,17 @@ describe('exact episode evidence fences',()=>{
    const first=await service.licensedEpisode(q);expect(first[0].text).toBe(plot);
    spy.mockImplementation(async()=>{throw Error('source unavailable');});const count=spy.mock.calls.length;
    expect(await service.licensedEpisode({...q,query:'another private question'})).toEqual(first);expect(spy.mock.calls.length).toBe(count);
-   const row=state.storage.sql.exec<{value:string}>('SELECT value FROM memory').one();expect(row.value).not.toContain('PRIVATE');expect(row.value).not.toContain('Future secret');
+   const rows=state.storage.sql.exec<{value:string}>('SELECT value FROM memory').toArray();expect(rows).toHaveLength(2);for(const row of rows){expect(row.value).not.toContain('PRIVATE');expect(row.value).not.toContain('Future secret');}
   });
+ });
+ it('resolves an exact short series title without relying on broad search ranking or a supplied year',async()=>{
+  const urls:string[]=[];vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{
+   urls.push(String(u));return String(u).includes('prop=pageprops')
+    ?Response.json({query:{pages:{1:{pageid:1,title:'Dark (TV series)',pageprops:{wikibase_item:'Q28443710'}}}}})
+    :Response.json({entities:{Q28443710:{claims:{P345:[{mainsnak:{datavalue:{value:'tt5753856'}}}],P580:[{mainsnak:{datavalue:{value:{time:'+2017-12-01T00:00:00Z'}}}}]}}}});
+  });
+  expect(await wikipediaTitle({title:'Dark',kind:'tv',query:''},new AbortController().signal)).toMatchObject({imdbId:'tt5753856',year:2017});
+  expect(urls).toHaveLength(2);expect(urls.some(u=>u.includes('generator=search'))).toBe(false);
  });
  it('matches a series premiere using P580 while rejecting the wrong year',async()=>{
   vi.spyOn(globalThis,'fetch').mockImplementation(async u=>String(u).includes('generator=search')

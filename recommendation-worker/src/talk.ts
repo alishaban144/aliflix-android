@@ -123,11 +123,15 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   * user questions, viewing boundaries, identities or conversation history. */
  async licensedEpisode(input:KnowledgeRequest):Promise<Evidence[]> {
   const q=KnowledgeSchema.parse({...input,query:''});if(q.kind!=='tv'||q.season==null||q.episode==null)return [];
-  const key='licensed-episode:'+JSON.stringify([q.title.toLowerCase(),q.year,q.season,q.episode]);
+  const key='licensed-episode:v2:'+JSON.stringify([q.title.toLowerCase(),q.year,q.season,q.episode]);
   const cached=this.read<Evidence[]>(key);if(cached)return cached;
   const signal=AbortSignal.timeout(8000);let result:Evidence[]=[];
   const fallback=tvEpisodeEvidence(q,undefined,signal).catch(()=>[] as Evidence[]);
-  try{const title=await wikipediaTitle(q,signal);if(title)result=await wikipediaEpisodeEvidence(title.title,q,signal);}catch{}
+  try{const title=await wikipediaTitle(q,signal);if(title){
+   const canonical='licensed-episode:identity:'+JSON.stringify([title.imdbId||title.pageid,q.season,q.episode]);
+   result=this.read<Evidence[]>(canonical)||await wikipediaEpisodeEvidence(title.title,q,signal);
+   if(result.length)this.put(canonical,result,Date.now()+7*DAY);
+  }}catch{}
   if(!result.length)result=await fallback;
   this.put(key,result,Date.now()+(result.some(e=>e.id.startsWith('wikipedia-episode-'))?7*DAY:30000));
   const count=this.ctx.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'licensed-episode:%'").one().n;
@@ -163,7 +167,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   if((explicit||episodeRequested)&&!state.grants.includes(key))state.grants.push(key);
   const allowPlot=!avoids&&(explicit||episodeRequested||state.grants.includes(key));
   this.put('live:'+session,state,state.expires);
-  const cacheKey='evidence:v3:'+JSON.stringify([key,allowPlot,state.context.imdbId,state.context.viewedRanges,state.context.completed]);const cached=this.read<Evidence[]>(cacheKey);
+  const cacheKey='evidence:v4:'+JSON.stringify([key,allowPlot,state.context.imdbId,state.context.viewedRanges,state.context.completed]);const cached=this.read<Evidence[]>(cacheKey);
   if(cached)return {model:TALK_MODEL,voice:state.context.voice||TALK_VOICE,evidence:cached,cached:true};
   if(++state.calls>24)throw Error('TOOL_LIMIT');
   const allowSearch=!!this.env.TAVILY_API_KEY;

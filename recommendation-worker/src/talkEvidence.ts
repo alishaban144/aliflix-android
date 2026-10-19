@@ -40,12 +40,21 @@ async function json(url:string,signal:AbortSignal,limit=512000):Promise<any> {
 export function reusableUrl(value:string):boolean {try {const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&u.port===''&&
  (u.hostname==='en.wikipedia.org'&&u.pathname.startsWith('/wiki/')||u.hostname==='www.tvmaze.com'&&/^\/(shows|episodes)\/\d+/.test(u.pathname));}catch{return false;}}
 export async function wikipediaTitle(q:KnowledgeRequest,signal:AbortSignal):Promise<{title:string;imdbId?:string;pageid:number;year?:number}|undefined> {
- const query=`${q.title} ${q.year||''} ${q.kind==='movie'?'film':'television series'}`;
- const r=await json(WIKI+'action=query&generator=search&gsrnamespace=0&gsrlimit=4&gsrsearch='+encodeURIComponent(query)+'&prop=pageprops',signal);
- const pages=(Object.values(r.query?.pages||{}) as any[]).filter(p=>normalize(p.title||'')===normalize(q.title));
+ const requestedYear=q.year||Number(q.title.match(/\((\d{4})\)\s*$/)?.[1])||undefined;
+ const base=q.title.replace(/\s*\((?:18|19|20)\d{2}\)\s*$/,'');
+ const variants=[base,`${base} (${q.kind==='movie'?'film':'TV series'})`,...(requestedYear?[`${base} (${requestedYear} ${q.kind==='movie'?'film':'TV series'})`]:[])];
+ let pages:any[]=[];
+ try{const direct=await json(WIKI+'action=query&redirects=1&prop=pageprops&titles='+encodeURIComponent(variants.join('|')),signal);pages=Object.values(direct.query?.pages||{});}catch{}
+ pages=pages.filter(p=>p.pageprops?.wikibase_item&&normalize(p.title||'')===normalize(base));
+ if(!pages.length){
+  const query=`"${base}" ${requestedYear||''} ${q.kind==='movie'?'film':'television series'}`;
+  const r=await json(WIKI+'action=query&generator=search&gsrnamespace=0&gsrlimit=4&gsrsearch='+encodeURIComponent(query)+'&prop=pageprops',signal);
+  pages=(Object.values(r.query?.pages||{}) as any[]).filter(p=>normalize(p.title||'')===normalize(base));
+ }
  const ids=pages.map(p=>p.pageprops?.wikibase_item).filter((x:unknown)=>typeof x==='string'&&/^Q\d+$/.test(x));
  if(!ids.length)return;
  const entities=await json('https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=claims&ids='+ids.join('|'),signal);
+ const matches:Array<{title:string;imdbId?:string;pageid:number;year?:number}>=[];
  for(const page of pages) {
   const item=entities.entities?.[page.pageprops?.wikibase_item];if(!item)continue;
   const values=(key:string)=>(item.claims?.[key]||[]).map((v:any)=>v.mainsnak?.datavalue?.value);
@@ -53,13 +62,14 @@ export async function wikipediaTitle(q:KnowledgeRequest,signal:AbortSignal):Prom
   const year=[...values('P577'),...(q.kind==='tv'?values('P580'):[])].map((v:any)=>Number(v?.time?.slice(1,5))).filter((v:number)=>v>1800);
   const imdb=values('P345').find((v:unknown)=>typeof v==='string'&&/^tt\d+$/.test(v));
   const exact=normalize(page.title)===normalize(q.title);
-  if(!exact||q.year&&!year.includes(q.year))continue;
+  if(!exact||requestedYear&&!year.includes(requestedYear))continue;
   // Reject a remake/television adaptation that happens to share a title.
   const types=values('P31').map((v:any)=>v?.id);
   if(q.kind==='movie'&&types.some((v:string)=>['Q5398426','Q581714','Q15416'].includes(v)))continue;
   if(q.kind==='tv'&&types.includes('Q11424'))continue;
-  return {title:page.title,imdbId:imdb,pageid:page.pageid,year:q.year||year[0]};
+  matches.push({title:page.title,imdbId:imdb,pageid:page.pageid,year:requestedYear||year[0]});
  }
+ return matches.length===1?matches[0]:undefined;
 }
 export async function wikipediaEvidence(title:string,signal:AbortSignal):Promise<Evidence[]> {
  // Revision IDs come from query/revisions, not the unsupported parse prop=revid.
