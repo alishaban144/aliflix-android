@@ -1149,7 +1149,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         const identities = resolved.filter(
           (v): v is NonNullable<typeof v> => !!v,
         );
-        console.log(JSON.stringify({event:"ask_identity_coverage",proposed:fresh.length,resolved:media.filter(Boolean).length,qualified:identities.length,...(owner==="scheduled"?{unresolved:fresh.filter((_,i)=>!media[i]).slice(0,12)}:{})}));
+        console.log(JSON.stringify({event:"ask_identity_coverage",proposed:fresh.length,resolved:media.filter(Boolean).length,qualified:identities.length,...(request.query?.startsWith("Current, popular and noteworthy ")?{unresolved:fresh.filter((_,i)=>!media[i]).slice(0,12)}:{})}));
         const identityBatches: Array<typeof identities> = [];
         for (let i = 0; i < identities.length; i += 32)
           identityBatches.push(identities.slice(i, i + 32));
