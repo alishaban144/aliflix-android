@@ -522,3 +522,18 @@ it('quota recovery respects both daily and monthly ledgers without resetting cou
  const month=researchBudgetState({...counts,aiMonth:2400},now);expect(month.retryAt).toBe(Date.UTC(2026,10,1,0,1));
  expect(counts.aiDay).toBe(96);
 });
+
+it('an active editorial refresh stays warming without scheduling duplicate work',async()=>{
+ await runInDurableObject(env.ASK_RESEARCH.getByName('inflight-editorial-read'),async(instance,state)=>{
+  const service=instance as unknown as AskResearch;
+  let release!:()=>void;const wait=new Promise<void>(r=>release=r);
+  vi.spyOn(service,'recommend').mockImplementation(async(_owner,raw)=>{await wait;return {results:Array.from({length:20},(_,i)=>({tmdbId:i+1,mediaType:(raw as any).mediaType})),metrics:{},cached:false} as any});
+  const needs=vi.spyOn(service,'needsRefresh');
+  const refreshing=service.refreshDaily();
+  const warming=await service.dailyForClient('movie');
+  expect(warming.state).toBe('warming');expect(warming.retryAt).toBeGreaterThan(Date.now());expect(needs).not.toHaveBeenCalled();
+  state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)','quota:ai:'+new Date().toISOString().slice(0,10),'96',Date.now()+86400000);
+  expect((await service.dailyForClient('movie')).state).toBe('warming');
+  release();await refreshing;expect((await service.dailyForClient('movie')).state).toBe('ready');
+ });
+});

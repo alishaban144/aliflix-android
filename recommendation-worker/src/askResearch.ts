@@ -1421,6 +1421,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
    * long research work; GET stays fast and never starts an unbounded waitUntil. */
   async dailyForClient(type:MediaType) {
     const collection=await this.daily(type);
+    const refreshing=this.flights.has("daily-refresh");
     const budget=this.researchBudget();
     const limited=!!this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10))||budget.limited;
     let pending=this.read<number>('daily:refreshAt');
@@ -1428,7 +1429,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       pending=Date.now()+1000;this.put('daily:refreshAt',pending,2*DAY);await this.ctx.storage.setAlarm(pending);
       return {...collection,state:'warming',retryAt:pending};
     }
-    if(!collection.results.length && !pending) {
+    if(!collection.results.length && !pending && !refreshing) {
       const attempts=this.read<number>('daily:bootstrap:'+new Date().toISOString().slice(0,10))||0;
       if(limited || attempts<3 && await this.needsRefresh()) {
         pending=limited?this.quotaRetryAt():Date.now()+1000;
@@ -1436,7 +1437,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         await this.ctx.storage.setAlarm(pending);
       }
     }
-    return {...collection,state:collection.results.length?'ready':limited?'limited':pending?'warming':'unavailable',retryAt:pending||0,budget,lastFailure:this.read('daily:lastFailure'),lastEvaluation:this.read('daily:lastEvaluation')};
+    return {...collection,state:collection.results.length?'ready':refreshing?'warming':limited?'limited':pending?'warming':'unavailable',retryAt:refreshing?Date.now()+5000:pending||0,budget,lastFailure:this.read('daily:lastFailure'),lastEvaluation:this.read('daily:lastEvaluation')};
   }
   async refreshDaily() {
     return this.single("daily-refresh", async () => {
