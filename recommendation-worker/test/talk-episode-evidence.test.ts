@@ -13,9 +13,9 @@ describe('exact episode evidence fences',()=>{
    const context=TalkContextSchema.parse({});const key=JSON.stringify(['dark',2017,'tv',2,1]);
    state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context,expires,calls:0,searches:0,grants:[key]}),expires);
    const cache='evidence:v4:'+JSON.stringify([key,true,context.imdbId,context.viewedRanges,context.completed]);
-   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)',cache,JSON.stringify([{id:'wiki-episode',title:'Dark',text:plot,url:'https://en.wikipedia.org/wiki/Dark',license:'CC BY-SA'}]),expires);
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)',cache,JSON.stringify([{id:'wiki-episode',title:'Dark',season:2,episode:1,text:plot,url:'https://en.wikipedia.org/wiki/Dark',license:'CC BY-SA'}]),expires);
    const result=await service.knowledge(session,{title:'Dark',year:2017,kind:'tv',season:2,episode:1,query:'recap'},'Erkläre Dark Staffel 2 Folge 1.');
-   expect(result.cached).toBe(true);expect(result.instruction).toContain('ONLY events expressly stated');expect(result.instruction).toContain('diary/object');expect(result.boundary).toBe('requested title/episode only');
+   expect(result.episodeScope).toMatchObject({title:'Dark',season:2,episode:1,yearsMentioned:['2053']});expect(result.cached).toBe(true);expect(result.instruction).toContain('ONLY events expressly stated');expect(result.instruction).toContain('diary/object');expect(result.boundary).toBe('requested title/episode only');
   });
  });
 

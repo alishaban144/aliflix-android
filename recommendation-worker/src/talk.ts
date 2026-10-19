@@ -185,7 +185,16 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
    'Episode boundary is strict: answer using ONLY events expressly stated in the attached episode evidence. Ignore remembered scenes from other episodes, even if plausible. A character mentioned as the owner of a diary/object does not establish that character travelling, meeting someone or taking an action in this episode. For a brief recap use at most two supported events; do not add extra timelines or meetings from memory. Keep interpretations distinct from events.':
    'Ground specific events in the attached evidence and distinguish interpretations from facts.';
   const cacheKey='evidence:v4:'+JSON.stringify([key,allowPlot,state.context.imdbId,state.context.viewedRanges,state.context.completed]);const cached=this.read<Evidence[]>(cacheKey);
-  if(cached)return {model:TALK_MODEL,voice:state.context.voice||TALK_VOICE,evidence:cached,cached:true,instruction:grounding,boundary:allowPlot?'requested title/episode only':'No unviewed plot details; answer reliable general knowledge naturally',unavailable:!cached.length};
+  const episodeScope=(evidence:Evidence[])=>q.kind==='tv'&&q.episode!=null?{
+   title:q.title,season:q.season,episode:q.episode,
+   // Derive anchors only from this episode's source text, never publication
+   // dates, the series overview or another episode. These are mentions, not a
+   // claim that every number is a narrative timeline.
+   yearsMentioned:[...new Set(evidence.filter(e=>e.episode===q.episode&&e.season===q.season)
+    .flatMap(e=>e.text.match(/\b(?:1\d{3}|2\d{3})\b/g)||[]))].slice(0,32),
+   rule:'For episode events, paraphrase only the attached source. Do not introduce other years, meetings or journeys from remembered series knowledge. A year mentioned here is not by itself evidence of a scene.'
+  }:undefined;
+  if(cached)return {model:TALK_MODEL,voice:state.context.voice||TALK_VOICE,episodeScope:episodeScope(cached),evidence:cached,cached:true,instruction:grounding,boundary:allowPlot?'requested title/episode only':'No unviewed plot details; answer reliable general knowledge naturally',unavailable:!cached.length};
   if(++state.calls>24)throw Error('TOOL_LIMIT');
   const allowSearch=!!this.env.TAVILY_API_KEY;
   state.grants=state.grants.slice(-12);this.put('live:'+session,state,state.expires);
@@ -194,7 +203,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   this.put(cacheKey,evidence,Date.now()+(evidence.length?(q.kind==='tv'&&!evidence.some(e=>e.id.startsWith('wikipedia-episode-'))?5*MINUTE:DAY):30000));
   const count=this.ctx.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'evidence:%'").one().n;
   if(count>40)this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN(SELECT key FROM memory WHERE key LIKE 'evidence:%' ORDER BY expires LIMIT ?)",count-40);
-  return {model:TALK_MODEL,voice:state.context.voice||TALK_VOICE,evidence,cached:false,instruction:grounding,boundary:allowPlot?'requested title/episode only':'No unviewed plot details; answer reliable general knowledge naturally',unavailable:!evidence.length};
+  return {model:TALK_MODEL,voice:state.context.voice||TALK_VOICE,episodeScope:episodeScope(evidence),evidence,cached:false,instruction:grounding,boundary:allowPlot?'requested title/episode only':'No unviewed plot details; answer reliable general knowledge naturally',unavailable:!evidence.length};
  }
  private async searchBudget(session:string){const current=this.read<Session>('live:'+session);if(!current||current.searches>=2)return false;current.searches++;this.put('live:'+session,current,current.expires);return this.env.TALK_SESSIONS.getByName('quota:search').reserve(1,20);}
  async alarm(){this.ctx.storage.sql.exec('DELETE FROM memory WHERE expires<=?',Date.now());const row=this.ctx.storage.sql.exec<{next:number}>('SELECT MIN(expires) next FROM memory').one();if(row.next)await this.ctx.storage.setAlarm(row.next);}
