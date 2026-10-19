@@ -204,6 +204,17 @@ describe("unified authenticated research", () => {
       },
     );
   });
+  it("retries an empty bootstrap after five minutes, retaining the longer populated backoff", async () => {
+    await runInDurableObject(env.ASK_RESEARCH.getByName("bootstrap-backoff"),async(instance,state)=>{
+      const service=instance as unknown as AskResearch;
+      state.storage.sql.exec("INSERT INTO ask_cache VALUES(?,?,?)","daily:attempt",JSON.stringify(Date.now()-301000),Date.now()+86400000);
+      expect(await service.needsRefresh()).toBe(true);
+      expect(await service.needsRefresh()).toBe(false);
+      for(const type of ["movie","tv"])state.storage.sql.exec("INSERT INTO ask_cache VALUES(?,?,?)","daily:"+type,JSON.stringify({results:[{tmdbId:1}],publishedAt:Date.now()-86400001}),Date.now()+86400000);
+      state.storage.sql.exec("UPDATE ask_cache SET value=? WHERE key=?",JSON.stringify(Date.now()-301000),"daily:attempt");
+      expect(await service.needsRefresh()).toBe(false);
+    });
+  });
   it("retains both last-good editorial collections on refresh failure", async () => {
     await runInDurableObject(
       env.ASK_RESEARCH.getByName("test-last-good"),
@@ -362,10 +373,11 @@ describe("unified authenticated research", () => {
             "@cf/openai/gpt-oss-120b",
             "@cf/cloudflare/clef-flash",
             "@cf/cloudflare/clef-flash",
+            "@cf/cloudflare/clef-flash",
           ]);
           expect(result.metrics).toMatchObject({
             gptCalls: 2,
-            clefCalls: 2,
+            clefCalls: 3,
             verified: 30,
             tavilyCredits: 1,
             neurons: null,
