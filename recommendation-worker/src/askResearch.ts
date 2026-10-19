@@ -433,11 +433,27 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       "DELETE FROM ask_cache WHERE expires<=?",
       Date.now(),
     );
+    const refreshAt=this.read<number>('daily:refreshAt');
+    if(refreshAt && refreshAt<=Date.now()) {
+      this.ctx.storage.sql.exec("DELETE FROM ask_cache WHERE key='daily:refreshAt'");
+      const key='daily:bootstrap:'+new Date().toISOString().slice(0,10);
+      const attempts=this.read<number>(key)||0;
+      if(attempts<3) {
+        this.put(key,attempts+1,2*DAY);
+        try { await this.refreshDaily(); }
+        catch(error) {
+          const quota=researchFailure(error)?.code==='AI_QUOTA';
+          if(quota || attempts<2)this.put('daily:refreshAt',quota?this.nextResearchDay():Date.now()+300000,2*DAY);
+          console.warn(JSON.stringify({event:'ask_bootstrap_retained',code:researchFailure(error)?.code||'RESEARCH_UNAVAILABLE'}));
+        }
+      }
+    }
     const next = this.ctx.storage.sql
       .exec<{ at: number | null }>("SELECT MIN(expires) AS at FROM ask_cache")
       .one().at;
-    if (next)
-      await this.ctx.storage.setAlarm(Math.max(Date.now() + 60000, next));
+    const pending=this.read<number>('daily:refreshAt');
+    if (next || pending)
+      await this.ctx.storage.setAlarm(Math.max(Date.now()+1000,Math.min(next||Infinity,pending||Infinity)));
     else this.cleanupScheduled = false;
   }
   private reserve(kind: "search" | "ai", count = 1) {
@@ -1321,7 +1337,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         results: results.slice(0, Math.max(24, request.pageSize)),
         metrics: usage,
       };
-      this.put(key, value, results.length >= 20 ? 3_600_000 : 120_000);
+      this.put(key, value, results.length >= 20 ? DAY : 120_000);
       console.log(JSON.stringify({ event: "ask_research_complete", ...usage }));
       return { ...value, cached: false };
     });
@@ -1332,6 +1348,23 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         "daily:" + type,
       ) || { results: [], publishedAt: 0 }
     );
+  }
+  private nextResearchDay(){return Date.parse(new Date().toISOString().slice(0,10))+DAY+60000;}
+  /** First installation must bootstrap without an operator POST. The alarm owns
+   * long research work; GET stays fast and never starts an unbounded waitUntil. */
+  async dailyForClient(type:MediaType) {
+    const collection=await this.daily(type);
+    const limited=!!this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10));
+    let pending=this.read<number>('daily:refreshAt');
+    if(!collection.results.length && !pending) {
+      const attempts=this.read<number>('daily:bootstrap:'+new Date().toISOString().slice(0,10))||0;
+      if(limited || attempts<3 && await this.needsRefresh()) {
+        pending=limited?this.nextResearchDay():Date.now()+1000;
+        this.put('daily:refreshAt',pending,2*DAY);
+        await this.ctx.storage.setAlarm(pending);
+      }
+    }
+    return {...collection,state:collection.results.length?'ready':limited?'limited':pending?'warming':'unavailable',retryAt:pending||0};
   }
   async refreshDaily() {
     return this.single("daily-refresh", async () => {
@@ -1388,7 +1421,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     // longer backoff and their last-good data.
     const backoff = a.results.length && b.results.length ? 3_600_000 : 300_000;
     if (Date.now() - last < backoff) return false;
-    if (Date.now() - Math.min(a.publishedAt, b.publishedAt) < DAY) return false;
+    if (new Date(Math.min(a.publishedAt,b.publishedAt)).toISOString().slice(0,10)===new Date().toISOString().slice(0,10)) return false;
     this.put("daily:attempt", Date.now(), DAY);
     return true;
   }
@@ -1415,7 +1448,7 @@ export async function askRoute(
     const service = env.ASK_RESEARCH.getByName("shared-v1");
     if (url.pathname === "/v4/ask/daily" && request.method === "GET") {
       const type = z.enum(["movie", "tv"]).parse(url.searchParams.get("type"));
-      return Response.json(await service.daily(type), {
+        return Response.json(await service.dailyForClient(type), {
         headers: { "cache-control": "private, max-age=300" },
       });
     }

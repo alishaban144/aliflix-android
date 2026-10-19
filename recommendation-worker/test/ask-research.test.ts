@@ -206,6 +206,28 @@ describe("unified authenticated research", () => {
       },
     );
   });
+  it("schedules one bounded empty bootstrap and serves its published result instantly",async()=>{
+    await runInDurableObject(env.ASK_RESEARCH.getByName("self-healing-editorial"),async(instance,state)=>{
+      const service=instance as unknown as AskResearch;
+      const first=await service.dailyForClient("movie");expect(first.state).toBe("warming");expect(first.results).toHaveLength(0);
+      expect((await service.dailyForClient("tv")).retryAt).toBe(first.retryAt);
+      const refresh=vi.spyOn(service,"refreshDaily").mockImplementation(async()=>{
+        for(const type of ["movie","tv"])state.storage.sql.exec("INSERT OR REPLACE INTO ask_cache VALUES(?,?,?)","daily:"+type,JSON.stringify({results:Array.from({length:20},(_,i)=>({tmdbId:i+1})),publishedAt:Date.now()}),Date.now()+86400000);
+        return {published:true,counts:[20,20]};
+      });
+      state.storage.sql.exec("UPDATE ask_cache SET value=? WHERE key='daily:refreshAt'",JSON.stringify(Date.now()-1));
+      await service.alarm();expect(refresh).toHaveBeenCalledTimes(1);expect((await service.dailyForClient("movie")).state).toBe("ready");
+    });
+  });
+  it("defers empty editorial research to the next UTC quota day without invoking a model",async()=>{
+    await runInDurableObject(env.ASK_RESEARCH.getByName("quota-bootstrap-day"),async(instance,state)=>{
+      const service=instance as unknown as AskResearch;
+      state.storage.sql.exec("INSERT INTO ask_cache VALUES(?,?,?)","quota:provider-blocked:"+new Date().toISOString().slice(0,10),'true',Date.now()+86400000);
+      const refresh=vi.spyOn(service,"refreshDaily");const result=await service.dailyForClient("tv");
+      expect(result.state).toBe("limited");expect(result.retryAt).toBeGreaterThan(Date.now());expect(new Date(result.retryAt).getUTCDate()).not.toBe(new Date().getUTCDate());
+      expect(refresh).not.toHaveBeenCalled();expect(await state.storage.getAlarm()).toBe(result.retryAt);
+    });
+  });
   it("retries an empty bootstrap after five minutes, retaining the longer populated backoff", async () => {
     await runInDurableObject(env.ASK_RESEARCH.getByName("bootstrap-backoff"),async(instance,state)=>{
       const service=instance as unknown as AskResearch;

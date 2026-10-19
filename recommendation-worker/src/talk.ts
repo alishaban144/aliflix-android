@@ -182,7 +182,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const allowPlot=!avoids&&(explicit||episodeRequested||state.grants.includes(key));
   this.put('live:'+session,state,state.expires);
   const grounding=q.kind==='tv'&&q.episode!=null?
-   'Episode boundary is strict: answer using ONLY events expressly stated in the attached episode evidence. Ignore remembered scenes from other episodes, even if plausible. A character mentioned as the owner of a diary/object does not establish that character travelling, meeting someone or taking an action in this episode. For a brief recap use at most two supported events; do not add extra timelines or meetings from memory. Keep interpretations distinct from events.':
+   'Episode boundary is strict: answer using ONLY events expressly stated in the attached episode evidence. Ignore remembered scenes from other episodes, even if plausible. A character mentioned as the owner of a diary/object does not establish that character travelling, meeting someone or taking an action in this episode. For a brief recap use at most two supported events; do not add extra timelines or meetings from memory. Preserve character names exactly as written in the evidence; never translate, expand or substitute them. Keep interpretations distinct from events.':
    'Ground specific events in the attached evidence and distinguish interpretations from facts.';
   const cacheKey='evidence:v4:'+JSON.stringify([key,allowPlot,state.context.imdbId,state.context.viewedRanges,state.context.completed]);const cached=this.read<Evidence[]>(cacheKey);
   const episodeScope=(evidence:Evidence[])=>q.kind==='tv'&&q.episode!=null?{
