@@ -87,6 +87,43 @@ export async function tvEpisodeEvidence(q:KnowledgeRequest,imdb:string|undefined
  if(ep.season!==q.season||ep.number!==q.episode||!ep.summary)return [];
  return [{id:'tvmaze-episode-'+ep.id,title:`${show.name} · S${ep.season} E${ep.number} · ${ep.name}`,text:stripMarkup(ep.summary),url:ep.url,license:'TVmaze · CC BY-SA 4.0',season:ep.season,episode:ep.number}];
 }
+/** Fail closed on an unfamiliar/combined episode table. Never hand a season's
+ * other summaries to the model, even though MediaWiki returns them together. */
+export function wikipediaEpisodeText(html:string,episode:number):string|undefined {
+ const matches:string[]=[];
+ for(const table of html.matchAll(/<table\b[^>]*class="[^"]*\bwikiepisodetable\b[^"]*"[^>]*>([\s\S]*?)<\/table>/gi)) {
+  const rows=[...table[1].matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)];
+  for(let i=0;i<rows.length-1;i++) {
+   if(!/\bvevent\b/.test(rows[i][1]))continue;
+   const firstCell=rows[i][2].match(/<td\b[^>]*>([\s\S]*?)<\/td>/i);
+   if(!firstCell||stripMarkup(firstCell[1])!==String(episode))continue;
+   if(!/\bexpand-child\b/.test(rows[i+1][1]))continue;
+   const description=rows[i+1][2].match(/<td\b[^>]*class="[^"]*\bdescription\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i);
+   if(description){const text=stripMarkup(description[1]);if(text.length>40)matches.push(text);}
+  }
+ }
+ return matches.length===1?matches[0]:undefined;
+}
+export async function wikipediaEpisodeEvidence(title:string,q:KnowledgeRequest,signal:AbortSignal):Promise<Evidence[]> {
+ if(q.season==null||q.episode==null)return [];
+ const info=await json(WIKI+'action=query&prop=info|revisions&rvprop=ids&titles='+encodeURIComponent(title),signal);
+ const page=(Object.values(info.query?.pages||{}) as any[])[0],revision=page?.revisions?.[0]?.revid;
+ if(!Number.isInteger(revision))return [];
+ const parsed=await json(WIKI+`action=parse&oldid=${revision}&prop=sections`,signal);
+ const sections=parsed.parse?.sections||[];let inside=false;let episodeLevel=0;
+ const seasonSections=sections.filter((s:any)=>{
+  const heading=stripMarkup(s.line||'');const level=Number(s.toclevel);
+  if(/^Episodes$/i.test(heading)){inside=true;episodeLevel=level;return false;}
+  if(inside&&level<=episodeLevel){inside=false;return false;}
+  return inside&&new RegExp(`^Season ${q.season}(?:\\s|$)`).test(heading)&&/^\d{1,3}$/.test(s.index);
+ });
+ if(seasonSections.length!==1)return [];
+ const section=seasonSections[0];
+ const body=await json(WIKI+`action=parse&oldid=${revision}&prop=text&section=${section.index}`,signal);
+ const text=wikipediaEpisodeText(body.parse?.text?.['*']||'',q.episode);
+ return text?[{id:`wikipedia-episode-${page.pageid}-${revision}-${q.season}-${q.episode}`,title:`${page.title} · S${q.season} E${q.episode}`,text,
+  url:`https://en.wikipedia.org/w/index.php?oldid=${revision}#${encodeURIComponent(section.anchor||'')}`,license:'Wikipedia contributors · CC BY-SA 4.0 · adapted',season:q.season,episode:q.episode}]:[];
+}
 export async function tavilyEvidence(env:RecommendationEnv,q:KnowledgeRequest,signal:AbortSignal):Promise<Evidence[]> {
  if(!env.TAVILY_API_KEY)return [];
  // Plot fallback shares the same account-wide free-tier reservation as general
@@ -124,6 +161,9 @@ export async function retrieveKnowledge(env:RecommendationEnv,q:KnowledgeRequest
  try{title=await wikipediaTitle(q,signal);}catch{}
  if(q.kind==='tv') {
   const watched=!!context&&!!title?.imdbId&&title.imdbId===context.imdbId&&q.season!=null&&q.episode!=null&&permittedEpisode(context,q.season,q.episode);
+  if((allowPlot||watched)&&title&&q.season!=null&&q.episode!=null) {
+   try{const detailed=await wikipediaEpisodeEvidence(title.title,q,signal);if(detailed.length)return detailed;}catch{}
+  }
   let result:Evidence[]=[];try{result=await tvEpisodeEvidence(allowPlot||watched?q:{...q,season:undefined,episode:undefined},title?.imdbId,signal);}catch{}
   if(!result.length&&(allowPlot||watched)&&q.episode!=null&&allowSearch&&await reserveSearch())try{result=await tavilyEvidence(env,q,signal);}catch{}
   return result;
