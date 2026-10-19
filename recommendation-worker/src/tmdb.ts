@@ -159,6 +159,11 @@ export class TmdbClient {
   discover(type: MediaType, params: Record<string, string | number | boolean | undefined>): Promise<TmdbPage> {
     return this.request(`/discover/${type}`, { include_adult: false, ...params });
   }
+  /** Identity/hard-filter verification needs structured metadata, not complete
+   * casts, reviews and neighbouring catalogues for every candidate. */
+  researchDetails(type: MediaType, id: number): Promise<TmdbDetails> {
+    return this.request(`/${type}/${id}`, { language:'en-US', ...(type==='tv'?{append_to_response:'external_ids'}:{}) });
+  }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
     return this.request(`/${type}/${id}`, {
       append_to_response: type === 'tv'

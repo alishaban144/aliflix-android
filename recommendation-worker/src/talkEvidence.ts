@@ -159,6 +159,9 @@ export async function tavilyEvidence(env:RecommendationEnv,q:KnowledgeRequest,si
  return evidence;
 }
 export async function retrieveKnowledge(env:RecommendationEnv,q:KnowledgeRequest,allowPlot:boolean,signal:AbortSignal,allowSearch:boolean,context?:TalkContext,reserveSearch:()=>Promise<boolean>=async()=>true):Promise<Evidence[]> {
+ if(allowPlot&&q.kind==='tv'&&q.season!=null&&q.episode!=null&&env.TALK_SESSIONS) {
+  try{const shared=await env.TALK_SESSIONS.getByName('licensed-episodes-v1').licensedEpisode({...q,query:''});if(shared.length)return shared;}catch{}
+ }
  let title:Awaited<ReturnType<typeof wikipediaTitle>>;
  try{title=await wikipediaTitle(q,signal);}catch{}
  if(q.kind==='tv') {

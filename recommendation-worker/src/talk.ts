@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { verifyIdentity } from './watchParty';
 import type { RecommendationEnv } from './types';
 import { AskRequestSchema, WebResearchSchema, researchFailure } from './askResearch';
-import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence, requestedEpisodeBoundary, avoidsSpoilers, resolveViewingTitle, TalkLibraryItemSchema, TalkViewingPageSchema } from './talkEvidence';
+import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence, requestedEpisodeBoundary, avoidsSpoilers, resolveViewingTitle, TalkLibraryItemSchema, TalkViewingPageSchema, wikipediaTitle, wikipediaEpisodeEvidence, tvEpisodeEvidence } from './talkEvidence';
 import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProviders';
 const MINUTE=60000,DAY=86400000;
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
@@ -119,6 +119,21 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   this.put(cacheKey,result,Math.min(state.expires,Date.now()+ttl));return result;
  }
  async close(session:string,forget=false){if(forget)this.ctx.storage.sql.exec('DELETE FROM memory');else {this.ctx.storage.sql.exec('DELETE FROM memory WHERE key=?','live:'+session);this.ctx.storage.sql.exec('DELETE FROM memory WHERE key LIKE ?','viewing:'+session+':%');}}
+ /** Internal RPC only. Shared cache holds public licensed episode facts, never
+  * user questions, viewing boundaries, identities or conversation history. */
+ async licensedEpisode(input:KnowledgeRequest):Promise<Evidence[]> {
+  const q=KnowledgeSchema.parse({...input,query:''});if(q.kind!=='tv'||q.season==null||q.episode==null)return [];
+  const key='licensed-episode:'+JSON.stringify([q.title.toLowerCase(),q.year,q.season,q.episode]);
+  const cached=this.read<Evidence[]>(key);if(cached)return cached;
+  const signal=AbortSignal.timeout(8000);let result:Evidence[]=[];
+  const fallback=tvEpisodeEvidence(q,undefined,signal).catch(()=>[] as Evidence[]);
+  try{const title=await wikipediaTitle(q,signal);if(title)result=await wikipediaEpisodeEvidence(title.title,q,signal);}catch{}
+  if(!result.length)result=await fallback;
+  this.put(key,result,Date.now()+(result.some(e=>e.id.startsWith('wikipedia-episode-'))?7*DAY:30000));
+  const count=this.ctx.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'licensed-episode:%'").one().n;
+  if(count>64)this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN(SELECT key FROM memory WHERE key LIKE 'licensed-episode:%' ORDER BY expires LIMIT ?)",count-64);
+  await this.ctx.storage.setAlarm(Date.now()+DAY);return result;
+ }
  async research(session:string,id:string,kind:string,input:unknown) {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
   const service=this.env.ASK_RESEARCH.getByName('shared-v1');
@@ -148,14 +163,14 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   if((explicit||episodeRequested)&&!state.grants.includes(key))state.grants.push(key);
   const allowPlot=!avoids&&(explicit||episodeRequested||state.grants.includes(key));
   this.put('live:'+session,state,state.expires);
-  const cacheKey='evidence:v2:'+JSON.stringify([key,allowPlot,state.context.imdbId,state.context.viewedRanges,state.context.completed]);const cached=this.read<Evidence[]>(cacheKey);
+  const cacheKey='evidence:v3:'+JSON.stringify([key,allowPlot,state.context.imdbId,state.context.viewedRanges,state.context.completed]);const cached=this.read<Evidence[]>(cacheKey);
   if(cached)return {model:TALK_MODEL,voice:state.context.voice||TALK_VOICE,evidence:cached,cached:true};
   if(++state.calls>24)throw Error('TOOL_LIMIT');
   const allowSearch=!!this.env.TAVILY_API_KEY;
   state.grants=state.grants.slice(-12);this.put('live:'+session,state,state.expires);
   let evidence:Evidence[]=[];try{evidence=await retrieveKnowledge(this.env,q,allowPlot,AbortSignal.timeout(q.kind==='tv'&&q.episode!=null?11000:7000),allowSearch,state.context,()=>this.searchBudget(session));}catch{}
   if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
-  this.put(cacheKey,evidence,Date.now()+(evidence.length?DAY:30000));
+  this.put(cacheKey,evidence,Date.now()+(evidence.length?(q.kind==='tv'&&!evidence.some(e=>e.id.startsWith('wikipedia-episode-'))?5*MINUTE:DAY):30000));
   const count=this.ctx.storage.sql.exec<{n:number}>("SELECT COUNT(*) n FROM memory WHERE key LIKE 'evidence:%'").one().n;
   if(count>40)this.ctx.storage.sql.exec("DELETE FROM memory WHERE key IN(SELECT key FROM memory WHERE key LIKE 'evidence:%' ORDER BY expires LIMIT ?)",count-40);
   return {model:TALK_MODEL,voice:state.context.voice||TALK_VOICE,evidence,cached:false,boundary:allowPlot?'requested title/episode only':'No unviewed plot details; answer reliable general knowledge naturally',unavailable:!evidence.length};

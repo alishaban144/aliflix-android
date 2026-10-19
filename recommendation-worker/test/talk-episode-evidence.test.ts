@@ -1,10 +1,31 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {wikipediaEpisodeEvidence,wikipediaEpisodeText,wikipediaTitle} from '../src/talkEvidence';
+import {env,runInDurableObject} from 'cloudflare:test';
+import {TalkSession} from '../src/talk';
 const plot='Jonas explores the post-apocalyptic power plant in 2053. He discovers a mysterious black substance.';
 const rows=(n:number,text:string)=>`<tr class="vevent module-episode-list-row"><th>${n+10}</th><td>${n}</td><td class="summary">Title</td></tr><tr class="expand-child"><td class="description"><p>${text}</p></td></tr>`;
 const table=(body:string)=>`<table class="wikitable wikiepisodetable">${body}</table>`;
 afterEach(()=>vi.restoreAllMocks());
 describe('exact episode evidence fences',()=>{
+ it('reuses public revision evidence across sessions and source outages without caching private questions',async()=>{
+  const claim=(value:unknown)=>({mainsnak:{datavalue:{value}}});
+  const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{
+   const url=String(u);if(url.includes('api.tvmaze.com'))return new Response('outage',{status:503});
+   if(url.includes('generator=search'))return Response.json({query:{pages:{1:{pageid:1,title:'Dark (TV series)',pageprops:{wikibase_item:'Q28443710'}}}}});
+   if(url.includes('wbgetentities'))return Response.json({entities:{Q28443710:{claims:{P345:[claim('tt5753856')],P580:[claim({time:'+2017-12-01T00:00:00Z'})]}}}});
+   if(url.includes('prop=info'))return Response.json({query:{pages:{1:{pageid:1,title:'Dark',revisions:[{revid:987}]}}}});
+   if(url.includes('prop=sections'))return Response.json({parse:{sections:[{line:'Episodes',toclevel:1,index:'6'},{line:'Season 2 (2019)',toclevel:2,index:'8',anchor:'Season_2'}]}});
+   return Response.json({parse:{text:{'*':table(rows(1,plot)+rows(2,'Future secret.'))}}});
+  });
+  await runInDurableObject(env.TALK_SESSIONS.getByName('shared-licensed-cache-test'),async(instance,state)=>{
+   const service=instance as unknown as TalkSession;
+   const q={title:'Dark',year:2017,kind:'tv' as const,season:2,episode:1,query:'PRIVATE QUESTION'};
+   const first=await service.licensedEpisode(q);expect(first[0].text).toBe(plot);
+   spy.mockImplementation(async()=>{throw Error('source unavailable');});const count=spy.mock.calls.length;
+   expect(await service.licensedEpisode({...q,query:'another private question'})).toEqual(first);expect(spy.mock.calls.length).toBe(count);
+   const row=state.storage.sql.exec<{value:string}>('SELECT value FROM memory').one();expect(row.value).not.toContain('PRIVATE');expect(row.value).not.toContain('Future secret');
+  });
+ });
  it('matches a series premiere using P580 while rejecting the wrong year',async()=>{
   vi.spyOn(globalThis,'fetch').mockImplementation(async u=>String(u).includes('generator=search')
    ?Response.json({query:{pages:{1:{pageid:1,title:'Dark (TV series)',pageprops:{wikibase_item:'Q28443710'}}}}})
