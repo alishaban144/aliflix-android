@@ -1149,7 +1149,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         const identities = resolved.filter(
           (v): v is NonNullable<typeof v> => !!v,
         );
-        console.log(JSON.stringify({event:"ask_identity_coverage",proposed:fresh.length,resolved:media.filter(Boolean).length,qualified:identities.length}));
+        console.log(JSON.stringify({event:"ask_identity_coverage",proposed:fresh.length,resolved:media.filter(Boolean).length,qualified:identities.length,...(owner==="scheduled"?{unresolved:fresh.filter((_,i)=>!media[i]).slice(0,12)}:{})}));
         const identityBatches: Array<typeof identities> = [];
         for (let i = 0; i < identities.length; i += 32)
           identityBatches.push(identities.slice(i, i + 32));
@@ -1410,7 +1410,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         await this.ctx.storage.setAlarm(pending);
       }
     }
-    return {...collection,state:collection.results.length?'ready':limited?'limited':pending?'warming':'unavailable',retryAt:pending||0};
+    return {...collection,state:collection.results.length?'ready':limited?'limited':pending?'warming':'unavailable',retryAt:pending||0,lastFailure:this.read('daily:lastFailure'),lastEvaluation:this.read('daily:lastEvaluation')};
   }
   async refreshDaily() {
     return this.single("daily-refresh", async () => {
@@ -1436,6 +1436,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
           }),
       );
       console.log(JSON.stringify({event:"ask_daily_evaluated",counts:collections.map(c=>c.results.length),metrics:collections.map(c=>c.metrics)}));
+        this.put('daily:lastEvaluation',{counts:collections.map(c=>c.results.length),at:Date.now()},2*DAY);
       if (collections.some((c) => c.results.length < 20))
         throw new ServiceError(
           "EDITORIAL_INCOMPLETE",
@@ -1458,7 +1459,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         published: true,
         counts: collections.map((c) => c.results.length),
       };
-    }).catch(error=>{console.warn("ask_daily_failed",error instanceof Error?error.message.slice(0,180):"unknown");throw wireFailure(error);});
+    }).catch(error=>{this.put('daily:lastFailure',{code:researchFailure(error)?.code||'RESEARCH_UNAVAILABLE',at:Date.now()},2*DAY);console.warn("ask_daily_failed",error instanceof Error?error.message.slice(0,180):"unknown");throw wireFailure(error);});
   }
   async needsRefresh() {
     const last = this.read<number>("daily:attempt") || 0;
