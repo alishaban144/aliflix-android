@@ -196,6 +196,8 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         baseUrl = BuildConfig.RECOMMENDATION_AI_BASE_URL,
         ioDispatcher = recommendationDispatchers.io,
         metadataCacheDir = if (BuildConfig.IS_TV) null else java.io.File(application.cacheDir, "mobile-taste-metadata"),
+        research = if (BuildConfig.IS_TV) null else com.aliflix.app.recommendation.AskResearchClient(application),
+        researchLibrary = { com.aliflix.app.recommendation.AskTaste(application).library(library) },
     )
     private val homeSnapshotStore: HomeSnapshotStore = AndroidHomeSnapshotStore(
         context = application,
@@ -340,13 +342,18 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             request = refinedRequest,
             aiModel = recommendationStore.aiModel.value,
         )
+        val refinedWorkerRequest = if (!BuildConfig.IS_TV && Regex("(?i)different|another|more suggestions|other (?:movies|series)|andere|weitere|أخرى|غيرها").containsMatchIn(normalized)) {
+            mapped.workerRequest.copy(filters = mapped.workerRequest.filters.copy(
+                excludedTmdbIds = (mapped.workerRequest.filters.excludedTmdbIds + currentResults.items.map { it.media.id }).distinct().take(1000),
+            ))
+        } else mapped.workerRequest
         activeAskJob?.cancel()
         val token = ++askSessionToken
         _askUiState.value = currentResults.copy(refining = true, refineError = null)
         activeAskJob = viewModelScope.launch {
             try {
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    aiClient.getRecommendations(mapped.workerRequest)
+                    aiClient.getRecommendations(refinedWorkerRequest)
                 }
                 if (token != askSessionToken) return@launch
                 val candidates = response.results.map(::mapAskResult)
@@ -661,6 +668,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             ?: return fallback
         return when (clientError.code) {
             "NETWORK_ERROR" -> "Check your connection and try again."
+            "AI_QUOTA", "RESEARCH_QUOTA" -> "Daily limit"
             "TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED" -> "Movie and series details are temporarily unavailable. Please try again."
             "RATE_LIMITED", "RESOURCE_EXHAUSTED", "GROQ_RATE_LIMITED" -> "Ask Aliflix is busy right now. Please wait a moment and try again."
             // Configuration and authentication failures are permanent for this

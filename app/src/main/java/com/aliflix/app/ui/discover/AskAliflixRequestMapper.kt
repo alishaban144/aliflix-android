@@ -29,11 +29,11 @@ object AskAliflixRequestMapper {
         }
         val spec = when (request) {
             is AskAliflixRequest.Filters -> request.spec
-            is AskAliflixRequest.Describe -> CatalogDiscoverySpec(
+            is AskAliflixRequest.Describe -> request.filters ?: CatalogDiscoverySpec(
                 if (outputType == MediaType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE,
                 requiredStatus = request.requiredStatus,
             )
-            is AskAliflixRequest.Similar -> CatalogDiscoverySpec(
+            is AskAliflixRequest.Similar -> request.filters ?: CatalogDiscoverySpec(
                 if (outputType == MediaType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE,
                 requiredStatus = request.requiredStatus,
             )

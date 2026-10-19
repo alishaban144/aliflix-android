@@ -30,4 +30,15 @@ class TalkVoiceUiTest {
             compose.runOnIdle { assertTrue(closed) }
         } finally { session.close();scope.cancel() }
     }
+    @Test fun voiceChoicesAreReachableWithoutStartingOrChangingSession(){
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
+        val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope)
+        try{
+            compose.setContent{AliflixMobileTheme{TalkVoiceScreen(session,{}, {})}}
+            compose.onNodeWithTag("talk-voice-picker").performClick()
+            for(voice in listOf("Aoede","Kore","Puck","Charon"))compose.onAllNodesWithText(voice).onLast().assertIsDisplayed()
+            compose.onNodeWithContentDescription("Close panel").performClick()
+            compose.runOnIdle{assertEquals("Ready",session.state.value.phase)}
+        }finally{session.close();scope.cancel()}
+    }
 }

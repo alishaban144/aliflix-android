@@ -30,6 +30,7 @@ import kotlin.math.sin
 /** A compact orbital treatment around the canonical brand asset. */
 @Composable
 internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { DiscoverTouchTracker() }, onMode: (Int) -> Unit) {
+    val context=androidx.compose.ui.platform.LocalContext.current
     val phase = if (com.aliflix.app.BuildConfig.IS_TV) {
         val orbit = rememberInfiniteTransition(label = "ask-orbit")
         val value by orbit.animateFloat(0f, if (!ValueAnimator.areAnimatorsEnabled()) 0f else 1f,
@@ -87,9 +88,9 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                listOf("Describe", "Find similar").forEachIndexed { index, label ->
+                (if(com.aliflix.app.BuildConfig.IS_TV)listOf("Describe", "Find similar")else listOf("Ask", "Talk")).forEachIndexed { index, label ->
                     Button(
-                        onClick = { onMode(index) },
+                        onClick = { if(!com.aliflix.app.BuildConfig.IS_TV&&index==1)context.startActivity(android.content.Intent().setClassName(context,"com.aliflix.app.talk.TalkVoiceActivity")) else onMode(index) },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = AliflixCorners.Small,
                         contentPadding = PaddingValues(horizontal = 9.dp),
@@ -98,9 +99,13 @@ internal fun DiscoverAskCard(touchTracker: DiscoverTouchTracker = remember { Dis
                             contentColor = if (index == 0) com.aliflix.app.ui.theme.AliflixContentInverse else Color.White,
                         ),
                     ) {
-                        Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
-                        Spacer(Modifier.width(8.dp))
-                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, Modifier.size(16.dp))
+                        if(com.aliflix.app.BuildConfig.IS_TV){
+                            Text(label,modifier=Modifier.weight(1f),fontWeight=FontWeight.SemiBold,fontSize=14.sp,maxLines=1)
+                            Spacer(Modifier.width(8.dp));Icon(Icons.AutoMirrored.Rounded.ArrowForward,null,Modifier.size(16.dp))
+                        }else Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.Center){
+                            Text(label,Modifier.padding(horizontal=27.dp),fontWeight=FontWeight.SemiBold,fontSize=17.sp,maxLines=1,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+                            Box(Modifier.align(Alignment.CenterEnd).size(24.dp),contentAlignment=Alignment.Center){if(index==1)AliflixCompanionIcon(Modifier.size(21.dp),Color.White)else Icon(Icons.AutoMirrored.Rounded.ArrowForward,null,Modifier.size(17.dp))}
+                        }
                     }
                 }
             }

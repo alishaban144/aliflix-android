@@ -1,5 +1,5 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {wikipediaEpisodeEvidence,wikipediaEpisodeText,wikipediaTitle} from '../src/talkEvidence';
+import {wikipediaEpisodeEvidence,wikipediaEpisodeText,wikipediaTitle,TalkContextSchema} from '../src/talkEvidence';
 import {env,runInDurableObject} from 'cloudflare:test';
 import {TalkSession} from '../src/talk';
 const plot='Jonas explores the post-apocalyptic power plant in 2053. He discovers a mysterious black substance.';
@@ -7,6 +7,18 @@ const rows=(n:number,text:string)=>`<tr class="vevent module-episode-list-row"><
 const table=(body:string)=>`<table class="wikitable wikiepisodetable">${body}</table>`;
 afterEach(()=>vi.restoreAllMocks());
 describe('exact episode evidence fences',()=>{
+ it('retains strict episode grounding and the permission boundary on cache hits',async()=>{
+  await runInDurableObject(env.TALK_SESSIONS.getByName('cached-episode-boundary'),async(instance,state)=>{
+   const service=instance as unknown as TalkSession,session=crypto.randomUUID(),expires=Date.now()+60000;
+   const context=TalkContextSchema.parse({});const key=JSON.stringify(['dark',2017,'tv',2,1]);
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context,expires,calls:0,searches:0,grants:[key]}),expires);
+   const cache='evidence:v4:'+JSON.stringify([key,true,context.imdbId,context.viewedRanges,context.completed]);
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)',cache,JSON.stringify([{id:'wiki-episode',title:'Dark',text:plot,url:'https://en.wikipedia.org/wiki/Dark',license:'CC BY-SA'}]),expires);
+   const result=await service.knowledge(session,{title:'Dark',year:2017,kind:'tv',season:2,episode:1,query:'recap'},'Erkläre Dark Staffel 2 Folge 1.');
+   expect(result.cached).toBe(true);expect(result.instruction).toContain('ONLY events expressly stated');expect(result.instruction).toContain('diary/object');expect(result.boundary).toBe('requested title/episode only');
+  });
+ });
+
  it('reuses public revision evidence across sessions and source outages without caching private questions',async()=>{
   const claim=(value:unknown)=>({mainsnak:{datavalue:{value}}});
   const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async u=>{

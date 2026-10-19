@@ -25,12 +25,13 @@ import kotlin.math.sqrt
 
 internal data class TalkLine(val role: String, val text: String, val sources: List<TalkReference> = emptyList())
 internal data class TalkReference(val title: String, val url: String, val license: String)
-internal data class TalkVoiceState(val phase: String = "Ready", val words: String = "ALIFLIX", val level: Float = 0f,
+internal val VOICES=listOf("Aoede","Kore","Puck","Charon")
+internal data class TalkVoiceState(val phase: String = "Ready", val words: String = "ALIFLIX", val level: Float = 0f, val voice:String="Aoede",
     val muted: Boolean = false, val keepHistory: Boolean = false, val lines: List<TalkLine> = emptyList(), val provider: String = "")
 
 /** Remote microphone conversation only. This class never receives episode PCM,
  * subtitle cues, streaming URLs or credentials belonging to a playback source. */
-internal class TalkVoiceSession(private val context: Context, private val scope: CoroutineScope) : AutoCloseable {
+internal class TalkVoiceSession(private val context: Context, private val scope: CoroutineScope, private val restoreHistory:Boolean=true) : AutoCloseable {
     private val prefs = context.getSharedPreferences("aliflix-talk", Context.MODE_PRIVATE)
     private fun savedLines():List<TalkLine> = runCatching {
         if(!prefs.getBoolean("keep-history",false)||prefs.getString("owner","")!=(FirebaseAuth.getInstance().currentUser?.uid?:"guest")) emptyList() else {
@@ -41,7 +42,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             }
         }
     }.getOrDefault(emptyList())
-    private val _state = MutableStateFlow(TalkVoiceState(keepHistory=prefs.getBoolean("keep-history",false),lines=savedLines()))
+    private val _state = MutableStateFlow(TalkVoiceState(keepHistory=restoreHistory&&prefs.getBoolean("keep-history",false),lines=if(restoreHistory)savedLines()else emptyList(),voice=prefs.getString("voice","Aoede")?.takeIf{it in VOICES}?:"Aoede"))
     val state = _state.asStateFlow()
     private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
@@ -72,6 +73,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     @Volatile private var muted = false
     @Volatile private var localVoice = false
     private var ephemeral: JSONObject? = null
+    private var backendSession:String?=null
     private var resumeHandle: String? = null
     @Volatile private var responseLanguage:String?=null
     internal val debugResponseLanguage get()=responseLanguage
@@ -89,22 +91,41 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     @Volatile private var debugRenderedBaseline = 0L
     internal val debugRenderedSamples get() = synchronized(outputLock) { runCatching { (output?.playbackHeadPosition?.toLong()?.and(0xffffffffL) ?: 0L)-debugRenderedBaseline }.getOrDefault(0L) }
     internal val debugResumeAvailable get() = !resumeHandle.isNullOrBlank()
+    internal var debugConnectionIssue=""
+    internal var debugStallRecoveries=0
+    internal var debugKnowledgeRequest=""
     internal val debugVoice get() = ephemeral?.optString("voice").orEmpty()
     internal val debugModel get() = ephemeral?.optString("model").orEmpty()
     private val manager = context.getSystemService(AudioManager::class.java)
     private val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-        .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-        .setOnAudioFocusChangeListener { value -> if (value <= 0) suspendSession() }.build()
+        .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+        .setOnAudioFocusChangeListener { value ->
+            when(value) {
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> runCatching {output?.setVolume(.25f)}
+                AudioManager.AUDIOFOCUS_GAIN -> runCatching {output?.setVolume(1f)}
+                AudioManager.AUDIOFOCUS_LOSS,AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {suspendSession();update{it.copy(phase="Audio unavailable",level=0f)}}
+            }
+        }.build()
     private var oldMode: Int? = null
     private var oldCommunicationDevice: AudioDeviceInfo? = null
     private var routedSpeaker = false
     @Volatile private var outputEnergy = 0.0
     @Volatile private var endOfAudio = false
     @Volatile private var writtenSamples = 0L
+    @Volatile private var primingFrom = 0L
+    @Volatile private var primingBegan = 0L
+    internal val debugUnderruns get()=runCatching{output?.underrunCount?:0}.getOrDefault(0)
+    internal var debugEpisodeEvidence=""
+    internal var debugWebEvidenceCount=0
+    internal var debugRecommendationCount=0
+    @Volatile private var lastOutputAt=0L
+    private var stalledRecoveries=0
+    private var continueAfterReconnect=false
     private var startedAt = 0L
     @Volatile private var awaitingInterrupt = false
     private val outputLock = Any()
-    private var finalText = ""
+    private val knownFilmTopics = linkedSetOf<String>()
+    private fun rememberFilmTopic(title:String){validatedTalkTopic(title)?.let{synchronized(knownFilmTopics){knownFilmTopics.add(it);while(knownFilmTopics.size>16)knownFilmTopics.remove(knownFilmTopics.first())}}}
     private var finalReferences: List<TalkReference> = emptyList()
     private var conversationContext = JSONObject()
 
@@ -116,12 +137,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     suspend fun connect() {
         if (closed || permitted || _state.value.phase == "Connecting") return
         val account=FirebaseAuth.getInstance().currentUser?.uid?:"guest"
-        if(prefs.getString("owner","")!=account){ephemeral=null;resumeHandle=null;responseLanguage=null;prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply();update{it.copy(lines=emptyList())}}
+        if(prefs.getString("owner","")!=account){backendSession=null;ephemeral=null;resumeHandle=null;responseLanguage=null;prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply();update{it.copy(lines=emptyList())}}
         reconnects = 0; permitted = true; startedAt = SystemClock.elapsedRealtime()
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("companionVersion",2).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("companionVersion",3).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
@@ -140,6 +161,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         val identities = (library.likes.value.map { it to "favorite" } + library.myList.value.map { it to "saved" } +
             library.recent.value.map { it to "watched" }).distinctBy { it.first.key }.take(48)
         conversationContext.put("library", JSONArray(identities.map { (item, kind) -> talkLibraryIdentity(item,kind) }))
+        val rejected=com.aliflix.app.recommendation.AskTaste(context).rejected().take(16).mapNotNull{key->val p=key.split(':');p.getOrNull(1)?.toIntOrNull()?.let{id->JSONObject().put("id",id).put("type",p[0])}}
+        conversationContext.put("rejected",JSONArray(rejected))
         conversationContext.put("libraryCounts",JSONObject().put("favorite",library.likes.value.size)
             .put("saved",library.myList.value.size).put("watched",library.recent.value.size))
         if(state.value.keepHistory)conversationContext.put("recentSuggestions",JSONArray(readSuggestions()))
@@ -173,16 +196,25 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         prefs.edit().putString("owner", owner).putString("token", data.getString("token")).putLong("expires", data.getLong("expires")).apply()
         data.getString("token")
     }
-    private suspend fun post(path: String, value: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun post(path: String, value: JSONObject, timeout:Long=12000): JSONObject = withContext(Dispatchers.IO) {
         val token = identity()
         val request = Request.Builder().url(BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/')+"/v1/talk/"+path)
             .header("Authorization","Bearer $token").post(value.toString().toRequestBody("application/json".toMediaType())).build()
-        http.newCall(request).execute().use { response ->
-            if(response.code==401) prefs.edit().remove("token").putLong("expires",0).apply()
-            if(response.code==429) throw IllegalStateException("Limited")
-            require(response.isSuccessful) { "Live unavailable" }
-            val source=requireNotNull(response.body).source();source.request(128001);require(source.buffer.size<=128000)
-            JSONObject(source.buffer.readUtf8())
+        kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+            val toolCall=http.newBuilder().callTimeout(timeout,TimeUnit.MILLISECONDS).build().newCall(request)
+            continuation.invokeOnCancellation{toolCall.cancel()}
+            toolCall.enqueue(object:Callback {
+                override fun onFailure(call:Call,e:java.io.IOException){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
+                override fun onResponse(call:Call,response:Response){response.use {
+                    try {
+                        if(it.code==401)prefs.edit().remove("token").putLong("expires",0).apply()
+                        if(it.code==410&&path=="renew")backendSession=null
+                        check(it.isSuccessful){if(it.code==429)"Limited" else "Live unavailable"}
+                        val source=requireNotNull(it.body).source();source.request(128001);require(source.buffer.size<=128000)
+                        if(continuation.isActive)continuation.resumeWith(Result.success(JSONObject(source.buffer.readUtf8())))
+                    }catch(e:Throwable){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
+                }}
+            })
         }
     }
     private suspend fun openSocket(ticket: Long) {
@@ -191,28 +223,32 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         try {
             if(ephemeral==null || ephemeral!!.optLong("expires")<System.currentTimeMillis()+10000) {
                 responseLanguage?.let {conversationContext.put("responseLanguage",it)}
-                val minted=post("session",JSONObject().put("context",conversationContext))
+                val renewing=backendSession
+                val minted=if(renewing!=null)post("renew",JSONObject().put("session",renewing).apply{responseLanguage?.let{put("responseLanguage",it)}})
+                    else post("session",JSONObject().put("context",conversationContext))
                 if(ticket!=epoch||!permitted)return
-                ephemeral=minted;resumeHandle=null
+                ephemeral=minted;backendSession=minted.getString("session");resumeHandle=null
             }
             val live=checkNotNull(ephemeral)
-            require(live.getString("model")=="gemini-3.8-live" && live.getString("voice")=="Aoede")
+            require(live.getString("model")=="gemini-3.8-live" && live.getString("voice")==state.value.voice)
             if(ticket!=epoch || !permitted) return
             readyWatchdog?.cancel();readyWatchdog=scope.launch { delay(15000);if(ticket==epoch&&state.value.phase in listOf("Connecting","Reconnecting")) disconnected(ticket,false) }
             val address="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained"
+            val requestedHandle=resumeHandle
             ws=http.newWebSocket(Request.Builder().url(address).header("Authorization","Token "+live.getString("token")).build(),object:WebSocketListener(){
                 override fun onOpen(webSocket:WebSocket,response:Response) {
                     if(ticket!=epoch||!permitted){webSocket.close(1000,null);return}
                     val setup=JSONObject(live.getJSONObject("setup").toString())
-                    setup.put("sessionResumption",JSONObject().apply { resumeHandle?.let { put("handle",it) } })
+                    setup.put("sessionResumption",JSONObject().apply { requestedHandle?.let { put("handle",it) } })
                     webSocket.send(JSONObject().put("setup",setup).toString())
                 }
                 override fun onMessage(webSocket:WebSocket,text:String) { if(ticket==epoch&&permitted) {
                     if(text.length>1000000){webSocket.close(1009,null);return}
-                    runCatching { receiveLive(JSONObject(text),ticket) }.onFailure { scope.launch { disconnected(ticket,false) } }
+                    runCatching { receiveLive(JSONObject(text),ticket,!requestedHandle.isNullOrBlank()) }.onFailure { scope.launch { disconnected(ticket,false) } }
                 } }
                 override fun onMessage(webSocket:WebSocket,bytes:okio.ByteString) { onMessage(webSocket,bytes.utf8()) }
                 override fun onFailure(webSocket:WebSocket,t:Throwable,response:Response?) { scope.launch {
+                    if(BuildConfig.DEBUG)debugConnectionIssue="socket:${response?.code?:0}:${t.javaClass.simpleName}"
                     if(ticket==epoch && response?.code in listOf(401,403)){ephemeral=null;resumeHandle=null}
                     disconnected(ticket,response?.code==429)
                 } }
@@ -221,12 +257,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     // a remote graceful close can leave the UI waiting indefinitely.
                     webSocket.close(if(code==1005)1000 else code,null)
                     scope.launch {
-                        if(ticket==epoch&&(reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
+                        if(BuildConfig.DEBUG)debugConnectionIssue="close:$code"
+                        if(ticket==epoch&&(code==1008||reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
                         disconnected(ticket,false)
                     }
                 }
                 override fun onClosed(webSocket:WebSocket,code:Int,reason:String) { scope.launch {
-                    if(ticket==epoch && (reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
+                    if(ticket==epoch && (code==1008||reason.contains("resum",true)||reason.contains("handle",true))){ephemeral=null;resumeHandle=null}
                     disconnected(ticket,false)
                 } }
             })
@@ -243,6 +280,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(limited||++reconnects>3||SystemClock.elapsedRealtime()-startedAt>1200000) {
             suspendSession();update {it.copy(phase=if(limited) "Try again later" else "Reconnect")};return
         }
+        // A consumed one-use token cannot open a fresh session without a valid
+        // resumption handle, especially after its one-minute start window.
+        // Mint the same model/voice again and replay bounded dialogue instead.
+        if(resumeHandle.isNullOrBlank())ephemeral=null
         val next=++epoch
         reconnectJob?.cancel();reconnectJob=scope.launch { delay((250L shl reconnects).coerceAtMost(2000));openSocket(next) }
     }
@@ -250,15 +291,19 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         chunk.startsWith(old)&&old.isNotEmpty()->chunk
         else->old+chunk
     }.takeLast(6000)
-    private fun receiveLive(message:JSONObject,ticket:Long) {
+    private fun receiveLive(message:JSONObject,ticket:Long,resuming:Boolean) {
         if(message.has("setupComplete")) { scope.launch(Dispatchers.Main) {
             if(ticket!=epoch||!permitted)return@launch
             readyWatchdog?.cancel();reconnects=0
-            if(resumeHandle==null&&state.value.lines.isNotEmpty()) {
+            if(continueAfterReconnect){
+                continueAfterReconnect=false
+                scope.launch {delay(750);if(ticket==epoch&&permitted&&!speaking)emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text","The audio connection briefly stalled. Continue the interrupted answer from the last complete sentence, keeping the established language, title and spoiler boundaries. Avoid repeating what was already said."))))).put("turnComplete",true)))}
+            }
+            if(!resuming&&state.value.lines.isNotEmpty()) {
                 val history=JSONArray(state.value.lines.takeLast(12).map { JSONObject().put("role",if(it.role=="assistant") "model" else "user").put("parts",JSONArray().put(JSONObject().put("text",it.text.take(800)))) })
                 emit(JSONObject().put("clientContent",JSONObject().put("turns",history).put("turnComplete",false)))
             }
-            try { startAudio(ticket);debugReadyGeneration=ticket;update{it.copy(phase="Listening",provider="gemini-3.8-live · Aoede")} }
+            try { startAudio(ticket);debugReadyGeneration=ticket;update{it.copy(phase="Listening",provider="gemini-3.8-live · ${it.voice}")} }
             catch(_:Exception){suspendSession();update{it.copy(phase="Audio unavailable")}}
         } }
         message.optJSONObject("sessionResumptionUpdate")?.let { if(it.optBoolean("resumable"))it.optString("newHandle").takeIf(String::isNotBlank)?.let {handle->resumeHandle=handle} }
@@ -275,7 +320,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(BuildConfig.DEBUG)debugToolCalls.merge(call.optString("name"),1){a,b->a+b}
                 if(call.optString("name")=="conversation_language") {
                     val args=call.optJSONObject("args")?:JSONObject()
-                    responseLanguage=chooseTalkResponseLanguage(responseLanguage,args.optString("language"),args.optBoolean("explicitRequest"))
+                    responseLanguage=chooseTalkResponseLanguage(responseLanguage,args.optString("language"),args.optBoolean("explicitRequest"),inputText.ifBlank{lastQuestion})
                     val result=JSONObject().put("language",responseLanguage?:"und").put("locked",responseLanguage!=null).put("scheduling","SILENT")
                         .put("instruction","Use this response language for every answer until the user explicitly requests a different one. Titles and quotations do not change it.")
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(
@@ -303,10 +348,17 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     continue
                 }
                 if(call.optString("name")=="film_knowledge") {
-                    validatedTalkTopic(call.optJSONObject("args")?.optString("title").orEmpty())?.let{topic->update{it.copy(words=topic)}}
+                    if(BuildConfig.DEBUG)debugKnowledgeRequest=call.optJSONObject("args")?.toString().orEmpty()
+                    val title=call.optJSONObject("args")?.optString("title").orEmpty();rememberFilmTopic(title)
+                    validatedTalkTopic(title)?.let{topic->update{it.copy(words=topic)}}
                 }
-                if(call.optString("name") !in setOf("film_knowledge","viewing_context")||tools.size>=2)continue
+                if(call.optString("name") !in setOf("film_knowledge","viewing_context","web_research","recommendations")||tools.size>=2) {
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(JSONObject().put("id",id).put("name",call.optString("name")).put("response",JSONObject().put("unavailable",true).put("retryable",true).put("scheduling","WHEN_IDLE"))))))
+                    continue
+                }
                 update{it.copy(phase=if(speaking)it.phase else "Thinking")}
+                val toolRequestId=java.util.UUID.randomUUID().toString()
+                if(call.optString("name") in setOf("web_research","recommendations")) answerDeadline.awaiting(70000)
                 tools[id]=scope.launch {
                     val result=runCatching {
                         if(call.optString("name")=="viewing_context") {
@@ -325,13 +377,27 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                                 .put("items",JSONArray(items.drop(offset).take(8).map{(m,k)->talkLibraryIdentity(m,k)}))
                                 .put("page",JSONObject().put("collection",collection).put("offset",offset).put("total",items.size)))
                         }
+                        else if(call.optString("name") in setOf("web_research","recommendations")) post(if(call.optString("name")=="web_research")"research" else "recommendations",
+                            JSONObject().put("session",ephemeral!!.getString("session")).put("requestId",toolRequestId).put("request",call.getJSONObject("args")),70000)
                         else post("knowledge",JSONObject().put("session",ephemeral!!.getString("session"))
                             .put("question",(inputText.ifBlank {lastQuestion}).take(1600)).put("request",call.getJSONObject("args")))
                     }
-                        .getOrElse { JSONObject().put("unavailable",true).put("evidence",JSONArray()) }
+                        .getOrElse { error ->
+                            if(error is CancellationException) {
+                                withContext(NonCancellable) {runCatching {post("cancel",JSONObject().put("session",ephemeral?.optString("session")).put("requestId",toolRequestId))}}
+                                throw error
+                            }
+                            JSONObject().put("unavailable",true).put("evidence",JSONArray()).put("instruction","This lookup is unavailable. Do not pretend you browsed or invent facts. Continue naturally with reliable existing knowledge.")
+                        }
                     if(ticket==epoch&&permitted&&id !in cancelledTools) {
+                        if(BuildConfig.DEBUG){
+                            if(call.optString("name")=="film_knowledge")debugEpisodeEvidence=result.optJSONArray("evidence")?.toString().orEmpty()
+                            if(call.optString("name")=="web_research")debugWebEvidenceCount=result.optJSONArray("evidence")?.length()?:0
+                            if(call.optString("name")=="recommendations")debugRecommendationCount=result.optJSONArray("results")?.length()?:0
+                        }
+                        result.optJSONArray("results")?.let{a->for(n in 0 until minOf(8,a.length()))rememberFilmTopic(a.optJSONObject(n)?.optString("title").orEmpty())}
                         val references=result.optJSONArray("evidence")
-                        finalReferences=references?.let {a->(0 until a.length()).map {n->a.getJSONObject(n).let {TalkReference(it.getString("title"),it.getString("url"),it.getString("license"))}}}.orEmpty()
+                        finalReferences=references?.let {a->(0 until a.length()).map {n->a.getJSONObject(n).let {TalkReference(it.getString("title"),it.getString("url"),it.optString("license",it.optString("attribution","Source")))}}}.orEmpty()
                         val response=JSONObject().put("id",id).put("name",call.getString("name")).put("response",result.put("scheduling","WHEN_IDLE"))
                         emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(response))))
                     }
@@ -361,6 +427,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 val data=parts.getJSONObject(i).optJSONObject("inlineData")?:continue
                 if(!data.optString("mimeType").startsWith("audio/pcm"))continue
                 val bytes=Base64.decode(data.getString("data"),Base64.NO_WRAP)
+                if(bytes.isNotEmpty())lastOutputAt=SystemClock.elapsedRealtime()
                 if(bytes.isNotEmpty())answerDeadline.clear()
                 require(bytes.size<=192000&&bytes.size%2==0)
                 val buffer=audio?:continue
@@ -371,7 +438,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     scope.launch {disconnected(ticket,false)};break
                 }
             } }
+            // Native generation completion can precede turnComplete while tools
+            // settle. It is a finished audio stream, never a stalled answer.
+            if(content.optBoolean("generationComplete")){endOfAudio=true;answerDeadline.clear()}
             if(content.optBoolean("turnComplete")) {
+                update{it.copy(words=completedTalkTopic(outputText,it.words,synchronized(knownFilmTopics){knownFilmTopics.toList()}))}
                 debugTurnCompleteAt=SystemClock.elapsedRealtime();endOfAudio=true;assistantLine=-1;outputText="";finalReferences=emptyList()
                 commitQuestion()
                 persistHistory()
@@ -385,9 +456,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }.getOrDefault(emptyList())
     private fun commitQuestion() {
         if(inputText.isBlank())return
+        stalledRecoveries=0
         lastQuestion=inputText;inputText=""
+        explicitRequestedTalkLanguage(lastQuestion)?.let{responseLanguage=it}
         addLine(TalkLine("user",lastQuestion))
-        update{it.copy(words=topicWords(lastQuestion,"",it.words))}
+        val subject=topicWords(lastQuestion,"",state.value.words);rememberFilmTopic(subject)
+        update{it.copy(words=subject)}
     }
     private fun addLine(line:TalkLine){if(line.text.isNotBlank())update{it.copy(lines=(it.lines+line).takeLast(24))}}
     private fun persistHistory(){if(state.value.keepHistory)prefs.edit().putString("history",JSONArray(state.value.lines.takeLast(12).map {JSONObject().put("role",it.role).put("text",it.text.take(1200))}).toString()).apply()}
@@ -403,13 +477,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         capture = record
         echo = if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(record.audioSessionId)?.apply { enabled = true } else null
         noise = if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(record.audioSessionId)?.apply { enabled = true } else null
-        val track = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+        val track = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
             .setAudioFormat(AudioFormat.Builder().setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
-            .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(maxOf(12_000, AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2)).build()
-        output = track; writtenSamples=0;debugRenderedBaseline=0;endOfAudio=false;outputEnergy=0.0;track.play()
+            .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(maxOf(24_000, AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT) * 3)).build()
+        output = track; writtenSamples=0;primingFrom=0;primingBegan=0;debugRenderedBaseline=0;endOfAudio=false;outputEnergy=0.0
         val buffer=AudioBuffer();val queue=buffer.chunks;audio=buffer
         outputJob = scope.launch(Dispatchers.IO) {
-            for ((seq, bytes) in queue) {
+            try {for ((seq, bytes) in queue) {
                 buffer.bytes.addAndGet(-bytes.size)
                 if (seq != sequence || ticket != epoch) continue
                 buffer.writing=true
@@ -427,12 +501,19 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         if (!isActive || ticket != epoch || seq != sequence || awaitingInterrupt) -1
                         else runCatching { track.write(bytes, at, minOf(4800, bytes.size - at), AudioTrack.WRITE_NON_BLOCKING) }.getOrDefault(-1).also { count->if(count>0)writtenSamples+=count/2 }
                     }
-                    if (wrote < 0) break
+                    if (wrote < 0) {if(seq==sequence&&ticket==epoch&&isActive)withContext(Dispatchers.Main){disconnected(ticket,false)};break}
                     if (wrote == 0) { delay(5); continue }
                     at += wrote
+                    if(primingBegan==0L)primingBegan=SystemClock.elapsedRealtime()
+                    // A bounded 120ms reservoir absorbs packet jitter; short
+                    // completed replies start immediately. Playback callbacks
+                    // never wait for network or research work.
+                    if(track.playState!=AudioTrack.PLAYSTATE_PLAYING && (writtenSamples-primingFrom>=2880||endOfAudio))
+                        synchronized(outputLock){if(seq==sequence&&ticket==epoch)runCatching{track.play()}}
                 }
                 } finally {buffer.writing=false}
-            }
+            }}catch(cancelled:CancellationException){throw cancelled}
+            catch(_:Exception){if(ticket==epoch&&permitted)withContext(Dispatchers.Main){disconnected(ticket,false)}}
         }
         record.startRecording()
         captureJob = scope.launch(Dispatchers.IO) {
@@ -445,7 +526,16 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 var sum=0.0;for(i in 0 until count)sum+=samples[i].toDouble()*samples[i]
                 val energy=sqrt(sum/count)/32768.0
                 if(debugFirstAudioAt==0L && writtenSamples>0 && debugRenderedSamples>0)debugFirstAudioAt=SystemClock.elapsedRealtime()
-                if(speaking&&endOfAudio&&!buffer.writing&&queue.isEmpty&&(track.playbackHeadPosition.toLong() and 0xffffffffL)>=writtenSamples){speaking=false;update{it.copy(phase=if(muted) "Muted" else "Listening")}}
+                if(writtenSamples>primingFrom&&track.playState!=AudioTrack.PLAYSTATE_PLAYING&&(endOfAudio||primingBegan>0&&SystemClock.elapsedRealtime()-primingBegan>=120))synchronized(outputLock){runCatching{track.play()}}
+                if(speaking&&endOfAudio&&!buffer.writing&&queue.isEmpty&&(track.playbackHeadPosition.toLong() and 0xffffffffL)>=writtenSamples){
+                    synchronized(outputLock){runCatching{track.pause()};primingFrom=writtenSamples;primingBegan=0}
+                    speaking=false;update{it.copy(phase=if(muted) "Muted" else "Listening")}
+                }
+                if(speaking&&!endOfAudio&&tools.isEmpty()&&!buffer.writing&&queue.isEmpty&&lastOutputAt>0&&SystemClock.elapsedRealtime()-lastOutputAt>5000&&(track.playbackHeadPosition.toLong() and 0xffffffffL)>=writtenSamples){
+                    if(stalledRecoveries++<2){debugStallRecoveries++;continueAfterReconnect=true;withContext(Dispatchers.Main){disconnected(ticket,false)}}
+                    else withContext(Dispatchers.Main){suspendSession();update{it.copy(phase="Reconnect",level=0f)}}
+                    break
+                }
                 update{it.copy(level=((if(speaking)outputEnergy else if(muted)0.0 else energy)*12).toFloat().coerceIn(0f,1f))}
                 if(muted)continue
                 if((ws?.queueSize()?:0)>128000)throw IllegalStateException("Backpressure")
@@ -460,9 +550,20 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun interruptOutput() {
         speaking = false; localVoice = false; outputEnergy = 0.0; endOfAudio = false
         audio?.let{buffer->while(true){val chunk=buffer.chunks.tryReceive().getOrNull()?:break;buffer.bytes.addAndGet(-chunk.second.size)}}
-        synchronized(outputLock) { runCatching { output?.pause(); output?.flush(); writtenSamples = 0; debugRenderedBaseline = 0; output?.play() } }
+        synchronized(outputLock) { runCatching { output?.pause(); output?.flush(); writtenSamples = 0;primingFrom=0;primingBegan=0; debugRenderedBaseline = 0 } }
     }
     internal val debugPlayedSamples get() = writtenSamples
+    fun selectVoice(voice:String) {
+        if(voice !in VOICES||voice==state.value.voice||closed)return
+        val oldSession=ephemeral?.optString("session")
+        suspendSession();ephemeral=null;backendSession=null;resumeHandle=null
+        prefs.edit().putString("voice",voice).apply()
+        update{it.copy(voice=voice,phase="Ready")}
+        // An explicit voice choice creates a fresh constrained token. In-memory
+        // dialogue is carried over; reconnects never select another voice.
+        scope.launch {connect()}
+        if(!oldSession.isNullOrBlank())scope.launch {runCatching{post("close",JSONObject().put("session",oldSession))}}
+    }
     internal fun debugInterrupt(){check(BuildConfig.DEBUG);sequence++;interruptOutput();emit(JSONObject().put("realtimeInput",JSONObject().put("text","Stop speaking.")))}
     internal fun debugReconnect(){check(BuildConfig.DEBUG);update{it.copy(phase="Reconnecting")};cancelSocket(ws)}
     internal suspend fun debugInjectText(text:String){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};inputText=text;commitQuestion();answerDeadline.awaiting();debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)))}
@@ -470,8 +571,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     fun toggleMute(){muted=!muted;if(muted&&captureJob?.isActive==true)emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)));update{it.copy(muted=muted,phase=if(it.phase in listOf("Connecting","Reconnecting"))it.phase else if(muted) "Muted" else if(speaking) "Speaking" else "Listening")}}
     fun setHistory(keep:Boolean){prefs.edit().putBoolean("keep-history",keep).apply();update{it.copy(keepHistory=keep)};if(keep)persistHistory()else prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()}
     fun clearHistory(){
+        synchronized(knownFilmTopics){knownFilmTopics.clear()}
         sequence++;interruptOutput();val session=ephemeral?.optString("session")
-        resumeHandle=null;ephemeral=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
+        resumeHandle=null;ephemeral=null;backendSession=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
         prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply();update{it.copy(lines=emptyList(),words="ALIFLIX")}
         val next=++epoch;readyWatchdog?.cancel();reconnectJob?.cancel();stopAudio();cancelSocket(ws);ws=null
         scope.launch {
@@ -574,7 +676,7 @@ internal fun compactTalkViewedRanges(episodes: List<Pair<Int,Int>>): List<Triple
 internal fun validatedTalkTopic(value:String):String? {
     val text=value.replace(Regex("[\\p{Cc}\\p{Cf}]"),"").trim().take(48)
     val tokens=text.lowercase(Locale.ROOT).split(Regex("[^\\p{L}\\p{N}]+" )).filter{it.isNotBlank()}
-    val filler=setOf("okay","ok","just","yes","no","sure","alright","thanks","thank","you","tell","me","more","continue","please","one","two","sentence","brief","briefly","succinctly","quickly","shortly","in","a","an","the","detail","details","about","that","this","short","answer","weiter","kurz","satz","فقط","باختصار","جملة","hello","hallo","ja","nein","bitte","danke","نعم","حسنا","شكرا")
+    val filler=setOf("earlier","previously","later","again","before","after","okay","ok","just","yes","no","sure","alright","thanks","thank","you","tell","me","more","continue","please","one","two","sentence","brief","briefly","succinctly","quickly","shortly","in","a","an","the","detail","details","about","that","this","short","answer","weiter","kurz","satz","فقط","باختصار","جملة","hello","hallo","ja","nein","bitte","danke","نعم","حسنا","شكرا")
     if(tokens.isEmpty()||tokens.size>6||tokens.all{it in filler}||tokens.distinct().size==1&&tokens.size>1)return null
     return text.uppercase(Locale.ROOT)
 }
@@ -582,8 +684,32 @@ internal fun topicWords(question:String,answer:String,previous:String="ALIFLIX")
     talkUtteranceTopic(question.ifBlank{answer})?:previous
 
 /** A foreign title or a mixed-language phrase cannot unlock an established language. */
-internal fun chooseTalkResponseLanguage(current:String?,requested:String,explicitRequest:Boolean):String? {
-    if(current!=null&&!explicitRequest)return current
+internal fun chooseTalkResponseLanguage(current:String?,requested:String,explicitRequest:Boolean,userText:String):String? {
+    if(current!=null&&(!explicitRequest||!explicitTalkLanguageRequest(userText,requested)))return current
     val code=requested.trim().lowercase(Locale.ROOT)
     return code.takeIf{it.matches(Regex("[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}"))}?:current
 }
+
+/** Resolve a completed referential answer against bounded known film identities.
+ * Streaming words never drive the display; ambiguous multi-title replies retain
+ * the model's established semantic topic. */
+internal fun completedTalkTopic(answer:String,previous:String,knownTitles:Collection<String>):String {
+    fun normalized(v:String)=" "+v.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]+")," ").trim()+" "
+    val text=normalized(answer)
+    return knownTitles.filter{text.contains(normalized(it))}.singleOrNull()?:previous
+}
+
+/** Model tool arguments alone cannot authorize changing an established language. */
+private val talkLanguageNames=mapOf("en" to "english|englisch|الإنجليزية|الانجليزية|الإنجليزي|الانجليزي", "de" to "german|deutsch|الألمانية|الالمانية", "ar" to "arabic|arabisch|العربية|بالعربي|عربي", "es" to "spanish|español|spanisch|الإسبانية", "fr" to "french|français|französisch|الفرنسية", "it" to "italian|italiano|italienisch", "pt" to "portuguese|português", "ja" to "japanese|日本語", "ko" to "korean|한국어", "ru" to "russian|русский", "zh" to "chinese|中文", "tr" to "turkish|türkçe", "hi" to "hindi|हिन्दी", "nl" to "dutch|nederlands", "pl" to "polish|polski")
+private val negatedTalkLanguage=Regex("(?i)(?:do not|don't|never|nicht|لا)\\s+(?:switch|change|speak|answer|wechsel|sprich|تتحدث|تغير)")
+private val talkLanguageRequests=talkLanguageNames.mapValues{(_,language)->
+    val en="(?:answer|respond|reply|speak|talk|continue|switch|use|communicate)(?:\\s+(?:to me|from now on|now|only|please|again)){0,3}\\s+(?:(?:in|to|using)\\s+)?(?:$language)"
+    val de="(?:antworte|antworten|sprich|sprechen|rede|wechsel)(?:\\s+(?:ab jetzt|bitte|nun|nur)){0,3}\\s+(?:auf\\s+)?(?:$language)"
+    val ar="(?:أجب|اجب|تحدث|تكلم|رد)(?:\\s+(?:الآن|الان|من الآن|فقط)){0,3}\\s+(?:ب(?:اللغة)?\\s*)?(?:$language)"
+    val romance="(?:habla|responde|contesta|continúa|cambia|parle|réponds|répondez|parla|rispondi|continua)(?:\\s+(?:solo|ahora|por favor|maintenant)){0,3}\\s+(?:(?:en|in)\\s+)?(?:$language)"
+    Regex("(?i)(?:$en|$de|$ar|$romance)")
+}
+internal fun explicitTalkLanguageRequest(text:String,code:String):Boolean =
+    !negatedTalkLanguage.containsMatchIn(text)&&talkLanguageRequests[code.lowercase(Locale.ROOT).substringBefore('-')]?.containsMatchIn(text)==true
+internal fun explicitRequestedTalkLanguage(text:String):String? =
+    if(negatedTalkLanguage.containsMatchIn(text))null else talkLanguageRequests.entries.firstOrNull{it.value.containsMatchIn(text)}?.key

@@ -139,18 +139,6 @@ internal fun MobileSettingsDialog(
                     }
                     SettingsGroup("DISCOVER") {
                         SettingsToggle(Icons.Rounded.AutoAwesome, "Ask Aliflix", "Personal recommendations in Discover", aiRecommendationsEnabled, "settings-ask-aliflix-switch", onSetAiRecommendationsEnabled)
-                        if (aiRecommendationsEnabled) {
-                        SettingsDivider()
-                        var modelMenu by remember { mutableStateOf(false) }
-                        Box {
-                            SettingsRow(Icons.Rounded.Tune, "Recommendation model", recommendationAiModel.label, onClick = { modelMenu = true }) {
-                                Icon(Icons.Rounded.ExpandMore, "Choose AI recommendation model", tint = AliflixAccentSecondary)
-                            }
-                            SettingsMenu(modelMenu, { modelMenu = false }, RecommendationAiModel.entries, { it.label }, recommendationAiModel) {
-                                modelMenu = false; onSetRecommendationAiModel(it)
-                            }
-                        }
-                        }
                     }
                     SettingsGroup("APP & STORAGE") {
 

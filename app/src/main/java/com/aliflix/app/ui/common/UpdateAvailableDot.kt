@@ -17,7 +17,7 @@ import com.aliflix.app.ui.theme.AliflixAccentSecondary
 @Composable
 internal fun UpdateAvailableDot(visible: Boolean, modifier: Modifier = Modifier) {
     AnimatedVisibility(visible, modifier, enter = fadeIn(), exit = fadeOut()) {
-        Box(Modifier.size(6.dp).background(AliflixAccentSecondary, CircleShape)
+        Box(Modifier.size(8.dp).background(AliflixAccentSecondary, CircleShape)
             .semantics { contentDescription = "Update available" })
     }
 }

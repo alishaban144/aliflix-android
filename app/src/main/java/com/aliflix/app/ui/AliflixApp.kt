@@ -3321,9 +3321,9 @@ internal fun MySpaceScreen(
                 Box {
                     Icon(Icons.Rounded.Settings, "Open Settings", tint = Color.White, modifier = Modifier.size(17.dp))
                     com.aliflix.app.ui.common.UpdateAvailableDot(!BuildConfig.IS_TV && (updateUi.available != null || updateUi.downloadedApk != null),
-                        Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-3).dp))
+                        Modifier.align(Alignment.CenterEnd).offset(x = 10.dp))
                 }
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(if (!BuildConfig.IS_TV && (updateUi.available != null || updateUi.downloadedApk != null)) 14.dp else 6.dp))
                 Text(
                     text = "Settings",
                     fontSize = 12.sp,

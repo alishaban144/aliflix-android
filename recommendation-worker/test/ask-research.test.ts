@@ -217,6 +217,17 @@ describe("unified authenticated research", () => {
       expect(await service.needsRefresh()).toBe(false);
     });
   });
+  it("publishes both complete editorial collections atomically and excludes the previous collection",async()=>{
+    await runInDurableObject(env.ASK_RESEARCH.getByName("atomic-editorial-success"),async(instance,state)=>{
+      const service=instance as unknown as AskResearch;
+      for(const type of ["movie","tv"])state.storage.sql.exec("INSERT INTO ask_cache VALUES(?,?,?)","daily:"+type,JSON.stringify({results:[{tmdbId:7}],publishedAt:123}),Date.now()+86400000);
+      const recommend=vi.spyOn(service,"recommend").mockImplementation(async(_owner,raw)=>({results:Array.from({length:20},(_,i)=>({tmdbId:i+100,mediaType:(raw as any).mediaType})),metrics:{},cached:false}) as any);
+      expect(await service.refreshDaily()).toMatchObject({published:true,counts:[20,20]});
+      const [movie,tv]=await Promise.all([service.daily("movie"),service.daily("tv")]);
+      expect(movie.publishedAt).toBe(tv.publishedAt);expect(movie.publishedAt).toBeGreaterThan(123);
+      for(const call of recommend.mock.calls)expect((call[1] as any).filters.excludedTmdbIds).toEqual([7]);
+    });
+  });
   it("retains both last-good editorial collections on refresh failure", async () => {
     await runInDurableObject(
       env.ASK_RESEARCH.getByName("test-last-good"),

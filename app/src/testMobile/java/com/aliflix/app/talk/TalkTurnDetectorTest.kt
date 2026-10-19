@@ -5,11 +5,24 @@ import org.junit.Test
 
 class TalkTurnDetectorTest {
     @Test fun establishedLanguageChangesOnlyForAnExplicitRequest() {
-        assertEquals("en",chooseTalkResponseLanguage(null,"en",false))
-        assertEquals("en",chooseTalkResponseLanguage("en","de",false))
-        assertEquals("de",chooseTalkResponseLanguage("en","de",true))
-        assertEquals("de",chooseTalkResponseLanguage("de","ar",false))
-        assertEquals("en",chooseTalkResponseLanguage("en","not a code",true))
+        assertEquals("en",chooseTalkResponseLanguage(null,"en",false,"Hello"))
+        assertEquals("en",chooseTalkResponseLanguage("en","de",false,"I love German films"))
+        assertEquals("en",chooseTalkResponseLanguage("en","de",true,"Explain the ending of The Shining"))
+        assertEquals("en",chooseTalkResponseLanguage("en","de",true,"I want to talk about German cinema"))
+        assertEquals("en",chooseTalkResponseLanguage("en","de",true,"Do not answer in German"))
+        assertEquals("ar",chooseTalkResponseLanguage("en","ar",true,"أجب بالعربية الآن"))
+        assertEquals("de",chooseTalkResponseLanguage("en","de",true,"Antworte auf Deutsch"))
+        assertEquals("de",chooseTalkResponseLanguage("de","ar",false,"Arabic cinema"))
+        assertEquals("en",chooseTalkResponseLanguage("en","not a code",true,"Answer in not a code"))
+    }
+    @Test fun explicitLanguageInstructionsDoNotDependOnAnOptionalModelCall(){
+        assertEquals("en",explicitRequestedTalkLanguage("Answer in English again. Which film did we discuss?"))
+        assertEquals("de",explicitRequestedTalkLanguage("Antworte ab jetzt auf Deutsch."))
+        assertEquals("de",explicitRequestedTalkLanguage("Please switch to German"))
+        assertEquals("ar",explicitRequestedTalkLanguage("أجب بالعربية الآن"))
+        assertEquals("es",explicitRequestedTalkLanguage("Responde en español"))
+        assertNull(explicitRequestedTalkLanguage("I want to talk about German cinema"))
+        assertNull(explicitRequestedTalkLanguage("Do not answer in German"))
     }
     @Test fun semanticTopicsRejectAcknowledgementsAndPreserveFollowUpContext() {
         assertNull(validatedTalkTopic("Briefly"));assertNull(validatedTalkTopic("One sentence"));assertNull(validatedTalkTopic("Okay"));assertNull(validatedTalkTopic("just just"))
@@ -68,5 +81,11 @@ class TalkTurnDetectorTest {
         assertEquals(TalkTurnDetector.END,vad.accept(.05,26000,false));assertFalse(vad.active)
         assertFalse(vad.reset());repeat(3){vad.accept(.05,27000+it*20L,false)}
         assertTrue(vad.reset());assertFalse(vad.active)
+    }
+    @Test fun completedReferencesRecoverTheFilmWithoutAdverbLabels(){
+        assertEquals("DARK",topicWords("Answer in English again. In one sentence, which film with a final photograph did we discuss earlier?","","DARK"))
+        assertNull(validatedTalkTopic("Earlier"))
+        assertEquals("THE SHINING",completedTalkTopic("We discussed The Shining (1980).","DARK",listOf("THE SHINING","DARK")))
+        assertEquals("SCI-FI",completedTalkTopic("Inception is more elaborate; Moon is quieter.","SCI-FI",listOf("INCEPTION","MOON")))
     }
 }

@@ -43,6 +43,12 @@ fun AskAliflixScreen(
     onToggleMyList: (Media) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    if (!com.aliflix.app.BuildConfig.IS_TV) {
+        UnifiedAskAliflix(uiState, editorState, onEditorStateChanged, onSubmitRequest, onReset, onBack,
+            onOpenMedia, suggestions, suggestionsLoading, onRetry, onSearchCompanies, listState,
+            myListKeys, onToggleMyList, modifier, onRefine=onRefineRequest)
+        return
+    }
     val tracker = remember { DiscoverTouchTracker() }
     CompositionLocalProvider(LocalAskTouchTracker provides if (com.aliflix.app.BuildConfig.IS_TV) null else tracker) {
     Box(

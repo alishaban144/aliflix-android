@@ -746,7 +746,7 @@ internal fun CatalogDiscoverySpec.askFilterSummary(): String {
     return values.joinToString(" / ").ifBlank { "No filters selected" }
 }
 
-private fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
+internal fun selectedFilterCount(spec: CatalogDiscoverySpec): Int =
     spec.includedGenres.size + spec.excludedGenres.size + spec.productionCompanies.size +
         (if (spec.animationFilter != null) 1 else 0) +
         listOf(

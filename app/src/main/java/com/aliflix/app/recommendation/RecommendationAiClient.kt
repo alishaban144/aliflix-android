@@ -25,9 +25,13 @@ class RecommendationAiClient(
     private val baseUrl: String,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val metadataCacheDir: java.io.File? = null,
+    private val research: AskResearchClient? = null,
+    private val researchLibrary: () -> JSONArray = { JSONArray() },
 ) {
     private val detailsLocks = Array(32) { kotlinx.coroutines.sync.Mutex() }
     suspend fun getRecommendations(request: V3RecommendationRequest): V3RecommendationResponse = withContext(ioDispatcher) {
+        if (!com.aliflix.app.BuildConfig.IS_TV && research != null) return@withContext V3RecommendationResponse.fromJson(
+            research.request("recommendations", request.toJson().put("aiModel", "cloudflare-gpt-oss-120b").put("geminiModel", "cloudflare-gpt-oss-120b").put("library", researchLibrary())))
         V3RecommendationResponse.fromJson(JSONObject(postJson("$baseUrl/v3/recommendations", request.toJson())))
     }
 

@@ -12,6 +12,7 @@ sealed interface AskAliflixRequest {
         val requiredStatus: String? = null,
         val previousText: String? = null,
         val refinementText: String? = null,
+        val filters: CatalogDiscoverySpec? = null,
     ) : AskAliflixRequest
 
     data class Similar(
@@ -20,6 +21,7 @@ sealed interface AskAliflixRequest {
         val anchor: Media? = anchors.firstOrNull(),
         val requiredStatus: String? = null,
         val refinementText: String? = null,
+        val filters: CatalogDiscoverySpec? = null,
     ) : AskAliflixRequest {
         constructor(outputMediaType: MediaType, anchor: Media, requiredStatus: String? = null, refinementText: String? = null) : this(
             outputMediaType = outputMediaType,

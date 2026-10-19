@@ -31,7 +31,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.*
 
-/** Native adaptation of SmoothUI's Pixel Flow Field text sampling and re-forming
+/** Native adaptation of SmoothUI's Pixel Flow Field and Kedhareswer Naidu's
+ * MIT Halftone Wordmark Footer (21st.dev): area-true dots, damped home springs,
+ * displacement warmth and a travelling impulse on semantic context changes.
  * grid. The visible lettering consists entirely of fine circular particles.
  * Shape/raster work happens once off-main, never in the animation draw loop. */
 @Composable
@@ -43,7 +45,7 @@ internal fun TalkDottedTopic(words:String, level:()->Float, motion:Boolean) {
             Typeface.create(Typeface.createFromAsset(assets,"fonts/Nunito.ttf"),600,false)
         }.getOrDefault(Typeface.create("sans-serif",Typeface.NORMAL))}
     }
-    val fontSize=with(density){(if(words.length>26)32.sp else 42.sp).toPx()}
+    val fontSize=with(density){(if(words.length>26)34.sp else 44.sp).toPx()}
     val step=with(density){1.15.dp.toPx()}.coerceAtLeast(1.5f)
     var size by remember {mutableStateOf(IntSize.Zero)}
     val glyph by produceState<TalkDotGlyph?>(null,words,size,fontSize,step,font) {
@@ -53,11 +55,14 @@ internal fun TalkDottedTopic(words:String, level:()->Float, motion:Boolean) {
     }
     val clock=rememberMobileAnimationClock(motion)
     var began by remember(glyph){mutableFloatStateOf(Float.NaN)}
-    LaunchedEffect(glyph){began=clock.value}
+    var current by remember{mutableStateOf<TalkDotGlyph?>(null)}
+    var former by remember{mutableStateOf<TalkDotGlyph?>(null)}
+    LaunchedEffect(glyph){if(glyph!=null){former=if(motion)current else null;current=glyph;began=clock.value}}
     Canvas(Modifier.fillMaxWidth().height(154.dp).onSizeChanged{size=it}
         .testTag("talk-topic").semantics {text=AnnotatedString(words)}) {
         val elapsed=if(!motion)10f else if(began.isNaN())0f else (clock.value-began).coerceAtLeast(0f)
-        glyph?.draw(this,elapsed,level().coerceIn(0f,1f),motion)
+        if(motion&&elapsed<.32f)former?.drawDeparting(this,1f-elapsed/.32f)
+        current?.draw(this,elapsed,level().coerceIn(0f,1f),motion)
     }
 }
 
@@ -65,6 +70,14 @@ internal class TalkDotGlyph(width:Int,height:Int,words:String,fontSize:Float,pri
     private val x:FloatArray
     private val y:FloatArray
     private val coverage:FloatArray
+    private val px:FloatArray
+    private val py:FloatArray
+    private val vx:FloatArray
+    private val vy:FloatArray
+    private var lastTime=0f
+    private var simulated=0f
+    private val impulseOriginX=width*.5f
+    private val impulseOriginY=height*.5f
     private val fixed=Array(16){Path()}
     private val paths=Array(6){Path()}
     private val native=Array(6){paths[it].asAndroidPath()}
@@ -103,17 +116,19 @@ internal class TalkDotGlyph(width:Int,height:Int,words:String,fontSize:Float,pri
             xs[count]=px.toFloat();ys[count]=py.toFloat();weights[count]=alpha;count++
         }
         x=xs.copyOf(count);y=ys.copyOf(count);coverage=weights.copyOf(count)
+        px=x.copyOf();py=y.copyOf();vx=FloatArray(count);vy=FloatArray(count)
         val fixedNative=Array(16){fixed[it].asAndroidPath()}
         for(i in x.indices) {
             val group=(x[i]/width*16).toInt().coerceIn(0,15)
-            fixedNative[group].addCircle(x[i],y[i],step*(.32f+coverage[i]*.055f),android.graphics.Path.Direction.CW)
+            fixedNative[group].addCircle(x[i],y[i],sqrt(coverage[i])*step*.43f,android.graphics.Path.Direction.CW)
         }
     }
     internal val particleCount get()=x.size
+    fun drawDeparting(scope:DrawScope,alpha:Float)=with(scope){for(i in fixed.indices)drawPath(fixed[i],colors[3].copy(alpha=alpha.coerceIn(0f,1f)))}
     fun draw(scope:DrawScope,time:Float,energy:Float,motion:Boolean)=with(scope) {
         // Settled geometry is immutable: HWUI can cache its paths. Only a
         // travelling light changes; thousands of curves are not rebuilt at 60Hz.
-        if(!motion||time>1.1f) {
+        if(!motion||time>1.8f) {
             for(i in fixed.indices) {
                 val light=if(motion)sin(i/16f*PI.toFloat()*2f-time*1.6f)else .5f
                 drawPath(fixed[i],colors[((light+1f)*2.5f).toInt().coerceIn(0,5)])
@@ -121,16 +136,32 @@ internal class TalkDotGlyph(width:Int,height:Int,words:String,fontSize:Float,pri
             return@with
         }
         paths.forEach{it.reset()}
-        val settle=if(motion)(1f-exp(-time*6f)).coerceIn(0f,1f)else 1f
+        // Fixed 60Hz physics keeps the reference's .05 spring / .84 damping
+        // independent of display refresh. Work ends after the short transition;
+        // settled vector paths remain cached for the rest of the conversation.
+        if(time<lastTime){px.indices.forEach{px[it]=x[it];py[it]=y[it];vx[it]=0f;vy[it]=0f};simulated=0f}
+        val until=min(time,lastTime+.05f)
+        while(simulated+1f/60f<=until){
+            simulated+=1f/60f
+            val ring=simulated*900f*step/3f
+            for(i in x.indices){
+                val dx=x[i]-impulseOriginX;val dy=y[i]-impulseOriginY
+                val distance=sqrt(dx*dx+dy*dy)+.001f
+                val band=(1f-abs(distance-ring)/(step*11f)).coerceIn(0f,1f)
+                val force=band*step*1.2f*(1f-simulated/.9f).coerceAtLeast(0f)
+                vx[i]=(vx[i]+dx/distance*force+(x[i]-px[i])*.05f)*.84f
+                vy[i]=(vy[i]+dy/distance*force+(y[i]-py[i])*.05f)*.84f
+                px[i]+=vx[i];py[i]+=vy[i]
+            }
+        }
+        lastTime=time
+        val settle=(time/.2f).coerceIn(0f,1f)
         for(i in x.indices) {
-            val phase=x[i]*.017f+y[i]*.009f
-            val wave=if(motion)sin(phase-time*1.6f)else .5f
-            val tier=((wave+1f)*2.5f).toInt().coerceIn(0,5)
-            val flow=if(motion)step*(.13f+energy*.18f)else 0f
-            val px=x[i]+sin(phase+time*.8f)*flow+sin(i*2.399f)*(1f-settle)*step*12
-            val py=y[i]+cos(phase*.7f+time)*flow+cos(i*2.399f)*(1f-settle)*step*10
-            val radius=step*(.32f+coverage[i]*.055f)*settle
-            if(radius>0f)native[tier].addCircle(px,py,radius,android.graphics.Path.Direction.CW)
+            val displacement=hypot(px[i]-x[i],py[i]-y[i])
+            val warmth=(displacement/(step*8f)).coerceIn(0f,1f)
+            val tier=(2f+warmth*3f).toInt().coerceIn(0,5)
+            val radius=sqrt(coverage[i])*step*.43f*settle
+            if(radius>0f)native[tier].addCircle(px[i],py[i],radius,android.graphics.Path.Direction.CW)
         }
         for(i in paths.indices)drawPath(paths[i],colors[i])
     }

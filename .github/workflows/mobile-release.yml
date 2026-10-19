@@ -39,8 +39,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "264"
-  RELEASE_VERSION_NAME: "3.1.174"
+  RELEASE_VERSION_CODE: "266"
+  RELEASE_VERSION_NAME: "3.1.176"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -265,6 +265,9 @@ jobs:
           echo "Expected certificate SHA256: $EXPECTED_MOBILE_SIGNER_SHA256"
           test "$KEYSTORE_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
+      - name: Verify Ask Aliflix publication readiness
+        run: node .github/scripts/verify-ask-readiness.mjs
+
       - name: Build phone release
         env:
           ALIFLIX_KEYSTORE_FILE: ${{ runner.temp }}/aliflix-release.jks
@@ -378,7 +381,7 @@ jobs:
           import hashlib, json, os
           from pathlib import Path
           apk = Path('aliflix-mobile-compat.apk')
-          bridge = dict(versionCode=263, versionName='3.1.173', minimumSdk=29,
+          bridge = dict(versionCode=265, versionName='3.1.175', minimumSdk=29,
               apkUrl=f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['RELEASE_TAG']}/aliflix-mobile-compat.apk",
               sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), sizeBytes=apk.stat().st_size,
               notes='Update compatibility. ARM64 devices can then install the latest mobile release.')
@@ -392,15 +395,15 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile-only: Talk has a continuous audio-reactive conic glow, attentive gaze with brief glances, a clearer microphone entry icon, and larger rounded fine-dot lettering. Spoken questions and verified title tools update the visual subject without depending solely on optional model calls; formatting requests and acknowledgements preserve the subject.
+            Mobile-only Ask Aliflix now has one Movies/Series composer, up to four Similar anchors, contextual Filters, Running/Ended series choices, and researched daily discovery. White fine-edged actions and larger centered Discover labels retain Aliflix's native visual identity.
 
-            Recommendations read Favorites before My List, resolve library items that lack IMDb IDs, and can page through the actual library on demand. Saved intent and completed viewing remain distinct. With Keep history enabled, recent recommendations can be remembered to reduce repetition. Talk can explain real Aliflix features and current player settings through a read-only app context tool.
+            Text and Talk recommendations share authenticated GPT-OSS 120B planning, Tavily research, exact TMDB validation, licensed narrative evidence and independent Clef-flash ranking. Daily movie/series collections publish atomically and retain last-good results. Favorites, saved titles, actual viewing and explicit feedback remain distinct.
 
-            Gemini 3.8 Live / Aoede and sticky conversation language remain unchanged. No new speech engine or neural model. Bounded cached context, existing quotas and authenticated tokens remain in place; closing/deleting a session prevents in-flight lookups from recreating its context.
+            Talk stays on Gemini 3.8 Live, with Aoede by default and explicit Aoede/Kore/Puck/Charon selection. General research and recommendations run through asynchronous tools. Audio buffering, interruption and same-voice reconnection are hardened. Rounded fine-dot topics, continuous layered voice-reactive light and restrained gaze/blinks refine the native particle experience. Exact episode summaries use revision-attributed, episode-fenced evidence.
 
-            ARM64-only main APK with the existing signed universal compatibility bridge and architecture-aware updater. Original native/model bytes are verified by the workflow. TV is unchanged.
+            ARM64-only main APK, existing release signer and architecture-aware universal compatibility bridge. Original native libraries and models are verified byte-for-byte. TV is unchanged and is neither built nor released.
 
-            Validation: docs/mobile-174-validation.md.
+            Validation and measured limits: docs/mobile-176-validation.md. Design references and native adaptations: docs/ask-176-design-provenance.md.
           files: |
             aliflix-mobile.apk
             update-mobile.json

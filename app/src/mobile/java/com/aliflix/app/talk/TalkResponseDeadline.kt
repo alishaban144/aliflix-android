@@ -14,11 +14,11 @@ internal class TalkResponseDeadline(
 ) {
     private var generation=0L
     private var job:Job?=null
-    @Synchronized fun awaiting() {
+    @Synchronized fun awaiting(timeout:Long=timeoutMillis) {
         val ticket=++generation
         job?.cancel()
         job=scope.launch {
-            delay(timeoutMillis)
+            delay(timeout)
             synchronized(this@TalkResponseDeadline) {if(ticket==generation)onTimeout()}
         }
     }

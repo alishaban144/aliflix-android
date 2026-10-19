@@ -13,7 +13,7 @@ import com.aliflix.app.ui.theme.AliflixMobileTheme
 import kotlinx.coroutines.launch
 
 class TalkVoiceActivity : ComponentActivity() {
-    internal val voice by lazy { TalkVoiceSession(this, lifecycleScope) }
+    internal val voice by lazy { TalkVoiceSession(this, lifecycleScope, restoreHistory=!(com.aliflix.app.BuildConfig.DEBUG&&intent.getBooleanExtra("validationFreshHistory",false))) }
     private val permission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) lifecycleScope.launch { voice.connect() } else voice.permissionDenied()
     }
