@@ -10,6 +10,7 @@ import {
   safeResearchUrl,
   planFilters,
   researchFilters,
+  researchTaste,
 } from "../src/askResearch";
 import { liveSetup, liveInstructions } from "../src/talkProviders";
 import { TalkContextSchema } from "../src/talkEvidence";
@@ -439,4 +440,12 @@ it("stops queuing new inference after the provider's daily allocation is exhaust
    expect(run).toHaveBeenCalledTimes(1);
   }finally{e.AI=original;}
  });
+});
+
+it("keeps Favorites first even after many rejections, with saved intent and playback distinct",()=>{
+ const items=[...Array.from({length:16},(_,i)=>({id:100+i,type:"movie" as const,kind:"dislike" as const})),...Array.from({length:12},(_,i)=>({id:1+i,type:"movie" as const,kind:"favorite" as const})),{id:200,type:"movie" as const,kind:"saved" as const},{id:300,type:"tv" as const,kind:"watched" as const},{id:100,type:"movie" as const,kind:"favorite" as const}];
+ const snapshot=researchTaste(items);expect(snapshot).toHaveLength(8);expect(snapshot[0].kind).toBe("favorite");
+ expect(snapshot.filter(v=>v.kind==="favorite").length).toBeGreaterThanOrEqual(4);
+ expect(snapshot.some(v=>v.kind==="saved")).toBe(true);expect(snapshot.some(v=>v.kind==="watched")).toBe(true);
+ expect(snapshot.filter(v=>v.id===100)).toEqual([{id:100,type:"movie",kind:"dislike"}]);
 });
