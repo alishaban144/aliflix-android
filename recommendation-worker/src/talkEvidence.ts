@@ -49,13 +49,15 @@ export async function wikipediaTitle(q:KnowledgeRequest,signal:AbortSignal):Prom
  for(const page of pages) {
   const item=entities.entities?.[page.pageprops?.wikibase_item];if(!item)continue;
   const values=(key:string)=>(item.claims?.[key]||[]).map((v:any)=>v.mainsnak?.datavalue?.value);
-  const year=values('P577').map((v:any)=>Number(v?.time?.slice(1,5))).filter((v:number)=>v>1800);
+  // Series premiere dates use start time (P580), not film publication (P577).
+  const year=[...values('P577'),...(q.kind==='tv'?values('P580'):[])].map((v:any)=>Number(v?.time?.slice(1,5))).filter((v:number)=>v>1800);
   const imdb=values('P345').find((v:unknown)=>typeof v==='string'&&/^tt\d+$/.test(v));
   const exact=normalize(page.title)===normalize(q.title);
   if(!exact||q.year&&!year.includes(q.year))continue;
   // Reject a remake/television adaptation that happens to share a title.
   const types=values('P31').map((v:any)=>v?.id);
   if(q.kind==='movie'&&types.some((v:string)=>['Q5398426','Q581714','Q15416'].includes(v)))continue;
+  if(q.kind==='tv'&&types.includes('Q11424'))continue;
   return {title:page.title,imdbId:imdb,pageid:page.pageid,year:q.year||year[0]};
  }
 }

@@ -1,10 +1,17 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {wikipediaEpisodeEvidence,wikipediaEpisodeText} from '../src/talkEvidence';
+import {wikipediaEpisodeEvidence,wikipediaEpisodeText,wikipediaTitle} from '../src/talkEvidence';
 const plot='Jonas explores the post-apocalyptic power plant in 2053. He discovers a mysterious black substance.';
 const rows=(n:number,text:string)=>`<tr class="vevent module-episode-list-row"><th>${n+10}</th><td>${n}</td><td class="summary">Title</td></tr><tr class="expand-child"><td class="description"><p>${text}</p></td></tr>`;
 const table=(body:string)=>`<table class="wikitable wikiepisodetable">${body}</table>`;
 afterEach(()=>vi.restoreAllMocks());
 describe('exact episode evidence fences',()=>{
+ it('matches a series premiere using P580 while rejecting the wrong year',async()=>{
+  vi.spyOn(globalThis,'fetch').mockImplementation(async u=>String(u).includes('generator=search')
+   ?Response.json({query:{pages:{1:{pageid:1,title:'Dark (TV series)',pageprops:{wikibase_item:'Q28443710'}}}}})
+   :Response.json({entities:{Q28443710:{claims:{P345:[{mainsnak:{datavalue:{value:'tt5753856'}}}],P580:[{mainsnak:{datavalue:{value:{time:'+2017-12-01T00:00:00Z'}}}}],P31:[{mainsnak:{datavalue:{value:{id:'Q5398426'}}}}]}}}}));
+  expect(await wikipediaTitle({title:'Dark',year:2017,kind:'tv',query:''},new AbortController().signal)).toMatchObject({imdbId:'tt5753856',year:2017});
+  expect(await wikipediaTitle({title:'Dark',year:2019,kind:'tv',query:''},new AbortController().signal)).toBeUndefined();
+ });
  it('extracts only the selected episode and rejects combined or ambiguous rows',()=>{
   const html=table(rows(1,plot)+rows(2,'FUTURE EVENT MUST NEVER REACH THE MODEL.'));
   expect(wikipediaEpisodeText(html,1)).toBe(plot);

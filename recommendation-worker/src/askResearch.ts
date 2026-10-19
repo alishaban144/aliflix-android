@@ -1332,6 +1332,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
             pageSize: 24,
           }),
       );
+      console.log(JSON.stringify({event:"ask_daily_evaluated",counts:collections.map(c=>c.results.length),metrics:collections.map(c=>c.metrics)}));
       if (collections.some((c) => c.results.length < 20))
         throw new ServiceError(
           "EDITORIAL_INCOMPLETE",
@@ -1353,7 +1354,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         published: true,
         counts: collections.map((c) => c.results.length),
       };
-    });
+    }).catch(error=>{console.warn("ask_daily_failed",error instanceof Error?error.message.slice(0,180):"unknown");throw wireFailure(error);});
   }
   async needsRefresh() {
     const last = this.read<number>("daily:attempt") || 0;
