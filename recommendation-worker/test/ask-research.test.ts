@@ -428,3 +428,15 @@ it("rejects malformed individual identities without discarding valid researched 
  expect(parsed.candidates.map(p=>p.title)).toEqual(["Arrival","Dark"]);
  expect(()=>PicksSchema.parse({candidates:Array(65).fill({title:"A",year:2023})})).toThrow();
 });
+
+it("stops queuing new inference after the provider's daily allocation is exhausted",async()=>{
+ await runInDurableObject(env.ASK_RESEARCH.getByName("provider-allocation-stop"),async(instance)=>{
+  const service=instance as unknown as AskResearch;const e=(instance as any).env;const original=e.AI;
+  const run=vi.fn(async()=>{throw Error("4006: daily free allocation exhausted");});
+  e.AI={run};try{
+   await expect(service.recommend("a",request({query:"first identity request"}))).rejects.toThrow("ASK_SERVICE:AI_QUOTA:429");
+   await expect(service.recommend("b",request({query:"different identity request"}))).rejects.toThrow("ASK_SERVICE:AI_QUOTA:429");
+   expect(run).toHaveBeenCalledTimes(1);
+  }finally{e.AI=original;}
+ });
+});

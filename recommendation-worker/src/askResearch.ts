@@ -779,6 +779,8 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         AI: binding
           ? {
               run: async (model: string, input: Record<string, unknown>) => {
+                const providerDay='quota:provider-blocked:'+new Date().toISOString().slice(0,10);
+                if(this.read<boolean>(providerDay))throw new ServiceError('AI_QUOTA','Daily research limit reached',429,false);
                 const inputRate = model.includes("clef") ? 3455 : 31818,
                   outputRate = model.includes("clef") ? 0 : 68182;
                 const upper = Math.ceil(
@@ -802,7 +804,13 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                     true,
                   );
                 this.put(ledger, held + upper, 2 * DAY);
-                const inference = binding.run(model, input);
+                const inference = binding.run(model, input).catch(error=>{
+                  if(/\b4006\b|daily free allocation/i.test(error instanceof Error?error.message:'')){
+                    this.put(providerDay,true,2*DAY);
+                    throw new ServiceError('AI_QUOTA','Daily research limit reached',429,false);
+                  }
+                  throw error;
+                });
                 // Settlement belongs to the inference, not the request deadline: a late
                 // upstream response still replaces its conservative reservation.
                 const settled = inference.then((result) => {
@@ -1344,11 +1352,12 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
           true,
         );
       // Both collections publish together only after the complete protocol succeeds.
+      const publishedAt=Date.now();
       this.ctx.storage.transactionSync(() => {
         collections.forEach((c, i) =>
           this.put(
             "daily:" + (i ? "tv" : "movie"),
-            { results: c.results, publishedAt: Date.now(), metrics: c.metrics },
+            { results: c.results, publishedAt, metrics: c.metrics },
             400 * DAY,
           ),
         );

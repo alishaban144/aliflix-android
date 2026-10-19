@@ -123,6 +123,12 @@ describe('Cloudflare Workers AI recommendations', () => {
     expect(retryInput.temperature).toBeLessThanOrEqual(0.1);
   });
 
+  it('reports free-allocation exhaustion without retrying or changing models',async()=>{
+    const run=vi.fn(async(_model:string,_input:unknown)=>{throw Error('4006: you have used up your daily free allocation of 10,000 neurons');});
+    await expect(recommendDescribeTitlesWithCloudflare({AI:{run}} as any,'identity films','movie',{},[],24)).rejects.toMatchObject({code:'AI_QUOTA',status:429,retryable:false});
+    expect(run).toHaveBeenCalledTimes(1);expect(run.mock.calls[0][0]).toBe(CLOUDFLARE_MODEL);
+  });
+
   it('fails clearly if the Workers AI binding is absent', async () => {
     await expect(recommendDescribeTitlesWithCloudflare(
       {} as any,

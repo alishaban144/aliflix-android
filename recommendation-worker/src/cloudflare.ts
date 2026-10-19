@@ -212,6 +212,9 @@ export async function cloudflareStructuredContent<T>(
         throw error;
       }
       const message = error instanceof Error ? error.message : String(error);
+      if (/\b4006\b|daily free allocation/i.test(message)) {
+        throw new ServiceError('AI_QUOTA', 'Daily research limit reached', 429, false);
+      }
       const retryable = /rate|limit|capacity|busy|tempor|timeout|overload|unavailable|internal/i.test(message);
       console.warn(JSON.stringify({
         event: 'cloudflare_ai_request_failed',
