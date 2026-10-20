@@ -105,15 +105,10 @@ internal fun UnifiedAskAliflix(
         dailyLoading=true;dailyError=false
         if(dailyProvider!=null){daily=dailyProvider(type);dailyLoading=false;return@LaunchedEffect}
         val file=java.io.File(context.cacheDir,"ask-daily-${type.routeName}.json")
-        fun parse(json:JSONObject):List<Media> {
-            val a=json.optJSONArray("results")?:return emptyList()
-            return (0 until a.length()).mapNotNull { n->runCatching {
-                val v=V3RecommendationResult.fromJson(a.getJSONObject(n))
-                require(v.tmdbId>0&&v.title.isNotBlank()&&MediaType.from(v.mediaType)==type)
-                Media(v.tmdbId,type,v.title,posterPath=v.posterPath,backdropPath=v.backdropPath,year=v.releaseDate?.take(4).orEmpty(),rating=v.tmdbRating?:0.0,genres=v.genres)
-            }.getOrNull() }.distinctBy{it.key}.take(32)
-        }
-        daily=withContext(Dispatchers.IO){runCatching{android.util.AtomicFile(file).openRead().bufferedReader().use{parse(JSONObject(it.readText()))}}.getOrDefault(emptyList())}
+        fun parse(json:JSONObject)=parseAskDailySuggestions(json,type)
+        daily=withContext(Dispatchers.IO){retainedAskDailySuggestions(type,
+            {android.util.AtomicFile(file).openRead().bufferedReader().use{it.readText()}},
+            {context.assets.open("ask-daily-fallback.json").bufferedReader().use{it.readText()}})}
         try {
             for(attempt in 0 until 18) {
                 val json=research.request("daily?type=${type.routeName}");val items=parse(json)
@@ -203,7 +198,7 @@ internal fun UnifiedAskAliflix(
                 }
             }
             LazyColumn(state=listState,modifier=Modifier.weight(1f).fillMaxWidth().testTag("ask-content"),contentPadding=PaddingValues(start=20.dp,end=20.dp,top=20.dp,bottom=100.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                if(state is AskAliflixUiState.Editing) {
+                if(state is AskAliflixUiState.Editing||results.isEmpty()) {
                     item("daily"){AnimatedContent(type to daily,transitionSpec={fadeIn(tween(if(motion)220 else 0)) togetherWith fadeOut(tween(if(motion)120 else 0))},label="ask-daily-type"){ (_, collection)->
                         if(collection.isNotEmpty())LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp),modifier=Modifier.fillMaxWidth().testTag("ask-daily")){
                             items(collection,key={it.key}){m->Column(Modifier.width(112.dp).clip(RoundedCornerShape(16.dp)).clickable{onOpen(m)}){AskAliflixPoster(m,Modifier.width(112.dp).height(168.dp),cornerRadius=16.dp);Text(m.title,Modifier.padding(top=8.dp),color=AliflixContentPrimary,fontSize=13.sp,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis);Text(m.year,Modifier.padding(top=3.dp),color=AliflixContentSecondary,fontSize=11.sp)}}
@@ -212,7 +207,7 @@ internal fun UnifiedAskAliflix(
                         else if(dailyError)AskAction("Retry",Icons.Rounded.Refresh,false,Modifier.fillMaxWidth()){dailyRetry++}
                     }}
                 }
-                if(busy)item("progress"){AskResearchProgress(Modifier.fillMaxWidth().height(140.dp),motion)}
+                if(busy)item("progress"){AskResearchProgress(Modifier.fillMaxWidth().height(48.dp),motion)}
                 if(resultState?.refineError!=null)item("refine-error"){AskAction("Retry refinement",Icons.Rounded.Refresh,false,Modifier.fillMaxWidth()){onRefine(sentDraft)}}
                 items(results,key={it.media.key}){item->Column(Modifier.animateItem()) {
                     MobileAskResultCard(item,{onOpen(item.media)},item.media.key in myListKeys,{onToggleMyList(item.media)},editorial=false)

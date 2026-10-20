@@ -1079,6 +1079,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         plan.hardFilters,
         context,
       );
+      console.log(JSON.stringify({event:'ask_phase',phase:'intent',elapsedMs:Date.now()-started}));
       const research = await this.web(
         {
           query: plan.search,
@@ -1091,6 +1092,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       );
       usage.tavilyCredits += research.credits;
       usage.researchCached = research.cached;
+      console.log(JSON.stringify({event:'ask_phase',phase:'research',elapsedMs:Date.now()-started}));
       const evidence = [...research.evidence];
       const results: RecommendationResult[] = [],
         seen = new Set(
@@ -1112,6 +1114,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         Object.assign(c,p.media,{detailsLoaded:true,hardFiltersVerified:true});return passesHardFilters(c,filters);
       });
       const reusableByTitle=new Map(reusable.map(p=>[normalize(p.title)+':'+p.media.releaseDate?.slice(0,4),p]));
+      console.log(JSON.stringify({event:'ask_phase',phase:'pool',eligible:reusable.length,elapsedMs:Date.now()-started}));
       const generatedTitles: string[] = [];
       const franchises = new Map<number, number>();
       for (
@@ -1120,7 +1123,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         pass++
       ) {
         remaining(signal);
-        const reusePass=!editorial&&pass===0&&reusable.length>=24;
+        const reusePass=!editorial&&pass===0&&reusable.length>=20;
         if(!reusePass){this.reserve("ai");usage.gptCalls++;}
         const generated = reusePass?{candidates:reusable.slice(0,64).map(p=>({title:p.title,year:Number(p.media.releaseDate?.slice(0,4)),evidence:[] as number[],reason:''}))}:PicksSchema.parse(
           await cloudflareStructuredContent(

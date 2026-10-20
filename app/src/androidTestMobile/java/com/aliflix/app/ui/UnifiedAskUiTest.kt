@@ -20,6 +20,19 @@ class UnifiedAskUiTest {
   compose.onNodeWithText("Daily limit").assertIsDisplayed()
   compose.onNodeWithText("Retry",useUnmergedTree=true).assertDoesNotExist()
  }
+ @Test fun quotaErrorKeepsBrowseSuggestionsVisible(){
+  val movie=Media(27205,MediaType.MOVIE,"Inception",year="2010")
+  compose.setContent{AliflixMobileTheme{UnifiedAskAliflix(AskAliflixUiState.Error("query","Daily limit"),AskAliflixEditorState(),{},{},{},{},{},emptyList(),false,{}, {emptyList()},rememberLazyListState(),emptySet(),{},Modifier,dailyProvider={listOf(movie)})}}
+  compose.onNodeWithTag("ask-daily").assertIsDisplayed()
+  compose.onNodeWithText("Daily limit").assertIsDisplayed()
+  compose.onNodeWithText("Retry",useUnmergedTree=true).assertDoesNotExist()
+ }
+ @Test fun researchDoesNotReplacePopulatedSuggestionsWithAnEmptyLoader(){
+  val movie=Media(27205,MediaType.MOVIE,"Inception",year="2010")
+  compose.setContent{AliflixMobileTheme{UnifiedAskAliflix(AskAliflixUiState.Searching("identity"),AskAliflixEditorState(),{},{},{},{},{},emptyList(),false,{}, {emptyList()},rememberLazyListState(),emptySet(),{},Modifier,dailyProvider={listOf(movie)})}}
+  compose.onNodeWithTag("ask-daily").assertIsDisplayed()
+  compose.onNodeWithText("Inception").assertIsDisplayed()
+ }
  @Test fun composerAnchorsFiltersAndMediaSelectionShareOneScreen(){
   var editor by mutableStateOf(AskAliflixEditorState())
   var submitted:AskAliflixRequest?=null
