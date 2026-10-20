@@ -482,6 +482,13 @@ describe("unified authenticated research", () => {
           const planner=ai.mock.calls.find(c=>!c[0].includes('clef'))![1];
           expect(JSON.parse(planner.messages.find((m:any)=>m.role==='user').content).mode).toBe('similar');
           expect(ai.mock.calls.filter(c=>c[0].includes('clef')).every(c=>JSON.parse(c[1].state).mode==='similar')).toBe(true);
+          const previous=ai.getMockImplementation()!;
+          ai.mockImplementation(async(model:string,input:any)=>model.includes('clef')?previous(model,input):{
+            response:JSON.stringify({intent:'Memory and identity',search:'memory identity film list',hardFilters:{},candidates:titles.slice(0,24).map((p,i)=>({...p,title:'Film '+(i+30)}))})
+          });
+          const combined=await (instance as unknown as AskResearch).recommend('user',request({query:'Combined intent and candidate hypotheses'}));
+          expect(combined.results).toHaveLength(24);
+          expect(combined.metrics).toMatchObject({gptCalls:1,generated:24});
 
         } finally {
           Object.assign(e, original);
