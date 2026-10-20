@@ -84,6 +84,7 @@ private fun JSONArray?.objects(): List<JSONObject> =
 /** Uses AniKuro's public JSON catalogue over HTTPS, then hands HLS/MP4 to Media3.
  * No WebView, browser video, local history, progress, or account state owns native playback. */
 internal class AniKuroNativeCatalog(private val activity: ComponentActivity) {
+    private val originFailures=java.util.concurrent.atomic.AtomicInteger(0)
 
     suspend fun resolve(
         selection: PlaybackSelection, positionMs: Long, excluded: Set<String>, preferred: String?,
@@ -155,8 +156,17 @@ internal class AniKuroNativeCatalog(private val activity: ComponentActivity) {
     }
 
     private suspend fun fetch(path: String): JSONObject? = withContext(Dispatchers.IO) {
-        try { JSONObject(String(AnimeCatalogueHttp.get(BASE.trimEnd('/') + path, USER_AGENT, BASE).bytes, Charsets.UTF_8)) }
-        catch (error: Exception) { currentCoroutineContext().ensureActive(); null }
+        // All subproviders share this origin. Two transport failures indicate
+        // an origin outage, not eleven independent missing episodes. A new
+        // resolver retries normally; no persistent denial or account changes.
+        if(originFailures.get()>=2)return@withContext null
+        try { withTimeout(HTTP_TIMEOUT_MS.toLong()) {
+            JSONObject(String(AnimeCatalogueHttp.get(BASE.trimEnd('/') + path, USER_AGENT, BASE).bytes, Charsets.UTF_8))
+        } } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            if(anikuroOriginFailure(error))originFailures.incrementAndGet()
+            null
+        }
     }
 
     private companion object {
@@ -174,3 +184,6 @@ internal class AniKuroNativeCatalog(private val activity: ComponentActivity) {
             "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
     }
 }
+
+internal fun anikuroOriginFailure(error:Exception):Boolean = error is kotlinx.coroutines.TimeoutCancellationException ||
+    error is java.net.SocketTimeoutException || error is java.net.UnknownHostException || error is java.net.ConnectException

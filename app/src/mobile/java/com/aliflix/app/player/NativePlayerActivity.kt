@@ -1294,7 +1294,10 @@ class NativePlayerActivity : FragmentActivity() {
                 NativePlaybackService.playbackFailure?.let { throw it }
                 if (controller != null && NativePlaybackService.playbackReady &&
                     (NativePlaybackService.renderedStreamUrl == url || ui.external)) {
-                    check(NativePlaybackService.hasSelectedAudio || ui.external) { "The stream has no supported audio track" }
+                    check(ui.external || NativePlaybackService.hasSelectedAudio ||
+                        controller?.currentTracks?.groups?.none { it.type == C.TRACK_TYPE_AUDIO } == true) {
+                        "The stream has no supported audio track"
+                    }
                     return@withTimeout
                 }
             }

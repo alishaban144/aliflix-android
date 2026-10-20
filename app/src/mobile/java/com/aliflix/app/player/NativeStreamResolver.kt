@@ -32,7 +32,7 @@ internal fun <T> selectNativeServer(servers: List<T>, preferredServer: String?, 
         return servers.firstOrNull { label(it) == preferredServer && label(it) !in excluded }
             ?: throw IllegalStateException("Server '$preferredServer' is unavailable for this episode. Retry this episode.")
     }
-    return preferredServer?.let { preferred -> servers.firstOrNull { label(it).equals(preferred, ignoreCase = true) } }
+    return preferredServer?.let { preferred -> servers.firstOrNull { label(it) !in excluded && label(it).equals(preferred, ignoreCase = true) } }
         ?: servers.firstOrNull { label(it) !in excluded }
 }
 
@@ -123,15 +123,17 @@ internal class NativeStreamResolver(
         if (embeds.isNotEmpty()) onServers(embeds.map { it.first })
         val history = activity.getSharedPreferences("native-resolver-performance", android.content.Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
-        val candidates = embeds.filter { it.first !in excluded }.sortedBy { (name, _) ->
+        val candidates = embeds.filter { it.first !in excluded }.sortedWith(compareBy<Pair<String,String>> {
+            if(it.first.equals(preferredServer,ignoreCase=true))0 else 1
+        }.thenBy { (name, _) ->
             val key = "${selection.source.identity}:$name"
             if (now - history.getLong("$key:at", 0) < 30 * 60_000) history.getLong("$key:ms", 5_000) else 5_000
-        }
+        })
         if (strictPreferredServer && (catalogueProvider || embeds.any { it.first == preferredServer })) {
             selectNativeServer(embeds, preferredServer, excluded, true) { it.first }
         }
         if (embeds.isNotEmpty() && candidates.isEmpty()) throw NoNativeServersException()
-        if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, strictPreferredServer, onServer).also { close(); if (validateSingle) StartupStreamCache.awaitPlayable(activity, it) }
+        if (strictPreferredServer || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, strictPreferredServer, onServer).also { close(); if (validateSingle) StartupStreamCache.awaitPlayable(activity, it) }
         val winner = try { firstSuccessful(candidates.map { (name, _) -> suspend {
             val child = NativeStreamResolver(activity, progress, host)
             children.add(child)

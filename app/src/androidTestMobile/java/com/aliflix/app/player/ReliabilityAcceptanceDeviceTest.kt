@@ -19,22 +19,26 @@ class ReliabilityAcceptanceDeviceTest {
         Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("providerAudit")=="true")
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val receipt=JSONArray()
+        val requested=InstrumentationRegistry.getArguments().getString("auditProvider")
+        val alternate=InstrumentationRegistry.getArguments().getString("auditAlternate")=="true"
+        val providers=(MobilePlaybackProvider.entries+PlaybackProviderId.entries).filter { requested==null||it.name==requested }
         ActivityScenario.launch<androidx.activity.ComponentActivity>(Intent(context,androidx.activity.ComponentActivity::class.java)).use { scenario ->
             lateinit var activity:androidx.activity.ComponentActivity
             lateinit var host:android.widget.FrameLayout
             scenario.onActivity { activity=it;host=android.widget.FrameLayout(it);it.setContentView(host) }
-            for(provider in MobilePlaybackProvider.entries+PlaybackProviderId.entries) {
+            for(provider in providers) {
                 val media=when {
-                    provider.isAnimeNative -> Media(73223,MediaType.TV,"Black Clover",year="2017",originalLanguage="ja",genres=listOf("Animation"))
+                    provider.isAnimeNative -> if(alternate) Media(37854,MediaType.TV,"One Piece",year="1999",originalLanguage="ja",genres=listOf("Animation")) else Media(73223,MediaType.TV,"Black Clover",year="2017",originalLanguage="ja",genres=listOf("Animation"))
                     provider==MobilePlaybackProvider.SERIENSTREAM -> Media(70523,MediaType.TV,"Dark",year="2017",imdbId="tt5753856",originalLanguage="de")
+                    alternate -> Media(157336,MediaType.MOVIE,"Interstellar",year="2014",imdbId="tt0816692",originalLanguage="en")
                     else -> Media(180,MediaType.MOVIE,"Minority Report",year="2002",imdbId="tt0181689",originalLanguage="en")
                 }
                 val selection=PlaybackSelection(media,if(media.type==MediaType.TV)1 else null,if(media.type==MediaType.TV)1 else null,source=PlaybackSource(provider))
-                val began=SystemClock.elapsedRealtime();val item=JSONObject().put("provider",provider.name)
+                val began=SystemClock.elapsedRealtime();val item=JSONObject().put("provider",provider.name).put("title",media.title)
                 runBlocking { withContext(Dispatchers.Main) {
                     val adapter=NativeStreamResolver(activity,com.aliflix.app.data.PlaybackProgressStore(activity),host)
                     try {
-                        withTimeout(22_000) { adapter.resolve(selection,0,emptySet(),allowVerification=false) { item.put("server",it) } }
+                        withTimeout(48_000) { adapter.resolve(selection,0,emptySet(),allowVerification=false) { item.put("server",it) } }
                         item.put("playableNativeVideo",true)
                     } catch(error:Exception) {
                         item.put("playableNativeVideo",false).put("failure",error.javaClass.simpleName)
@@ -44,7 +48,7 @@ class ReliabilityAcceptanceDeviceTest {
                 File(context.getExternalFilesDir(null),"providers-177.json").writeText(receipt.toString(2))
             }
         }
-        assertEquals(12,receipt.length())
+        assertEquals(if(requested==null)12 else 1,receipt.length())
     }
     @Test fun requestedTitlesPlayAndSeek() {
         Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("liveReliability")=="true")

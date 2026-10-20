@@ -26,10 +26,14 @@ class RequestedMetadataDeviceTest {
                 val details=api.getTitleDetails(media.type.routeName,media.id)
                 val identified=media.copy(imdbId=details.imdbId)
                 val rating=withTimeout(25000) { repo.ratingFor(identified) }
-                val rt=RottenTomatoesClient().loadRating(identified)
+                val rt=RottenTomatoesClient().loadRating(identified.copy(year=rating.originalReleaseYear?.toString()?:identified.year))
                 rows.put(JSONObject().put("title",media.title).put("imdbId",identified.imdbId).put("imdb",rating.rating).put("imdbState",rating.state.name).put("rt",rt.rating).put("rtState",rt.state.name))
                 File(context.getExternalFilesDir(null),"metadata-177.json").writeText(rows.toString(2))
-                assertTrue("IMDb ${media.title}: ${rating.state}",rating.rating!=null&&rating.rating>0)
+                if(media.id==86328) {
+                    assertNull("The 2011 web shorts must not borrow the 2022 TV score",rating.rating)
+                    assertNotEquals("tt14932528",rating.identity.imdbId)
+                } else assertTrue("IMDb ${media.title}: ${rating.state}",rating.rating!=null&&rating.rating>0)
+                if(media.id==67415)assertEquals(RatingSourceState.NOT_RATED,rt.state)
             }
             val episodes=MobileEpisodeRepository(context,api).episodes(86328,1)
             assertEquals(6,episodes.size);assertEquals("Creativity",episodes.first().title)

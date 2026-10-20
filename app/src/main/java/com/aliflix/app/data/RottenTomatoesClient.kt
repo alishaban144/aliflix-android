@@ -688,6 +688,11 @@ class RottenTomatoesClient internal constructor(
         }
         add(yearInTitlePattern.find(doc.title())?.groupValues?.getOrNull(1)?.toIntOrNull())
         doc.selectFirst("[slot=releaseYear], [data-qa=release-year]")?.text()?.take(4)?.toIntOrNull()?.let(::add)
+        // Current title headers publish the year as an exact metadata prop,
+        // including unrated shorts that have no JSON-LD release date.
+        if (!BuildConfig.IS_TV) doc.select("media-hero [slot=metadata-prop]").forEach {
+            it.text().trim().takeIf { value -> value.matches(Regex("[0-9]{4}")) }?.toIntOrNull()?.let(::add)
+        }
         SLUG_YEAR_PATTERN.findAll(canonical.ifBlank { doc.location() }).forEach { match ->
             add(match.groupValues.getOrNull(1)?.toIntOrNull())
         }

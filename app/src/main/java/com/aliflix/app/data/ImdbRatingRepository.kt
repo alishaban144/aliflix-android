@@ -32,6 +32,7 @@ data class ImdbRatingSnapshot(
     val voteCount: Int?,
     val state: RatingSourceState,
     val fetchedAtMillis: Long = System.currentTimeMillis(),
+    val originalReleaseYear: Int? = null,
 )
 
 data class ImdbEpisodeRatingSnapshot(
@@ -392,6 +393,7 @@ class DefaultImdbRatingRepository(
                 RatingSourceState.VERIFIED
             },
             fetchedAtMillis = nowMillis(),
+            originalReleaseYear = title.optJSONObject("releaseYear")?.optInt("year")?.takeIf { it > 0 && identity.year != null && it != identity.year },
         )
     }
 
@@ -471,7 +473,8 @@ class DefaultImdbRatingRepository(
             val rating = aggregate.optDouble("ratingValue").takeIf { it in .1..10.0 } ?: continue
             return ImdbRatingSnapshot(identity, rating,
                 aggregate.optInt("ratingCount").takeIf { aggregate.has("ratingCount") && it >= 0 },
-                RatingSourceState.VERIFIED, fetchedAtMillis)
+                RatingSourceState.VERIFIED, fetchedAtMillis,
+                json.optString("datePublished").take(4).toIntOrNull()?.takeIf { identity.year!=null&&it!=identity.year })
         }
         // Only the primary title node, never aggregateRating from a recommendation elsewhere on the page.
         val next = document.selectFirst("script#__NEXT_DATA__")?.data()
@@ -497,7 +500,8 @@ class DefaultImdbRatingRepository(
         val year = json.optString("datePublished").take(4).toIntOrNull()
         val canonicalMobileIdentity = !com.aliflix.app.BuildConfig.IS_TV && identity.year != null && year == identity.year
         if (!canonicalMobileIdentity && titleIdentityScore(normalize(identity.title), normalize(json.optString("name"))) < 70) return false
-        return identity.year == null || (year != null && kotlin.math.abs(identity.year - year) <= 1)
+        return identity.year == null || (year != null && kotlin.math.abs(identity.year - year) <= 1) ||
+            (!com.aliflix.app.BuildConfig.IS_TV && titleIdentityScore(normalize(identity.title),normalize(json.optString("name")))>=85)
     }
 
     private fun unavailableSnapshot(media: Media) = ImdbRatingSnapshot(

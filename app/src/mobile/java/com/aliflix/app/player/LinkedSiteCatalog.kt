@@ -70,6 +70,17 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
             document to filmoPlaybackLinks(document)
         } else {
             require(selection.source.identity == MobilePlaybackProvider.ANIWORLD && selection.media.isJapaneseAnime)
+            // AniWorld's displayed year can precede the television premiere (Black Clover: 2016/2017).
+            // Resolve the canonical external ID; never weaken identity matching to title alone.
+            val identified=if(selection.media.imdbId.isNullOrBlank()) {
+                val identity=withTimeoutOrNull(2_500) {
+                    try { RecommendationAiClient(com.aliflix.app.BuildConfig.RECOMMENDATION_AI_BASE_URL,
+                        metadataCacheDir=java.io.File(activity.cacheDir,"mobile-taste-metadata"))
+                        .getTitleDetails(selection.media.type.routeName,selection.media.id).imdbId }
+                    catch(error:Exception){currentCoroutineContext().ensureActive();null}
+                }
+                selection.media.copy(imdbId=identity)
+            } else selection.media
             val base=selection.source.baseUrl.trimEnd('/')
             val titleKey="aniworld:${selection.media.key}"
             val titleUrl=titles[titleKey] ?: run {
@@ -79,10 +90,10 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
                 val candidates=(0 until results.length()).mapNotNull { index -> ownedSiteUrl(
                     results.getJSONObject(index).optString("link"),base,Regex("/anime/stream/[^/]+")) }.distinct().take(10)
                 firstSuccessful(candidates.map { url -> suspend {
-                    require(aniworldTitleMatches(page(url),selection.media)) { "AniWorld title identity mismatch" };url
+                    require(aniworldTitleMatches(page(url),identified)) { "AniWorld title identity mismatch" };url
                 } },parallelism=2).also { titles[titleKey]=it }
             }
-            val index=try { page(titleUrl).also { require(aniworldTitleMatches(it,selection.media)) { "AniWorld title changed" } } }
+            val index=try { page(titleUrl).also { require(aniworldTitleMatches(it,identified)) { "AniWorld title changed" } } }
                 catch(cancelled:CancellationException) { throw cancelled }
                 catch(error:Exception) { titles.remove(titleKey,titleUrl);throw error }
             val repository=MobileEpisodeRepository(activity,RecommendationAiClient(com.aliflix.app.BuildConfig.RECOMMENDATION_AI_BASE_URL))
@@ -141,6 +152,7 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
                     catch(cancelled:CancellationException) { throw cancelled }
                     catch(error:Exception) {
                         currentCoroutineContext().ensureActive()
+                        if(error is ProviderSiteHttpException && error.status in setOf(404,410))throw error
                         android.util.Log.w("AliflixSite","${selection.source.identity.name}: public VOE ${error.javaClass.simpleName}: ${error.message.orEmpty().replace(Regex("https?://\\S+"),"[url]").take(160)}")
                         embedded(link.label,target)
                     }

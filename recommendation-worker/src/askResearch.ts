@@ -1167,7 +1167,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       ) {
         remaining(signal);
         const reusePass=!editorial&&pass===0&&reusable.length>=20;
-        const candidateBudget=pass===0?Math.max(24,48-Math.min(reusable.length,24)):32;
+        // Spoken/text Talk needs a few choices, not a poster rail. Keep the
+        // same Tavily, identity, evidence and Clef gates with a smaller pool.
+        const candidateBudget=request.pageSize<=3?12:pass===0?Math.max(24,48-Math.min(reusable.length,24)):32;
         if(!reusePass){this.reserve("ai");usage.gptCalls++;}
         const generated = reusePass?{candidates:reusable.slice(0,64).map(p=>({title:p.title,year:Number(p.media.releaseDate?.slice(0,4)),evidence:[] as number[],reason:''}))}:PicksSchema.parse(
           await cloudflareStructuredContent(

@@ -163,6 +163,7 @@ class AndroidCatalogCacheStore internal constructor(
                     voteCount = entry.optInt("votes").takeIf { entry.has("votes") && it >= 0 },
                     state = state,
                     fetchedAtMillis = fetchedAt,
+                    originalReleaseYear = entry.optInt("originalReleaseYear").takeIf { entry.has("originalReleaseYear") && it > 0 },
                 )
             }
         }
@@ -183,6 +184,7 @@ class AndroidCatalogCacheStore internal constructor(
                 snapshot.voteCount?.let { put("votes", it) }
                 put("state", snapshot.state.name)
                 put("fetchedAt", snapshot.fetchedAtMillis)
+                snapshot.originalReleaseYear?.let { put("originalReleaseYear", it) }
             }
         }
     }

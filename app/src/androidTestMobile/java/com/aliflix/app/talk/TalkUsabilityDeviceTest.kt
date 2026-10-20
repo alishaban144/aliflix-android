@@ -2,7 +2,8 @@ package com.aliflix.app.talk
 
 import android.content.Intent
 import android.os.SystemClock
-import androidx.test.core.app.ActivityScenario
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
 import org.json.JSONObject
@@ -42,20 +43,25 @@ class TalkUsabilityDeviceTest {
     @Test fun currentGenreRequestReplacesAnAbandonedEpisodeQuestion() {
         Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("liveTalkUsability")=="true")
         val instrumentation=InstrumentationRegistry.getInstrumentation();val context=instrumentation.targetContext
-        ActivityScenario.launch<TalkVoiceActivity>(Intent(context,TalkVoiceActivity::class.java).putExtra("textMode",true).putExtra("validationFreshHistory",true)).use { scenario ->
-            lateinit var session:TalkVoiceSession
-            scenario.onActivity { session=it.voice }
+        context.startActivity(Intent(context,TalkVoiceActivity::class.java).putExtra("textMode",true).putExtra("validationFreshHistory",true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        var talk:TalkVoiceActivity?=null
+        runBlocking { withTimeout(20000) { while(talk==null) {
+            instrumentation.runOnMainSync { talk=ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<TalkVoiceActivity>().firstOrNull() }
+            delay(50)
+        } } }
+        val activity=requireNotNull(talk);val session=activity.voice
+        try {
             runBlocking { withTimeout(25000) { while(session.debugReadyGeneration==0L)delay(50) } }
-            scenario.onActivity { session.sendText("Briefly explain the ending of Dark season 2 episode 1.") }
+            instrumentation.runOnMainSync { session.sendText("Briefly explain the ending of Dark season 2 episode 1.") }
             runBlocking { withTimeoutOrNull(5000) { while((session.debugToolCalls["film_knowledge"]?:0)==0)delay(50) } }
             val began=SystemClock.elapsedRealtime()
-            scenario.onActivity { session.sendText("Instead, suggest two recent sci-fi movies. Include their release years.") }
+            instrumentation.runOnMainSync { session.sendText("Instead, suggest two recent sci-fi movies. Include their release years.") }
             runBlocking { withTimeout(100000) { while(session.debugTurnCompleteAt<began||session.state.value.sending)delay(100) } }
             val lines=session.state.value.lines
             val lastUser=lines.indexOfLast { it.role=="user" }
             val answer=lines.drop(lastUser+1).filter { it.role=="assistant" }.joinToString(" ") { it.text }
             val receipt=JSONObject().put("answer",answer).put("recommendations",session.debugRecommendationCount).put("years",session.debugRecommendationYears)
-                .put("elapsedMs",SystemClock.elapsedRealtime()-began).put("tools",JSONObject(session.debugToolCalls.toMap()))
+                .put("elapsedMs",SystemClock.elapsedRealtime()-began).put("tools",JSONObject(session.debugToolCalls.toMap())).put("recommendationIssue",session.debugRecommendationIssue)
             File(context.getExternalFilesDir(null),"talk-usability-177.json").writeText(receipt.toString(2))
             assertTrue("No researched recommendations: $receipt",session.debugRecommendationCount>0)
             assertTrue("No dated results: $receipt",session.debugRecommendationYears.isNotEmpty())
@@ -63,6 +69,6 @@ class TalkUsabilityDeviceTest {
             assertFalse("The old episode hijacked the new request: $receipt",Regex("Jonas|Claudia|Sic Mundus|Adam|Winden",RegexOption.IGNORE_CASE).containsMatchIn(answer))
             assertTrue("No text answer: $receipt",answer.length>30)
             assertTrue(session.state.value.textMode)
-        }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
 }

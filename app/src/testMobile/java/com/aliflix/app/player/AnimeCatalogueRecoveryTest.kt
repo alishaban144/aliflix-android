@@ -13,4 +13,11 @@ class AnimeCatalogueRecoveryTest {
         assertFalse(animeCatalogueShouldRetry(CancellationException()))
         assertFalse(animeCatalogueShouldRetry(IllegalArgumentException("invalid payload")))
     }
+    @Test fun aMissingAniKuroEpisodeMustNotOpenAnOriginOutageCircuit() {
+        assertTrue(anikuroOriginFailure(java.net.SocketTimeoutException()))
+        assertTrue(anikuroOriginFailure(java.net.UnknownHostException()))
+        assertFalse(anikuroOriginFailure(AnimeCatalogueHttpException(404)))
+        assertFalse(anikuroOriginFailure(AnimeCatalogueHttpException(503)))
+        assertFalse(anikuroOriginFailure(IllegalArgumentException("Invalid provider payload")))
+    }
 }

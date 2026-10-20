@@ -49,9 +49,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private val userTurn=java.util.concurrent.atomic.AtomicLong(0)
     @Volatile private var inputTurnActive=false
     @Volatile private var socketReady=false
+    private var responseTurn=-1L
     private var textSend:Job?=null
     private fun beginUserTurn() {
-        userTurn.incrementAndGet();inputTurnActive=true;continueAfterReconnect=false
+        userTurn.incrementAndGet();responseTurn=-1L;turnHasAudio=false;inputTurnActive=true;continueAfterReconnect=false
+        debugRecommendationCount=0;debugRecommendationYears=emptyList();debugRecommendationIssue=""
         tools.values.forEach { it.cancel() };tools.clear()
         sequence++;interruptOutput();assistantLine=-1;outputText="";finalReferences=emptyList()
         update { it.copy(sending=true) }
@@ -64,6 +66,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     fun sendText(text:String) {
         val question=text.trim().take(1600);if(question.isBlank()||textSend?.isActive==true)return
         textSend=scope.launch {
+            val replacesPending=socketReady&&(state.value.sending||speaking||tools.isNotEmpty())
+            // Live responses have no client turn ID. A new socket gives typed
+            // replacements a hard boundary, including queued tool calls and
+            // completions that may arrive after the old generation ended.
+            if(replacesPending) {
+                suspendSession();ephemeral=null;resumeHandle=null
+            }
             beginUserTurn();inputText=question;commitQuestion();persistHistory()
             try {
                 if(!permitted)connect()
@@ -164,6 +173,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal var debugEpisodeEvidence=""
     internal var debugWebEvidenceCount=0
     internal var debugRecommendationCount=0
+    internal var debugRecommendationIssue=""
     internal var debugRecommendationYears:List<Int> = emptyList()
     @Volatile private var lastOutputAt=0L
     private var stalledRecoveries=0
@@ -203,6 +213,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
+        if(!state.value.textMode) {
         if (manager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             permitted = false; update { it.copy(phase = "Audio unavailable") }; return
         }
@@ -213,6 +224,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             manager.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let {
                 routedSpeaker = manager.setCommunicationDevice(it)
             }
+        }
         }
         val library = (context.applicationContext as AliflixApplication).libraryStore
         val identities = (library.likes.value.map { it to "favorite" } + library.myList.value.map { it to "saved" } +
@@ -278,6 +290,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     private suspend fun openSocket(ticket: Long) {
         cancelledTools.clear()
+        awaitingInterrupt=false
         update { it.copy(phase=if(reconnects==0) "Connecting" else "Reconnecting") }
         try {
             if(ephemeral==null || ephemeral!!.optLong("expires")<System.currentTimeMillis()+10000) {
@@ -451,6 +464,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                             .put("question",toolQuestion.take(1600)).put("request",call.getJSONObject("args")))
                     }
                         .getOrElse { error ->
+                            if(BuildConfig.DEBUG&&call.optString("name")=="recommendations")debugRecommendationIssue=error.javaClass.simpleName+":"+error.message.orEmpty().take(120)
                             if(error is CancellationException) {
                                 withContext(NonCancellable) {runCatching {post("cancel",JSONObject().put("session",toolSession).put("requestId",toolRequestId))}}
                                 throw error
@@ -463,6 +477,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                             if(call.optString("name")=="web_research")debugWebEvidenceCount=result.optJSONArray("evidence")?.length()?:0
                             if(call.optString("name")=="recommendations"){
                                 val rows=result.optJSONArray("results")?:JSONArray();debugRecommendationCount=rows.length()
+                                if(rows.length()==0&&debugRecommendationIssue.isBlank())debugRecommendationIssue="Empty results; unavailable="+result.optBoolean("unavailable")+" available="+result.optBoolean("available")
                                 debugRecommendationYears=(0 until rows.length()).mapNotNull { rows.optJSONObject(it)?.optString("year")?.toIntOrNull() }
                             }
                         }
@@ -487,9 +502,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 // Gemini's explicit toolCallCancellation IDs own tool cancellation;
                 // a late audio interruption must not cancel a newer lookup.
                 update{it.copy(phase=if(muted) "Muted" else "Listening")}
+                return@let
             }
             content.optJSONObject("inputTranscription")?.optString("text")?.let { if(!inputTurnActive)beginUserTurn();if(inputText.isBlank())turnHasAudio=false;inputText=appendTranscript(inputText,it);answerDeadline.awaiting();update{v->v.copy(phase=if(speaking) v.phase else "Thinking")} }
             content.optJSONObject("outputTranscription")?.optString("text")?.let { text->
+                responseTurn=userTurn.get()
                 inputTurnActive=false;answerDeadline.clear()
                 outputText=appendTranscript(outputText,text)
                 commitQuestion()
@@ -507,6 +524,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 val bytes=Base64.decode(data.getString("data"),Base64.NO_WRAP)
                 if(bytes.isNotEmpty())lastOutputAt=SystemClock.elapsedRealtime()
                 if(bytes.isNotEmpty()){turnHasAudio=true;answerDeadline.clear()}
+                if(bytes.isNotEmpty())responseTurn=userTurn.get()
                 require(bytes.size<=192000&&bytes.size%2==0)
                 val buffer=audio?:continue
                 val reserved=buffer.bytes.addAndGet(bytes.size)
@@ -519,7 +537,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             // Native generation completion can precede turnComplete while tools
             // settle. It is a finished audio stream, never a stalled answer.
             if(content.optBoolean("generationComplete")){endOfAudio=true;if(turnHasAudio)answerDeadline.clear()}
-            if(content.optBoolean("turnComplete")) {
+            if(content.optBoolean("turnComplete")&&responseTurn==userTurn.get()&&(turnHasAudio||outputText.isNotBlank())) {
                 update{it.copy(words=completedTalkTopic(outputText,it.words,synchronized(knownFilmTopics){knownFilmTopics.toList()}))}
                 inputTurnActive=false;update { it.copy(sending=false,phase=if(it.textMode)"Listening" else it.phase) }
                 debugTurnCompleteAt=SystemClock.elapsedRealtime();endOfAudio=true;assistantLine=-1;outputText="";finalReferences=emptyList()

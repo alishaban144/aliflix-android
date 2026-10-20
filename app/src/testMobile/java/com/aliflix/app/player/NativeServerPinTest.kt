@@ -38,6 +38,7 @@ class NativeServerPinTest {
         assertEquals("Mist", selectNativeServer(servers, "mist", emptySet()) { it })
         assertEquals("Vid", selectNativeServer(servers, "Missing", emptySet()) { it })
         assertEquals("Mist", selectNativeServer(servers, null, setOf("Vid")) { it })
+        assertEquals("Mist", selectNativeServer(servers, "Vid", setOf("Vid")) { it })
         assertNull(selectNativeServer(servers, null, servers.toSet()) { it })
     }
 }

@@ -7,6 +7,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LinkedSiteCatalogTest {
+    @Test fun canonicalAnimeIdentitySurvivesTheSitesEarlierCatalogueYear() {
+        val page=Jsoup.parse("""<h1><span>Black Clover</span></h1><a href="/animes/jahr/2016">2016</a><a data-imdb="tt7441658"></a>""")
+        val media=Media(73223,MediaType.TV,"Black Clover",year="2017",imdbId="tt7441658")
+        assertTrue(aniworldTitleMatches(page,media))
+        assertFalse(aniworldTitleMatches(page,media.copy(imdbId="tt9999999")))
+        assertFalse(aniworldTitleMatches(page,media.copy(imdbId=null)))
+    }
     @Test fun changedSearchSchemasCannotCertifyThatAWorkingSiteLacksTheTitle() {
         assertEquals(0,filmoSearchMovies("""{"movies":[]}""").length())
         assertThrows(IllegalArgumentException::class.java) { filmoSearchMovies("""{"results":[]}""") }

@@ -1123,6 +1123,7 @@ class CatalogClient(
                     onProgress(enriched, recommendations)
                     enriched.imdbRating?.let { imdbRatingsCache[enriched.key] = it }
                 }
+                imdbSnapshot.originalReleaseYear
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -1130,6 +1131,7 @@ class CatalogClient(
                 val unavailable = if (current.imdbRating != null) current else current.copy(imdbRatingState = RatingSourceState.UNAVAILABLE)
                 catalogue = listOf(unavailable) + catalogue.filterNot { it.key == unavailable.key }
                 onProgress(unavailable, recommendations)
+                null
             }
         }
 
@@ -1163,7 +1165,12 @@ class CatalogClient(
                     }
                 }
 
-                val rt = rottenTomatoesClient.loadRating(current)
+                var rt = rottenTomatoesClient.loadRating(current)
+                if(!com.aliflix.app.BuildConfig.IS_TV && rt.state==RatingSourceState.UNAVAILABLE && !current.imdbId.isNullOrBlank()) {
+                    val originalYear=kotlinx.coroutines.withTimeoutOrNull(1_000) { imdbJob.await() }
+                    if(originalYear!=null&&originalYear!=current.year.take(4).toIntOrNull())
+                        rt=rottenTomatoesClient.loadRating(current.copy(year=originalYear.toString()))
+                }
                 publish(rt)
                 if (rt.state in setOf(RatingSourceState.VERIFIED, RatingSourceState.STALE, RatingSourceState.NOT_RATED)) {
                     rottenTomatoesRatingsCache[current.key] = rt

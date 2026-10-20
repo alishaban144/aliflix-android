@@ -57,7 +57,7 @@ internal object SerienstreamHttp {
                 if (connection.headerFields.keys.any { it?.equals("Set-Cookie", true) == true }) cookies.flush()
                 if (status in 300..399) continuation.resume(Response(byteArrayOf(), "", connection.getHeaderField("Location") ?: error("Missing redirect")))
                 else {
-                    require(status in 200..299) { "Serienstream HTTP $status" }
+                    if(status !in 200..299)throw ProviderSiteHttpException(status,URI(url).host)
                     val bytes = connection.inputStream.use { input ->
                         val output = java.io.ByteArrayOutputStream()
                         val buffer = ByteArray(8192)
@@ -76,6 +76,8 @@ internal object SerienstreamHttp {
         continuation.invokeOnCancellation { task.cancel(true); connection.disconnect() }
     }
 }
+
+internal class ProviderSiteHttpException(val status:Int,host:String):java.io.IOException("Provider HTTP $status on $host")
 
 internal fun sameProviderOrigin(from:URI,to:URI):Boolean = to.scheme=="https" && from.scheme=="https" &&
     to.userInfo==null && from.userInfo==null && to.port in setOf(-1,443) && from.port in setOf(-1,443) &&
