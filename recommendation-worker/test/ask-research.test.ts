@@ -13,6 +13,7 @@ import {
   researchTaste,
   researchQuotaRetryAt,
   researchBudgetState,
+  researchCacheIdentity,
 } from "../src/askResearch";
 import { liveSetup, liveInstructions } from "../src/talkProviders";
 import { TalkContextSchema } from "../src/talkEvidence";
@@ -671,4 +672,13 @@ describe('progressive research transport',()=>{
    put('empty',value(0),now+60000);expect(service.retainedResults('empty')).toBeUndefined();
   });
  });
+});
+
+
+it('shares pinned-model research across Android aliases without merging taste or constraints',()=>{
+ const input=AskRequestSchema.parse(request());
+ const mobile=AskRequestSchema.parse({...input,aiModel:'cloudflare-gpt-oss-120b',geminiModel:'cloudflare-gpt-oss-120b'});
+ expect(JSON.stringify(researchCacheIdentity(input))).toBe(JSON.stringify(researchCacheIdentity(mobile)));
+ expect(JSON.stringify(researchCacheIdentity(input))).not.toBe(JSON.stringify(researchCacheIdentity({...mobile,library:[{id:1,type:'movie',kind:'favorite'}]})));
+ expect(JSON.stringify(researchCacheIdentity(input))).not.toBe(JSON.stringify(researchCacheIdentity({...mobile,filters:{...mobile.filters,originalLanguage:'de'}})));
 });

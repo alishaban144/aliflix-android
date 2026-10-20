@@ -7,6 +7,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.callbackFlow
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -50,6 +55,49 @@ class AskResearchClient(context:Context) {
             };throw e
         }
     }
+    fun recommendations(body:JSONObject):Flow<JSONObject> = callbackFlow {
+        val token=identity()
+        val parser=AskResearchStream(body.getString("requestId"))
+        val request=Request.Builder().url("$base/v4/ask/recommendations?stream=1")
+            .header("Authorization","Bearer $token").post(body.toString().toRequestBody(JSON)).build()
+        val call=http.newCall(request)
+        fun failed(error:Throwable){
+            if(!call.isCanceled()){
+                parser.retained()?.let{trySend(it);close()}?:close(error)
+            }
+        }
+        call.enqueue(object:Callback {
+            override fun onFailure(call:Call,e:IOException){failed(e)}
+            override fun onResponse(call:Call,response:Response){response.use {
+                try {
+                    if(it.code==401)prefs.edit().clear().apply()
+                    if(!it.isSuccessful){
+                        val source=requireNotNull(it.body).source();source.request(24001)
+                        require(source.buffer.size<=24000)
+                        val error=JSONObject(source.buffer.readUtf8()).optJSONObject("error")
+                        throw RecommendationAiClientException(error?.optString("code")?:"RESEARCH_UNAVAILABLE",it.code==429||it.code>=500,"Research unavailable")
+                    }
+                    require(it.header("content-type").orEmpty().startsWith("application/x-ndjson"))
+                    val source=requireNotNull(it.body).source()
+                    while(!call.isCanceled()&&!source.exhausted()){
+                        val event=JSONObject(source.readUtf8LineStrict(256000))
+                        parser.accept(event)?.let{value->trySend(value)}
+                        if(parser.finished)break
+                    }
+                    if(!parser.finished)throw IOException("Research connection ended")
+                    close()
+                }catch(e:Exception){failed(e)}
+            }}
+        })
+        awaitClose {
+            call.cancel()
+            if(!parser.finished)http.newCall(Request.Builder().url("$base/v4/ask/cancel").header("Authorization","Bearer $token")
+                .post(JSONObject().put("requestId",body.getString("requestId")).toString().toRequestBody(JSON)).build()).enqueue(object:Callback{
+                override fun onFailure(call:Call,e:IOException){}
+                override fun onResponse(call:Call,response:Response){response.close()}
+            })
+        }
+    }.buffer(Channel.CONFLATED)
     private suspend fun execute(request:Request,timeout:Long=12000):JSONObject=withContext(Dispatchers.IO){suspendCancellableCoroutine { c ->
         val call=http.newBuilder().callTimeout(timeout,TimeUnit.MILLISECONDS).build().newCall(request);c.invokeOnCancellation{call.cancel()}
         call.enqueue(object:Callback {

@@ -60,6 +60,7 @@ sealed interface AskAliflixUiState {
         val nextCursor: String? = null,
         val loadMoreError: String? = null,
         val refining: Boolean = false,
+        val researching: Boolean = false,
         val refineError: String? = null,
         val appliedRefinements: List<String> = emptyList(),
         val activeRequest: AskAliflixRequest? = null,

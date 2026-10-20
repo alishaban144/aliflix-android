@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -29,9 +30,18 @@ class RecommendationAiClient(
     private val researchLibrary: () -> JSONArray = { JSONArray() },
 ) {
     private val detailsLocks = Array(32) { kotlinx.coroutines.sync.Mutex() }
-    suspend fun getRecommendations(request: V3RecommendationRequest): V3RecommendationResponse = withContext(ioDispatcher) {
-        if (!com.aliflix.app.BuildConfig.IS_TV && research != null) return@withContext V3RecommendationResponse.fromJson(
-            research.request("recommendations", request.toJson().put("aiModel", "cloudflare-gpt-oss-120b").put("geminiModel", "cloudflare-gpt-oss-120b").put("library", researchLibrary())))
+    suspend fun getRecommendations(request: V3RecommendationRequest, onPartial: (suspend (V3RecommendationResponse) -> Unit)? = null): V3RecommendationResponse = withContext(ioDispatcher) {
+        if (!com.aliflix.app.BuildConfig.IS_TV && research != null) {
+            val body=request.toJson().put("aiModel", "cloudflare-gpt-oss-120b").put("geminiModel", "cloudflare-gpt-oss-120b").put("library", researchLibrary())
+            if(onPartial==null)return@withContext V3RecommendationResponse.fromJson(research.request("recommendations",body))
+            var latest:V3RecommendationResponse?=null
+            research.recommendations(body).collect{event->
+                val value=V3RecommendationResponse.fromJson(event)
+                latest=value
+                if(value.results.isNotEmpty())onPartial(value)
+            }
+            return@withContext requireNotNull(latest){"Missing research response"}
+        }
         V3RecommendationResponse.fromJson(JSONObject(postJson("$baseUrl/v3/recommendations", request.toJson())))
     }
 
@@ -266,6 +276,8 @@ data class V3RecommendationResponse(
     val totalResults: Int,
     val nextCursor: String?,
     val hasMore: Boolean,
+    val inProgress: Boolean = false,
+    val incomplete: Boolean = false,
 ) {
     companion object {
         fun fromJson(json: JSONObject): V3RecommendationResponse {
@@ -279,6 +291,8 @@ data class V3RecommendationResponse(
                 nextCursor = json.optString("nextCursor")
                     .takeIf { it.isNotBlank() && it != "null" },
                 hasMore = json.optBoolean("hasMore"),
+                inProgress = json.optBoolean("inProgress"),
+                incomplete = json.optBoolean("incomplete"),
             )
         }
     }

@@ -50,6 +50,10 @@ export const WebResearchSchema = z
   })
   .strict();
 type AskRequest = z.infer<typeof AskRequestSchema>;
+// Research models are pinned server-side; legacy client aliases must not
+// fragment identical researched requests between Android and Talk.
+export const researchCacheIdentity=(request:AskRequest)=>({...request,requestId:undefined,cursor:undefined,aiModel:undefined,geminiModel:undefined});
+
 export type WebFinding = {
   title: string;
   url: string;
@@ -822,11 +826,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     const request = AskRequestSchema.parse(raw),
       controller = new AbortController(),
       job = owner + ":" + request.requestId;
-    const key = await digest({
-      ...request,
-      requestId: undefined,
-      cursor: undefined,
-    });
+    const key = await digest(researchCacheIdentity(request));
     const shared =
       this.recommendationControllers.get(key) || new AbortController();
     this.recommendationControllers.set(key, shared);
@@ -878,9 +878,10 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     const started = Date.now(),
       key =
         (editorial?"editorial-results-v12:":"results-v11:") +
-        (await digest({ ...request, requestId: undefined, cursor: undefined }));
-    const approvedPrevious=editorial?this.read<{results:RecommendationResult[];metrics:Usage}>("results-v11:"+(await digest({...request,requestId:undefined,cursor:undefined}))):undefined;
-    const existing = this.retainedResults(key)||(approvedPrevious&&approvedPrevious.results.length>=20?approvedPrevious:undefined);
+        (await digest(researchCacheIdentity(request)));
+    const approvedPrevious=editorial?this.read<{results:RecommendationResult[];metrics:Usage}>("results-v11:"+(await digest(researchCacheIdentity(request)))):undefined;
+    const legacyKey=(editorial?'editorial-results-v12:':'results-v11:')+await digest({...request,requestId:undefined,cursor:undefined});
+    const existing = this.retainedResults(key)||(legacyKey!==key?this.retainedResults(legacyKey):undefined)||(approvedPrevious&&approvedPrevious.results.length>=20?approvedPrevious:undefined);
     if (existing)
       return {
         ...existing,

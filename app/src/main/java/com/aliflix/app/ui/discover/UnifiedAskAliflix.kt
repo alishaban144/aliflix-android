@@ -216,6 +216,7 @@ internal fun UnifiedAskAliflix(
                     MobileAskResultCard(item,{onOpen(item.media)},item.media.key in myListKeys,{onToggleMyList(item.media)},editorial=false)
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){AliflixIconButton(onClick={taste.reject(item.media);rejected=taste.rejected()},modifier=Modifier.size(48.dp)){Icon(Icons.Rounded.ThumbDownOffAlt,"Not for me: ${item.media.title}",tint=AliflixContentSecondary,modifier=Modifier.size(16.dp))}}
                 }}
+                if(resultState?.researching==true)item("research-continuing"){AskResearchProgress(Modifier.fillMaxWidth().height(32.dp).testTag("ask-research-continuing"),motion)}
                 if(!busy&&state !is AskAliflixUiState.Editing&&results.isEmpty())item("empty"){
                     val limited=state is AskAliflixUiState.Error&&state.message=="Daily limit"
                     Column(Modifier.fillMaxWidth().padding(vertical=32.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(if(limited)Icons.Rounded.Schedule else Icons.Rounded.SearchOff,null,tint=AliflixContentSecondary,modifier=Modifier.size(32.dp));Text(if(limited)"Daily limit" else if(state is AskAliflixUiState.Empty)"No matches" else "Unavailable",Modifier.padding(12.dp),color=AliflixContentPrimary,fontSize=17.sp);if(!limited)AskAction("Retry",Icons.Rounded.Refresh,false,Modifier){onRetry()}}

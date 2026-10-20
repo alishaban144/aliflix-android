@@ -70,4 +70,18 @@ The requested target applies to Describe, Similar and Surprise Me results, not t
 
 Uncached Similar to Inception still took 28,818 ms and returned 12 independently accepted matches. A combined-planning experiment took 41,667 ms and returned 13; it was withdrawn, not shipped as a claimed improvement. The under-20-second target for all modes, and 20 genuine matches for this Similar case, are NOT passed. The bounded research ledger has one inference left today, insufficient for another complete live run; no quota reset, increase or model substitution was performed. The next full daily call budget starts 21 October at 00:01 UTC.
 
-A production-signed draft can be reviewed without exposing an update to users. Stable publication remains held because the requested Similar acceptance gate is unmet; publishing with that known limit requires an explicit user decision. Public asset and updater verification can only be claimed after actual publication.
+The user subsequently authorized a holistic implementation and publication with engineering judgment. The progressive delivery below addresses time spent waiting for a complete batch; it does not turn the earlier failed cold-latency measurements into passes. Public asset and updater verification is performed after publication.
+
+
+## Progressive verified research delivery
+
+Describe, Similar and uncached Surprise Me now use authenticated NDJSON snapshots from the same Durable Object and the same GPT-OSS/Tavily/TMDB/Clef protocol. Each independent Clef batch publishes accepted, source-backed, hard-filtered identities immediately. Later batches append without moving earlier posters. The client can open a title, refine or cancel while replenishment continues. Cached researched Surprise remains immediate; catalogue-only suggestions never count as researched matches.
+
+The stream has bounded backpressure, versioned events, request identity validation, duplicate/out-of-order rejection and cancellation of the caller's waiter. Shared research survives cancellation by one caller while another still waits. A later failure retains actual evaluated matches for the same request instead of clearing them. Positive partial caches retain valid evidence for one day; no quota is reset or model substituted. Existing JSON clients remain supported. Mobile networking runs off the playback thread.
+
+The new backend suite passes 220 tests, including actual byte-stream RPC transfer, verified partial publication, slow consumers, cancellation, quotas, retention and cache migration. Android adds seven parser regressions and an incremental-result interaction test. Their final execution and physical-device results are recorded in the publication evidence. Fresh first-batch timing is distinct from completion of all replenishment; a universal cold under-20-second result guarantee is not established by cached measurements or simulated delays.
+
+
+The first real native-client pass exposed a cache fragmentation bug: Android sends legacy model aliases while the host benchmark omitted them. Research models are pinned server-side, so cache identity now omits these aliases while preserving every filter, anchor, query, refinement and taste entry. Legacy cache rows remain readable. The failed phone pass is retained; it is not counted as a successful end-to-end run.
+
+The deployed stream independently returned 21 researched Describe matches in 792 ms and 13 Similar matches in 516 ms, with zero new GPT, Tavily or Clef calls. These are cached HTTPS timings, not fresh-model benchmarks. The mobile gate passes 695 unit cases with zero failures/errors and three skipped, plus lint and both debug APK assemblies. Five actual Pixel UI cases passed, including opening a verified poster while later batches are pending and appending without replacing earlier titles. The authenticated native-client check is repeated after deploying the cache identity repair.

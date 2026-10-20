@@ -253,6 +253,23 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private var activeAskSummary: String? = null
     private var activeAskSpec: com.aliflix.app.recommendation.CatalogDiscoverySpec? = null
 
+    private suspend fun publishAskProgress(
+        token: Long,
+        response: com.aliflix.app.recommendation.V3RecommendationResponse,
+        summary: String,
+        spec: com.aliflix.app.recommendation.CatalogDiscoverySpec,
+        request: com.aliflix.app.ui.discover.AskAliflixRequest,
+        refinements: List<String> = emptyList(),
+    ) = withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+        if(token==askSessionToken && response.results.isNotEmpty()) {
+            _askUiState.value=com.aliflix.app.ui.discover.AskAliflixUiState.Results(
+                requestSummary=summary,spec=spec,items=response.results.map(::mapAskResult),
+                totalAvailable=response.totalResults,hasMore=response.hasMore,nextCursor=response.nextCursor,
+                activeRequest=request,appliedRefinements=refinements,researching=response.inProgress,
+            )
+        }
+    }
+
     fun submitAskAliflix(request: com.aliflix.app.ui.discover.AskAliflixRequest) {
         activeAskJob?.cancel()
         val token = ++askSessionToken
@@ -273,7 +290,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskJob = viewModelScope.launch {
             try {
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    aiClient.getRecommendations(workerRequest)
+                    aiClient.getRecommendations(workerRequest) { partial ->
+                        publishAskProgress(token,partial,summary,mapped.spec,request)
+                    }
                 }
                 
                 if (token != askSessionToken) return@launch
@@ -353,7 +372,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskJob = viewModelScope.launch {
             try {
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    aiClient.getRecommendations(refinedWorkerRequest)
+                    aiClient.getRecommendations(refinedWorkerRequest) { partial ->
+                        publishAskProgress(token,partial,mapped.summary,mapped.spec,refinedRequest,currentResults.appliedRefinements+normalized)
+                    }
                 }
                 if (token != askSessionToken) return@launch
                 val candidates = response.results.map(::mapAskResult)
@@ -475,7 +496,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskJob = viewModelScope.launch {
             try {
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    aiClient.getRecommendations(mapped.workerRequest)
+                    aiClient.getRecommendations(mapped.workerRequest) { partial ->
+                        publishAskProgress(token,partial,mapped.summary,mapped.spec,uiRequest,previous?.appliedRefinements.orEmpty())
+                    }
                 }
                 if (token != askSessionToken) return@launch
                 val candidates = response.results.map(::mapAskResult)

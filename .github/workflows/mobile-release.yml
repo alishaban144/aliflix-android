@@ -412,7 +412,7 @@ jobs:
 
             ARM64-only main APK, existing release signer and architecture-aware universal compatibility bridge. Original native libraries and models are verified byte-for-byte. TV is unchanged and is neither built nor released.
 
-            Measured limitation: uncached Similar requests have not yet met the requested under-20-second acceptance target. Results remain evidence-checked; no irrelevant titles are added to inflate their count.
+            Research now streams verified matches as each independent batch completes, appending further matches without holding the first posters behind replenishment. Later failures retain genuine matches. Cached researched Surprise opens immediately. Cold completion latency can still exceed 20 seconds; no irrelevant titles inflate the result count.
 
             [Validation and measured limits](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-176-recovery.md). [Design references](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/ask-176-design-provenance.md).
           files: |

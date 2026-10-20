@@ -69,4 +69,16 @@ class UnifiedAskUiTest {
   compose.onNodeWithTag("ask-status-all").performClick()
   compose.runOnIdle{assertNull(editor.spec.requiredStatus)}
  }
+ @Test fun verifiedPostersAreInteractiveWhileFurtherBatchesContinue(){
+  val first=Media(27205,MediaType.MOVIE,"Inception",year="2010")
+  val next=Media(157336,MediaType.MOVIE,"Interstellar",year="2014")
+  var state by mutableStateOf(AskAliflixUiState.Results("space",com.aliflix.app.recommendation.CatalogDiscoverySpec(mediaKind=com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE),
+   listOf(com.aliflix.app.recommendation.RecommendationCandidate(first)),researching=true,hasMore=false))
+  var opened:Media?=null
+  compose.setContent{AliflixMobileTheme{UnifiedAskAliflix(state,AskAliflixEditorState(),{},{},{},{},{opened=it},emptyList(),false,{}, {emptyList()},rememberLazyListState(),emptySet(),{},Modifier,dailyProvider={emptyList()})}}
+  compose.onNodeWithText("Inception").performScrollTo().performClick()
+  compose.runOnIdle{assertEquals(first,opened);state=state.copy(items=state.items+com.aliflix.app.recommendation.RecommendationCandidate(next),researching=false)}
+  compose.onNodeWithText("Interstellar").performScrollTo().assertIsDisplayed()
+  compose.onNodeWithTag("ask-research-continuing").assertDoesNotExist()
+ }
 }
