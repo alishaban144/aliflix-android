@@ -6,7 +6,7 @@ import { AskRequestSchema, WebResearchSchema, researchFailure } from './askResea
 import { TalkContextSchema, TalkContext, KnowledgeSchema, KnowledgeRequest, explicitlyRequestsSpoilers, permittedEpisode, retrieveKnowledge, Evidence, requestedEpisodeBoundary, avoidsSpoilers, resolveViewingTitle, TalkLibraryItemSchema, TalkViewingPageSchema, wikipediaTitle, wikipediaEpisodeEvidence, tvEpisodeEvidence } from './talkEvidence';
 import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProviders';
 import { talkRecommendationPolicy } from './talkIntent';
-import { TalkChat, TalkChatsRequestSchema } from './talkChats';
+import { TalkChat, TalkChatsRequestSchema, talkChatAccountOwner } from './talkChats';
 const MINUTE=60000,DAY=86400000;
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
 const sessionSchema=z.object({context:TalkContextSchema.default(()=>TalkContextSchema.parse({}))}).strict();
@@ -18,12 +18,16 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
   const owner=await verifyIdentity(request.headers.get('Authorization')?.replace(/^Bearer /,'')||'',env.CURSOR_SIGNING_SECRET);
   if(Number(request.headers.get('Content-Length')||0)>24000)return json({error:'REQUEST_LIMIT'},413);
   const bodyRaw=await boundedJson(new Response(request.body),24000);
-  if(!(await env.RECOMMENDATION_RATE_LIMITER.limit({key:'talk-live:'+owner.sub})).success)return json({error:'TRY_LATER'},429);
-  const user=env.TALK_SESSIONS.getByName('user:'+owner.sub);
   if(path.endsWith('/chats')) {
    if(owner.kind!=='account')return json({error:'ACCOUNT_REQUIRED'},403);
-   return json(await user.chats(bodyRaw));
+   const archiveOwner=talkChatAccountOwner(owner.sub),body=TalkChatsRequestSchema.parse(bodyRaw);
+   // Archive writes/list refreshes must not consume live conversation/tool
+   // capacity. Each validated action still has a bounded account-wide rate.
+   if(!(await env.RECOMMENDATION_RATE_LIMITER.limit({key:'talk-chats:'+archiveOwner+':'+body.action})).success)return json({error:'TRY_LATER'},429);
+   return json(await env.TALK_SESSIONS.getByName('archive:'+archiveOwner).chats(body));
   }
+  if(!(await env.RECOMMENDATION_RATE_LIMITER.limit({key:'talk-live:'+owner.sub})).success)return json({error:'TRY_LATER'},429);
+  const user=env.TALK_SESSIONS.getByName('user:'+owner.sub);
   if(path.endsWith('/session')) {
    const body=sessionSchema.parse(bodyRaw);const ip=request.headers.get('CF-Connecting-IP')||'unknown';
    const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ip+env.CURSOR_SIGNING_SECRET)))).map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -39,7 +43,9 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
    return json(await user.research(b.session,b.requestId,path.endsWith('/cancel')?'cancel':path.endsWith('/research')?'research':'recommendations',b.request));
   }
   if(path.endsWith('/viewing')) {const body=z.object({session:z.string().uuid(),items:z.array(TalkLibraryItemSchema).max(8).optional(),page:TalkViewingPageSchema.optional()}).strict().parse(bodyRaw);return json(await user.viewing(body.session,body.items,body.page));}
-  if(path.endsWith('/close')) {const body=z.object({session:z.string().uuid(),forget:z.boolean().default(false)}).strict().parse(bodyRaw);await user.close(body.session,body.forget);return json({closed:true});}
+  if(path.endsWith('/close')) {const body=z.object({session:z.string().uuid(),forget:z.boolean().default(false)}).strict().parse(bodyRaw);await user.close(body.session,body.forget);
+   if(body.forget&&owner.kind==='account')await env.TALK_SESSIONS.getByName('archive:'+talkChatAccountOwner(owner.sub)).chats({action:'clear'});
+   return json({closed:true});}
   const body=requestSchema.parse(bodyRaw);return json(await user.knowledge(body.session,body.request,body.question));
  }catch(e) {
   const remote=researchFailure(e);if(remote)return json({error:remote.code},remote.status);

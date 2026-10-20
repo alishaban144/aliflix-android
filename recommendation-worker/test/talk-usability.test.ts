@@ -1,6 +1,7 @@
 import { describe,it,expect } from 'vitest';
 import { env,runInDurableObject } from 'cloudflare:test';
-import { TalkSession } from '../src/talk';
+import { TalkSession, talkRoute } from '../src/talk';
+import { issueIdentity } from '../src/watchParty';
 import { talkRecommendationPolicy } from '../src/talkIntent';
 import { TalkChatsRequestSchema } from '../src/talkChats';
 import { liveInstructions } from '../src/talkProviders';
@@ -27,6 +28,19 @@ describe('Talk recent discovery and task continuity',()=>{
 });
 describe('bounded account chat archive',()=>{
  const chat={id:crypto.randomUUID(),title:'Recent science fiction',updatedAt:Date.now(),lines:[{role:'user' as const,text:'Suggest a sci-fi movie',sources:[]}]};
+ it('shares an archive across device tokens without consuming live tool capacity or leaking another account',async()=>{
+  const keys:string[]=[];
+  const config={...env,CURSOR_SIGNING_SECRET:'archive-test-only',RECOMMENDATION_RATE_LIMITER:{limit:async({key}:{key:string})=>{keys.push(key);return {success:!key.startsWith('talk-live:')};}}};
+  const token=async(hash:string)=>issueIdentity({sub:'account:'+hash+':'+crypto.randomUUID(),kind:'account',exp:Date.now()+60000},config.CURSOR_SIGNING_SECRET);
+  const a=await token('a'.repeat(43)),same=await token('a'.repeat(43)),other=await token('b'.repeat(43));
+  async function request(auth:string,body:unknown){const response=await talkRoute(new Request('https://worker.test/v1/talk/chats',{method:'POST',headers:{Authorization:'Bearer '+auth,'content-type':'application/json'},body:JSON.stringify(body)}),config);expect(response?.status).toBe(200);return response!.json<any>();}
+  await request(a,{action:'save',chat});
+  expect(await request(same,{action:'read',id:chat.id})).toEqual({chat});
+  expect(await request(other,{action:'read',id:chat.id})).toEqual({chat:null});
+  await request(same,{action:'delete',id:chat.id});
+  expect(await request(a,{action:'read',id:chat.id})).toEqual({chat:null});
+  expect(keys.every(key=>key.startsWith('talk-chats:account:'))).toBe(true);
+ });
  it('lists summaries, restores sources, and prevents queued saves resurrecting deleted chats',async()=>{
   await runInDurableObject(env.TALK_SESSIONS.getByName('chat-archive-unit'),async instance=>{
    const store=instance as unknown as TalkSession;

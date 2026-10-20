@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Playback and resume recovery, reliable audio switching, rounded Talk lettering, and resilient researched recommendations."
+          RELEASE_NOTES="Text and voice Talk with recent chats, recent researched suggestions, faster priority-source fallback, detail-page preparation, stable Home picks, independent ratings and episodes, and smooth video transitions."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -404,17 +404,17 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Mobile-only Ask Aliflix now has one Movies/Series composer, up to four Similar anchors, contextual Filters, Running/Ended series choices, and researched daily discovery. White fine-edged actions and larger centered Discover labels retain Aliflix's native visual identity.
+            Aliflix Talk now combines native text chat and voice, source links, icon-only recent chats, account synchronization and full-screen orb touch tracking. New questions cancel abandoned work. Recommendations use Tavily research and default to released titles from the last three years, while honoring explicit older-era requests.
 
-            Text and Talk recommendations share authenticated GPT-OSS 120B planning, Tavily research, exact TMDB validation, licensed narrative evidence and independent Clef-flash ranking. Daily movie/series collections publish atomically and retain last-good results. Favorites, saved titles, actual viewing and explicit feedback remain distinct.
+            Details prepare playback in the background. Filmo, Serienstream and AniWorld retain a short priority head start while working alternatives race. Dead mirrors, saved server hints and unavailable providers no longer prevent fallback. Play and first-frame transitions fade smoothly. Home's Picked for You keeps its current order when returning from details.
 
-            Talk stays on Gemini 3.8 Live, with Aoede by default and explicit Aoede/Kore/Puck/Charon selection. General research and recommendations run through asynchronous tools. Audio buffering, interruption and same-voice reconnection are hardened. Rounded fine-dot topics, continuous layered voice-reactive light and restrained gaze/blinks refine the native particle experience. Exact episode summaries use revision-attributed, episode-fenced evidence.
+            Episode lists load independently of ratings. Re-release identities retain verified IMDb scores and original-year Rotten Tomatoes matching; missing critic scores and different series editions are never substituted.
 
-            ARM64-only main APK, existing release signer and architecture-aware universal compatibility bridge. Original native libraries and models are verified byte-for-byte. TV is unchanged and is neither built nor released.
+            The connected Pixel validated eleven providers' native preparation, reported-title playback/seek paths, metadata, Home stability and playback/Talk regressions. AniKuro's public origins timed out, and no working file was found for Incoherence. Live recommendation quality validation encountered HTTP 429. Physical account transport was unavailable on the signed-out phone; authenticated cross-device archive behavior has server regression coverage.
 
-            Research now streams verified matches as each independent batch completes, appending further matches without holding the first posters behind replenishment. Later failures retain genuine matches. Cached researched Surprise opens immediately. Cold completion latency can still exceed 20 seconds; no irrelevant titles inflate the result count.
+            ARM64 main APK and universal compatibility bridge retain the existing release signer and original native libraries/models. TV is unchanged.
 
-            [Validation and measured limits](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-176-recovery.md). [Design references](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/ask-176-design-provenance.md).
+            [Validation and measured limits](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-177-validation.md).
           files: |
             aliflix-mobile.apk
             update-mobile.json

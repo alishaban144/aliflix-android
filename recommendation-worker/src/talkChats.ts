@@ -13,3 +13,10 @@ export const TalkChatsRequestSchema = z.discriminatedUnion('action',[
   z.object({action:z.literal('clear')}).strict(),
 ]);
 export type TalkChat = z.infer<typeof TalkChatSchema>;
+/** Party identities distinguish device connections; archives belong to the
+ * stable, verified account hash shared by all of those connections. */
+export function talkChatAccountOwner(sub:string):string {
+ const match=/^account:([A-Za-z0-9_-]{43}):[0-9a-f-]{36}$/i.exec(sub);
+ if(!match)throw Error('UNAUTHORIZED');
+ return 'account:'+match[1];
+}
