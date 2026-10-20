@@ -404,7 +404,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Aliflix Talk now combines native text chat and voice, source links, icon-only recent chats, account synchronization and full-screen orb touch tracking. New questions cancel abandoned work. Recommendations use Tavily research and default to released titles from the last three years, while honoring explicit older-era requests.
+            Aliflix Talk now combines native text chat and voice, source links, icon-only recent chats, account synchronization and full-screen orb touch tracking. New questions cancel abandoned work. Recommendations use Tavily research and default to released titles from the last three years, while honoring explicit older-era requests. Simple genre discovery can reuse matching recently researched titles during quotas, without claiming a new search or widening unsupported constraints.
 
             Details prepare playback in the background. Filmo, Serienstream and AniWorld retain a short priority head start while working alternatives race. Dead mirrors, saved server hints and unavailable providers no longer prevent fallback. Play and first-frame transitions fade smoothly. Home's Picked for You keeps its current order when returning from details.
 

@@ -2,7 +2,8 @@ import { describe,it,expect } from 'vitest';
 import { env,runInDurableObject } from 'cloudflare:test';
 import { TalkSession, talkRoute } from '../src/talk';
 import { issueIdentity } from '../src/watchParty';
-import { talkRecommendationPolicy } from '../src/talkIntent';
+import { talkRecommendationPolicy, cachedTalkDiscovery } from '../src/talkIntent';
+import type { RecommendationResult } from '../src/types';
 import { TalkChatsRequestSchema } from '../src/talkChats';
 import { liveInstructions } from '../src/talkProviders';
 import { TalkContextSchema } from '../src/talkEvidence';
@@ -24,6 +25,16 @@ describe('Talk recent discovery and task continuity',()=>{
   expect(text).toContain('never permission to recap the last watched episode');
   expect(text).not.toContain('Reliable general recommendations and non-plot facts can be answered immediately');
   expect(text).toContain('wait for its researched results');
+ });
+ it('reuses only recent evaluated research for simple discovery during quotas',()=>{
+  const pick=(id:number,date:string,genres=['Science Fiction'])=>({tmdbId:id,mediaType:'movie',title:'Film '+id,releaseDate:date,genres,finalScore:80,retrievalSources:['https://example.org/research']} as RecommendationResult);
+  const collection={publishedAt:now.getTime()-86400000,results:[pick(1,'2006-01-01'),pick(2,'2025-05-01'),pick(3,'2026-06-01'),pick(4,'2026-12-01'),pick(5,'2026-05-01',['Horror'])]};
+  const lookup=(q:string,ids=new Set<number>(),titles:string[]=[])=>cachedTalkDiscovery(q,collection,'movie',ids,titles,now);
+  expect(lookup('Instead, suggest two recent sci-fi movies. Include their release years.').map(v=>v.tmdbId)).toEqual([3,2]);
+  expect(lookup('a sci-fi movie',new Set([3]),['Film 2'])).toEqual([]);
+  for(const q of ['classic sci-fi from 2006','sci-fi like Arrival','no horror movies','mind-bending sci-fi','sci-fi under two hours','horror or comedy'])expect(lookup(q)).toEqual([]);
+  expect(cachedTalkDiscovery('sci-fi movies',{...collection,publishedAt:now.getTime()-8*86400000},'movie',new Set(),[],now)).toEqual([]);
+  expect(cachedTalkDiscovery('sci-fi movies',{...collection,results:[{...pick(8,'2026-01-01'),finalScore:0} ]},'movie',new Set(),[],now)).toEqual([]);
  });
 });
 describe('bounded account chat archive',()=>{

@@ -127,7 +127,7 @@ internal class NativeStreamResolver(
             if(it.first.equals(preferredServer,ignoreCase=true))0 else 1
         }.thenBy { (name, _) ->
             val key = "${selection.source.identity}:$name"
-            if (now - history.getLong("$key:at", 0) < 30 * 60_000) history.getLong("$key:ms", 5_000) else 5_000
+            if (now - history.getLong("$key:at", 0) < 30 * 60_000) history.getLong("$key:ms", 5_000) else 5_000L
         })
         if (strictPreferredServer && (catalogueProvider || embeds.any { it.first == preferredServer })) {
             selectNativeServer(embeds, preferredServer, excluded, true) { it.first }
