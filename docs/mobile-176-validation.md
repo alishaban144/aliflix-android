@@ -1,6 +1,6 @@
 # Aliflix mobile 3.1.176 validation
 
-**Unreleased candidate.** The latest public APK remains v3.1.174. Publication is blocked until both daily collections pass the real backend readiness gate and final recommendation/quality acceptance is complete. No production APK, signer, updater or public-artifact check is claimed for v3.1.176.
+**Historical candidate report.** Later repairs and final validation are recorded in [mobile-176-recovery.md](mobile-176-recovery.md). The failures and unreleased status below describe the earlier candidate.
 
 ## Scope and baseline
 
