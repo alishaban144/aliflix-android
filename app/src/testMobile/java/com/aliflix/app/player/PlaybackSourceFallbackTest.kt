@@ -16,7 +16,7 @@ class PlaybackSourceFallbackTest {
         assertEquals(MobilePlaybackProvider.ANIWORLD, preferences.sourceFor(anime).identity)
         val old = PlaybackSelection(anime, 1, 243, source = PlaybackSource(MobilePlaybackProvider.FLIXER))
         assertEquals(listOf(MobilePlaybackProvider.ANIWORLD, PlaybackProviderId.MIRURO, PlaybackProviderId.ANIKURO),
-            initialPlaybackRace(playbackSourceFallbacks(old, preferences)).map { it.source.identity })
+            initialPlaybackRace(playbackSourceFallbacks(old, preferences)).take(3).map { it.source.identity })
         assertEquals(PlaybackProviderId.CINEJOY, preferences.sourceFor(anime, PlaybackProviderId.CINEJOY).identity)
         assertEquals(MobilePlaybackProvider.SERIENSTREAM, preferences.sourceFor(anime.copy(originalLanguage = "en")).identity)
         assertEquals(MobilePlaybackProvider.SERIENSTREAM, preferences.sourceFor(anime.copy(genres = listOf("Drama"))).identity)
@@ -67,7 +67,7 @@ class PlaybackSourceFallbackTest {
         val choices = playbackSourceFallbacks(selection, PlaybackPreferences())
         assertEquals(PlaybackProviderId.ANIKURO, choices.first().source.identity)
         assertTrue(choices.any { it.source.identity == MobilePlaybackProvider.FLIXER })
-        assertEquals(listOf(PlaybackProviderId.ANIKURO, MobilePlaybackProvider.ANIWORLD, PlaybackProviderId.MIRURO), initialPlaybackRace(choices).map { it.source.identity })
+        assertEquals(listOf(PlaybackProviderId.ANIKURO, MobilePlaybackProvider.ANIWORLD, PlaybackProviderId.MIRURO), initialPlaybackRace(choices).take(3).map { it.source.identity })
         assertEquals("https://anikuro.to/", choices.first().source.buildEntryUrl(anime))
         choices.forEach {
             assertEquals(anime, it.media)
@@ -134,5 +134,21 @@ class PlaybackSourceFallbackTest {
         }
         assertEquals("playable", winner)
         assertTrue(loserClosed)
+    }
+
+    @Test fun priorityTimeoutCannotHideAFastAvailableMirror() = runBlocking {
+        val selection=PlaybackSelection(Media(180,MediaType.MOVIE,"Minority Report"),source=PlaybackSource(MobilePlaybackProvider.FILMO))
+        val candidates=initialPlaybackRace(playbackSourceFallbacks(selection,PlaybackPreferences()))
+        assertEquals(selection,candidates.first())
+        assertTrue(candidates.size>1)
+        var cleaned=false
+        val winner=withTimeout(2_500) {
+            racePlaybackSources(candidates) { candidate ->
+                if(candidate.source.identity==MobilePlaybackProvider.FILMO)try { awaitCancellation() } finally { cleaned=true }
+                else candidate.source.identity.name
+            }
+        }
+        assertNotEquals(MobilePlaybackProvider.FILMO.name,winner)
+        assertTrue(cleaned)
     }
 }

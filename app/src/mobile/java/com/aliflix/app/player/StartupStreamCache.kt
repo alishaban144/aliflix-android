@@ -78,7 +78,9 @@ internal object StartupStreamCache {
                 player.playerError?.let { throw it }
                 delay(50)
             }
-            check(player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }) { "No playable audio" }
+            val groups=player.currentTracks.groups
+            check(groups.any { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }) { "No playable video" }
+            check(groups.none { it.type == C.TRACK_TYPE_AUDIO } || groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }) { "No playable audio" }
         } catch(error:Exception) {
             if(com.aliflix.app.BuildConfig.DEBUG)android.util.Log.w("AliflixStartup","${error.javaClass.simpleName}: state=${player.playbackState}, position=${player.currentPosition}, buffered=${player.bufferedPosition}, duration=${player.duration}, tracks=${player.currentTracks.groups.size}, error=${player.playerError?.errorCodeName}")
             throw error

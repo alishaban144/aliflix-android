@@ -61,7 +61,8 @@ class SerienstreamNativeCatalogTest {
         assertFalse(MobilePlaybackProvider.SERIENSTREAM.isAvailableFor(dark.copy(type = MediaType.MOVIE)))
         assertEquals(1, mobileGeneralPlaybackProviders().count { it == MobilePlaybackProvider.SERIENSTREAM })
         val selected = PlaybackSelection(dark,1,1,source = prefs.sourceFor(dark))
-        assertEquals(listOf(selected),initialPlaybackRace(playbackSourceFallbacks(selected,prefs)))
+        assertEquals(selected,initialPlaybackRace(playbackSourceFallbacks(selected,prefs)).first())
+        assertTrue(initialPlaybackRace(playbackSourceFallbacks(selected,prefs)).size>1)
         assertFalse(playbackSourceFallbacks(selected,prefs).drop(1).isEmpty())
     }
 

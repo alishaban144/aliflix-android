@@ -651,7 +651,10 @@ class DefaultImdbRatingRepository(
         if (
             expected.year != null &&
             returnedYear != null &&
-            kotlin.math.abs(expected.year - returnedYear) > 1
+            kotlin.math.abs(expected.year - returnedYear) > 1 &&
+            // A catalogue may date a re-release. Exact IMDb ID + matching title/type
+            // is stronger evidence than that distribution date (e.g. Incoherence).
+            (com.aliflix.app.BuildConfig.IS_TV || score < 85)
         ) {
             return false
         }

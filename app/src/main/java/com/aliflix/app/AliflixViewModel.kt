@@ -748,19 +748,25 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             // Starts before the launch overlay finishes; Firebase already owns startup retry.
             accountServices.syncRepository.retry()
             viewModelScope.launch(Dispatchers.Default) {
+                var picksOwner: String? = null
                 combine(likes, recent, playbackProgressStore.entries, accountState) { liked, history, progress, account ->
                     val watched = (progress.values.sortedByDescending { it.updatedAtMillis }.map { it.media } + history)
                         .distinctBy(Media::key).take(20)
-                    Triple(account.uid, liked.distinctBy(Media::key), watched)
-                }.distinctUntilChanged().collectLatest { (_, explicit, history) ->
+                    // Opening a detail can enrich Media or reorder history. Neither is a new taste.
+                    Triple(account.uid, liked.distinctBy(Media::key).sortedBy(Media::key), watched.sortedBy(Media::key))
+                }.distinctUntilChanged { before, after ->
+                    before.first == after.first && before.second.map(Media::key) == after.second.map(Media::key) &&
+                        before.third.map(Media::key) == after.third.map(Media::key)
+                }.collectLatest { (owner, explicit, history) ->
+                    if (owner != picksOwner) { _pickedForYou.value = emptyList(); picksOwner = owner }
                     com.aliflix.app.recommendation.MobileTasteModel.setHistory(history)
                     if (explicit.isEmpty() && history.isEmpty()) { _pickedForYou.value = emptyList(); return@collectLatest }
-                    val seeds = (com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(explicit, 10) +
-                        com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(history, if (explicit.size < 3) 4 else 2)).distinctBy(Media::key)
+                    val seeds = (com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(explicit, 4) +
+                        com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(history, if (explicit.size < 3) 2 else 1)).distinctBy(Media::key)
                     val candidates = linkedMapOf<String, Media>()
                     val excluded = (explicit + history).map(Media::key).toSet()
-                    _pickedForYou.value = com.aliflix.app.recommendation.TastePicks.rankMobile(
-                        _pickedForYou.value, explicit, excluded, history)
+                    val previous = _pickedForYou.value.filter { it.key !in excluded }
+                    _pickedForYou.value = previous
                     val creatorsFetched = hashSetOf<Int>()
                     for (seed in seeds) {
                         ensureActive()
@@ -772,7 +778,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         details?.recommendations?.map { it.toMedia() }?.forEach { candidates[it.key] = it }
                         // Director/creator filmographies add distinct interests outside Home rails.
                         val creator = enriched.creators.firstOrNull { it.tmdbId > 0 }
-                        if (creator != null && creatorsFetched.size < 3 && creatorsFetched.add(creator.tmdbId)) {
+                        if (creator != null && creatorsFetched.size < 2 && creatorsFetched.add(creator.tmdbId)) {
                             try {
                                 aiClient.getPersonCredits(creator.tmdbId).results.map { it.toMedia() }
                                     .take(20).forEach { candidates[it.key] = it }
@@ -782,19 +788,22 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     // Hydrate bounded candidates before assessing rich anchors against sparse cards.
                     val hydrated = mutableListOf<Media>()
                     val pool = com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(
-                        candidates.values.filter { it.key !in excluded && it.posterPath != null }, 48)
-                    for (candidate in pool) {
+                        candidates.values.filter { it.key !in excluded && it.posterPath != null }, 24)
+                    // Keep this entire optional refresh below 20 API calls so details/episodes have headroom.
+                    for (candidate in pool.take(12)) {
                         ensureActive()
                         val item = try { aiClient.getTitleDetails(candidate.type.routeName, candidate.id).toStableMobileMedia(candidate) }
                             catch (cancelled: CancellationException) { throw cancelled }
                             catch (_: Exception) { candidate }
                         hydrated += item
                         com.aliflix.app.recommendation.MobileTasteModel.remember(listOf(item))
-                        _pickedForYou.value = withContext(Dispatchers.Default) {
-                            com.aliflix.app.recommendation.TastePicks.rankMobile(hydrated.toList(), explicit, excluded, history)
-                        }
                         delay(30)
                     }
+                    hydrated += pool.drop(12)
+                    val ranked = com.aliflix.app.recommendation.TastePicks.rankMobile(hydrated, explicit, excluded, history)
+                    // Keep the current rail's identity/order while refreshing its metadata and tail.
+                    val fresh = ranked.associateBy(Media::key)
+                    _pickedForYou.value = (previous.map { fresh[it.key] ?: it } + ranked).distinctBy(Media::key).take(24)
                 }
             }
         }
@@ -1208,7 +1217,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                     if (_detail.value.item?.key == item.key) _detail.value = _detail.value.copy(seasons = seasons)
                 } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
             }
-            launch {
+            val identityReady = async {
                 try {
                     val details = aiClient.getTitleDetails(item.type.routeName, item.id)
                     if (_detail.value.item?.key == item.key) {
@@ -1217,11 +1226,15 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         mobileDetailCache[item.key] = stable
                         launch { runCatching { offlineDetails.save(stable) } }
                     }
-                } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+                    details.toStableMobileMedia(initial)
+                } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { initial }
             }
             launch {
                 try {
-                    client.details(initial, nativeMetadata = true) { update, _ ->
+                    // Ratings use the same exact TMDB external identity, including short films.
+                    // This deadline gates ratings only; episodes, Play and details stay independent.
+                    val identified = kotlinx.coroutines.withTimeoutOrNull(4_000) { identityReady.await() } ?: initial
+                    client.details(identified, nativeMetadata = true) { update, _ ->
                         val current = _detail.value
                         if (current.item?.key == item.key) {
                             val merged = current.item.mergeStableMobileDetailUpdate(update)
@@ -1244,7 +1257,13 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 if (latest.item?.key == item.key && latest.selectedSeason == season) _detail.value = latest.copy(episodes = episodes, episodesLoading = false)
             }
             try {
-                val episodes = mobileEpisodes.episodes(item.id, season) { publish(it) }
+                val episodes = try {
+                    kotlinx.coroutines.withTimeout(6_000) { mobileEpisodes.episodes(item.id, season) { publish(it) } }
+                } catch(error:Exception) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    // Independent public catalogue fallback; a quota failure cannot hide the episode list.
+                    kotlinx.coroutines.withTimeout(20_000) { client.episodes(item,season) { publish(it) } }
+                }
                 publish(episodes)
                 // Ratings enrich visible rows; they never gate the list or the Play action.
                 val enriched = client.mobileEpisodeRatings(_detail.value.item ?: item, season, episodes)

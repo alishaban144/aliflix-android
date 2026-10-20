@@ -10,6 +10,19 @@ import org.junit.Assert.*
 
 class TalkVoiceUiTest {
     @get:Rule val compose=createComposeRule()
+    @Test fun orbObservesTouchesFarOutsideItsHaloWithoutEatingControls() {
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
+        val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)
+        val tracker=com.aliflix.app.ui.discover.DiscoverTouchTracker()
+        var closed=false
+        try {
+            compose.setContent { AliflixMobileTheme { TalkVoiceScreen(session,{}, {closed=true},tracker) } }
+            compose.onNodeWithTag("talk-screen").performTouchInput { click(androidx.compose.ui.geometry.Offset(width*.08f,height*.78f)) }
+            compose.runOnIdle { assertNotNull(tracker.point);assertTrue(tracker.lastTouchMillis>0) }
+            compose.onNodeWithContentDescription("Close conversation").performClick()
+            compose.runOnIdle { assertTrue(closed) }
+        } finally {session.close();scope.cancel()}
+    }
     @Test fun conversationStartsAutomaticallyAndPrivacyControlsRemainReachable() {
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
         val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope)
@@ -21,10 +34,10 @@ class TalkVoiceUiTest {
             compose.runOnIdle { assertTrue(started);assertEquals("Ready",session.state.value.phase) }
             compose.onNodeWithContentDescription("Privacy").performClick()
             compose.onNodeWithText("Keep history").assertIsDisplayed()
-            compose.onNodeWithText("Delete history").performClick()
+            compose.onNodeWithText("Delete history").assertIsDisplayed()
             compose.onNodeWithContentDescription("Close panel").performClick()
-            compose.onNodeWithContentDescription("Transcript").performClick()
-            compose.onNodeWithText("Transcript").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Recent chats").performClick()
+            compose.onNodeWithText("Recent chats").assertIsDisplayed()
             compose.onNodeWithContentDescription("Close panel").performClick()
             compose.onNodeWithContentDescription("Close conversation").performClick()
             compose.runOnIdle { assertTrue(closed) }

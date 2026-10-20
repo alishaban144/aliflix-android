@@ -59,7 +59,7 @@ class LinkedSiteCatalogTest {
         assertEquals("Japanese · German subtitles",links.last().audioLabel)
         assertEquals("ja",resolvedDialogueLanguage("und",links.last().language))
     }
-    @Test fun initialSourcesAreContentSpecificAndFinishBeforeAnyFallbackRace() {
+    @Test fun initialSourcesAreContentSpecificWithoutBlockingFallback() {
         val preferences=PlaybackPreferences(generalProvider=PlaybackProviderId.CINEJOY)
         val cases=listOf(Media(1,MediaType.MOVIE,"Movie") to MobilePlaybackProvider.FILMO,
             Media(2,MediaType.TV,"Series") to MobilePlaybackProvider.SERIENSTREAM,
@@ -67,7 +67,8 @@ class LinkedSiteCatalogTest {
         for((media,provider) in cases) {
             assertEquals(provider,preferences.sourceFor(media).identity)
             val selection=PlaybackSelection(media,source=preferences.sourceFor(media))
-            assertEquals(listOf(provider),initialPlaybackRace(playbackSourceFallbacks(selection,preferences)).map { it.source.identity })
+            assertEquals(provider,initialPlaybackRace(playbackSourceFallbacks(selection,preferences)).first().source.identity)
+            assertTrue(initialPlaybackRace(playbackSourceFallbacks(selection,preferences)).size>1)
             assertEquals(provider,downloadProviderOrder(selection).first())
             assertEquals(PlaybackProviderId.CINEJOY,preferences.sourceFor(media,PlaybackProviderId.CINEJOY).identity)
         }

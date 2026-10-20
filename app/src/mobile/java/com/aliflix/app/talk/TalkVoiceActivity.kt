@@ -19,10 +19,12 @@ class TalkVoiceActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if(intent.getBooleanExtra("textMode",false))voice.setTextMode(true)
         enableEdgeToEdge(statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         setContent { AliflixMobileTheme { TalkVoiceScreen(voice, onStart = ::startListening, onClose = ::finish) } }
     }
     private fun startListening() {
+        if(voice.state.value.textMode){lifecycleScope.launch { voice.connect() };return}
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
             lifecycleScope.launch { voice.connect() }
         else permission.launch(Manifest.permission.RECORD_AUDIO)

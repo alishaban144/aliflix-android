@@ -27,7 +27,7 @@ internal data class TalkLine(val role: String, val text: String, val sources: Li
 internal data class TalkReference(val title: String, val url: String, val license: String)
 internal val VOICES=listOf("Aoede","Kore","Puck","Charon")
 internal data class TalkVoiceState(val phase: String = "Ready", val words: String = "ALIFLIX", val level: Float = 0f, val voice:String="Aoede",
-    val muted: Boolean = false, val keepHistory: Boolean = false, val lines: List<TalkLine> = emptyList(), val provider: String = "")
+    val muted: Boolean = false, val keepHistory: Boolean = false, val lines: List<TalkLine> = emptyList(), val provider: String = "", val textMode:Boolean=false, val sending:Boolean=false)
 
 /** Remote microphone conversation only. This class never receives episode PCM,
  * subtitle cues, streaming URLs or credentials belonging to a playback source. */
@@ -42,8 +42,50 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             }
         }
     }.getOrDefault(emptyList())
-    private val _state = MutableStateFlow(TalkVoiceState(keepHistory=restoreHistory&&prefs.getBoolean("keep-history",false),lines=if(restoreHistory)savedLines()else emptyList(),voice=prefs.getString("voice","Aoede")?.takeIf{it in VOICES}?:"Aoede"))
+    private val _state = MutableStateFlow(TalkVoiceState(keepHistory=restoreHistory&&prefs.getBoolean("keep-history",true),lines=emptyList(),voice=prefs.getString("voice","Aoede")?.takeIf{it in VOICES}?:"Aoede"))
     val state = _state.asStateFlow()
+    val history=TalkChatHistory(context,scope) { uid,value -> post("chats",value,expectedOwner=uid) }
+    private var chatId=java.util.UUID.randomUUID().toString()
+    private val userTurn=java.util.concurrent.atomic.AtomicLong(0)
+    @Volatile private var inputTurnActive=false
+    @Volatile private var socketReady=false
+    private var textSend:Job?=null
+    private fun beginUserTurn() {
+        userTurn.incrementAndGet();inputTurnActive=true;continueAfterReconnect=false
+        tools.values.forEach { it.cancel() };tools.clear()
+        sequence++;interruptOutput();assistantLine=-1;outputText="";finalReferences=emptyList()
+        update { it.copy(sending=true) }
+    }
+    fun setTextMode(enabled:Boolean) {
+        if(enabled==state.value.textMode)return
+        persistHistory();suspendSession();update { it.copy(textMode=enabled,muted=enabled) };muted=enabled
+        if(enabled)scope.launch { connect() }
+    }
+    fun sendText(text:String) {
+        val question=text.trim().take(1600);if(question.isBlank()||textSend?.isActive==true)return
+        textSend=scope.launch {
+            beginUserTurn();inputText=question;commitQuestion();persistHistory()
+            try {
+                if(!permitted)connect()
+                withTimeout(20000){while(!socketReady)delay(30)}
+                answerDeadline.awaiting(70000)
+                emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text",question))))).put("turnComplete",true)))
+            } catch(cancelled:CancellationException){throw cancelled}
+            catch(_:Exception){update { it.copy(phase="Reconnect",sending=false) }}
+        }
+    }
+    fun newChat() {
+        persistHistory();suspendSession();userTurn.incrementAndGet();inputTurnActive=false
+        chatId=java.util.UUID.randomUUID().toString();ephemeral=null;backendSession=null;resumeHandle=null
+        inputText="";lastQuestion="";outputText="";assistantLine=-1;responseLanguage=null
+        update { it.copy(lines=emptyList(),words="ALIFLIX",sending=false) }
+    }
+    fun openChat(id:String) { scope.launch {
+        val chat=history.read(id)?:return@launch
+        newChat();chatId=chat.id;muted=true;update { it.copy(lines=chat.lines,words=chat.title.take(32),textMode=true,muted=true) }
+        if(state.value.textMode)connect()
+    } }
+
     private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
     @Volatile private var closed = false
@@ -122,6 +164,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal var debugEpisodeEvidence=""
     internal var debugWebEvidenceCount=0
     internal var debugRecommendationCount=0
+    internal var debugRecommendationYears:List<Int> = emptyList()
     @Volatile private var lastOutputAt=0L
     private var stalledRecoveries=0
     private var continueAfterReconnect=false
@@ -133,6 +176,15 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun rememberFilmTopic(title:String){validatedTalkTopic(title)?.let{synchronized(knownFilmTopics){knownFilmTopics.add(it);while(knownFilmTopics.size>16)knownFilmTopics.remove(knownFilmTopics.first())}}}
     private var finalReferences: List<TalkReference> = emptyList()
     private var conversationContext = JSONObject()
+
+    init {
+        val owner=FirebaseAuth.getInstance().currentUser?.uid ?: "guest"
+        if(restoreHistory&&!prefs.getBoolean("archive-migrated:$owner",false)) {
+            val legacy=savedLines()
+            if(legacy.isNotEmpty())history.save(TalkChat(java.util.UUID.randomUUID().toString(),legacy.firstOrNull { it.role=="user" }?.text?.take(80)?:"Conversation",System.currentTimeMillis(),legacy))
+            prefs.edit().putBoolean("archive-migrated:$owner",true).apply()
+        }
+    }
 
     private fun update(block: (TalkVoiceState) -> TalkVoiceState) { _state.update(block) }
     fun permissionDenied() = update { it.copy(phase = "Microphone permission", words = "MICROPHONE") }
@@ -201,8 +253,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         prefs.edit().putString("owner", owner).putString("token", data.getString("token")).putLong("expires", data.getLong("expires")).apply()
         data.getString("token")
     }
-    private suspend fun post(path: String, value: JSONObject, timeout:Long=12000): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun post(path: String, value: JSONObject, timeout:Long=12000, expectedOwner:String?=null): JSONObject = withContext(Dispatchers.IO) {
+        if(expectedOwner!=null)check(FirebaseAuth.getInstance().currentUser?.uid==expectedOwner)
         val token = identity()
+        if(expectedOwner!=null)check(FirebaseAuth.getInstance().currentUser?.uid==expectedOwner)
         val request = Request.Builder().url(BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/')+"/v1/talk/"+path)
             .header("Authorization","Bearer $token").post(value.toString().toRequestBody("application/json".toMediaType())).build()
         kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
@@ -249,7 +303,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
                 override fun onMessage(webSocket:WebSocket,text:String) { if(ticket==epoch&&permitted) {
                     if(text.length>1000000){webSocket.close(1009,null);return}
-                    runCatching { receiveLive(JSONObject(text),ticket,!requestedHandle.isNullOrBlank()) }.onFailure { scope.launch { disconnected(ticket,false) } }
+                    val message=runCatching { JSONObject(text) }.getOrNull() ?: return
+                    scope.launch(Dispatchers.Main.immediate) {
+                        if(ticket==epoch&&permitted)runCatching { receiveLive(message,ticket,!requestedHandle.isNullOrBlank()) }.onFailure { disconnected(ticket,false) }
+                    }
                 } }
                 override fun onMessage(webSocket:WebSocket,bytes:okio.ByteString) { onMessage(webSocket,bytes.utf8()) }
                 override fun onFailure(webSocket:WebSocket,t:Throwable,response:Response?) { scope.launch {
@@ -299,16 +356,17 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun receiveLive(message:JSONObject,ticket:Long,resuming:Boolean) {
         if(message.has("setupComplete")) { scope.launch(Dispatchers.Main) {
             if(ticket!=epoch||!permitted)return@launch
-            readyWatchdog?.cancel();reconnects=0
+            readyWatchdog?.cancel();reconnects=0;socketReady=true
             if(continueAfterReconnect){
                 continueAfterReconnect=false
                 scope.launch {delay(750);if(ticket==epoch&&permitted&&!speaking)emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text","Continue answering the latest user question in the restored dialogue. If audio was interrupted, continue from the last complete sentence. Keep the established language, title and spoiler boundaries. Avoid repeating completed speech or acknowledging this reconnection."))))).put("turnComplete",true)))}
             }
             if(state.value.lines.isNotEmpty()) {
-                val history=talkContinuityTurns(state.value.lines,resuming)
+                val restored=if(textSend?.isActive==true&&state.value.lines.lastOrNull()?.role=="user")state.value.lines.dropLast(1) else state.value.lines
+                val history=talkContinuityTurns(restored,resuming)
                 emit(JSONObject().put("clientContent",JSONObject().put("turns",history).put("turnComplete",false)))
             }
-            try { startAudio(ticket);debugReadyGeneration=ticket;update{it.copy(phase="Listening",provider="gemini-3.8-live · ${it.voice}")} }
+            try { if(!state.value.textMode)startAudio(ticket);debugReadyGeneration=ticket;update{it.copy(phase="Listening",provider="gemini-3.8-live · ${it.voice}")} }
             catch(_:Exception){suspendSession();update{it.copy(phase="Audio unavailable")}}
         } }
         message.optJSONObject("sessionResumptionUpdate")?.let { if(it.optBoolean("resumable"))it.optString("newHandle").takeIf(String::isNotBlank)?.let {handle->resumeHandle=handle} }
@@ -365,6 +423,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
                 update{it.copy(phase=if(speaking)it.phase else "Thinking")}
                 val toolRequestId=java.util.UUID.randomUUID().toString()
+                val toolTurn=userTurn.get()
+                val toolQuestion=inputText.ifBlank { lastQuestion }
+                val toolSession=ephemeral!!.getString("session")
                 if(call.optString("name") in setOf("web_research","recommendations")) answerDeadline.awaiting(70000)
                 tools[id]=scope.launch {
                     val result=runCatching {
@@ -380,27 +441,30 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                                     library.recent.value.map{it to "watched"}).distinctBy{it.first.key}
                             }
                             val offset=args.optInt("offset",0).coerceIn(0,100000)
-                            post("viewing",JSONObject().put("session",ephemeral!!.getString("session"))
+                            post("viewing",JSONObject().put("session",toolSession)
                                 .put("items",JSONArray(items.drop(offset).take(8).map{(m,k)->talkLibraryIdentity(m,k)}))
                                 .put("page",JSONObject().put("collection",collection).put("offset",offset).put("total",items.size)))
                         }
                         else if(call.optString("name") in setOf("web_research","recommendations")) post(if(call.optString("name")=="web_research")"research" else "recommendations",
-                            JSONObject().put("session",ephemeral!!.getString("session")).put("requestId",toolRequestId).put("request",call.getJSONObject("args")),70000)
-                        else post("knowledge",JSONObject().put("session",ephemeral!!.getString("session"))
-                            .put("question",(inputText.ifBlank {lastQuestion}).take(1600)).put("request",call.getJSONObject("args")))
+                            JSONObject().put("session",toolSession).put("requestId",toolRequestId).put("request",call.getJSONObject("args")),70000)
+                        else post("knowledge",JSONObject().put("session",toolSession)
+                            .put("question",toolQuestion.take(1600)).put("request",call.getJSONObject("args")))
                     }
                         .getOrElse { error ->
                             if(error is CancellationException) {
-                                withContext(NonCancellable) {runCatching {post("cancel",JSONObject().put("session",ephemeral?.optString("session")).put("requestId",toolRequestId))}}
+                                withContext(NonCancellable) {runCatching {post("cancel",JSONObject().put("session",toolSession).put("requestId",toolRequestId))}}
                                 throw error
                             }
                             JSONObject().put("unavailable",true).put("evidence",JSONArray()).put("instruction","This lookup is unavailable. Do not pretend you browsed or invent facts. Continue naturally with reliable existing knowledge.")
                         }
-                    if(ticket==epoch&&permitted&&id !in cancelledTools) {
+                    if(ticket==epoch&&permitted&&toolTurn==userTurn.get()&&id !in cancelledTools) {
                         if(BuildConfig.DEBUG){
                             if(call.optString("name")=="film_knowledge")debugEpisodeEvidence=result.optJSONArray("evidence")?.toString().orEmpty()
                             if(call.optString("name")=="web_research")debugWebEvidenceCount=result.optJSONArray("evidence")?.length()?:0
-                            if(call.optString("name")=="recommendations")debugRecommendationCount=result.optJSONArray("results")?.length()?:0
+                            if(call.optString("name")=="recommendations"){
+                                val rows=result.optJSONArray("results")?:JSONArray();debugRecommendationCount=rows.length()
+                                debugRecommendationYears=(0 until rows.length()).mapNotNull { rows.optJSONObject(it)?.optString("year")?.toIntOrNull() }
+                            }
                         }
                         result.optJSONArray("results")?.let{a->for(n in 0 until minOf(8,a.length()))rememberFilmTopic(a.optJSONObject(n)?.optString("title").orEmpty())}
                         val references=result.optJSONArray("evidence")
@@ -412,7 +476,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(response))))
                     }
                     tools.remove(id)
-                    if(tools.isEmpty()&&!turnHasAudio)answerDeadline.awaiting(12000)
+                    if(toolTurn==userTurn.get()&&tools.isEmpty()&&!turnHasAudio)answerDeadline.awaiting(12000)
                 }
             }
         }
@@ -424,8 +488,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 // a late audio interruption must not cancel a newer lookup.
                 update{it.copy(phase=if(muted) "Muted" else "Listening")}
             }
-            content.optJSONObject("inputTranscription")?.optString("text")?.let { if(inputText.isBlank())turnHasAudio=false;inputText=appendTranscript(inputText,it);answerDeadline.awaiting();update{v->v.copy(phase=if(speaking) v.phase else "Thinking")} }
+            content.optJSONObject("inputTranscription")?.optString("text")?.let { if(!inputTurnActive)beginUserTurn();if(inputText.isBlank())turnHasAudio=false;inputText=appendTranscript(inputText,it);answerDeadline.awaiting();update{v->v.copy(phase=if(speaking) v.phase else "Thinking")} }
             content.optJSONObject("outputTranscription")?.optString("text")?.let { text->
+                inputTurnActive=false;answerDeadline.clear()
                 outputText=appendTranscript(outputText,text)
                 commitQuestion()
                 update { v->
@@ -456,6 +521,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             if(content.optBoolean("generationComplete")){endOfAudio=true;if(turnHasAudio)answerDeadline.clear()}
             if(content.optBoolean("turnComplete")) {
                 update{it.copy(words=completedTalkTopic(outputText,it.words,synchronized(knownFilmTopics){knownFilmTopics.toList()}))}
+                inputTurnActive=false;update { it.copy(sending=false,phase=if(it.textMode)"Listening" else it.phase) }
                 debugTurnCompleteAt=SystemClock.elapsedRealtime();endOfAudio=true;assistantLine=-1;outputText="";finalReferences=emptyList()
                 commitQuestion()
                 persistHistory()
@@ -477,7 +543,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         update{it.copy(words=subject)}
     }
     private fun addLine(line:TalkLine){if(line.text.isNotBlank())update{it.copy(lines=(it.lines+line).takeLast(24))}}
-    private fun persistHistory(){if(state.value.keepHistory)prefs.edit().putString("history",JSONArray(state.value.lines.takeLast(12).map {JSONObject().put("role",it.role).put("text",it.text.take(1200))}).toString()).apply()}
+    private fun persistHistory(){
+        if(!state.value.keepHistory||state.value.lines.isEmpty())return
+        val title=state.value.lines.firstOrNull { it.role=="user" }?.text?.take(80) ?: "Conversation"
+        history.save(TalkChat(chatId,title,System.currentTimeMillis(),state.value.lines))
+    }
     private fun sendPcm(bytes:ByteArray){emit(JSONObject().put("realtimeInput",JSONObject().put("audio",JSONObject().put("mimeType","audio/pcm;rate=16000").put("data",Base64.encodeToString(bytes,Base64.NO_WRAP)))))}
 
     @SuppressLint("MissingPermission")
@@ -579,11 +649,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     internal fun debugInterrupt(){check(BuildConfig.DEBUG);sequence++;interruptOutput();emit(JSONObject().put("realtimeInput",JSONObject().put("text","Stop speaking.")))}
     internal fun debugReconnect(){check(BuildConfig.DEBUG);update{it.copy(phase="Reconnecting")};cancelSocket(ws)}
-    internal suspend fun debugInjectText(text:String){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};inputText=text;commitQuestion();answerDeadline.awaiting();debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)))}
+    internal suspend fun debugInjectText(text:String){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};beginUserTurn();inputText=text;commitQuestion();answerDeadline.awaiting();debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)))}
     internal suspend fun debugInjectUtterance(pcm:ByteArray){check(BuildConfig.DEBUG&&pcm.size in 6400..960000&&pcm.size%2==0);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;for(at in pcm.indices step 3200){sendPcm(pcm.copyOfRange(at,minOf(at+3200,pcm.size)));delay(100)};repeat(15){sendPcm(ByteArray(3200));delay(100)};emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)))}
     fun toggleMute(){muted=!muted;if(muted&&captureJob?.isActive==true)emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)));update{it.copy(muted=muted,phase=if(it.phase in listOf("Connecting","Reconnecting"))it.phase else if(muted) "Muted" else if(speaking) "Speaking" else "Listening")}}
-    fun setHistory(keep:Boolean){prefs.edit().putBoolean("keep-history",keep).apply();update{it.copy(keepHistory=keep)};if(keep)persistHistory()else prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()}
+    fun setHistory(keep:Boolean){if(!keep)history.clear();prefs.edit().putBoolean("keep-history",keep).apply();update{it.copy(keepHistory=keep)};if(keep)persistHistory()else prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()}
     fun clearHistory(){
+        history.clear();userTurn.incrementAndGet();chatId=java.util.UUID.randomUUID().toString();
         synchronized(knownFilmTopics){knownFilmTopics.clear()}
         sequence++;interruptOutput();val session=ephemeral?.optString("session")
         resumeHandle=null;ephemeral=null;backendSession=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
@@ -611,7 +682,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     fun suspendSession() {
         // Detach ownership before focus/routing callbacks can re-enter teardown.
-        permitted=false;awaitingInterrupt=false;epoch++
+        persistHistory();socketReady=false;permitted=false;awaitingInterrupt=false;epoch++
         readyWatchdog?.cancel();readyWatchdog=null;reconnectJob?.cancel();reconnectJob=null
         val socket=ws;ws=null;runCatching {socket?.close(1000,"Paused")}
         stopAudio()

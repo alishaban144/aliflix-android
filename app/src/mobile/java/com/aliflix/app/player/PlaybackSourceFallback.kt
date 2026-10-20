@@ -11,12 +11,19 @@ internal fun playbackSourceFallbacks(selection: PlaybackSelection, preferences: 
         .filter { it.isAvailableFor(selection.media) && it != selection.source.identity }
         .map { selection.copy(source = preferences.sourceFor(selection.media, it)) }
 
-/** Native anime sources retain their race; general playback advances through a bounded queue. */
+/** Priority controls launch order; an unavailable priority must never serialize fallback. */
 internal fun initialPlaybackRace(candidates: List<PlaybackSelection>): List<PlaybackSelection> {
     val anime = candidates.filter { it.source.identity.isAnimeNative }
     return when {
-        candidates.firstOrNull()?.source?.identity?.hasSourceEditions == true -> candidates.take(1)
-        candidates.firstOrNull()?.media?.let { it.type == MediaType.TV && it.isJapaneseAnime } == true && anime.isNotEmpty() -> anime
+        candidates.firstOrNull()?.media?.let { it.type == MediaType.TV && it.isJapaneseAnime } == true && anime.isNotEmpty() ->
+            anime + candidates.filterNot { it.source.identity.isAnimeNative }
         else -> candidates
     }
 }
+
+/** Give the chosen catalogue a brief head start, with bounded concurrent alternatives. */
+internal suspend fun <T : Any> racePlaybackSources(candidates: List<PlaybackSelection>, attempt: suspend (PlaybackSelection) -> T): T =
+    firstSuccessful(candidates.mapIndexed { index, candidate -> suspend {
+        if (index > 0) kotlinx.coroutines.delay(900)
+        attempt(candidate)
+    } }, parallelism = 4)

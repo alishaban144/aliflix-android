@@ -121,9 +121,9 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
         val ordered=eligible.sortedWith(compareBy<SitePlaybackLink> { if(it.label==preferred) 0 else 1 }
             .thenBy { if(it.language==desired || it.language.substringBefore('-')==desired) 0 else 1 })
         require(ordered.isNotEmpty()) { "Selected site audio/host unavailable" }
-        // Exhaust the preferred soundtrack's mirrors before another edition.
-        var last:Exception?=null
-        for (link in ordered) {
+        // Race host mirrors within a bounded budget; an unresponsive first host cannot hide a working second.
+        val winner=firstSuccessful(ordered.mapIndexed { index,link -> suspend {
+            if(index>0)delay(650)
             try {
                 // Host discovery and actual HLS/audio validation have separate
                 // deadlines. A valid URL found near the discovery deadline must
@@ -152,17 +152,18 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
                 val resolved=request.copy(sourceAudioLanguage=link.language,sourceAudioOptions=JSONArray().apply {
                     links.distinctBy { it.language }.forEach { put(JSONObject().put("language",it.language).put("label",it.audioLabel)) }
                 }.toString())
-                onServer(link.label)
-                return@withTimeout resolved
+                link.label to resolved
             } catch(timeout:TimeoutCancellationException) {
-                currentCoroutineContext().ensureActive();last=timeout
+                currentCoroutineContext().ensureActive();throw timeout
             } catch(cancelled:CancellationException) { throw cancelled }
             catch(error:Exception) {
-                currentCoroutineContext().ensureActive();last=error
+                currentCoroutineContext().ensureActive()
                 android.util.Log.w("AliflixSite","${selection.source.identity.name}:${link.label}:${error.javaClass.simpleName}: ${error.message.orEmpty().replace(Regex("https?://\\S+"),"[url]").take(160)}")
+                throw error
             }
-        }
-        throw last ?: NoNativeServersException()
+        } },parallelism=2)
+        onServer(winner.first)
+        winner.second
     }
     private suspend fun publicVoeRequest(selection:PlaybackSelection,url:String,position:Long):NativePlaybackRequest {
         val document=followPublicVoeRelay(page(url),url)

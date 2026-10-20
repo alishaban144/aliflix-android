@@ -499,7 +499,7 @@ internal fun NativePlayerScreen(
 
         // Artwork Background
         AnimatedVisibility(visible = preparing || state.error != null || state.external || ended,
-            enter = fadeIn(tween(180)), exit = fadeOut(tween(320))) {
+            enter = fadeIn(tween(180)), exit = fadeOut(tween(520, easing = androidx.compose.animation.core.FastOutSlowInEasing))) {
             Box(Modifier.fillMaxSize().background(PlayerInk)) {
                 AsyncImage(state.artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.42f)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PlayerInk.copy(alpha = 0.32f), PlayerInk.copy(alpha = 0.92f)))))
@@ -509,7 +509,7 @@ internal fun NativePlayerScreen(
         // Preparing / Loading Overlay
         AnimatedVisibility(visible = preparing, modifier = Modifier.align(Alignment.Center),
             enter = fadeIn(tween(160)) + androidx.compose.animation.scaleIn(tween(180), initialScale = .96f),
-            exit = fadeOut(tween(120))) {
+            exit = fadeOut(tween(220)) + androidx.compose.animation.scaleOut(tween(280), targetScale = .92f)) {
             HmsLoadingIndicator(Modifier.size(104.dp))
         }
 

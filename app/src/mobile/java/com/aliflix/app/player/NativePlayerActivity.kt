@@ -963,7 +963,7 @@ class NativePlayerActivity : FragmentActivity() {
                 val history = getSharedPreferences("native-resolver-performance", MODE_PRIVATE)
                 val seriesKey = "series:${current.media.key}"
                 var detailWarm = if (preferredServer == null) DetailPreloadStore.take(current, resume)
-                    ?.takeIf { !animeSeries || it.first.source.identity.isAnimeNative } else null
+                    else null
                 val savedRoute = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { routeStore.load(current) }
                     ?.takeIf { preferredServer == null &&
                         current.source.identity != com.aliflix.app.model.PlaybackProviderId.CINEJOY &&
@@ -985,7 +985,7 @@ class NativePlayerActivity : FragmentActivity() {
                 val cineJoyRetries = mutableMapOf<String, Int>()
                 var cineJoyRetryServer: String? = null
                 var cineJoyLowQuality = false
-                var preferSaved = preferredServer != null || (savedProvider != null && !animeSeries)
+                var preferSaved = strictPreferredServer
                 if (detailWarm == null && savedRoute?.request != null && triedServers.isEmpty()) {
                     val restored = savedRoute.selection
                     val request = savedRoute.request.copy(positionMs = resume, playing = false,
@@ -1026,7 +1026,7 @@ class NativePlayerActivity : FragmentActivity() {
                     detailWarm = null
                     warmedEpisode = null
                     val winner = try {
-                        warmed ?: firstSuccessful(batch.map { candidate -> suspend {
+                        warmed ?: racePlaybackSources(batch) { candidate ->
                             val adapter = NativeStreamResolver(this@NativePlayerActivity, progress, resolverHost)
                             var server = ""
                             val excluded = excludedBySource.getOrPut(candidate.source.identity) { mutableSetOf() }
@@ -1044,6 +1044,7 @@ class NativePlayerActivity : FragmentActivity() {
                                 }) {
                                     adapter.resolve(candidate, resume, excluded, strictPreferredServer = (strictPreferredServer && candidate.source == startingSource) || (candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY && cineJoyRetryServer != null),
                                         validateSingle = true,
+                                        allowVerification = strictPreferredServer,
                                         audioLanguage = if (candidate.source.identity.hasSourceEditions && preferredServer == null)
                                             getSharedPreferences("serienstream-audio", MODE_PRIVATE).getString(candidate.media.key, null) else null,
                                         forceLowQuality = candidate.source.identity == com.aliflix.app.model.PlaybackProviderId.CINEJOY && cineJoyLowQuality,
@@ -1071,7 +1072,7 @@ class NativePlayerActivity : FragmentActivity() {
                             } finally {
                                 adapter.close()
                             }
-                        } }, parallelism = 4)
+                        }
                     } catch (error: Exception) {
                         ensureActive()
                         if (error is SerienstreamVerificationRequired && current.source.identity == MobilePlaybackProvider.SERIENSTREAM) {

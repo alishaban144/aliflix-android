@@ -88,17 +88,17 @@ internal fun claimDetailPreload(selection: PlaybackSelection) {
             session.result = scope.async {
                 try {
                     withTimeoutOrNull(30_000) {
-                        firstSuccessful(initialPlaybackRace(playbackSourceFallbacks(selection, preferences)).map { candidate -> suspend {
+                        racePlaybackSources(initialPlaybackRace(playbackSourceFallbacks(selection, preferences))) { candidate ->
                             val adapter = NativeStreamResolver(activity, progress, host)
                             try {
                                 var server = candidate.source.identity.displayName
                                 val request = withTimeout(resolveBudgetMillis(candidate.source.identity)) {
-                                    adapter.resolve(candidate, position, emptySet(), parallelism = 2) { server = it }
+                                    adapter.resolve(candidate, position, emptySet(), parallelism = 2, allowVerification = false) { server = it }
                                 }
                                 StartupStreamCache.awaitPlayable(activity, request.copy(playing = false))
                                 DetailPreloadStore.Entry(candidate, server, request)
                             } finally { adapter.close() }
-                        } }, parallelism = 4)
+                        }
                     }
                 } catch (error: Exception) {
                     currentCoroutineContext().ensureActive()

@@ -4313,7 +4313,8 @@ internal fun DetailScreen(
         )
     } ?: state.episodes.firstOrNull()
     com.aliflix.app.player.DetailPlaybackPreload(
-        item, mainEpisode, state.episodes, enabled = preloadEnabled,
+        item, mainEpisode ?: if(item.type == MediaType.TV) Episode(state.selectedSeason,1,"Episode 1") else null,
+        state.episodes, enabled = preloadEnabled,
     )
     val configuration = LocalConfiguration.current
     val detailHeroHeight = if (configuration.screenWidthDp > configuration.screenHeightDp) 360.dp else (configuration.screenHeightDp * 0.53f).coerceIn(300f, 460f).dp

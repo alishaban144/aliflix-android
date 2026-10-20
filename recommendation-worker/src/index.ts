@@ -334,8 +334,16 @@ export default {
     if (titleMatch || personMatch || isEditorialPicks || isHomeFeed || isTitleSearch || isCompanySearch || isTvNetworkFeed) {
       if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
       try {
+        if(titleMatch) {
+          const key=new Request(new URL(url.pathname,url.origin),{method:'GET'});
+          const cached=await caches.default.match(key);if(cached)return cached;
+          await enforceRateLimit(request,env);
+          const response=catalogJson(await titleDetails(env,titleMatch[1] as 'movie'|'tv',Number(titleMatch[2])));
+          response.headers.set('cache-control','public, max-age=21600');
+          const write=caches.default.put(key,response.clone());if(ctx)ctx.waitUntil(write);else await write;
+          return response;
+        }
         await enforceRateLimit(request, env);
-        if (titleMatch) return catalogJson(await titleDetails(env, titleMatch[1] as 'movie' | 'tv', Number(titleMatch[2])));
         if (personMatch) {
           return catalogJson(await personCredits(env, Number(personMatch[1])));
         }

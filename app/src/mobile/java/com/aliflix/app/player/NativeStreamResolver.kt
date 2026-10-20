@@ -60,6 +60,7 @@ internal class NativeStreamResolver(
         parallelism: Int = 2,
         forceLowQuality: Boolean = false,
         audioLanguage: String? = null,
+        allowVerification: Boolean = true,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
         reportServers = onServers
@@ -82,6 +83,7 @@ internal class NativeStreamResolver(
                 strictPreferredServer, onServers, onServer, audioLanguage,
                 validate={ request -> if(validateSingle) StartupStreamCache.awaitPlayable(activity,request) })
             return try { resolveCatalogue() } catch (gate: SerienstreamVerificationRequired) {
+                if (!allowVerification) throw gate
                 if (!SerienstreamBrowserSession.approve(activity, host, gate)) throw gate
                 resolveCatalogue()
             }
