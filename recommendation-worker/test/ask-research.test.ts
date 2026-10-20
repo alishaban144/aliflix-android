@@ -419,10 +419,17 @@ describe("unified authenticated research", () => {
               evidenceBatch:async(items:Array<{title:string;year:number}>)=>items.map(p=>({title:`${p.title} (${p.year})`,finding:{title:p.title,text:'Memory and identity are central to this story.',url:'https://en.wikipedia.org/wiki/'+p.title.replaceAll(' ','_'),attribution:'Wikipedia contributors · CC BY-SA 4.0'}})),
             }),
           };
-          const result = await (instance as unknown as AskResearch).recommend(
+          const snapshots:any[]=[];
+          const result:Awaited<ReturnType<AskResearch['recommend']>> = await (instance as any).recommendInternal(
             "user",
             request({ filters: { minimumYear: 2024, originalLanguage: "en" } }),
+            (value:any)=>snapshots.push(structuredClone(value)),
           );
+          expect(snapshots.length).toBeGreaterThan(1);
+          expect(snapshots[0].results.length).toBeGreaterThan(0);
+          expect(snapshots[0].results.length).toBeLessThan(24);
+          expect(snapshots.every(s=>s.results.every((v:any)=>v.finalScore>0&&v.retrievalSources.length>0))).toBe(true);
+          expect(result.metrics.firstResultsMs).toBeLessThanOrEqual(result.metrics.elapsedMs);
           expect(result.results).toHaveLength(24);
           expect(new Set(result.results.map((v) => v.tmdbId)).size).toBe(24);
           expect(result.results.some((v) => v.tmdbId === 1)).toBe(false);
@@ -590,5 +597,78 @@ it('catalogue outage retains the previous valid pair without consuming AI or sea
   pair.forEach((v,i)=>state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)','daily:catalogue:'+(i?'tv':'movie'),JSON.stringify(v),Date.now()+86400000));
   vi.spyOn(globalThis,'fetch').mockRejectedValue(Error('offline'));
   expect(await service.catalogueDaily()).toEqual(pair);
+ });
+});
+
+
+describe('progressive research transport',()=>{
+ const value=(n:number)=>({results:Array.from({length:n},(_,i)=>({tmdbId:i+1})),metrics:{accepted:n}});
+ const decode=(bytes:Uint8Array)=>JSON.parse(new TextDecoder().decode(bytes));
+ it('transfers actual byte streams through Durable Object RPC',async()=>{
+  const stub=env.ASK_RESEARCH.getByName('stream-rpc');
+  const input=AskRequestSchema.parse(request());
+  const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({...input,requestId:undefined,cursor:undefined})));
+  const key='results-v11:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  await runInDurableObject(stub,async(_instance,state)=>{
+   state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)',key,JSON.stringify({...value(24),cachedAt:Date.now()}),Date.now()+86400000);
+  });
+  const response=new Response(await stub.recommendStream('owner',input));
+  const events=(await response.text()).trim().split('\n').map(line=>JSON.parse(line));
+  expect(events.at(-1)).toMatchObject({requestId:input.requestId,type:'results',inProgress:false,cached:true,results:value(24).results});
+ });
+ it('delivers an evaluated batch while the rest is pending and conflates slow readers',async()=>{
+  await runInDurableObject(env.ASK_RESEARCH.getByName('stream-batches'),async instance=>{
+   const service=instance as unknown as AskResearch;
+   let advance!:(n:number)=>void,finish!:()=>void;
+   const completion=new Promise<void>(r=>finish=r);
+   vi.spyOn(service as any,'recommendInternal').mockImplementation(async(_owner:any,_raw:any,progress:any)=>{
+    advance=n=>progress(value(n));await completion;return value(24);
+   });
+   const id=crypto.randomUUID(),reader=(await service.recommendStream('owner',request({requestId:id}))).getReader();
+   expect(decode((await reader.read()).value!)).toMatchObject({requestId:id,type:'progress',revision:1});
+   advance(5);
+   expect(decode((await reader.read()).value!)).toMatchObject({inProgress:true,results:value(5).results});
+   advance(8);advance(12);advance(18);finish();
+   const rest:any[]=[];for(;;){const next=await reader.read();if(next.done)break;rest.push(decode(next.value));}
+   expect(rest.at(-1)).toMatchObject({inProgress:false,results:value(24).results});
+   expect(rest.length).toBeLessThanOrEqual(3);
+   expect(rest.every((v,i)=>!i||v.revision>rest[i-1].revision)).toBe(true);
+  });
+ });
+ it('consumer cancellation aborts its waiter, and quota errors never fabricate results',async()=>{
+  await runInDurableObject(env.ASK_RESEARCH.getByName('stream-cancel'),async instance=>{
+   const service=instance as unknown as AskResearch;let cancelled=false;
+   const work=vi.spyOn(service as any,'recommendInternal').mockImplementation(async(_o:any,_r:any,_p:any,signal:any)=>{
+    await new Promise<void>(r=>signal.addEventListener('abort',()=>{cancelled=true;r();}));return value(0);
+   });
+   const reader=(await service.recommendStream('owner',request())).getReader();await reader.read();await reader.cancel();expect(cancelled).toBe(true);
+   work.mockRejectedValue(Error('ASK_SERVICE:AI_QUOTA:429'));
+   const failed=(await service.recommendStream('owner',request())).getReader();await failed.read();
+   expect(decode((await failed.read()).value!)).toMatchObject({type:'error',error:{code:'AI_QUOTA'}});
+   expect((await failed.read()).done).toBe(true);
+  });
+ });
+ it('retains real partial matches after a later failure',async()=>{
+  await runInDurableObject(env.ASK_RESEARCH.getByName('stream-partial'),async(instance,state)=>{
+   const service=instance as unknown as AskResearch;
+   vi.spyOn(service as any,'build').mockImplementation(async()=>{
+    const key=[...(service as any).progressListeners.keys()][0];
+    (service as any).latestProgress.set(key,value(5));throw Error('ASK_SERVICE:AI_QUOTA:429');
+   });
+   const reader=(await service.recommendStream('owner',request())).getReader();await reader.read();
+   const result=decode((await reader.read()).value!);expect(result).toMatchObject({inProgress:false,incomplete:true,results:value(5).results});
+   expect((await reader.read()).done).toBe(true);
+   const row=state.storage.sql.exec<{value:string;expires:number}>("SELECT value,expires FROM ask_cache WHERE key LIKE 'results-v11:%'").one();
+   expect(JSON.parse(row.value).cachedAt).toBeGreaterThan(Date.now()-1000);expect(row.expires).toBeGreaterThan(Date.now()+86000000);
+  });
+ });
+ it('migrates legacy evaluated partial caches without models, but never revives old or empty data',async()=>{
+  await runInDurableObject(env.ASK_RESEARCH.getByName('stream-legacy'),async(instance,state)=>{
+   const service=instance as any,now=Date.now();
+   const put=(key:string,data:unknown,expires:number)=>state.storage.sql.exec('INSERT OR REPLACE INTO ask_cache VALUES(?,?,?)',key,JSON.stringify(data),expires);
+   put('legacy',value(12),now-60000);expect(service.retainedResults('legacy').results).toHaveLength(12);
+   put('too-old',value(12),now-86400000);expect(service.retainedResults('too-old')).toBeUndefined();
+   put('empty',value(0),now+60000);expect(service.retainedResults('empty')).toBeUndefined();
+  });
  });
 });

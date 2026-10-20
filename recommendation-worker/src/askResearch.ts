@@ -70,6 +70,7 @@ type Research = {
 };
 type Usage = {
   elapsedMs: number;
+  firstResultsMs?:number;
   tavilyCredits: number;
   researchCached: boolean;
   gptCalls: number;
@@ -91,6 +92,7 @@ type Usage = {
     };
   }>;
 };
+type ResearchResult={results:RecommendationResult[];metrics:Usage;cached?:boolean;inProgress?:boolean;incomplete?:boolean};
 const clean = (v: unknown, max = 1200) =>
   typeof v === "string"
     ? v
@@ -428,6 +430,8 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
   private webWaiters = new Map<string, number>();
   private recommendationControllers = new Map<string, AbortController>();
   private recommendationWaiters = new Map<string, number>();
+  private progressListeners=new Map<string,Set<(value:ResearchResult)=>void>>();
+  private latestProgress=new Map<string,ResearchResult>();
   private cleanupScheduled = false;
   constructor(ctx: DurableObjectState, env: RecommendationEnv) {
     super(ctx, env);
@@ -787,7 +791,34 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     );
     return values;
   }
-  async recommend(owner: string, raw: unknown) {
+  async recommend(owner:string,raw:unknown):Promise<ResearchResult>{return this.recommendInternal(owner,raw);}
+  async recommendStream(owner:string,raw:unknown):Promise<ReadableStream<Uint8Array>> {
+    const request=AskRequestSchema.parse(raw),abort=new AbortController(),encoder=new TextEncoder();
+    let controller:ReadableByteStreamController,pending:Uint8Array|undefined,done=false,closed=false,revision=0;
+    const flush=()=>{if(closed)return;if(pending&&(controller.desiredSize??0)>0){const next=pending;pending=undefined;controller.enqueue(next);}if(done&&!pending&&!closed){closed=true;controller.close();}};
+    const send=(value:Record<string,unknown>)=>{if(closed)return;pending=encoder.encode(JSON.stringify({requestId:request.requestId,revision:++revision,...value})+'\n');flush();};
+    return new ReadableStream({
+      type:'bytes',
+      start:c=>{
+        controller=c;
+        send({type:'progress',inProgress:true});
+        this.ctx.waitUntil(this.recommendInternal(owner,request,value=>send({type:'results',...value,inProgress:true}),abort.signal)
+          .then(value=>send({type:'results',...value,inProgress:false}))
+          .catch(error=>send({type:'error',inProgress:false,error:{code:researchFailure(error)?.code||'RESEARCH_UNAVAILABLE',message:'Research unavailable'}}))
+          .finally(()=>{done=true;flush();}));
+      },
+      pull:()=>flush(),
+      cancel:()=>{closed=true;pending=undefined;abort.abort();},
+    },{highWaterMark:1});
+  }
+  private retainedResults(key:string):ResearchResult|undefined {
+    const row=this.ctx.storage.sql.exec<{value:string;expires:number}>('SELECT value,expires FROM ask_cache WHERE key=?',key).toArray()[0];
+    if(!row)return;
+    const value=JSON.parse(row.value) as ResearchResult&{cachedAt?:number};
+    const created=value.cachedAt??row.expires-(value.results?.length>=20?DAY:120000);
+    if(value.results?.length&&Date.now()-created>=0&&Date.now()-created<DAY)return value;
+  }
+  private async recommendInternal(owner: string, raw: unknown,onProgress?:(value:ResearchResult)=>void,externalSignal?:AbortSignal):Promise<ResearchResult> {
     const request = AskRequestSchema.parse(raw),
       controller = new AbortController(),
       job = owner + ":" + request.requestId;
@@ -804,17 +835,25 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       (this.recommendationWaiters.get(key) || 0) + 1,
     );
     this.controllers.set(job, controller);
+    const progressKey='results-v11:'+key;
+    if(onProgress){const listeners=this.progressListeners.get(progressKey)||new Set();listeners.add(onProgress);this.progressListeners.set(progressKey,listeners);const latest=this.latestProgress.get(progressKey);if(latest)onProgress(latest);}
     try {
+      if(externalSignal)remaining(externalSignal);
       return await boundedInference(
         this.build(
           request,
           AbortSignal.any([shared.signal, AbortSignal.timeout(owner==="scheduled"?180000:65000)]),
           owner === "scheduled",
         ),
-        controller.signal,
+        externalSignal?AbortSignal.any([controller.signal,externalSignal]):controller.signal,
         65000,
       );
     } catch (error) {
+      const partial=this.latestProgress.get(progressKey);
+      if(partial?.results.length&&!controller.signal.aborted&&!externalSignal?.aborted){
+        const retained={...partial,inProgress:false,incomplete:true,cachedAt:Date.now()};
+        this.put(progressKey,retained,DAY);return retained;
+      }
       console.warn(
         "ask_pipeline_failed",
         error instanceof Error
@@ -823,9 +862,11 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       );
       throw wireFailure(error);
     } finally {
+      if(onProgress){this.progressListeners.get(progressKey)?.delete(onProgress);if(!this.progressListeners.get(progressKey)?.size)this.progressListeners.delete(progressKey);}
       this.controllers.delete(job);
       const count = (this.recommendationWaiters.get(key) || 1) - 1;
       if (count <= 0) {
+        this.latestProgress.delete(progressKey);
         shared.abort();
         this.recommendationWaiters.delete(key);
         if (this.recommendationControllers.get(key) === shared)
@@ -839,7 +880,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         (editorial?"editorial-results-v12:":"results-v11:") +
         (await digest({ ...request, requestId: undefined, cursor: undefined }));
     const approvedPrevious=editorial?this.read<{results:RecommendationResult[];metrics:Usage}>("results-v11:"+(await digest({...request,requestId:undefined,cursor:undefined}))):undefined;
-    const existing = this.read<{results:RecommendationResult[];metrics:Usage}>(key)||(approvedPrevious&&approvedPrevious.results.length>=20?approvedPrevious:undefined);
+    const existing = this.retainedResults(key)||(approvedPrevious&&approvedPrevious.results.length>=20?approvedPrevious:undefined);
     if (existing)
       return {
         ...existing,
@@ -1338,8 +1379,26 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
           const evaluationBatches: Array<typeof candidates> = [];
           for (let i = 0; i < candidates.length; i += 12)
             evaluationBatches.push(candidates.slice(i, i + 12));
-          const judged = (
-            await lanes(evaluationBatches, 3, async (group) => {
+          // Publish only independently evaluated matches. Later batches append;
+          // a slow replenishment never holds already verified posters hostage.
+          const accept = (judged: Array<(typeof candidates)[number] & {score:number}>) => {
+            const before=results.length;
+            for(const p of judged.filter(p=>p.score>0).sort((a,b)=>b.score-a.score)) {
+              if(seen.has(p.media.tmdbId))continue;
+              const collection='collectionId' in p.media?Number(p.media.collectionId):0;
+              if(collection&&(franchises.get(collection)||0)>=2)continue;
+              if(collection)franchises.set(collection,(franchises.get(collection)||0)+1);
+              seen.add(p.media.tmdbId);
+              results.push({...p.media,finalScore:p.score,matchLevel:'Relevant',matchReasons:[],retrievalSources:p.pick.evidence.map(i=>evidence[i]?.url).filter((v):v is string=>!!v)});
+            }
+            if(results.length>before){
+              usage.firstResultsMs??=Date.now()-started;
+              const snapshot={results:results.slice(0,Math.max(24,request.pageSize)),metrics:{...usage,elapsedMs:Date.now()-started,accepted:results.length},inProgress:true};
+              this.latestProgress.set(key,snapshot);
+              for(const listener of this.progressListeners.get(key)||[])try{listener(snapshot);}catch{ /* One disconnected subscriber cannot stop the shared research. */ }
+            }
+          };
+          await lanes(evaluationBatches, 3, async (group) => {
               this.reserve("ai");
               usage.clefCalls++;
               const questions = Object.fromEntries(
@@ -1401,33 +1460,12 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                   true,
                 );
               }
-              return group.map((p, i) => ({
+              remaining(signal);
+              accept(group.map((p, i) => ({
                 ...p,
                 score: clefVerdict(output.answers!["c" + i]),
-              }));
-            })
-          ).flat();
-          const ranked = judged
-            .filter((p) => p.score > 0)
-            .sort((a, b) => b.score - a.score);
-          for (const p of ranked) {
-            if (seen.has(p.media.tmdbId)) continue;
-            const collection =
-              "collectionId" in p.media ? Number(p.media.collectionId) : 0;
-            if (collection && (franchises.get(collection) || 0) >= 2) continue;
-            if (collection)
-              franchises.set(collection, (franchises.get(collection) || 0) + 1);
-            seen.add(p.media.tmdbId);
-            results.push({
-              ...p.media,
-              finalScore: p.score,
-              matchLevel: "Relevant",
-              matchReasons: [],
-              retrievalSources: p.pick.evidence
-                .map((i) => evidence[i]?.url)
-                .filter((v): v is string => !!v),
+              })));
             });
-          }
         }
         if (results.length < Math.min(20, request.pageSize) && pass === 0) {
           const refill = await this.web(
@@ -1455,7 +1493,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         results: results.slice(0, Math.max(24, request.pageSize)),
         metrics: usage,
       };
-      this.put(key, value, results.length >= 20 ? DAY : 120_000);
+      this.put(key, {...value,cachedAt:Date.now()}, results.length ? DAY : 120_000);
       console.log(JSON.stringify({ event: "ask_research_complete", ...usage }));
       return { ...value, cached: false };
     });
@@ -1621,6 +1659,7 @@ export async function askRoute(
     }
     if (url.pathname.endsWith("/recommendations")) {
       const b = AskRequestSchema.parse(raw);
+      if(url.searchParams.get('stream')==='1')return new Response(await service.recommendStream(owner.sub,b),{headers:{'content-type':'application/x-ndjson; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
       const result = await service.recommend(owner.sub, b);
       return Response.json(
         {
