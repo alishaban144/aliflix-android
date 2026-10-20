@@ -537,3 +537,24 @@ it('an active editorial refresh stays warming without scheduling duplicate work'
   release();await refreshing;expect((await service.dailyForClient('movie')).state).toBe('ready');
  });
 });
+
+it('AI quota cannot blank verified catalogue suggestions or consume another inference',async()=>{
+ await runInDurableObject(env.ASK_RESEARCH.getByName('catalogue-quota-display'),async(instance,state)=>{
+  const service=instance as unknown as AskResearch;
+  state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)','quota:ai:'+new Date().toISOString().slice(0,10),'96',Date.now()+86400000);
+  const pair=['movie','tv'].map(mediaType=>({results:Array.from({length:24},(_,i)=>({tmdbId:i+1,mediaType,title:'Verified '+i,finalScore:0,retrievalSources:[`https://www.themoviedb.org/${mediaType}/${i+1}`]})),publishedAt:Date.now(),source:'catalogue'}));
+  vi.spyOn(service,'catalogueDaily').mockResolvedValue(pair as any);
+  const inference=vi.spyOn(service,'recommend');
+  expect(await service.dailyForClient('movie')).toMatchObject({state:'ready',source:'catalogue',results:pair[0].results});
+  expect(await service.dailyForClient('tv')).toMatchObject({state:'ready',source:'catalogue',results:pair[1].results});
+  expect(inference).not.toHaveBeenCalled();
+ });
+});
+it('catalogue outage retains the previous valid pair without consuming AI or search budget',async()=>{
+ await runInDurableObject(env.ASK_RESEARCH.getByName('catalogue-last-good'),async(instance,state)=>{
+  const service=instance as unknown as AskResearch;const pair=['movie','tv'].map(mediaType=>({results:Array.from({length:24},(_,i)=>({tmdbId:i+1,mediaType,title:'Retained '+i})),publishedAt:Date.now()-2*86400000,source:'catalogue'}));
+  pair.forEach((v,i)=>state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)','daily:catalogue:'+(i?'tv':'movie'),JSON.stringify(v),Date.now()+86400000));
+  vi.spyOn(globalThis,'fetch').mockRejectedValue(Error('offline'));
+  expect(await service.catalogueDaily()).toEqual(pair);
+ });
+});

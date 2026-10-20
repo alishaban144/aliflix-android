@@ -6,6 +6,7 @@ function verifyCollection(collection,type,now){
  assert(items.length>=20,`Daily ${type}: ${items.length} verified titles; 20 required before publication`);
  assert.equal(new Set(items.map(v=>v.tmdbId)).size,items.length,'Duplicate daily identities');
  assert(items.every(v=>Number.isInteger(v.tmdbId)&&v.tmdbId>0&&v.mediaType===type&&typeof v.title==='string'&&v.title.trim()&&Array.isArray(v.retrievalSources)&&v.retrievalSources.length&&v.retrievalSources.every(link=>{try{const u=new URL(link);return u.protocol==='https:'&&!u.username&&!u.password;}catch{return false;}})),'Missing verified daily metadata/evidence');
+ if(collection.source==='catalogue')assert(items.every(v=>v.finalScore===0&&Array.isArray(v.matchReasons)&&v.matchReasons.length===0&&v.retrievalSources.every(url=>url===`https://www.themoviedb.org/${type}/${v.tmdbId}`)),'Catalogue fallback must use canonical identities without invented AI assessments');
  assert(collection.publishedAt>now-3*86400000&&collection.publishedAt<=now+60000,'Daily publication is stale or future-dated');
 }
 export function verifyAskCollections(collections,now=Date.now()){

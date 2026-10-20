@@ -26,3 +26,8 @@ test('a transient read failure cannot publish or immediately abort a bounded wai
  const result=await awaitAskReadiness({maxWaitMs:60000,now:()=>time,wait:async ms=>{time+=ms;},read:async()=>{if(++reads===1)throw Error('temporary network failure');return complete();}});
  assert.equal(reads,2);assert.equal(result[0].results.length,20);
 });
+
+test('catalogue fallback carries actual title identities, never fabricated AI scores',()=>{
+ const c=complete().map(v=>({...v,source:'catalogue',results:v.results.map(r=>({...r,finalScore:0,matchReasons:[],retrievalSources:[`https://www.themoviedb.org/${r.mediaType}/${r.tmdbId}`]}))}));
+ verifyAskCollections(c,at);c[0].results[0].finalScore=.9;assert.throws(()=>verifyAskCollections(c,at),/invented AI/);
+});

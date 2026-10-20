@@ -1,4 +1,4 @@
-import {editorialSeedCandidates} from '../src/askResearch';
+import {editorialSeedCandidates,catalogueSuggestions} from '../src/askResearch';
 import {afterEach,expect,it,vi} from 'vitest';
 import {env} from 'cloudflare:test';
 import {TmdbClient} from '../src/tmdb';
@@ -25,4 +25,10 @@ it('editorial seeds preserve actual premiere years and strip editorial prose bef
  expect(seeds).toEqual([{title:'A recent series',year:2024,id:1,evidence:[],reason:''}]);
  expect(discover).toHaveBeenCalledTimes(3);
  expect(discover.mock.calls[0]).toEqual(['tv',expect.objectContaining({'first_air_date.gte':'2023-01-01'})]);
+});
+
+it('catalogue suggestions exclude unreleased, adult, low-confidence and duplicate identities without inventing AI scores',()=>{
+ const valid={id:1,name:'Verified series',first_air_date:'2025-01-02',poster_path:'/poster.jpg',vote_count:100,vote_average:8,genre_ids:[18]};
+ const results=catalogueSuggestions([valid,valid,{...valid,id:2,first_air_date:'2027-01-01'},{...valid,id:3,adult:true},{...valid,id:4,vote_count:0},{...valid,id:5,first_air_date:'2010-01-01'}],'tv',new Map([[18,'Drama']]),'2026-10-20');
+ expect(results).toHaveLength(1);expect(results[0]).toMatchObject({tmdbId:1,genres:['Drama'],finalScore:0,matchReasons:[],retrievalSources:['https://www.themoviedb.org/tv/1']});
 });

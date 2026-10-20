@@ -410,6 +410,16 @@ export async function editorialSeedCandidates(tmdb:TmdbClient,type:MediaType,min
   }).slice(0,60);
 }
 
+export function catalogueSuggestions(items:Array<import('./types').TmdbListItem & {adult?:boolean}>,type:MediaType,genres:Map<number,string>,today=new Date().toISOString().slice(0,10)):RecommendationResult[] {
+ const seen=new Set<number>();const minimum=Number(today.slice(0,4))-3;
+ return items.flatMap(item=>{
+  const date=(type==='movie'?item.release_date:item.first_air_date)||'';
+  if(item.adult||!item.poster_path||!/^\d{4}-\d{2}-\d{2}$/.test(date)||date>today||Number(date.slice(0,4))<minimum||(item.vote_count||0)<20||(item.vote_average||0)<6||seen.has(item.id))return [];
+  const c=toCandidate(item,type,genres);if(!c)return [];seen.add(item.id);
+  return [{tmdbId:c.tmdbId,mediaType:type,title:c.title,originalTitle:c.originalTitle,posterPath:c.posterPath,backdropPath:c.backdropPath,releaseDate:c.releaseDate,genres:c.genres,originalLanguage:c.originalLanguage,originCountries:c.originCountries,tmdbRating:c.tmdbRating,tmdbVoteCount:c.tmdbVoteCount,matchLevel:'Relevant' as const,finalScore:0,matchReasons:[],retrievalSources:[`https://www.themoviedb.org/${type}/${c.tmdbId}`]}];
+ }).slice(0,24);
+}
+
 export class AskResearch extends DurableObject<RecommendationEnv> {
   private flights = new Map<string, Promise<unknown>>();
   private controllers = new Map<string, AbortController>();
@@ -749,7 +759,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     deadline: number,
   ): Promise<Array<ResearchMedia | null>> {
     if (items.length > 40) throw new Error("REQUEST_LIMIT");
-    return lanes(items, 4, async (p) => {
+    return lanes(items, 8, async (p) => {
       const shard = await digest([type, p.title, p.year]);
       return this.env.ASK_RESEARCH.getByName("identity:" + shard)
         .identity(type, p.title, p.year, p.id, deadline)
@@ -797,7 +807,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       return await boundedInference(
         this.build(
           request,
-          AbortSignal.any([shared.signal, AbortSignal.timeout(65000)]),
+          AbortSignal.any([shared.signal, AbortSignal.timeout(owner==="scheduled"?180000:65000)]),
           owner === "scheduled",
         ),
         controller.signal,
@@ -946,7 +956,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                 const result = await boundedInference(
                   settled,
                   signal,
-                  model.includes("clef") ? 15000 : 22000,
+                  editorial?45000:model.includes("clef") ? 15000 : 22000,
                 ).catch((error) => {
                   if (
                     error instanceof ServiceError &&
@@ -1148,10 +1158,10 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
               ).resolveBatch(
                 request.mediaType,
                 chunk.map((p) => ({ title: p.title, year: p.year, id:seedIds.get(normalize(p.title)+":"+p.year) })),
-                started + 60000,
+                started + (editorial?175000:60000),
               ),
               signal,
-              15000,
+              editorial?40000:15000,
             ),
           )
         ).flat();
@@ -1189,10 +1199,10 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
                   year: p.pick.year,
                   imdbId: p.media.imdbId,
                 })),
-                started + 60000,
+                started + (editorial?175000:60000),
               ),
               signal,
-              17000,
+              editorial?30000:17000,
             ),
           )
         ).flat();
@@ -1415,6 +1425,24 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       ) || { results: [], publishedAt: 0 }
     );
   }
+  async catalogueDaily() {
+    return this.single('catalogue-daily',async()=>{
+      const old=['movie','tv'].map(type=>this.read<{results:RecommendationResult[];publishedAt:number;source:string}>('daily:catalogue:'+type));
+      if(old.every(v=>v&&v.results.length>=20&&v.publishedAt>Date.now()-DAY))return old;
+      try {
+        const today=new Date().toISOString().slice(0,10);const minimum=Number(today.slice(0,4))-3;
+        const tmdb=new TmdbClient(this.env,14,AbortSignal.timeout(8500));
+        const collections=await lanes(['movie','tv'] as MediaType[],2,async type=>{
+          const [pages,genre]=await Promise.all([lanes([1,2,3],2,page=>tmdb.discover(type,{page,sort_by:'popularity.desc','vote_count.gte':20,'vote_average.gte':6,...(type==='tv'?{'first_air_date.gte':`${minimum}-01-01`,'first_air_date.lte':today}:{'primary_release_date.gte':`${minimum}-01-01`,'primary_release_date.lte':today})})),tmdb.genres(type)]);
+          return catalogueSuggestions(pages.flatMap(p=>p.results),type,new Map(genre.genres.map(g=>[g.id,g.name])),today);
+        });
+        if(collections.some(v=>v.length<20))throw Error('CATALOGUE_INCOMPLETE');
+        const publishedAt=Date.now();const pair=collections.map(results=>({results,publishedAt,source:'catalogue'}));
+        this.ctx.storage.transactionSync(()=>pair.forEach((v,i)=>this.put('daily:catalogue:'+(i?'tv':'movie'),v,400*DAY)));
+        return pair;
+      }catch(error){console.warn('ask_catalogue_retained',error instanceof Error?error.name:'unavailable');return old;}
+    });
+  }
   private nextResearchDay(){return Date.parse(new Date().toISOString().slice(0,10))+DAY+60000;}
   private quotaRetryAt(){return Math.max(this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':retryAt')||0,this.researchBudget().retryAt)||this.nextResearchDay();}
   /** First installation must bootstrap without an operator POST. The alarm owns
@@ -1427,7 +1455,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     let pending=this.read<number>('daily:refreshAt');
     if(!collection.results.length && limited && !budget.limited && (this.read<number>('quota:neurons:'+new Date().toISOString().slice(0,10))||0)+10<=9000 && Date.now()-(this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':checkedAt')||0)>=3600000) {
       pending=Date.now()+1000;this.put('daily:refreshAt',pending,2*DAY);await this.ctx.storage.setAlarm(pending);
-      return {...collection,state:'warming',retryAt:pending};
+      const fallback=collection.results.length?undefined:(await this.catalogueDaily())[type==='tv'?1:0];
+      const visible=collection.results.length?collection:fallback||collection;
+      return {...visible,state:visible.results.length?'ready':'warming',retryAt:pending};
     }
     if(!collection.results.length && !pending && !refreshing) {
       const attempts=this.read<number>('daily:bootstrap:'+new Date().toISOString().slice(0,10))||0;
@@ -1437,7 +1467,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         await this.ctx.storage.setAlarm(pending);
       }
     }
-    return {...collection,state:collection.results.length?'ready':refreshing?'warming':limited?'limited':pending?'warming':'unavailable',retryAt:refreshing?Date.now()+5000:pending||0,budget,lastFailure:this.read('daily:lastFailure'),lastEvaluation:this.read('daily:lastEvaluation')};
+    const fallback=collection.results.length?undefined:(await this.catalogueDaily())[type==='tv'?1:0];
+    const visible=collection.results.length?{...collection,source:'research'}:fallback||collection;
+    return {...visible,state:visible.results.length?'ready':refreshing?'warming':limited?'limited':pending?'warming':'unavailable',retryAt:refreshing?Date.now()+5000:pending||0,budget,lastFailure:this.read('daily:lastFailure'),lastEvaluation:this.read('daily:lastEvaluation')};
   }
   async refreshDaily() {
     return this.single("daily-refresh", async () => {
@@ -1524,7 +1556,7 @@ export async function askRoute(
     if (url.pathname === "/v4/ask/daily" && request.method === "GET") {
       const type = z.enum(["movie", "tv"]).parse(url.searchParams.get("type"));
         return Response.json(await service.dailyForClient(type), {
-        headers: { "cache-control": "private, max-age=300" },
+        headers: { "cache-control": "no-store" },
       });
     }
     if (request.method !== "POST") return new Response(null, { status: 405 });
