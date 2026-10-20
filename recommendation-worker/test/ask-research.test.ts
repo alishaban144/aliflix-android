@@ -454,6 +454,29 @@ describe("unified authenticated research", () => {
           expect(resolveBatch.mock.calls.length).toBe(lookups);
           expect(ai.mock.calls.filter(c=>!c[0].includes('clef'))).toHaveLength(1);
 
+          // A replenishment pass must retain the first pass's independently
+          // verified evidence even when its titles were not relevant this time.
+          (instance as any).ctx.storage.sql.exec('DELETE FROM ask_cache WHERE key=?','knowledge-pool:movie');
+          let generation=0;
+          ai.mockImplementation(async(model:string,input:any)=>{
+            if(model.includes('clef')){
+              const candidates=JSON.parse(input.state).candidates;
+              return {answers:Object.fromEntries(Object.keys(input.questions).map((key,i)=>[key,{type:'choice',choice:Number(candidates[i].title.split(' ')[1])<30?'weak':'strong',probabilities:{strong:0.9,relevant:0.05,weak:0.05,unsupported:0}}]))};
+            }
+            return {response:JSON.stringify(input.messages[0].content.startsWith('Interpret')?{intent:'Memory and identity',search:'memory identity film list',hardFilters:{}}:{candidates:titles.map(p=>({...p,title:'Film '+(Number(p.title.split(' ')[1])+generation*30)}))})};
+          });
+          const generator=ai.getMockImplementation()!;
+          ai.mockImplementation(async(model:string,input:any)=>{
+            const value=await generator(model,input);
+            if(!model.includes('clef')&&!input.messages[0].content.startsWith('Interpret'))generation++;
+            return value;
+          });
+          const replenished=await (instance as unknown as AskResearch).recommend('user',request({query:'A replenished research pool'}));
+          expect(replenished.results).toHaveLength(24);
+          const retained=await (instance as unknown as AskResearch).recommend('user',request({query:'Rerank the accumulated public knowledge'}));
+          expect(retained.results).toHaveLength(24);
+          expect(retained.metrics).toMatchObject({gptCalls:1,generated:0,reusedCandidates:60});
+
         } finally {
           Object.assign(e, original);
         }
