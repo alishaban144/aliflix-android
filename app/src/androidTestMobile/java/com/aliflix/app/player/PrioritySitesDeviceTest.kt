@@ -72,6 +72,9 @@ class PrioritySitesDeviceTest {
             val provider=PlaybackPreferences().sourceFor(media)
             val selection=PlaybackSelection(media,if(media.type==MediaType.TV) 1 else null,
                 if(media.type==MediaType.TV) 1 else null,source=provider)
+            val requestedResume=args.getString("resumeMs")?.toLong()
+            if(requestedResume!=null)(context.applicationContext as com.aliflix.app.AliflixApplication).playbackProgressStore
+                .savePlayerProgress(selection,requestedResume/1000.0,12000.0,urgentCloudSync=false)
             context.stopService(Intent(context,NativePlaybackService::class.java))
             Thread.sleep(350)
             val started=SystemClock.elapsedRealtime()
@@ -93,6 +96,7 @@ class PrioritySitesDeviceTest {
                         assertEquals("No cross-provider fallback",provider.identity,nativeSelection(request.selectionJson).source.identity)
                         assertTrue("Decoded video dimensions",it.playbackController!!.videoSize.width>0)
                         assertNull(it.playbackController!!.playerError)
+                        if(requestedResume!=null){assertTrue("Resume position retained",kotlin.math.abs(it.playbackController!!.currentPosition-requestedResume)<10000);receipt.put("resumeMs",requestedResume)}
                         receipt.put("startupMs",SystemClock.elapsedRealtime()-started)
                             .put("audio",NativePlaybackService.selectedAudioLanguage())
                             .put("audioEditions",JSONArray(it.playbackUiState.sourceAudioOptions.map { option->option.language }))

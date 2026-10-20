@@ -25,6 +25,10 @@ on:
         description: "Validate and deploy the mobile speech backend without publishing an APK"
         type: boolean
         default: false
+      draft:
+        description: "Build and verify signed mobile artifacts as an unpublished draft"
+        type: boolean
+        default: false
       validation_focus:
         description: "Phone checks to run"
         type: choice
@@ -357,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Talk now uses one Gemini Live voice with native interruption, multilingual conversation, secure direct streaming and verified film knowledge. Automatic source recovery, original-language audio alternatives, episode rating matching and refined mobile controls."
+          RELEASE_NOTES="Playback and resume recovery, reliable audio switching, rounded Talk lettering, and resilient researched recommendations."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -395,6 +399,7 @@ jobs:
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
@@ -407,7 +412,9 @@ jobs:
 
             ARM64-only main APK, existing release signer and architecture-aware universal compatibility bridge. Original native libraries and models are verified byte-for-byte. TV is unchanged and is neither built nor released.
 
-            Validation and measured limits: docs/mobile-176-validation.md. Design references and native adaptations: docs/ask-176-design-provenance.md.
+            Measured limitation: uncached Similar requests have not yet met the requested under-20-second acceptance target. Results remain evidence-checked; no irrelevant titles are added to inflate their count.
+
+            [Validation and measured limits](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-176-recovery.md). [Design references](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/ask-176-design-provenance.md).
           files: |
             aliflix-mobile.apk
             update-mobile.json

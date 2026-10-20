@@ -1,0 +1,10 @@
+Talk dotted topic lettering uses Fredoka Bold and Baloo Bhaijaan 2 ExtraBold.
+Unmodified variable font binaries from Google Fonts, pinned to commit:
+47d54ca1ebb14fd864695f1d39dc734f39017c33
+
+https://github.com/google/fonts/tree/47d54ca1ebb14fd864695f1d39dc734f39017c33/ofl/fredoka
+https://github.com/google/fonts/tree/47d54ca1ebb14fd864695f1d39dc734f39017c33/ofl/baloobhaijaan2
+
+Copyright notices and SIL Open Font License 1.1 are bundled alongside each font.
+Only the topic typeface changes; particle geometry, animation and layout remain
+implemented by the existing TalkDottedTopic renderer.

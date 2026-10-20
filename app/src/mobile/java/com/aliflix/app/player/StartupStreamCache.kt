@@ -59,7 +59,10 @@ internal object StartupStreamCache {
         val player = ExoPlayer.Builder(context.applicationContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(media).setLoadErrorHandlingPolicy(CineJoyLoadErrorPolicy { request.referer == CineJoyNativeCatalog.REFERER }))
             .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(
-                if (bufferMs > 250) 4_000 else 1_000, if (bufferMs > 250) 8_000 else 2_000,
+                // Sparse video keyframes can lie beyond a tiny seek buffer.
+                // Keep the fast READY threshold, but permit two HLS segments
+                // of loading so resume validation cannot stall below READY.
+                4_000, 12_000,
                 if (bufferMs > 250) 1_000 else 250, 500).build()).build()
         try {
             player.volume = 0f
@@ -76,6 +79,9 @@ internal object StartupStreamCache {
                 delay(50)
             }
             check(player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }) { "No playable audio" }
+        } catch(error:Exception) {
+            if(com.aliflix.app.BuildConfig.DEBUG)android.util.Log.w("AliflixStartup","${error.javaClass.simpleName}: state=${player.playbackState}, position=${player.currentPosition}, buffered=${player.bufferedPosition}, duration=${player.duration}, tracks=${player.currentTracks.groups.size}, error=${player.playerError?.errorCodeName}")
+            throw error
         } finally { player.release() }
     } }
 }

@@ -125,7 +125,11 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
         var last:Exception?=null
         for (link in ordered) {
             try {
-                val resolved=withTimeout(8_000) {
+                // Host discovery and actual HLS/audio validation have separate
+                // deadlines. A valid URL found near the discovery deadline must
+                // still get Media3's normal buffer validation, within the total
+                // provider budget; cold CDN startup is not a broken mirror.
+                val request=withTimeout(8_000) {
                 val action=if(link.token.isNotBlank()) {
                     val csrf=document.selectFirst("meta[name=csrf-token]")?.attr("content") ?: error("Missing site session")
                     val result=JSONObject(SerienstreamHttp.post("https://filmo.to/n",document.location(),
@@ -141,11 +145,13 @@ internal class LinkedSiteCatalog(private val activity: ComponentActivity) {
                         embedded(link.label,target)
                     }
                     else embedded(link.label,target)
+                request
+                }
+                if(com.aliflix.app.BuildConfig.DEBUG)android.util.Log.d("AliflixSite","${selection.source.identity.name}: host resolved; validating native media")
                 StartupStreamCache.awaitPlayable(activity,request.copy(sourceAudioLanguage=link.language.substringBefore('-')))
-                request.copy(sourceAudioLanguage=link.language,sourceAudioOptions=JSONArray().apply {
+                val resolved=request.copy(sourceAudioLanguage=link.language,sourceAudioOptions=JSONArray().apply {
                     links.distinctBy { it.language }.forEach { put(JSONObject().put("language",it.language).put("label",it.audioLabel)) }
                 }.toString())
-                }
                 onServer(link.label)
                 return@withTimeout resolved
             } catch(timeout:TimeoutCancellationException) {

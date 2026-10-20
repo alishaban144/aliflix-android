@@ -78,6 +78,7 @@ internal fun UnifiedAskAliflix(
     var rememberedSeriesStatus by rememberSaveable{mutableStateOf(editor.spec.requiredStatus)}
     LaunchedEffect(type,editor.spec.requiredStatus){if(type==MediaType.TV)rememberedSeriesStatus=editor.spec.requiredStatus}
     var daily by remember(type){mutableStateOf<List<Media>>(emptyList())}
+    var dailyResearchBacked by remember(type){mutableStateOf(false)}
     val keyboard=LocalSoftwareKeyboardController.current
     val motion=rememberMobileMotionEnabled()
     val anchors=editor.selectedAnchors.ifEmpty{listOfNotNull(editor.selectedAnchor)}
@@ -109,6 +110,7 @@ internal fun UnifiedAskAliflix(
         daily=withContext(Dispatchers.IO){retainedAskDailySuggestions(type,
             {android.util.AtomicFile(file).openRead().bufferedReader().use{it.readText()}},
             {context.assets.open("ask-daily-fallback.json").bufferedReader().use{it.readText()}})}
+        dailyResearchBacked=withContext(Dispatchers.IO){runCatching{android.util.AtomicFile(file).openRead().bufferedReader().use{researchBackedAskDailySuggestions(JSONObject(it.readText()),type)}}.getOrDefault(false)}
         try {
             for(attempt in 0 until 18) {
                 val json=research.request("daily?type=${type.routeName}");val items=parse(json)
@@ -116,6 +118,7 @@ internal fun UnifiedAskAliflix(
                 dailyRetryAt=json.optLong("retryAt",0L)
                 if(items.isNotEmpty()) {
                     daily=items
+                    dailyResearchBacked=researchBackedAskDailySuggestions(json,type)
                     withContext(Dispatchers.IO){runCatching{
                         val atomic=android.util.AtomicFile(file);val output=atomic.startWrite()
                         try{output.write(json.toString().toByteArray(Charsets.UTF_8));atomic.finishWrite(output)}
@@ -178,7 +181,7 @@ internal fun UnifiedAskAliflix(
                     val prefs=context.getSharedPreferences("aliflix-ask-surprises-"+(com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid?:"guest"),0);val prior=prefs.getStringSet("seen",emptySet()).orEmpty()
                     val excluded=(recent+favorites).map{it.key}.toSet()+rejected+prior
                     val genres=favorites.flatMap{it.genres}.groupingBy{it}.eachCount()
-                    val pick=daily.takeIf{selectedFilterCount(editor.spec)==0&&editor.describeText.isBlank()&&!similar}.orEmpty().filterNot{it.key in excluded}.shuffled().maxByOrNull{m->m.genres.sumOf{genres[it]?:0}}
+                    val pick=daily.takeIf{dailyResearchBacked&&selectedFilterCount(editor.spec)==0&&editor.describeText.isBlank()&&!similar}.orEmpty().filterNot{it.key in excluded}.shuffled().maxByOrNull{m->m.genres.sumOf{genres[it]?:0}}
                     if(pick!=null){prefs.edit().putStringSet("seen",(prior+pick.key).toList().takeLast(96).toSet()).apply();onOpen(pick)}
                     else if(!busy){surprisePending=true;onSubmit(AskAliflixRequest.Describe(type,"A surprising, excellent unwatched ${if(type==MediaType.TV)"series" else "film"} that connects to my Favorites without repeating obvious recommendations.",filters=editor.spec))}
                 }

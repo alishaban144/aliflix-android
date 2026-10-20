@@ -3,6 +3,9 @@ package com.aliflix.app.talk
 import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.fonts.Font
+import android.graphics.fonts.FontFamily
+import android.graphics.fonts.FontStyle
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -42,8 +45,13 @@ internal fun TalkDottedTopic(words:String, level:()->Float, motion:Boolean) {
     val assets=LocalContext.current.applicationContext.assets
     val font by produceState<Typeface?>(null,assets) {
         value=withContext(Dispatchers.IO) {runCatching {
-            Typeface.create(Typeface.createFromAsset(assets,"fonts/Nunito.ttf"),600,false)
-        }.getOrDefault(Typeface.create("sans-serif",Typeface.NORMAL))}
+            val latin=FontFamily.Builder(Font.Builder(assets,"fonts/Fredoka.ttf")
+                .setWeight(700).setFontVariationSettings("'wght' 700").build()).build()
+            val arabic=FontFamily.Builder(Font.Builder(assets,"fonts/BalooBhaijaan2.ttf")
+                .setWeight(800).setFontVariationSettings("'wght' 800").build()).build()
+            Typeface.CustomFallbackBuilder(latin).addCustomFallback(arabic)
+                .setStyle(FontStyle(700,FontStyle.FONT_SLANT_UPRIGHT)).setSystemFallback("sans-serif").build()
+        }.getOrDefault(Typeface.create("sans-serif-rounded",Typeface.BOLD))}
     }
     val fontSize=with(density){(if(words.length>26)34.sp else 44.sp).toPx()}
     val step=with(density){1.15.dp.toPx()}.coerceAtLeast(1.5f)

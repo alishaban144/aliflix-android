@@ -36,7 +36,7 @@ The editorial model was assigning later-season years to older shows and inventin
 
 ## Verification status
 
-Final mobile unit/assembly/lint passed: 687 cases, zero failures/errors, three skipped (684 executed). Worker typecheck and 214 tests passed, plus six publication-gate tests. Evidence is recorded in .validation/v176b. Live editorial bootstrap and public production APK/signature/updater/ABI/native parity and signed-payload Pixel checks remain publication gates. No permanent credentials, private transcripts or stream URLs are included in this report.
+Final mobile unit/assembly/lint passed: 688 cases, zero failures/errors, three skipped (685 executed), 123 suites. Worker typecheck and 214 tests passed, plus six publication-gate tests. Evidence is recorded in .validation/v176b. Live editorial bootstrap and public production APK/signature/updater/ABI/native parity and signed-payload Pixel checks remain publication gates. No permanent credentials, private transcripts or stream URLs are included in this report.
 
 ## Empty-page recovery (20 October)
 
@@ -55,3 +55,19 @@ The 61,796 ms figure measures a background refresh of both daily collections, no
 Public verified title identities and licensed narrative evidence now share a bounded one-day, 128-entry cache per media type. New requests recheck hard filters, exclusions and taste boundaries, perform GPT intent planning and Tavily research (or reuse valid cached findings), and independently rerank with Clef. Cached relevance scores are never treated as new assessments. Direct Wikimedia and independently identity/year-matched indexed Wikipedia/TVmaze evidence can be reused; arbitrary publisher text is not added to this licensed knowledge pool. Partially populated pools supplement smaller fresh candidate batches instead of being discarded.
 
 The actual connected Pixel passed all four unified Ask UI cases in 6.298 s, including quota-error suggestions and visible browsing content during research. Actual Movies and Series landing pages both had populated poster carousels and were visually reviewed. Offline first-launch metadata, corrupt cache recovery, valid cache retention and malformed-row isolation are covered by mobile unit tests. No test pretends catalogue browsing suggestions answer an unfinished custom query.
+
+## Final physical source and typography checks (20 October)
+
+A final cold-resume pass exposed an additional validation deadlock: Interstellar at 69,053 ms had 2,947 ms buffered, six track groups and no player error, but remained BUFFERING until the provider deadline. The 2-second startup validation cap could stop loading before a usable sparse video keyframe. The validator now allows a bounded 12-second loading window while preserving the 250 ms normal ready threshold. Host discovery and actual Media3 validation also have separate deadlines within the existing total source budget. This changes startup buffering only, not model binaries or subtitle alignment algorithms.
+
+The exact 69,053 ms regression then passed on Pixel: actual Filmo, 5,208 ms startup (first decoded frame 3,519 ms), English/German metadata, loaded captions, and English to German to English confirmation. Final actual Serienstream Dark startup was 2,777 ms; AniWorld Black Clover 2,497 ms, Japanese audio and all three real editions. A deliberately unreachable primary origin recovered automatically through CineJoy in 5,557 ms. The earlier failed runs are retained as failures. These are sampled live proofs, not a guarantee that third-party sites can never change or fail.
+
+Only the Talk topic typeface was replaced: Fredoka Bold plus Baloo Bhaijaan 2 ExtraBold for Arabic, with original SIL Open Font Licenses. Font binaries are pinned to Google Fonts commit 47d54ca1ebb14fd864695f1d39dc734f39017c33. Particle timing, springs, transitions, dot sampling, layout and orb motion are unchanged. The actual Pixel Latin/Arabic render fixture passed in 15.019 s and both frames were reviewed. Unused Nunito assets were removed.
+
+## Under-20-second acceptance status
+
+The requested target applies to Describe, Similar and Surprise Me results, not the browsing carousel. The verified-evidence implementation produced a fresh Describe response with 21 evaluated results in 6,143 ms; its repeat took 183 ms. Native Surprise Me opened a title from the already fully researched pool within a 3,143 ms click-to-UI-dump upper bound, including automation overhead. Catalogue-only browsing data is explicitly ineligible for this researched Surprise shortcut.
+
+Uncached Similar to Inception still took 28,818 ms and returned 12 independently accepted matches. A combined-planning experiment took 41,667 ms and returned 13; it was withdrawn, not shipped as a claimed improvement. The under-20-second target for all modes, and 20 genuine matches for this Similar case, are NOT passed. The bounded research ledger has one inference left today, insufficient for another complete live run; no quota reset, increase or model substitution was performed. The next full daily call budget starts 21 October at 00:01 UTC.
+
+A production-signed draft can be reviewed without exposing an update to users. Stable publication remains held because the requested Similar acceptance gate is unmet; publishing with that known limit requires an explicit user decision. Public asset and updater verification can only be claimed after actual publication.
