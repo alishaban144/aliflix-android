@@ -668,6 +668,11 @@ describe('progressive research transport',()=>{
    const service=instance as any,now=Date.now();
    const put=(key:string,data:unknown,expires:number)=>state.storage.sql.exec('INSERT OR REPLACE INTO ask_cache VALUES(?,?,?)',key,JSON.stringify(data),expires);
    put('legacy',value(12),now-60000);expect(service.retainedResults('legacy').results).toHaveLength(12);
+   const migrated=state.storage.sql.exec<{value:string;expires:number}>('SELECT value,expires FROM ask_cache WHERE key=?','legacy').one();
+   expect(migrated.expires).toBe(now-180000+86400000);
+   expect(JSON.parse(migrated.value).cachedAt).toBe(now-180000);
+   service.put('unrelated',{ok:true},60000);
+   expect(service.retainedResults('legacy').results).toHaveLength(12);
    put('too-old',value(12),now-86400000);expect(service.retainedResults('too-old')).toBeUndefined();
    put('empty',value(0),now+60000);expect(service.retainedResults('empty')).toBeUndefined();
   });

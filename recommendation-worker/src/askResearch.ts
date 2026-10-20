@@ -820,7 +820,12 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     if(!row)return;
     const value=JSON.parse(row.value) as ResearchResult&{cachedAt?:number};
     const created=value.cachedAt??row.expires-(value.results?.length>=20?DAY:120000);
-    if(value.results?.length&&Date.now()-created>=0&&Date.now()-created<DAY)return value;
+    if(value.results?.length&&Date.now()-created>=0&&Date.now()-created<DAY){
+      // Persist migration before another cache write's expired-row cleanup.
+      // Retention is measured from original research, never from each read.
+      if(row.expires<created+DAY)this.ctx.storage.sql.exec('UPDATE ask_cache SET value=?,expires=? WHERE key=?',JSON.stringify({...value,cachedAt:created}),created+DAY,key);
+      return value;
+    }
   }
   private async recommendInternal(owner: string, raw: unknown,onProgress?:(value:ResearchResult)=>void,externalSignal?:AbortSignal):Promise<ResearchResult> {
     const request = AskRequestSchema.parse(raw),

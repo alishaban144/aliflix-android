@@ -20,7 +20,7 @@ class AskProgressiveDeviceTest {
   val research=AskResearchClient(context)
   val report=JSONArray()
   runBlocking { withTimeout(90000) {
-   for(mode in listOf("describe","similar")) {
+   for(mode in listOf("describe","similar").filter{InstrumentationRegistry.getArguments().getString("researchMode")?.let{selected->selected==it}?:true}) {
     val request=V3RecommendationRequest(UUID.randomUUID().toString(),mode=mode,
      query=if(mode=="describe")"Excellent science fiction movies exploring humanity" else "",mediaType="movie",
      anchors=if(mode=="similar")listOf(V3RecommendationAnchor(27205,"Inception","movie")) else emptyList())
@@ -36,6 +36,7 @@ class AskProgressiveDeviceTest {
     assertFalse(result.inProgress);assertTrue(result.results.isNotEmpty());assertTrue(snapshots>0)
     report.put(JSONObject().put("mode",mode).put("firstResultsMs",first).put("completeMs",SystemClock.elapsedRealtime()-started)
      .put("count",result.results.size).put("snapshots",snapshots).put("incomplete",result.incomplete))
+    File(context.getExternalFilesDir(null),"ask-progressive-176.json").writeText(report.toString(2))
    }
   }}
   File(context.getExternalFilesDir(null),"ask-progressive-176.json").writeText(report.toString(2))
