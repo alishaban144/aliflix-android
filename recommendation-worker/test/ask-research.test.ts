@@ -476,6 +476,12 @@ describe("unified authenticated research", () => {
           const retained=await (instance as unknown as AskResearch).recommend('user',request({query:'Rerank the accumulated public knowledge'}));
           expect(retained.results).toHaveLength(24);
           expect(retained.metrics).toMatchObject({gptCalls:1,generated:0,reusedCandidates:60});
+          ai.mockClear();
+          const similar=await (instance as unknown as AskResearch).recommend('user',request({mode:'similar',query:'',anchors:[{tmdbId:999,title:'Anchor film',mediaType:'movie'}]}));
+          expect(similar.results).toHaveLength(24);
+          const planner=ai.mock.calls.find(c=>!c[0].includes('clef'))![1];
+          expect(JSON.parse(planner.messages.find((m:any)=>m.role==='user').content).mode).toBe('similar');
+          expect(ai.mock.calls.filter(c=>c[0].includes('clef')).every(c=>JSON.parse(c[1].state).mode==='similar')).toBe(true);
 
         } finally {
           Object.assign(e, original);
