@@ -413,14 +413,10 @@ describe("unified authenticated research", () => {
             matchReasons: [],
             retrievalSources: [],
           });
+          const resolveBatch=vi.fn(async(type:string,items:Array<{title:string}>)=>Promise.all(items.map(p=>identity(type,p.title))));
           e.ASK_RESEARCH = {
-            getByName: () => ({
-              identity,
-              resolveBatch: async (
-                type: string,
-                items: Array<{ title: string }>,
-              ) => Promise.all(items.map((p) => identity(type, p.title))),
-              evidenceBatch: async () => [],
+            getByName: () => ({identity,resolveBatch,
+              evidenceBatch:async(items:Array<{title:string;year:number}>)=>items.map(p=>({title:`${p.title} (${p.year})`,finding:{title:p.title,text:'Memory and identity are central to this story.',url:'https://en.wikipedia.org/wiki/'+p.title.replaceAll(' ','_'),attribution:'Wikipedia contributors · CC BY-SA 4.0'}})),
             }),
           };
           const result = await (instance as unknown as AskResearch).recommend(
@@ -449,6 +445,15 @@ describe("unified authenticated research", () => {
             tavilyCredits: 1,
             neurons: null,
           });
+          const lookups=resolveBatch.mock.calls.length;
+          ai.mockClear();
+          const reranked=await (instance as unknown as AskResearch).recommend('user',request({query:'Different wording about memory and identity',filters:{minimumYear:2024,originalLanguage:'en',excludedTmdbIds:[2]}}));
+          expect(reranked.results).toHaveLength(24);
+          expect(reranked.results.some(v=>v.tmdbId===2)).toBe(false);
+          expect(reranked.metrics).toMatchObject({gptCalls:1,clefCalls:3,tavilyCredits:0,generated:0,reusedCandidates:29});
+          expect(resolveBatch.mock.calls.length).toBe(lookups);
+          expect(ai.mock.calls.filter(c=>!c[0].includes('clef'))).toHaveLength(1);
+
         } finally {
           Object.assign(e, original);
         }
