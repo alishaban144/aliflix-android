@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
@@ -74,13 +75,14 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     val localTracker=remember { DiscoverTouchTracker() }
     val tracker=touchTracker ?: localTracker
     val motion=rememberMobileMotionEnabled() && rememberMobileResumed()
+    val keyboardOpen=WindowInsets.ime.getBottom(LocalDensity.current)>0
     BackHandler { if(recent)recent=false else if(voices)voices=false else if(privacy)privacy=false else onClose() }
     LaunchedEffect(Unit) { onStart() }
     val idle=state.phase in listOf("Ready","Resume","Reconnect","Microphone permission","Audio unavailable","Try again later","Opened elsewhere")
     fun send(){if(draft.isNotBlank()){session.sendText(draft);draft=""}}
     Box(Modifier.fillMaxSize().background(AliflixBackgroundBase).observeDiscoverTouches(tracker).testTag("talk-screen")) {
         TalkPixelField("",state.phase,{state.level},motion,Modifier.fillMaxSize().graphicsLayer { alpha=if(state.textMode).15f else .52f })
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(horizontal=20.dp)) {
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)).imePadding().padding(horizontal=20.dp)) {
             Row(Modifier.fillMaxWidth().padding(top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("ALIFLIX",color=AliflixAccentSecondary,fontSize=9.sp,letterSpacing=3.sp,fontWeight=FontWeight.Bold)
@@ -103,9 +105,9 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 }
                 if(state.lines.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center) {
                     Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                        TalkLiveOrb(state.phase,{state.level},motion,Modifier.size(116.dp),tracker)
+                        if(!keyboardOpen)TalkLiveOrb(state.phase,{state.level},motion,Modifier.size(116.dp),tracker)
                         Text("What are you in the mood for?",color=AliflixContentPrimary,fontSize=19.sp,fontWeight=FontWeight.Medium)
-                        listOf("Recent sci-fi","Find a series","Something unexpected").forEach { prompt ->
+                        if(!keyboardOpen)listOf("Recent sci-fi","Find a series","Something unexpected").forEach { prompt ->
                             SuggestionChip(onClick={session.sendText(prompt)},label={Text(prompt)},shape=RoundedCornerShape(16.dp))
                         }
                     }
@@ -141,7 +143,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,{state.level},motion) }
                 if(idle&&state.phase!="Ready") Text(state.phase,color=AliflixContentSecondary,fontSize=12.sp,modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=12.dp))
                 Row(Modifier.fillMaxWidth().padding(bottom=20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(20.dp,Alignment.CenterHorizontally)) {
-                    AliflixIconButton(onClick={session.setTextMode(true)},modifier=Modifier.size(52.dp).testTag("talk-chat-mode")) { Icon(Icons.Rounded.ChatBubbleOutline,"Chat",tint=AliflixContentSecondary) }
+                    AliflixIconButton(onClick={session.setTextMode(true);onStart()},modifier=Modifier.size(52.dp).testTag("talk-chat-mode")) { Icon(Icons.Rounded.ChatBubbleOutline,"Chat",tint=AliflixContentSecondary) }
                     AliflixIconButton(onClick={if(idle)onStart()else session.toggleMute()},modifier=Modifier.size(64.dp)) {
                         AnimatedContent(if(idle)0 else if(state.muted)1 else 2,label="voice-control") { mode -> Icon(if(mode==0)Icons.Rounded.Refresh else if(mode==1)Icons.Rounded.MicOff else Icons.Rounded.Mic,
                             if(idle)"Retry connection" else if(state.muted)"Unmute microphone" else "Mute microphone",tint=AliflixAccentSecondary,modifier=Modifier.size(29.dp)) }

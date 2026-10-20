@@ -21,7 +21,7 @@ Existing app data was preserved. The phone had a Debug-signed installation and w
 | Incoherence, TMDB 67415 / IMDb tt1997399 | Catalog re-release year 2025; IMDb original year 1994 and score 6.7 verified. RT correctly reports no critic score. No playable provider file found in the live test. |
 | Home details/back | Picked rail identities/order preserved on the phone. |
 | Background preparation | Undone prepared silently; Play transferred the pending request, reached visible playback in 2.3 s, then resumed after a three-minute seek. |
-| Talk | Recent-chat, privacy, voice-picker and full-screen-touch tests passed. Replacing an episode explanation with a sci-fi request reached the correct recommendation tool without the old episode answer. Research returned HTTP 429; successful live recommendation quality/count is unverified. |
+| Talk | Four UI tests passed, including the focused composer. A settled keyboard screenshot verifies the header stays visible and the composer sits directly above the keys. Replacing an episode explanation with a sci-fi request returned three researched 2026 identities and a relevant answer in 21.7 s, without old episode output. New AI research was quota-limited; retained Tavily research recovery was verified live. |
 | Player regressions | Ten physical tests passed: muted preparation, resume across routes, audio-only progress, skip/up-next/caption layouts and Talk controls. |
 
 Direct native-video preparation, without automatic provider substitution:

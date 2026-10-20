@@ -10,6 +10,24 @@ import org.junit.Assert.*
 
 class TalkVoiceUiTest {
     @get:Rule val compose=createComposeRule()
+    @Test fun focusedTextComposerKeepsHeaderAndHistoryControlsReachable() {
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
+        val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)
+        session.setTextMode(true)
+        try {
+            compose.setContent {
+                val activity=androidx.activity.compose.LocalActivity.current
+                androidx.compose.runtime.SideEffect { activity?.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) }
+                AliflixMobileTheme { TalkVoiceScreen(session,{}, {}) }
+            }
+            compose.onNodeWithTag("talk-composer").performClick().performTextInput("Recent sci-fi")
+            compose.onNodeWithContentDescription("Recent chats").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Close conversation").assertIsDisplayed()
+            compose.onNodeWithTag("talk-composer").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Send message").assertIsDisplayed()
+            compose.runOnIdle { assertEquals(0L,session.debugReadyGeneration) }
+        } finally {session.close();scope.cancel()}
+    }
     @Test fun orbObservesTouchesFarOutsideItsHaloWithoutEatingControls() {
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
         val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)

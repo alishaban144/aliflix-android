@@ -61,7 +61,6 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     fun setTextMode(enabled:Boolean) {
         if(enabled==state.value.textMode)return
         persistHistory();suspendSession();update { it.copy(textMode=enabled,muted=enabled) };muted=enabled
-        if(enabled)scope.launch { connect() }
     }
     fun sendText(text:String) {
         val question=text.trim().take(1600);if(question.isBlank()||textSend?.isActive==true)return
