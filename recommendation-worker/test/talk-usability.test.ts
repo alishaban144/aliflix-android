@@ -1,0 +1,56 @@
+import { describe,it,expect } from 'vitest';
+import { env,runInDurableObject } from 'cloudflare:test';
+import { TalkSession } from '../src/talk';
+import { talkRecommendationPolicy } from '../src/talkIntent';
+import { TalkChatsRequestSchema } from '../src/talkChats';
+import { liveInstructions } from '../src/talkProviders';
+import { TalkContextSchema } from '../src/talkEvidence';
+
+describe('Talk recent discovery and task continuity',()=>{
+ const now=new Date('2026-10-20T12:00:00Z');
+ it('bounds generic sci-fi discovery to released recent years',()=>{
+  expect(talkRecommendationPolicy('Suggest a sci-fi movie',now).filters).toEqual({minimumYear:2023,maximumYear:2026});
+  expect(talkRecommendationPolicy('Something like Arrival (2016)',now).filters.minimumYear).toBe(2023);
+  expect(talkRecommendationPolicy('a funny series',new Date('2027-01-02Z')).filters.maximumYear).toBe(2027);
+ });
+ it('honors an expressly requested older era',()=>{
+  for(const query of ['classic sci fi','movies from 2006','1990s thrillers','any era','افلام قديمة','ältere Filme'])
+   expect(talkRecommendationPolicy(query,now).filters).toEqual({});
+ });
+ it('never authorizes immediate unresearched recommendations or a history-driven subject change',()=>{
+  const text=liveInstructions(TalkContextSchema.parse({companionVersion:3,recentProgress:[]}));
+  expect(text).toContain('Answer the newest user request');
+  expect(text).toContain('never permission to recap the last watched episode');
+  expect(text).not.toContain('Reliable general recommendations and non-plot facts can be answered immediately');
+  expect(text).toContain('wait for its researched results');
+ });
+});
+describe('bounded account chat archive',()=>{
+ const chat={id:crypto.randomUUID(),title:'Recent science fiction',updatedAt:Date.now(),lines:[{role:'user' as const,text:'Suggest a sci-fi movie',sources:[]}]};
+ it('lists summaries, restores sources, and prevents queued saves resurrecting deleted chats',async()=>{
+  await runInDurableObject(env.TALK_SESSIONS.getByName('chat-archive-unit'),async instance=>{
+   const store=instance as unknown as TalkSession;
+   await store.chats({action:'save',chat});
+   expect(await store.chats({action:'list'})).toEqual({chats:[{id:chat.id,title:chat.title,updatedAt:chat.updatedAt}]});
+   expect(await store.chats({action:'read',id:chat.id})).toEqual({chat});
+   await store.chats({action:'delete',id:chat.id});
+   expect(await store.chats({action:'save',chat})).toEqual({deleted:true});
+   expect(await store.chats({action:'read',id:chat.id})).toEqual({chat:null});
+  });
+ });
+ it('isolates owners and retains only 30 conversations',async()=>{
+  const a=env.TALK_SESSIONS.getByName('archive-owner-a'),b=env.TALK_SESSIONS.getByName('archive-owner-b');
+  await runInDurableObject(a,async instance=>{
+   const store=instance as unknown as TalkSession;
+   for(let i=0;i<32;i++)await store.chats({action:'save',chat:{...chat,id:crypto.randomUUID(),updatedAt:Date.now()-i}});
+   expect((await store.chats({action:'list'}) as {chats:unknown[]}).chats).toHaveLength(30);
+   await store.chats({action:'clear'});expect(await store.chats({action:'list'})).toEqual({chats:[]});
+  });
+  await runInDurableObject(b,async instance=>expect(await(instance as unknown as TalkSession).chats({action:'read',id:chat.id})).toEqual({chat:null}));
+ });
+ it('rejects oversized or unsafe archive payloads',()=>{
+  expect(TalkChatsRequestSchema.safeParse({action:'save',chat:{...chat,lines:Array(13).fill(chat.lines[0])}}).success).toBe(false);
+  expect(TalkChatsRequestSchema.safeParse({action:'read',id:'../other-user'}).success).toBe(false);
+  expect(TalkChatsRequestSchema.safeParse({action:'save',chat:{...chat,lines:[{...chat.lines[0],sources:[{title:'Unsafe',url:'javascript:alert(1)',license:''}]}]}}).success).toBe(false);
+ });
+});

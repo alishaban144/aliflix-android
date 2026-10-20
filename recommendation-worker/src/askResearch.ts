@@ -617,7 +617,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
               include_raw_content: false,
               include_answer: false,
               include_usage: true,
-              ...(input.recent ? { time_range: "month" } : {}),
+              ...(input.recent ? { time_range: "year", include_published_date: true } : {}),
             }),
           });
           if (!response.ok)
@@ -1125,9 +1125,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       console.log(JSON.stringify({event:'ask_phase',phase:'intent',elapsedMs:Date.now()-started}));
       const research = await this.web(
         {
-          query: plan.search,
+          query: filters.minimumYear && filters.minimumYear >= new Date().getUTCFullYear()-3 ? `${plan.search} released ${filters.minimumYear}–${filters.maximumYear || new Date().getUTCFullYear()} movies series available now` : plan.search,
           recent:
-            /\b(?:latest|current|new releases|this (?:week|month)|2026)\b/i.test(
+            /\b(?:latest|current|new releases|this (?:week|month)|as of)\b/i.test(
               context,
             ),
         },

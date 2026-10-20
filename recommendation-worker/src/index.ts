@@ -312,10 +312,17 @@ export default {
     if (seasonMatch) {
       if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
       try {
+        const key=new Request(new URL(url.pathname,url.origin),{method:'GET'});
+        const cached=await caches.default.match(key);
+        if(cached)return cached;
         await enforceRateLimit(request, env);
         const tmdb = new TmdbClient(env, 3);
-        return catalogJson(seasonMatch[2] === undefined ? await tmdb.seasons(Number(seasonMatch[1]))
+        const response=catalogJson(seasonMatch[2] === undefined ? await tmdb.seasons(Number(seasonMatch[1]))
           : await tmdb.episodes(Number(seasonMatch[1]), Number(seasonMatch[2])));
+        response.headers.set('cache-control','public, max-age=21600');
+        const write=caches.default.put(key,response.clone());
+        if(ctx)ctx.waitUntil(write);else await write;
+        return response;
       } catch (error) { return errorResponse(error); }
     }
     const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);
