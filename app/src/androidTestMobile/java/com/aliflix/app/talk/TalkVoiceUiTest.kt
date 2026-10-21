@@ -26,6 +26,11 @@ class TalkVoiceUiTest {
             compose.onNodeWithTag("talk-composer").assertIsDisplayed()
             compose.onNodeWithContentDescription("Send message").assertIsDisplayed()
             compose.runOnIdle { assertEquals(0L,session.debugReadyGeneration) }
+            Thread.sleep(500)
+            val instrumentation=InstrumentationRegistry.getInstrumentation()
+            instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                java.io.File(instrumentation.targetContext.getExternalFilesDir(null),"talk-modern-composer-177.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) };bitmap.recycle()
+            }
         } finally {session.close();scope.cancel()}
     }
     @Test fun orbObservesTouchesFarOutsideItsHaloWithoutEatingControls() {
@@ -50,7 +55,8 @@ class TalkVoiceUiTest {
             compose.onNodeWithText("Start").assertDoesNotExist()
             compose.onNodeWithText("Resume").assertDoesNotExist()
             compose.runOnIdle { assertTrue(started);assertEquals("Ready",session.state.value.phase) }
-            compose.onNodeWithContentDescription("Privacy").performClick()
+            compose.onNodeWithContentDescription("Conversation settings").performClick()
+            compose.onNodeWithText("Privacy").performClick()
             compose.onNodeWithText("Keep history").assertIsDisplayed()
             compose.onNodeWithText("Delete history").assertIsDisplayed()
             compose.onNodeWithContentDescription("Close panel").performClick()
@@ -66,10 +72,27 @@ class TalkVoiceUiTest {
         val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope)
         try{
             compose.setContent{AliflixMobileTheme{TalkVoiceScreen(session,{}, {})}}
+            compose.onNodeWithContentDescription("Conversation settings").performClick()
             compose.onNodeWithTag("talk-voice-picker").performClick()
             for(voice in listOf("Aoede","Kore","Puck","Charon"))compose.onAllNodesWithText(voice).onLast().assertIsDisplayed()
             compose.onNodeWithContentDescription("Close panel").performClick()
             compose.runOnIdle{assertEquals("Ready",session.state.value.phase)}
         }finally{session.close();scope.cancel()}
+    }
+    @Test fun topTypingIconOpensChatAndStopCancelsWithoutNetwork() {
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
+        val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)
+        try {
+            compose.setContent { AliflixMobileTheme { TalkVoiceScreen(session,{}, {}) } }
+            val screen=compose.onNodeWithTag("talk-screen").fetchSemanticsNode().boundsInRoot
+            val chat=compose.onNodeWithTag("talk-chat-mode").fetchSemanticsNode().boundsInRoot
+            assertTrue(chat.bottom<screen.height*.22f)
+            compose.onNodeWithTag("talk-chat-mode").performClick()
+            compose.onNodeWithTag("talk-composer").performTextInput("Draft preserved")
+            compose.onNodeWithContentDescription("Voice conversation").performClick()
+            compose.onNodeWithTag("talk-chat-mode").performClick()
+            compose.onNodeWithTag("talk-composer").assertTextContains("Draft preserved")
+            compose.runOnIdle { session.stopAnswer();assertFalse(session.state.value.sending);assertEquals(0L,session.debugReadyGeneration) }
+        } finally { session.close();scope.cancel() }
     }
 }

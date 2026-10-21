@@ -179,12 +179,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         computationDispatcher = recommendationDispatchers.computation,
     )
     private val library = (application as AliflixApplication).libraryStore
-    private val playbackProviderRepository = PlaybackProviderRepository(application)
+    private val playbackProviderRepository = if (BuildConfig.IS_TV) PlaybackProviderRepository(application)
+        else (application as AliflixApplication).playbackProviderRepository
     val playbackProgressStore = (application as AliflixApplication).playbackProgressStore
-    private val recommendationStore = RecommendationStore(
-        context = application,
-    )
-    private val accountServices = createAccountServices(
+    private val recommendationStore = if (BuildConfig.IS_TV) RecommendationStore(application)
+        else (application as AliflixApplication).recommendationStore
+    private val accountServices = if (!BuildConfig.IS_TV) (application as AliflixApplication).accountServices else createAccountServices(
         application = application,
         libraryStore = library,
         playbackRepository = playbackProviderRepository,
@@ -1551,7 +1551,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     override fun onCleared() {
-        accountServices.close()
+        if (BuildConfig.IS_TV) accountServices.close()
         super.onCleared()
     }
 

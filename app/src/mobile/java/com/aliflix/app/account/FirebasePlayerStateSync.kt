@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Base64
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.MetadataChanges
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
@@ -25,11 +26,16 @@ internal class FirebasePlayerStateSync(
     private val db: FirebaseFirestore,
     private val onError: (Throwable) -> Unit,
 ) {
+    private val appContext=context.applicationContext
     private val stores = mapOf(
         "playerPreferences" to context.getSharedPreferences("aliflix_player_settings", Context.MODE_PRIVATE),
         "subtitleChoices" to context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE),
         "captionFiles" to context.getSharedPreferences("account-caption-files", Context.MODE_PRIVATE),
         "subtitleCorrections" to context.getSharedPreferences("subtitle-audio-corrections", Context.MODE_PRIVATE),
+        "audioChoices" to context.getSharedPreferences("native-audio-choice", Context.MODE_PRIVATE),
+        "seriesAudioChoices" to context.getSharedPreferences("serienstream-audio", Context.MODE_PRIVATE),
+        "activityShelves" to context.getSharedPreferences("activity-shelves", Context.MODE_PRIVATE),
+        "talkPreferences" to context.getSharedPreferences("aliflix-talk", Context.MODE_PRIVATE),
     )
     private val scopes = context.getSharedPreferences("player-account-scopes", Context.MODE_PRIVATE)
     private var applying = false
@@ -48,12 +54,16 @@ internal class FirebasePlayerStateSync(
         scopes.edit().also { editor -> scopes.all.keys.filter { it.startsWith("$uid/") }.forEach { editor.remove(it) } }.apply()
     }
 
-    private fun encoded(value: Any): String = JSONObject().put("type", value.javaClass.simpleName).put("value", value).toString()
+    private fun syncable(name:String,key:String)=name!="talkPreferences" || key in setOf("voice","keep-history")
+    private fun encoded(value: Any?): String = JSONObject().put("type", if(value is Set<*>)"StringSet" else value?.javaClass?.simpleName ?: "Deleted")
+        .put("value", if(value is Set<*>)org.json.JSONArray(value.toList()) else value ?: JSONObject.NULL).toString()
 
     private fun apply(store: SharedPreferences, key: String, raw: String) {
         val json = JSONObject(raw)
         val editor = store.edit()
         when (json.getString("type")) {
+            "Deleted" -> editor.remove(key)
+            "StringSet" -> { val rows=json.getJSONArray("value");editor.putStringSet(key,(0 until rows.length()).map { rows.getString(it) }.toSet()) }
             "Float" -> editor.putFloat(key, json.getDouble("value").toFloat())
             "Integer" -> editor.putInt(key, json.getInt("value"))
             "Long" -> editor.putLong(key, json.getLong("value"))
@@ -70,12 +80,12 @@ internal class FirebasePlayerStateSync(
         try {
             stores.forEach { (name, store) ->
                 val saved = JSONObject()
-                store.all.forEach { (key, value) -> if (value != null) saved.put(key, encoded(value)) }
+                store.all.forEach { (key, value) -> if (value != null&&syncable(name,key)) saved.put(key, encoded(value)) }
                 scopes.edit().putString("$previous/$name", saved.toString()).apply()
                 val restored = scopes.getString("$next/$name", null)
                 // Guest choices may seed a first sign-in, but another user's data never does.
                 if (restored != null || previous != "guest") {
-                    store.edit().clear().apply()
+                    store.edit().also { editor -> store.all.keys.filter { syncable(name,it) }.forEach(editor::remove) }.apply()
                     val json = JSONObject(restored ?: "{}")
                     json.keys().forEach { key -> apply(store, key, json.getString(key)) }
                 }
@@ -85,12 +95,14 @@ internal class FirebasePlayerStateSync(
     }
 
     private suspend fun sync(uid: String) = coroutineScope {
+        val stores=this@FirebasePlayerStateSync.stores + ("tastePreferences" to appContext.getSharedPreferences("aliflix-ask-feedback-$uid",Context.MODE_PRIVATE))
         val changes = Channel<Pair<String, String>>(Channel.UNLIMITED)
         val listeners = mutableListOf<ListenerRegistration>()
         val callbacks = stores.map { (name, store) ->
             val callback = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-                if (!applying && key != null) {
-                    if (name == "subtitleCorrections") scopes.edit().putBoolean("$uid/$name/$key/pending", true).apply()
+                if (!applying && key != null && syncable(name,key)) {
+                    scopes.edit().putBoolean("$uid/$name/$key/pending", true)
+                        .putLong("$uid/$name/$key/local",maxOf(System.currentTimeMillis(),scopes.getLong("$uid/$name/$key/time",0L)+1,scopes.getLong("$uid/$name/$key/local",0L)+1)).apply()
                     changes.trySend(name to key)
                 }
             }
@@ -101,10 +113,12 @@ internal class FirebasePlayerStateSync(
         fun timestampKey(name: String, key: String) = "$uid/$name/$key/time"
         suspend fun upload(name: String, key: String) {
             if (account.uid != uid) return
-            val value = stores.getValue(name).all[key] ?: return
+            val value = stores.getValue(name).all[key]
             val raw = encoded(value)
-            val bytes = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(raw.toByteArray(Charsets.UTF_8)) } }.toByteArray()
-            val chunks = Base64.encodeToString(bytes, Base64.NO_WRAP).chunked(180_000)
+            val chunks = withContext(Dispatchers.Default) {
+                val bytes=ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(raw.toByteArray(Charsets.UTF_8)) } }.toByteArray()
+                Base64.encodeToString(bytes,Base64.NO_WRAP).chunked(180_000)
+            }
             if (name == "subtitleCorrections") {
                 val expected = scopes.getLong(timestampKey(name, key), 0L)
                 val revision = maxOf(System.currentTimeMillis(), expected + 1L)
@@ -132,51 +146,85 @@ internal class FirebasePlayerStateSync(
                 scopes.edit().putLong(timestampKey(name, key), accepted.second).apply()
                 return
             }
-            val timestamp = maxOf(System.currentTimeMillis(), scopes.getLong(timestampKey(name, key), 0L) + 1L)
-            scopes.edit().putLong(timestampKey(name, key), timestamp).apply()
-            val batch = db.batch()
-            chunks.forEachIndexed { index, part ->
-                batch.set(user.collection(name).document("$key~$index"), mapOf(
-                    "key" to key, "part" to index, "count" to chunks.size,
-                    "payload" to part, "version" to timestamp,
-                ))
+            val timestamp = scopes.getLong("$uid/$name/$key/local",0L).takeIf { it>0 }
+                ?: maxOf(System.currentTimeMillis(),scopes.getLong(timestampKey(name,key),0L)+1)
+            require(chunks.size<=400)
+            // Compare revisions on the server. A delayed offline write cannot
+            // replace a newer preference saved on another device.
+            val accepted=db.runTransaction { transaction ->
+                val head=transaction.get(user.collection(name).document("$key~0"))
+                val remoteVersion=head.getLong("version")?:0L
+                if(remoteVersion>timestamp || (head.exists()&&!scopes.getBoolean("$uid/$name/$key/pending",false)))false else {
+                    chunks.forEachIndexed { index, part -> transaction.set(user.collection(name).document("$key~$index"),mapOf(
+                        "key" to key,"part" to index,"count" to chunks.size,"payload" to part,"version" to timestamp)) }
+                    true
+                }
+            }.await()
+            if(account.uid!=uid)return
+            if(encoded(stores.getValue(name).all[key])==raw) {
+                scopes.edit().putBoolean("$uid/$name/$key/pending",false).apply()
+                if(accepted)scopes.edit().putLong(timestampKey(name,key),timestamp).apply()
+                else {
+                    val docs=user.collection(name).whereEqualTo("key",key).get().await().documents
+                    if(account.uid!=uid)return
+                    val head=docs.firstOrNull { it.getLong("part")==0L }
+                    val version=head?.getLong("version")
+                    val parts=docs.filter { it.getLong("version")==version }.sortedBy { it.getLong("part") }
+                    if(version!=null&&parts.size==head.getLong("count")?.toInt()) {
+                        val packed=parts.joinToString("") { it.getString("payload").orEmpty() }
+                        val remoteRaw=GZIPInputStream(Base64.decode(packed,Base64.NO_WRAP).inputStream()).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                        applying=true
+                        try { apply(stores.getValue(name),key,remoteRaw);scopes.edit().putLong(timestampKey(name,key),version).apply() }
+                        finally { applying=false }
+                    }
+                }
             }
-            // Firestore persists this write offline and retries it when connectivity returns.
-            batch.commit().addOnFailureListener(onError)
         }
         try {
             stores.forEach { (name, store) ->
-                listeners += user.collection(name).addSnapshotListener { snapshot, error ->
+                listeners += user.collection(name).addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                     if (account.uid != uid) return@addSnapshotListener
                     if (error != null) { onError(error); return@addSnapshotListener }
                     if (snapshot == null || snapshot.metadata.hasPendingWrites()) return@addSnapshotListener
                     snapshot.documents.groupBy { it.getString("key") }.forEach group@ { (key, docs) ->
-                        if (key == null) return@group
+                        if (key == null || !syncable(name,key)) return@group
                         val head = docs.firstOrNull { it.getLong("part") == 0L } ?: return@group
                         val version = head.getLong("version") ?: return@group
-                        if (name == "subtitleCorrections" && scopes.getBoolean("$uid/$name/$key/pending", false)) {
-                            changes.trySend(name to key)
-                            return@group
+                        if (scopes.getBoolean("$uid/$name/$key/pending", false)) {
+                            if(name=="subtitleCorrections" || version<=scopes.getLong("$uid/$name/$key/local",0L)) {
+                                changes.trySend(name to key);return@group
+                            }
+                            scopes.edit().putBoolean("$uid/$name/$key/pending",false).apply()
                         }
                         if (version <= scopes.getLong(timestampKey(name, key), 0L) && store.contains(key)) return@group
                         val count = head.getLong("count")?.toInt() ?: return@group
                         val parts = docs.filter { it.getLong("version") == version }.sortedBy { it.getLong("part") }
                         if (parts.size != count) return@group
-                        runCatching {
-                            val packed = parts.joinToString("") { it.getString("payload").orEmpty() }
-                            val raw = GZIPInputStream(Base64.decode(packed, Base64.NO_WRAP).inputStream()).bufferedReader(Charsets.UTF_8).use { it.readText() }
-                            applying = true
-                            apply(store, key, raw)
-                            scopes.edit().putLong(timestampKey(name, key), version).apply()
-                        }.onFailure(onError)
-                        applying = false
+                        launch {
+                            try {
+                                val raw=withContext(Dispatchers.Default) {
+                                    val packed=parts.joinToString("") { it.getString("payload").orEmpty() }
+                                    GZIPInputStream(Base64.decode(packed,Base64.NO_WRAP).inputStream()).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                                }
+                                if(account.uid!=uid||version<scopes.getLong(timestampKey(name,key),0L)||
+                                    (scopes.getBoolean("$uid/$name/$key/pending",false)&&version<=scopes.getLong("$uid/$name/$key/local",0L)))return@launch
+                                applying=true
+                                try { apply(store,key,raw);scopes.edit().putLong(timestampKey(name,key),version).apply() }
+                                finally { applying=false }
+                            } catch(cancelled:CancellationException){throw cancelled}
+                            catch(error:Exception){onError(error)}
+                        }
                     }
                     // Seed only absent cloud values after an authoritative server snapshot.
                     if (!snapshot.metadata.isFromCache) {
                         val remoteKeys = snapshot.documents.mapNotNull { it.getString("key") }.toSet()
-                        store.all.keys.filterNot { it in remoteKeys }.forEach { changes.trySend(name to it) }
+                        store.all.keys.filter { syncable(name,it)&&it !in remoteKeys }.forEach { changes.trySend(name to it) }
                     }
                 }
+            }
+            scopes.all.keys.filter { it.startsWith("$uid/")&&it.endsWith("/pending")&&scopes.getBoolean(it,false) }.forEach { pending ->
+                val path=pending.removePrefix("$uid/").removeSuffix("/pending");val name=path.substringBefore('/')
+                if(name in stores)changes.trySend(name to path.substringAfter('/'))
             }
             for ((name, key) in changes) {
                 try { upload(name, key) } catch (cancelled: CancellationException) { throw cancelled }

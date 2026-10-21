@@ -48,6 +48,12 @@ object AccountCloudDeletionPlan {
         "subtitleChoices",
         "captionFiles",
         "subtitleCorrections",
+        "audioChoices",
+        "seriesAudioChoices",
+        "activityShelves",
+        "tastePreferences",
+        "talkPreferences",
+        "talkArchive",
     )
 }
 

@@ -16,11 +16,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 sealed interface LibraryMutation {
-    data class MyListChanged(val media: Media, val added: Boolean) : LibraryMutation
-    data class FavoriteChanged(val media: Media, val added: Boolean) : LibraryMutation
+    data class MyListChanged(val media: Media, val added: Boolean, val metadataOnly:Boolean=false) : LibraryMutation
+    data class FavoriteChanged(val media: Media, val added: Boolean, val metadataOnly:Boolean=false) : LibraryMutation
     data class RecentPlayed(val entry: RecentMediaEntry, val metadataOnly: Boolean = false) : LibraryMutation
     data class RecentRemoved(val mediaKey: String) : LibraryMutation
-    data object RecentCleared : LibraryMutation
+    data class RecentCleared(val mediaKeys:Set<String>) : LibraryMutation
 }
 
 class LibraryStore(context: Context) {
@@ -82,8 +82,9 @@ class LibraryStore(context: Context) {
     }
 
     fun clearRecent() {
+        val keys=_recentEntries.value.map { it.media.key }.toSet()
         applyRecent(emptyList())
-        _mutations.tryEmit(LibraryMutation.RecentCleared)
+        _mutations.tryEmit(LibraryMutation.RecentCleared(keys))
     }
 
     fun refreshMetadata(item: Media) {
@@ -93,7 +94,7 @@ class LibraryStore(context: Context) {
         if (updatedList != _myList.value) {
             _myList.value = updatedList
             write("my_list", updatedList)
-            _mutations.tryEmit(LibraryMutation.MyListChanged(item, added = true))
+            _mutations.tryEmit(LibraryMutation.MyListChanged(item, added = true, metadataOnly=true))
         }
 
         val updatedRecent = _recentEntries.value.map { played ->
@@ -111,7 +112,7 @@ class LibraryStore(context: Context) {
         if (updatedLikes != _likes.value) {
             _likes.value = updatedLikes
             write("liked_titles", updatedLikes)
-            _mutations.tryEmit(LibraryMutation.FavoriteChanged(item, added = true))
+            _mutations.tryEmit(LibraryMutation.FavoriteChanged(item, added = true, metadataOnly=true))
         }
     }
 

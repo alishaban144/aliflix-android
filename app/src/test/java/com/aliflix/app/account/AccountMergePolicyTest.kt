@@ -130,6 +130,12 @@ class AccountMergePolicyTest {
                 "subtitleChoices",
                 "captionFiles",
                 "subtitleCorrections",
+                "audioChoices",
+                "seriesAudioChoices",
+                "activityShelves",
+                "tastePreferences",
+                "talkPreferences",
+                "talkArchive",
             ),
             AccountCloudDeletionPlan.collections,
         )

@@ -1,5 +1,17 @@
 import type { RecommendationResult } from './types';
 
+export function canRetainTalkResearch(failure:{status:number;code:string}|undefined):boolean {
+ return !!failure&&([429,500,502,503,504].includes(failure.status)||(failure.status===422&&failure.code==='NO_RESEARCH'));
+}
+export function talkRecommendationQuery(question:string|undefined,toolQuery:string):string {
+ const current=question?.trim();
+ if(!current)return toolQuery;
+ // A relative follow-up needs the model's conversation-grounded expansion.
+ // Self-contained requests always replace that expansion.
+ return /\b(?:those|these|them|same ones|more like|more of|that kind|similar ones)\b/i.test(current)
+  ? `${toolQuery}\nLatest user follow-up: ${current}` : current;
+}
+
 /** Resolve era preference at the request boundary, rather than trusting model memory. */
 export function talkRecommendationPolicy(query: string, now = new Date()) {
   const year = now.getUTCFullYear();

@@ -14,6 +14,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.ClipEntry
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.background
@@ -71,7 +76,9 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     var recent by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
     var voices by remember { mutableStateOf(false) }
-    var draft by rememberSaveableTalkDraft()
+    var settings by remember { mutableStateOf(false) }
+    var draft by rememberSaveable(state.conversationId) { mutableStateOf("") }
+    var deleteHistory by remember { mutableStateOf(false) }
     val localTracker=remember { DiscoverTouchTracker() }
     val tracker=touchTracker ?: localTracker
     val motion=rememberMobileMotionEnabled() && rememberMobileResumed()
@@ -81,61 +88,90 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     val idle=state.phase in listOf("Ready","Resume","Reconnect","Microphone permission","Audio unavailable","Try again later","Opened elsewhere")
     fun send(){if(draft.isNotBlank()){session.sendText(draft);draft=""}}
     Box(Modifier.fillMaxSize().background(AliflixBackgroundBase).observeDiscoverTouches(tracker).testTag("talk-screen")) {
-        TalkPixelField("",state.phase,{state.level},motion,Modifier.fillMaxSize().graphicsLayer { alpha=if(state.textMode).15f else .52f })
+        TalkPixelField("",state.phase,{state.level},motion&&!state.textMode,Modifier.fillMaxSize().graphicsLayer { alpha=if(state.textMode).15f else .52f })
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)).imePadding().padding(horizontal=20.dp)) {
             Row(Modifier.fillMaxWidth().padding(top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("ALIFLIX",color=AliflixAccentSecondary,fontSize=9.sp,letterSpacing=3.sp,fontWeight=FontWeight.Bold)
                     Text("Talk",color=AliflixContentPrimary,fontSize=25.sp,fontWeight=FontWeight.SemiBold)
                 }
+                AliflixIconButton(onClick={session.setTextMode(!state.textMode);onStart()},modifier=Modifier.testTag("talk-chat-mode").semantics { stateDescription=if(state.textMode)"Text chat selected" else "Voice selected" }) {
+                    Icon(if(state.textMode)Icons.Rounded.GraphicEq else Icons.Rounded.EditNote,if(state.textMode)"Voice conversation" else "Chat",tint=AliflixAccentSecondary)
+                }
                 AliflixIconButton(onClick={recent=true;session.history.refresh()},modifier=Modifier.testTag("talk-recent-chats")) { Icon(Icons.Rounded.History,"Recent chats",tint=AliflixContentSecondary) }
-                AliflixIconButton(onClick={voices=true},modifier=Modifier.testTag("talk-voice-picker")) { Icon(Icons.Rounded.GraphicEq,"Choose voice",tint=AliflixAccentSecondary) }
-                AliflixIconButton(onClick={privacy=true}) { Icon(Icons.Rounded.PrivacyTip,"Privacy",tint=AliflixContentSecondary) }
+                Box {
+                    AliflixIconButton(onClick={settings=true}) { Icon(Icons.Rounded.MoreHoriz,"Conversation settings",tint=AliflixContentSecondary) }
+                    DropdownMenu(expanded=settings,onDismissRequest={settings=false}) {
+                        DropdownMenuItem(text={Text("New chat")},onClick={session.newChat();draft="";settings=false},leadingIcon={Icon(Icons.Rounded.AddComment,null)})
+                        DropdownMenuItem(text={Text("Choose voice")},onClick={voices=true;settings=false},leadingIcon={Icon(Icons.Rounded.GraphicEq,null)},modifier=Modifier.testTag("talk-voice-picker"))
+                        DropdownMenuItem(text={Text("Privacy")},onClick={privacy=true;settings=false},leadingIcon={Icon(Icons.Rounded.PrivacyTip,null)})
+                    }
+                }
                 AliflixIconButton(onClick=onClose) { Icon(Icons.Rounded.Close,"Close conversation",tint=AliflixContentPrimary) }
             }
             if(state.textMode) {
                 Row(Modifier.fillMaxWidth().padding(bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
-                    Text("Conversation",Modifier.weight(1f),color=AliflixContentSecondary,fontSize=13.sp)
+                    Column(Modifier.weight(1f)) {
+                        Text("Your cinema companion",color=AliflixContentPrimary,fontSize=13.sp,fontWeight=FontWeight.Medium)
+                        Text(talkConnectionLabel(state),color=AliflixContentTertiary,fontSize=11.sp,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite })
+                    }
                     AliflixIconButton(onClick={session.newChat();draft=""}) { Icon(Icons.Rounded.AddComment,"New chat",tint=AliflixAccentSecondary) }
                 }
                 val list=rememberLazyListState()
-                LaunchedEffect(state.lines.size,state.lines.lastOrNull()?.text) {
-                    if(state.lines.isNotEmpty()&&!list.isScrollInProgress && (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index?:0)>=state.lines.size-3)
-                        list.animateScrollToItem(state.lines.lastIndex)
+                var following by remember { mutableStateOf(true) }
+                LaunchedEffect(list) { snapshotFlow { list.isScrollInProgress to list.canScrollForward }.collect { (scrolling,more) -> if(scrolling)following=!more } }
+                LaunchedEffect(state.lines.size,state.lines.lastOrNull()?.text,state.sending,following) {
+                    if(state.lines.isNotEmpty()&&following&&!list.isScrollInProgress)list.scrollToItem(state.lines.size-1+(if(state.sending)1 else 0))
                 }
                 if(state.lines.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center) {
                     Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
                         if(!keyboardOpen)TalkLiveOrb(state.phase,{state.level},motion,Modifier.size(116.dp),tracker)
                         Text("What are you in the mood for?",color=AliflixContentPrimary,fontSize=19.sp,fontWeight=FontWeight.Medium)
+                        if(!keyboardOpen)Text("Discover a new release, follow a mood, or talk through a story.",color=AliflixContentTertiary,fontSize=13.sp,lineHeight=20.sp,modifier=Modifier.padding(horizontal=20.dp),textAlign=androidx.compose.ui.text.style.TextAlign.Center)
                         if(!keyboardOpen)listOf("Recent sci-fi","Find a series","Something unexpected").forEach { prompt ->
                             SuggestionChip(onClick={session.sendText(prompt)},label={Text(prompt)},shape=RoundedCornerShape(16.dp))
                         }
                     }
-                } else LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("talk-messages"),state=list,verticalArrangement=Arrangement.spacedBy(18.dp),contentPadding=PaddingValues(vertical=16.dp)) {
-                    items(state.lines) { line ->
+                } else Box(Modifier.weight(1f).fillMaxWidth()) {
+                  LazyColumn(Modifier.fillMaxSize().testTag("talk-messages"),state=list,verticalArrangement=Arrangement.spacedBy(18.dp),contentPadding=PaddingValues(top=16.dp,bottom=24.dp)) {
+                    items(state.lines.size,key={it}) { index ->
+                        val line=state.lines[index]
                         Column(Modifier.fillMaxWidth(),horizontalAlignment=if(line.role=="user")Alignment.End else Alignment.Start) {
                             Surface(color=if(line.role=="user")AliflixAccentSecondary.copy(alpha=.14f) else Color.Transparent,
                                 shape=RoundedCornerShape(22.dp,22.dp,if(line.role=="user")6.dp else 22.dp,if(line.role=="user")22.dp else 6.dp),
                                 modifier=Modifier.widthIn(max=520.dp)) {
-                                Text(line.text,Modifier.padding(horizontal=if(line.role=="user")16.dp else 2.dp,vertical=12.dp),color=AliflixContentPrimary,fontSize=16.sp,lineHeight=25.sp)
+                                SelectionContainer { Text(line.text,Modifier.padding(horizontal=if(line.role=="user")16.dp else 2.dp,vertical=12.dp),color=AliflixContentPrimary,fontSize=16.sp,lineHeight=25.sp) }
                             }
                             line.sources.distinctBy { it.url }.take(4).forEach { SourceLink(it) }
+                            if(line.role=="assistant"&&(!state.sending||index<state.lines.lastIndex)) {
+                                val clipboard=LocalClipboard.current
+                                val actionScope=rememberCoroutineScope()
+                                Row(verticalAlignment=Alignment.CenterVertically) {
+                                    IconButton(onClick={actionScope.launch { clipboard.setClipEntry(ClipEntry(android.content.ClipData.newPlainText("Aliflix reply",line.text))) }}) { Icon(Icons.Rounded.ContentCopy,"Copy reply",tint=AliflixContentTertiary,modifier=Modifier.size(16.dp)) }
+                                    if(index==state.lines.lastIndex)TextButton(onClick=session::retryLastMessage) { Icon(Icons.Rounded.Refresh,null,Modifier.size(16.dp));Spacer(Modifier.width(6.dp));Text("Try again",fontSize=11.sp) }
+                                }
+                            }
                         }
                     }
+                    if(state.sending)item(key="response-status") { Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite }.testTag("talk-response-status")) {
+                        Icon(Icons.Rounded.AutoAwesome,null,tint=AliflixAccentSecondary,modifier=Modifier.size(16.dp));Spacer(Modifier.width(10.dp))
+                        Text(if(state.lines.lastOrNull()?.role=="assistant")"Writing…" else "Thinking through your request…",color=AliflixContentTertiary,fontSize=12.sp)
+                    } }
+                  }
+                  if(!following&&list.canScrollForward)FilledTonalIconButton(onClick={following=true},modifier=Modifier.align(Alignment.BottomCenter)) { Icon(Icons.Rounded.ArrowDownward,"Latest message") }
                 }
                 if(state.phase in listOf("Reconnect","Try again later","Audio unavailable")) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                     Text(if(state.phase=="Try again later")state.phase else "Connection unavailable",Modifier.weight(1f),color=AliflixContentSecondary,fontSize=12.sp)
-                    TextButton(onClick={state.lines.lastOrNull { it.role=="user" }?.let { session.sendText(it.text) }}) { Text("Retry") }
+                    TextButton(onClick=session::retryLastMessage) { Text("Retry") }
                 }
-                if(state.sending) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp).padding(horizontal=8.dp),color=AliflixAccentSecondary,trackColor=Color.Transparent)
                 Row(Modifier.fillMaxWidth().padding(top=10.dp,bottom=8.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                    AliflixIconButton(onClick={session.setTextMode(false);onStart()}) { Icon(Icons.Rounded.Mic,"Voice conversation",tint=AliflixAccentSecondary) }
                     OutlinedTextField(value=draft,onValueChange={draft=it.take(1600)},modifier=Modifier.weight(1f).testTag("talk-composer"),
                         placeholder={Text("Message Aliflix",fontSize=14.sp)},maxLines=5,shape=RoundedCornerShape(24.dp),
                         keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),
                         colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=AliflixAccentSecondary,unfocusedBorderColor=AliflixContentTertiary.copy(alpha=.3f),focusedTextColor=AliflixContentPrimary,unfocusedTextColor=AliflixContentPrimary))
-                    IconButton(onClick={send()},enabled=draft.isNotBlank(),modifier=Modifier.size(48.dp).clip(CircleShape).background(AliflixAccentSecondary.copy(alpha=if(draft.isBlank()).12f else .85f)).testTag("talk-send")) {
-                        Icon(Icons.Rounded.ArrowUpward,"Send message",tint=if(draft.isBlank())AliflixContentTertiary else AliflixBackgroundBase)
+                    val stop=state.sending&&draft.isBlank()
+                    IconButton(onClick={if(stop)session.stopAnswer()else send()},enabled=stop||draft.isNotBlank(),modifier=Modifier.size(48.dp).clip(CircleShape).background(AliflixAccentSecondary.copy(alpha=if(!stop&&draft.isBlank()).12f else .85f)).testTag("talk-send")) {
+                        Icon(if(stop)Icons.Rounded.Stop else Icons.Rounded.ArrowUpward,if(stop)"Stop response" else "Send message",tint=if(!stop&&draft.isBlank())AliflixContentTertiary else AliflixBackgroundBase)
                     }
                 }
             } else {
@@ -143,7 +179,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,{state.level},motion) }
                 if(idle&&state.phase!="Ready") Text(state.phase,color=AliflixContentSecondary,fontSize=12.sp,modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=12.dp))
                 Row(Modifier.fillMaxWidth().padding(bottom=20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(20.dp,Alignment.CenterHorizontally)) {
-                    AliflixIconButton(onClick={session.setTextMode(true);onStart()},modifier=Modifier.size(52.dp).testTag("talk-chat-mode")) { Icon(Icons.Rounded.ChatBubbleOutline,"Chat",tint=AliflixContentSecondary) }
+                    AliflixIconButton(onClick=session::stopAnswer,modifier=Modifier.size(52.dp)) { Icon(Icons.Rounded.Stop,"Stop response",tint=AliflixContentSecondary) }
                     AliflixIconButton(onClick={if(idle)onStart()else session.toggleMute()},modifier=Modifier.size(64.dp)) {
                         AnimatedContent(if(idle)0 else if(state.muted)1 else 2,label="voice-control") { mode -> Icon(if(mode==0)Icons.Rounded.Refresh else if(mode==1)Icons.Rounded.MicOff else Icons.Rounded.Mic,
                             if(idle)"Retry connection" else if(state.muted)"Unmute microphone" else "Mute microphone",tint=AliflixAccentSecondary,modifier=Modifier.size(29.dp)) }
@@ -161,7 +197,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 }
                 if(recent) {
                     if(syncStatus.isNotBlank())TextButton(onClick={session.history.refresh()}) { Text(syncStatus,color=AliflixContentTertiary,fontSize=11.sp) }
-                    if(!state.keepHistory)Text("History is off",color=AliflixContentSecondary,modifier=Modifier.padding(vertical=20.dp))
+                    if(!state.keepHistory)Text("New messages won't be saved",color=AliflixContentSecondary,modifier=Modifier.padding(vertical=20.dp))
                     else if(chats.isEmpty())Text("No recent chats",color=AliflixContentSecondary,modifier=Modifier.padding(vertical=24.dp))
                     LazyColumn(Modifier.heightIn(max=440.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                         items(chats,key={it.id}) { chat ->
@@ -180,13 +216,22 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     TextButton(onClick={session.selectVoice(voice);voices=false},modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)) { Text(voice,Modifier.weight(1f),color=AliflixContentPrimary);if(state.voice==voice)Icon(Icons.Rounded.Check,"Selected",tint=AliflixAccentSecondary) }
                 } else {
                     Row(Modifier.fillMaxWidth().heightIn(min=60.dp),verticalAlignment=Alignment.CenterVertically) { Text("Keep history",Modifier.weight(1f),color=AliflixContentPrimary);AliflixLiquidToggle(state.keepHistory,session::setHistory) }
-                    TextButton(onClick=session::clearHistory,modifier=Modifier.heightIn(min=48.dp)) { Icon(Icons.Rounded.DeleteOutline,null);Spacer(Modifier.width(8.dp));Text("Delete history") }
+                    Text("Chats sync with your account when history is on. Recent chats are kept for 90 days; long conversations retain recent messages. Voice capture stops when you leave Talk.",color=AliflixContentTertiary,fontSize=12.sp,lineHeight=19.sp)
+                    TextButton(onClick={deleteHistory=true},modifier=Modifier.heightIn(min=48.dp)) { Icon(Icons.Rounded.DeleteOutline,null);Spacer(Modifier.width(8.dp));Text("Delete history") }
                 }
             }
         }
+        if(deleteHistory)AlertDialog(onDismissRequest={deleteHistory=false},title={Text("Delete chat history?")},text={Text("This removes saved conversations from this account and its other devices.")},
+            confirmButton={TextButton(onClick={session.clearHistory();deleteHistory=false}){Text("Delete")}},dismissButton={TextButton(onClick={deleteHistory=false}){Text("Keep chats")}})
     }
 }
-@Composable private fun rememberSaveableTalkDraft() = androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+internal fun talkConnectionLabel(state:TalkVoiceState):String = when(state.phase) {
+    "Connecting","Reconnecting" -> "Connecting securely…"
+    "Opening chat" -> "Opening saved conversation…"
+    "Reconnect","Try again later","Audio unavailable" -> "Saved locally · Connection needs a retry"
+    "Resume" -> "Paused · Send a message to continue"
+    else -> if(state.keepHistory)"History on · Synced when signed in" else "History off · This conversation only"
+}
 @Composable private fun SourceLink(source: TalkReference) {
     val context = LocalContext.current
     TextButton(onClick = {

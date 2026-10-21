@@ -31,6 +31,6 @@ class TalkVoiceActivity : ComponentActivity() {
     }
     // The microphone and sockets never survive the visible experience.
     // Returning requires an explicit retry; a backgrounded phone cannot record.
-    override fun onStop() { voice.suspendSession(); super.onStop() }
+    override fun onStop() { voice.pauseSession(); super.onStop() }
     override fun onDestroy() { voice.close(); super.onDestroy() }
 }

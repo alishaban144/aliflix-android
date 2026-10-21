@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Text and voice Talk with recent chats, recent researched suggestions, faster priority-source fallback, detail-page preparation, stable Home picks, independent ratings and episodes, and smooth video transitions."
+          RELEASE_NOTES="Modern text and voice Talk with stop/retry, account-synced recent chats and startup background sync. Recent researched suggestions, faster priority-source fallback, detail preparation, stable Home picks and independent ratings. Loading animation unchanged."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -404,13 +404,19 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Aliflix Talk now combines native text chat and voice, source links, icon-only recent chats, account synchronization and full-screen orb touch tracking. New questions cancel abandoned work. Recommendations use Tavily research and default to released titles from the last three years, while honoring explicit older-era requests. Simple genre discovery can reuse matching recently researched titles during quotas, without claiming a new search or widening unsupported constraints.
+            Aliflix Talk now combines native text chat and voice with a top typing icon, stop/retry, selectable and copyable replies, a reading-aware transcript, source links, icon-only recent chats and full-screen orb touch tracking. Saved chats support longer conversations within a fixed byte budget. New questions cancel abandoned work, including replacements during connection setup. Account changes and app backgrounding close the active capture/socket.
+
+            Mobile account synchronization starts alongside app startup and survives screen recreation. Favorites, My List, history, resume/completion state, player/subtitle/audio choices, activity shelves, dislikes and Talk preferences synchronize in the background. Durable outboxes, revision checks and deletion records protect offline changes from stale-device overwrite/resurrection. Chat changes notify other signed-in devices. Local downloads and device credentials remain local. The loading animation is unchanged.
+
+            Recommendations use Tavily research and default to released titles from the last three years, while honoring explicit older-era requests. Simple genre discovery can reuse matching recently researched titles during quotas, without claiming a new search or widening unsupported constraints.
 
             Details prepare playback in the background. Filmo, Serienstream and AniWorld retain a short priority head start while working alternatives race. Dead mirrors, saved server hints and unavailable providers no longer prevent fallback. Play and first-frame transitions fade smoothly. Home's Picked for You keeps its current order when returning from details.
 
             Episode lists load independently of ratings. Re-release identities retain verified IMDb scores and original-year Rotten Tomatoes matching; missing critic scores and different series editions are never substituted.
 
-            The connected Pixel validated eleven providers' native preparation, reported-title playback/seek paths, metadata, Home stability and playback/Talk regressions. Talk's replacement test returned three researched 2026 films through retained research while the daily AI allowance was exhausted. AniKuro's public origins timed out, and no working file was found for Incoherence. Fresh AI research remains quota-limited. Physical account transport was unavailable on the signed-out phone; authenticated cross-device archive behavior has server regression coverage.
+            Physical Pixel checks cover eleven providers' native preparation, reported-title playback/seek paths, metadata, Home stability, modern Talk UI and startup service lifetime. Two independent Firebase clients with isolated stores and a disposable account verified library, resume/completion, audio/Talk/taste/activity/caption changes, history/progress deletion and stale offline conflict handling. The viewer's default account/data were preserved and the test account was deleted. This is not a two-physical-device latency measurement. Authenticated archive isolation also has server regression coverage.
+
+            Recent genre discovery can retain verified Tavily research when fresh lookup is quota-limited or returns no verified evidence. AniKuro's public origins timed out and no working file was found for Incoherence. A third CineJoy audio rendition returned an upstream HTTP 502 during an isolated seek/soak probe; the full all-track soak is not claimed. External file availability cannot be guaranteed by an adapter change.
 
             ARM64 main APK and universal compatibility bridge retain the existing release signer and original native libraries/models. TV is unchanged.
 
@@ -421,3 +427,13 @@ jobs:
             update-mobile-arm64.json
             aliflix-mobile-compat.apk
             native-parity.json
+
+      - name: Pin draft to the tested source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = "true" ]; then
+            gh release edit "$RELEASE_TAG" --target "$GITHUB_SHA"
+            test "$(gh release view "$RELEASE_TAG" --json targetCommitish --jq .targetCommitish)" = "$GITHUB_SHA"
+          fi

@@ -2,7 +2,7 @@ import { describe,it,expect } from 'vitest';
 import { env,runInDurableObject } from 'cloudflare:test';
 import { TalkSession, talkRoute } from '../src/talk';
 import { issueIdentity } from '../src/watchParty';
-import { talkRecommendationPolicy, cachedTalkDiscovery } from '../src/talkIntent';
+import { talkRecommendationPolicy, cachedTalkDiscovery, canRetainTalkResearch, talkRecommendationQuery } from '../src/talkIntent';
 import type { RecommendationResult } from '../src/types';
 import { TalkChatsRequestSchema } from '../src/talkChats';
 import { liveInstructions } from '../src/talkProviders';
@@ -18,6 +18,16 @@ describe('Talk recent discovery and task continuity',()=>{
  it('honors an expressly requested older era',()=>{
   for(const query of ['classic sci fi','movies from 2006','1990s thrillers','any era','افلام قديمة','ältere Filme'])
    expect(talkRecommendationPolicy(query,now).filters).toEqual({});
+ });
+ it('uses the actual new request while retaining context for relative follow-ups',()=>{
+  expect(talkRecommendationQuery('Instead, suggest recent sci-fi movies.','Explain the ending of Dark')).toBe('Instead, suggest recent sci-fi movies.');
+  expect(talkRecommendationQuery('More like those, but shorter.','Recent sci-fi films')).toContain('Recent sci-fi films\nLatest user follow-up: More like those, but shorter.');
+ });
+ it('can reuse verified retained research when a fresh search yields no evidence, without hiding request failures',()=>{
+  expect(canRetainTalkResearch({status:422,code:'NO_RESEARCH'})).toBe(true);
+  expect(canRetainTalkResearch({status:503,code:'RESEARCH_UNAVAILABLE'})).toBe(true);
+  expect(canRetainTalkResearch({status:422,code:'INVALID_REQUEST'})).toBe(false);
+  expect(canRetainTalkResearch({status:401,code:'UNAUTHORIZED'})).toBe(false);
  });
  it('never authorizes immediate unresearched recommendations or a history-driven subject change',()=>{
   const text=liveInstructions(TalkContextSchema.parse({companionVersion:3,recentProgress:[]}));
@@ -70,11 +80,13 @@ describe('bounded account chat archive',()=>{
    for(let i=0;i<32;i++)await store.chats({action:'save',chat:{...chat,id:crypto.randomUUID(),updatedAt:Date.now()-i}});
    expect((await store.chats({action:'list'}) as {chats:unknown[]}).chats).toHaveLength(30);
    await store.chats({action:'clear'});expect(await store.chats({action:'list'})).toEqual({chats:[]});
+   expect(await store.chats({action:'save',chat:{...chat,id:crypto.randomUUID(),updatedAt:Date.now()-100_000}})).toEqual({deleted:true});
   });
   await runInDurableObject(b,async instance=>expect(await(instance as unknown as TalkSession).chats({action:'read',id:chat.id})).toEqual({chat:null}));
  });
  it('rejects oversized or unsafe archive payloads',()=>{
-  expect(TalkChatsRequestSchema.safeParse({action:'save',chat:{...chat,lines:Array(13).fill(chat.lines[0])}}).success).toBe(false);
+  expect(TalkChatsRequestSchema.safeParse({action:'save',chat:{...chat,lines:Array(64).fill(chat.lines[0])}}).success).toBe(true);
+  expect(TalkChatsRequestSchema.safeParse({action:'save',chat:{...chat,lines:Array(65).fill(chat.lines[0])}}).success).toBe(false);
   expect(TalkChatsRequestSchema.safeParse({action:'read',id:'../other-user'}).success).toBe(false);
   expect(TalkChatsRequestSchema.safeParse({action:'save',chat:{...chat,lines:[{...chat.lines[0],sources:[{title:'Unsafe',url:'javascript:alert(1)',license:''}]}]}}).success).toBe(false);
  });
