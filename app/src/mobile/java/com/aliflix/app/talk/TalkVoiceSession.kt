@@ -43,7 +43,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             textSend?.cancel();suspendSession();sessionOwner=owner
             ephemeral=null;backendSession=null;resumeHandle=null;userTurn.incrementAndGet()
             prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()
-            chatId=java.util.UUID.randomUUID().toString();inputText="";lastQuestion="";outputText="";assistantLine=-1
+            chatId=java.util.UUID.randomUUID().toString();persistedLines=emptyList();inputText="";lastQuestion="";outputText="";assistantLine=-1
             update { it.copy(lines=emptyList(),sending=false,phase="Ready",words="ALIFLIX",conversationId=chatId) }
             history.refresh()
         }
@@ -72,6 +72,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     val state = _state.asStateFlow()
     val history=historyOverride ?: TalkAccountArchive.get(context)
     private var chatId=state.value.conversationId
+    private var persistedLines:List<TalkLine> = emptyList()
     private val userTurn=java.util.concurrent.atomic.AtomicLong(0)
     @Volatile private var inputTurnActive=false
     @Volatile private var socketReady=false
@@ -149,6 +150,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         textSend?.cancel();textSend=null
         persistHistory();suspendSession();userTurn.incrementAndGet();inputTurnActive=false
         chatId=java.util.UUID.randomUUID().toString();ephemeral=null;backendSession=null;resumeHandle=null
+        persistedLines=emptyList()
         inputText="";lastQuestion="";outputText="";assistantLine=-1;responseLanguage=null
         update { it.copy(lines=emptyList(),words="ALIFLIX",sending=false,conversationId=chatId) }
     }
@@ -159,7 +161,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         val chat=history.read(id)
         if(ticket!=archiveReadSequence||owner!=sessionOwner||closed)return@launch
         if(chat==null){update { it.copy(phase="Ready") };return@launch}
-        newChat();chatId=chat.id;muted=true;update { it.copy(lines=talkArchiveResumeLines(chat.lines),words=chat.title.take(32),textMode=true,muted=true,conversationId=chatId) }
+        val restored=talkArchiveResumeLines(chat.lines)
+        newChat();chatId=chat.id;persistedLines=restored;muted=true;update { it.copy(lines=restored,words=chat.title.take(32),textMode=true,muted=true,conversationId=chatId) }
         if(state.value.textMode)connect()
       }
     }
@@ -635,9 +638,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     private fun addLine(line:TalkLine){if(line.text.isNotBlank())update{it.copy(lines=(it.lines+line).takeLast(64))}}
     private fun persistHistory(){
-        if(!state.value.keepHistory||state.value.lines.isEmpty()||sessionOwner!=(FirebaseAuth.getInstance().currentUser?.uid?:"guest"))return
+        if(!state.value.keepHistory||state.value.lines.isEmpty()||state.value.lines==persistedLines||sessionOwner!=(FirebaseAuth.getInstance().currentUser?.uid?:"guest"))return
         val title=state.value.lines.firstOrNull { it.role=="user" }?.text?.take(80) ?: "Conversation"
         history.save(TalkChat(chatId,title,System.currentTimeMillis(),state.value.lines))
+        persistedLines=state.value.lines
     }
     private fun sendPcm(bytes:ByteArray){emit(JSONObject().put("realtimeInput",JSONObject().put("audio",JSONObject().put("mimeType","audio/pcm;rate=16000").put("data",Base64.encodeToString(bytes,Base64.NO_WRAP)))))}
 
@@ -747,6 +751,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     fun clearHistory(){
         pauseSession()
         history.clear();userTurn.incrementAndGet();chatId=java.util.UUID.randomUUID().toString();
+        persistedLines=emptyList()
         synchronized(knownFilmTopics){knownFilmTopics.clear()}
         sequence++;interruptOutput();val session=ephemeral?.optString("session")
         resumeHandle=null;ephemeral=null;backendSession=null;inputText="";lastQuestion="";inputTurnActive=false;responseLanguage=null;outputText="";assistantLine=-1;finalReferences=emptyList()

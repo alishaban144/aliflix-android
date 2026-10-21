@@ -38,6 +38,17 @@ class TalkUsabilityDeviceTest {
             }
             runBlocking { delay(1500) }
             assertTrue(session.state.value.lines.isEmpty());assertFalse(session.state.value.sending)
+            instrumentation.runOnMainSync {
+                session.setHistory(true)
+                val id=java.util.UUID.randomUUID().toString()
+                val old=listOf(TalkLine("user","A question"),TalkLine("assistant","An answer"))
+                archive.save(TalkChat(id,"Fixture",System.currentTimeMillis(),old))
+                session.openChat(id)
+                val newer=old+TalkLine("user","A second-device follow-up")+TalkLine("assistant","A second-device answer")
+                archive.save(TalkChat(id,"Fixture",System.currentTimeMillis()+500,newer))
+                session.pauseSession()
+                assertEquals("Closing an unchanged reader overwrote a newer synced answer",newer,archive.chats.value.single { it.id==id }.lines)
+            }
         } finally {
             instrumentation.runOnMainSync { session.close();archive.close();scope.cancel() }
             names.forEach { base.getSharedPreferences("$prefix-$it",0).edit().clear().commit() }

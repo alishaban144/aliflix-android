@@ -13,6 +13,7 @@ import com.google.firebase.auth.*
 import com.google.firebase.firestore.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 import org.junit.*
@@ -59,13 +60,28 @@ class LiveAccountSyncDeviceTest {
             val account=SyncFixtureAccount(testUser)
             lateinit var libraryA:LibraryStore;lateinit var libraryB:LibraryStore
             lateinit var progressA:PlaybackProgressStore;lateinit var progressB:PlaybackProgressStore
+            val lostInitialItems=java.util.concurrent.atomic.AtomicBoolean(false)
+            val importCounts=java.util.concurrent.CopyOnWriteArrayList<Int>()
+            var importMonitor:Job?=null
             withContext(Dispatchers.Main) {
                 libraryA=LibraryStore(a);libraryB=LibraryStore(b)
                 progressA=PlaybackProgressStore(a);progressB=PlaybackProgressStore(b)
+                repeat(32) { index ->
+                    val imported=Media(2147482800+index,MediaType.MOVIE,"Import fixture $index",year="2026")
+                    libraryA.toggleLike(imported)
+                    if(index<4)libraryA.markPlayed(imported)
+                }
+                importMonitor=scope.launch { libraryA.likes.collect { if(importCounts.lastOrNull()!=it.size)importCounts+=it.size;if(it.size<32)lostInitialItems.set(true) } }
                 syncA=FirebaseAccountSyncRepository(a,account,libraryA,PlaybackProviderRepository(a),progressA,RecommendationStore(a),scope,dbA)
                 syncB=FirebaseAccountSyncRepository(b,account,libraryB,PlaybackProviderRepository(b),progressB,RecommendationStore(b),scope,dbB)
             }
             until { syncA!!.state.value==AccountSyncState.Synced&&syncB!!.state.value==AccountSyncState.Synced }
+            until { libraryB.likes.value.size==32&&libraryB.recent.value.size==4 }
+            importMonitor?.cancel()
+            receipt.put("initialImportCounts",org.json.JSONArray(importCounts.toList()))
+            assertFalse("Initial remote snapshots discarded local imports",lostInitialItems.get())
+            assertEquals(32,libraryA.likes.value.size)
+            receipt.put("initialImportsPreservedAndShared",true)
             val media=Media(2147482905,MediaType.MOVIE,"Account sync fixture",year="2026")
             val started=android.os.SystemClock.elapsedRealtime()
             withContext(Dispatchers.Main) { libraryA.toggleLike(media);libraryA.toggleMyList(media);libraryA.markPlayed(media) }
