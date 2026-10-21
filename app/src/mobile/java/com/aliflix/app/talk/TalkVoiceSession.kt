@@ -23,7 +23,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.sqrt
 
-internal data class TalkLine(val role: String, val text: String, val sources: List<TalkReference> = emptyList())
+internal data class TalkLine(val role: String, val text: String, val sources: List<TalkReference> = emptyList(),val stopped:Boolean=false)
 internal data class TalkReference(val title: String, val url: String, val license: String)
 internal val VOICES=listOf("Aoede","Kore","Puck","Charon")
 internal data class TalkVoiceState(val phase: String = "Ready", val words: String = "ALIFLIX", val level: Float = 0f, val voice:String="Aoede",
@@ -75,7 +75,19 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var responseTurn=-1L
     private var textSend:Job?=null
     private var archiveReadSequence=0L
+    private fun markStoppedTurn() {
+        if(!state.value.sending)return
+        update { value ->
+            val from=value.lines.indexOfLast { it.role=="user" }
+            value.copy(lines=value.lines.mapIndexed { index,line -> if(from>=0&&index>=from)line.copy(stopped=true)else line })
+        }
+    }
+    private fun failedTextTurn() {
+        markStoppedTurn();suspendSession();ephemeral=null;resumeHandle=null
+        update { it.copy(phase="Reconnect",sending=false) }
+    }
     private fun beginUserTurn() {
+        markStoppedTurn()
         userTurn.incrementAndGet();responseTurn=-1L;turnHasAudio=false;inputTurnActive=true;continueAfterReconnect=false
         debugRecommendationCount=0;debugRecommendationYears=emptyList();debugRecommendationIssue=""
         tools.values.forEach { it.cancel() };tools.clear()
@@ -84,7 +96,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     fun setTextMode(enabled:Boolean) {
         if(enabled==state.value.textMode)return
-        persistHistory();suspendSession();update { it.copy(textMode=enabled,muted=enabled) };muted=enabled
+        pauseSession();update { it.copy(textMode=enabled,muted=enabled) };muted=enabled
     }
     fun sendText(text:String) {
         val question=text.trim().take(1600);if(question.isBlank())return
@@ -96,6 +108,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             // replacements a hard boundary, including queued tool calls and
             // completions that may arrive after the old generation ended.
             if(replacesPending) {
+                markStoppedTurn()
                 suspendSession();ephemeral=null;resumeHandle=null
             }
             beginUserTurn();inputText=question;commitQuestion();persistHistory()
@@ -104,12 +117,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 withTimeout(20000){while(!socketReady)delay(30)}
                 answerDeadline.awaiting(70000)
                 emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text",question))))).put("turnComplete",true)))
-            } catch(cancelled:CancellationException){throw cancelled}
-            catch(_:Exception){update { it.copy(phase="Reconnect",sending=false) }}
+            } catch(cancelled:CancellationException){if(cancelled is TimeoutCancellationException)failedTextTurn()else throw cancelled}
+            catch(_:Exception){failedTextTurn()}
         }
     }
     fun stopAnswer() {
         archiveReadSequence++
+        continueAfterReconnect=false
+        markStoppedTurn()
         textSend?.cancel();textSend=null
         suspendSession();userTurn.incrementAndGet();inputTurnActive=false
         ephemeral=null;resumeHandle=null;outputText="";assistantLine=-1;finalReferences=emptyList()
@@ -124,6 +139,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     fun newChat() {
         archiveReadSequence++
+        continueAfterReconnect=false
+        markStoppedTurn()
         textSend?.cancel();textSend=null
         persistHistory();suspendSession();userTurn.incrementAndGet();inputTurnActive=false
         chatId=java.util.UUID.randomUUID().toString();ephemeral=null;backendSession=null;resumeHandle=null
@@ -426,7 +443,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             if(state.value.lines.isNotEmpty()) {
                 val restored=if(textSend?.isActive==true&&state.value.lines.lastOrNull()?.role=="user")state.value.lines.dropLast(1) else state.value.lines
                 val history=talkContinuityTurns(restored,resuming)
-                emit(JSONObject().put("clientContent",JSONObject().put("turns",history).put("turnComplete",false)))
+                if(history.length()>0)emit(JSONObject().put("clientContent",JSONObject().put("turns",history).put("turnComplete",false)))
             }
             try { if(!state.value.textMode)startAudio(ticket);debugReadyGeneration=ticket;update{it.copy(phase="Listening",provider="gemini-3.8-live · ${it.voice}")} }
             catch(_:Exception){suspendSession();update{it.copy(phase="Audio unavailable")}}
@@ -768,7 +785,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         }
         update {it.copy(phase="Resume",level=0f,sending=false)}
     }
-    fun pauseSession() { archiveReadSequence++;textSend?.cancel();textSend=null;suspendSession() }
+    fun pauseSession() { archiveReadSequence++;continueAfterReconnect=false;markStoppedTurn();textSend?.cancel();textSend=null;suspendSession() }
     override fun close() {
         if(closed)return
         closed=true

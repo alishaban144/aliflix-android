@@ -19,7 +19,7 @@ internal fun talkControlScheduling(names:List<String>,index:Int,hasOutput:Boolea
 /** Restore bounded, user-owned dialogue even when a provider resume handle
  * acknowledges transport but omits earlier realtime input from its context. */
 internal fun talkContinuityTurns(lines:List<TalkLine>,resuming:Boolean):org.json.JSONArray {
-    val history=org.json.JSONArray(lines.takeLast(12).map { JSONObject().put("role",if(it.role=="assistant")"model" else "user")
+    val history=org.json.JSONArray(lines.filterNot { it.stopped }.takeLast(12).map { JSONObject().put("role",if(it.role=="assistant")"model" else "user")
         .put("parts",org.json.JSONArray().put(JSONObject().put("text",it.text.take(800)))) })
     if(!resuming)return history
     return org.json.JSONArray().put(JSONObject().put("role","user").put("parts",org.json.JSONArray().put(JSONObject().put("text",

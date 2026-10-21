@@ -6,7 +6,7 @@ import org.junit.Test
 
 class TalkChatHistoryTest {
     @Test fun archiveRoundTripKeepsDialogueAndAttribution() {
-        val chat=TalkChat("chat","Sci-fi",1234,listOf(TalkLine("user","A recent film"),TalkLine("assistant","A researched choice",listOf(TalkReference("Source","https://example.org/film","Publisher")))))
+        val chat=TalkChat("chat","Sci-fi",1234,listOf(TalkLine("user","A recent film"),TalkLine("assistant","A researched choice",listOf(TalkReference("Source","https://example.org/film","Publisher")),stopped=true)))
         assertEquals(chat,parseTalkChat(chat.json()))
     }
     @Test fun remoteSummaryDoesNotInventDialogue() {

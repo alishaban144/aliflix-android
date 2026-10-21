@@ -49,6 +49,14 @@ describe('Talk recent discovery and task continuity',()=>{
 });
 describe('bounded account chat archive',()=>{
  const chat={id:crypto.randomUUID(),title:'Recent science fiction',updatedAt:Date.now(),lines:[{role:'user' as const,text:'Suggest a sci-fi movie',sources:[]}]};
+ it('preserves stopped-turn state when restoring a chat on another client',async()=>{
+  await runInDurableObject(env.TALK_SESSIONS.getByName('stopped-chat-archive'),async instance=>{
+   const store=instance as unknown as TalkSession;
+   const stopped={...chat,lines:[{...chat.lines[0],stopped:true}]};
+   await store.chats({action:'save',chat:stopped});
+   expect(await store.chats({action:'read',id:chat.id})).toEqual({chat:stopped});
+  });
+ });
  it('shares an archive across device tokens without consuming live tool capacity or leaking another account',async()=>{
   const keys:string[]=[];
   const config={...env,CURSOR_SIGNING_SECRET:'archive-test-only',RECOMMENDATION_RATE_LIMITER:{limit:async({key}:{key:string})=>{keys.push(key);return {success:!key.startsWith('talk-live:')};}}};

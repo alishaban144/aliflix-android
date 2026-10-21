@@ -5,6 +5,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkFunctionResponseTest {
+    @Test fun stoppedRequestsRemainVisibleButCannotBecomeRestoredInstructions() {
+        val lines=listOf(TalkLine("user","Recent films"),TalkLine("assistant","A completed recommendation"),
+            TalkLine("user","Explain Dark",stopped=true),TalkLine("assistant","An unfinished episode answer",stopped=true))
+        for(resuming in listOf(false,true)) {
+            val restored=talkContinuityTurns(lines,resuming).toString()
+            assertTrue(restored.contains("completed recommendation"))
+            assertFalse(restored.contains("Explain Dark"))
+            assertFalse(restored.contains("unfinished episode"))
+        }
+        assertEquals(4,lines.size)
+    }
     @Test fun controlOnlyTurnsContinueOnceWithoutDuplicatingAnAnswerOrRacingEvidence() {
         val names=listOf("conversation_language","conversation_topic")
         assertEquals("SILENT",talkControlScheduling(names,0,false,false))

@@ -143,6 +143,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                                 SelectionContainer { Text(line.text,Modifier.padding(horizontal=if(line.role=="user")16.dp else 2.dp,vertical=12.dp),color=AliflixContentPrimary,fontSize=16.sp,lineHeight=25.sp) }
                             }
                             line.sources.distinctBy { it.url }.take(4).forEach { SourceLink(it) }
+                            if(line.stopped)Text("Stopped",color=AliflixContentTertiary,fontSize=11.sp,modifier=Modifier.padding(top=2.dp))
                             if(line.role=="assistant"&&(!state.sending||index<state.lines.lastIndex)) {
                                 val clipboard=LocalClipboard.current
                                 val actionScope=rememberCoroutineScope()

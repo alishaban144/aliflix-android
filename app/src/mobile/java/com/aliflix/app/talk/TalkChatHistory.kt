@@ -11,7 +11,7 @@ import org.json.JSONObject
 internal data class TalkChat(val id:String, val title:String, val updatedAt:Long, val lines:List<TalkLine> = emptyList())
 internal fun TalkChat.json():JSONObject {
     val json=JSONObject().put("id",id).put("title",title.take(100)).put("updatedAt",updatedAt)
-    .put("lines",JSONArray(lines.takeLast(64).map { line -> JSONObject().put("role",line.role).put("text",line.text.take(6000))
+    .put("lines",JSONArray(lines.takeLast(64).map { line -> JSONObject().put("role",line.role).put("text",line.text.take(6000)).apply { if(line.stopped)put("stopped",true) }
         .put("sources",JSONArray(line.sources.take(2).filter { it.url.startsWith("https://") }.map { JSONObject().put("title",it.title.take(160)).put("url",it.url.take(600)).put("license",it.license.take(240)) })) }))
     val rows=json.getJSONArray("lines")
     while(json.toString().toByteArray(Charsets.UTF_8).size>21_000) {
@@ -30,7 +30,7 @@ internal fun parseTalkChat(json:JSONObject):TalkChat {
             val ref=refs.getJSONObject(at)
             TalkReference(ref.getString("title"),ref.getString("url"),ref.optString("license"))
         }
-        TalkLine(line.getString("role"),line.getString("text"),sources)
+        TalkLine(line.getString("role"),line.getString("text"),sources,line.optBoolean("stopped"))
     }
     return TalkChat(json.getString("id"),json.getString("title"),json.getLong("updatedAt"),lines)
 }

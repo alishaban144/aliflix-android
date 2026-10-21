@@ -38,6 +38,7 @@ class TalkUsabilityDeviceTest {
             val reply=session.state.value.lines.lastOrNull { it.role=="assistant" }?.text.orEmpty()
             assertTrue(reply,reply.length>15)
             assertFalse(reply,Regex("Jonas|Claudia|Sic Mundus|Winden",RegexOption.IGNORE_CASE).containsMatchIn(reply))
+            assertFalse("A stopped request leaked into the next answer: $reply",Regex("Arrival|contemplative|beautifully eerie",RegexOption.IGNORE_CASE).containsMatchIn(reply))
             File(context.getExternalFilesDir(null),"talk-stop-replace-177.json").writeText(JSONObject().put("stopped",true).put("rapidReplacement",true).put("nextReply",reply).put("elapsedMs",SystemClock.elapsedRealtime()-began).toString())
         } finally { instrumentation.runOnMainSync { talk.finish() } }
     }
