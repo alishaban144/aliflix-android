@@ -12,6 +12,37 @@ import org.junit.Assert.*
 import java.io.File
 
 class TalkUsabilityDeviceTest {
+    @Test fun clearingIsolatedHistoryCancelsPendingReplyAndHistoryOffPreservesSavedChats() {
+        Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("liveTalkUsability")=="true")
+        val instrumentation=InstrumentationRegistry.getInstrumentation();val base=instrumentation.targetContext
+        val names=mutableSetOf<String>();val prefix="talk-clear-proof-"+java.util.UUID.randomUUID()
+        val isolated=object:android.content.ContextWrapper(base) {
+            override fun getSharedPreferences(name:String,mode:Int):android.content.SharedPreferences {
+                names+=name
+                return base.getSharedPreferences("$prefix-$name",mode)
+            }
+        }
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
+        val archive=TalkChatHistory(isolated,scope,{ _,_->JSONObject() },{"guest"})
+        val session=TalkVoiceSession(isolated,scope,restoreHistory=false,historyOverride=archive)
+        try {
+            instrumentation.runOnMainSync {
+                archive.save(TalkChat(java.util.UUID.randomUUID().toString(),"Fixture",System.currentTimeMillis(),listOf(TalkLine("user","Saved fixture"))))
+                session.setHistory(false)
+                assertEquals(1,archive.chats.value.size)
+                session.setTextMode(true)
+                session.sendText("Explain the ending of Dark season 2 episode 1.")
+                session.clearHistory()
+                assertTrue(archive.chats.value.isEmpty());assertTrue(session.state.value.lines.isEmpty());assertFalse(session.state.value.sending)
+                assertEquals("Ready",session.state.value.phase)
+            }
+            runBlocking { delay(1500) }
+            assertTrue(session.state.value.lines.isEmpty());assertFalse(session.state.value.sending)
+        } finally {
+            instrumentation.runOnMainSync { session.close();archive.close();scope.cancel() }
+            names.forEach { base.getSharedPreferences("$prefix-$it",0).edit().clear().commit() }
+        }
+    }
     @Test fun rapidReplacementStopAndNextMessageRemainUsable() {
         Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("liveTalkUsability")=="true")
         val instrumentation=InstrumentationRegistry.getInstrumentation();val context=instrumentation.targetContext

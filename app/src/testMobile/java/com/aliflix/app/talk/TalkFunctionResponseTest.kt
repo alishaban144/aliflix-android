@@ -5,6 +5,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkFunctionResponseTest {
+    @Test fun namedQuotaErrorsStopRetryingAndSavedDanglingQuestionsDoNotBecomeNewTurns() {
+        assertTrue(talkFailureIsLimited(TalkHttpException(429,"DAILY_LIMIT")))
+        assertTrue(talkFailureIsLimited(TalkHttpException(429,"TRY_LATER")))
+        assertFalse(talkFailureIsLimited(TalkHttpException(503,"LIVE_UNAVAILABLE")))
+        val completed=listOf(TalkLine("user","A completed question"),TalkLine("assistant","Its answer"))
+        val restored=talkArchiveResumeLines(completed+TalkLine("user","An interrupted question"))
+        assertEquals(completed,restored.take(2));assertTrue(restored.last().stopped)
+        assertFalse(talkContinuityTurns(restored,false).toString().contains("interrupted question"))
+    }
     @Test fun stoppedRequestsRemainVisibleButCannotBecomeRestoredInstructions() {
         val lines=listOf(TalkLine("user","Recent films"),TalkLine("assistant","A completed recommendation"),
             TalkLine("user","Explain Dark",stopped=true),TalkLine("assistant","An unfinished episode answer",stopped=true))

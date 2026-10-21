@@ -2,6 +2,12 @@ package com.aliflix.app.talk
 
 import org.json.JSONObject
 
+/** A saved unanswered prompt is history, never a newly submitted request. */
+internal fun talkArchiveResumeLines(lines:List<TalkLine>):List<TalkLine> {
+    val answered=lines.indexOfLast { it.role=="assistant"&&!it.stopped }
+    return lines.mapIndexed { index,line -> if(index>answered&&line.role=="user")line.copy(stopped=true)else line }
+}
+
 /** Scheduling is a FunctionResponse protocol field, not model-visible output.
  * Keep one wire encoder for silent local controls and asynchronous knowledge. */
 internal fun talkFunctionResponse(id:String,name:String,result:JSONObject,scheduling:String):JSONObject =
