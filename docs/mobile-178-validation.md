@@ -4,7 +4,7 @@ This release starts from v3.1.177 and keeps the TV version and TV UI unchanged.
 
 ## Changes and failure causes
 
-- Talk previously treated an initial spoken acknowledgment as a finished answer and could leave asynchronous results waiting. Completed lookups now explicitly resume generation, retain their title cards and rearm a bounded answer deadline. A lookup that has not produced speech sends a streaming `willContinue` progress response for one contextual bridge. A short grace period avoids duplicating a bridge already being generated.
+- Talk previously treated an initial spoken acknowledgment as a finished answer and could leave asynchronous results waiting. Completed lookups now explicitly resume generation, retain their title cards and rearm a bounded answer deadline. A lookup that has not produced speech sends a streaming `willContinue` progress response for one contextual bridge. A short grace period lets already-arriving native speech take priority.
 - The microphone still uses continuous native capture, server automatic VAD and native AudioTrack playback. New questions cancel abandoned tools; backgrounding still closes capture and the socket. A greeting is not required.
 - Describe/Similar now use Tavily, one Gemini selection and direct TMDB identity matching. Talk supplies its own Gemini candidates, avoiding a second model selection. There is no Clef or narrative verification stage in this path. Explicit filters, exclusions and account boundaries remain.
 - The Android stream parser previously rejected valid reordered whole-list snapshots, retained a few early titles and cancelled the rest. Revisions can now replace/reorder the list while request ownership, valid catalogue identities and duplicate checks remain enforced.
@@ -28,3 +28,5 @@ The phone has the debug signer already installed, so physical runtime evidence i
 The signed main APK remains ARM64. The universal compatibility bridge and original native/model assets retain their existing release checks. The release publishes SHA-256, byte size and ABI in `update-mobile-arm64.json`, native parity in `native-parity.json`, and the compatibility manifest in `update-mobile.json`. The current mobile app checks the ARM64 manifest; older clients keep the universal bridge route. Final public download and canonical updater verification occur after publication.
 
 External title quality, speech phrasing and latency vary. Tavily findings are context, not proof of every generated recommendation premise; TMDB supplies identities/artwork and factual catalogue fields. No generated relevance probability is presented as verified confidence. Unrelated search findings are omitted from citations, and source outages are not reported as successful browsing.
+
+See [final public artifact, installed payload, updater and network-cap verification](mobile-178-release-evidence.md) for post-publication measurements and the final 235-test Worker gate.
