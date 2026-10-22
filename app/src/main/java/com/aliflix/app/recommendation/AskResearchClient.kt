@@ -25,7 +25,7 @@ import kotlin.coroutines.resumeWithException
  * No provider credentials or movie prose are shipped to the device. */
 class AskResearchClient(context:Context) {
     private val prefs=context.applicationContext.getSharedPreferences("aliflix-ask-identity",Context.MODE_PRIVATE)
-    private val http=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(70,TimeUnit.SECONDS).callTimeout(75,TimeUnit.SECONDS).build()
+    private val http=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(40,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build()
     private val base=BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/')
     private val identityLock=kotlinx.coroutines.sync.Mutex()
     private suspend fun identity():String {
@@ -45,7 +45,7 @@ class AskResearchClient(context:Context) {
         val token=identity()
         val request=Request.Builder().url("$base/v4/ask/$path").header("Authorization","Bearer $token")
             .apply{if(body!=null)post(body.toString().toRequestBody(JSON))}.build()
-        return try{execute(request,if(path=="recommendations")75000 else 15000)}catch(e:kotlinx.coroutines.CancellationException){
+        return try{execute(request,if(path=="recommendations")40000 else 15000)}catch(e:kotlinx.coroutines.CancellationException){
             body?.optString("requestId")?.takeIf{it.isNotBlank()}?.let { id ->
                 http.newCall(Request.Builder().url("$base/v4/ask/cancel").header("Authorization","Bearer $token")
                     .post(JSONObject().put("requestId",id).toString().toRequestBody(JSON)).build()).enqueue(object:Callback{

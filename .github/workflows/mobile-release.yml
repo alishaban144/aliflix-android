@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "267"
-  RELEASE_VERSION_NAME: "3.1.177"
+  RELEASE_VERSION_CODE: "268"
+  RELEASE_VERSION_NAME: "3.1.178"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Modern text and voice Talk with stop/retry, account-synced recent chats and startup background sync. Recent researched suggestions, faster priority-source fallback, detail preparation, stable Home picks and independent ratings. Loading animation unchanged."
+          RELEASE_NOTES="Talk responds to substantive requests and continues after Tavily searches with brief spoken bridges. Elegant film and series cards keep the orb and animated topic in voice and chat. Faster Describe and Similar recommendations use Tavily, Gemini and TMDB. Surprise Me offers three choices; dislike acts immediately inside the card. Update dot moved left of Settings."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -404,23 +404,19 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Aliflix Talk now combines native text chat and voice with a top typing icon, stop/retry, selectable and copyable replies, a reading-aware transcript, source links, icon-only recent chats and full-screen orb touch tracking. Saved chats support longer conversations within a fixed byte budget. New questions cancel abandoned work, including replacements during connection setup. Account changes and app backgrounding close the active capture/socket.
+            Talk responds to substantive film requests and continues when asynchronous searches finish. Search uses Tavily. Brief, contextual spoken bridges keep the conversation moving while results arrive; acknowledgments do not count as finished answers. Pending work is still cancelled when a new question replaces it.
 
-            Mobile account synchronization starts alongside app startup and survives screen recreation. Favorites, My List, history, resume/completion state, player/subtitle/audio choices, activity shelves, dislikes and Talk preferences synchronize in the background. Durable outboxes, revision checks and deletion records protect offline changes from stale-device overwrite/resurrection. Chat changes notify other signed-in devices. Local downloads and device credentials remain local. The loading animation is unchanged.
+            Film and series cards appear as a delicate poster rail below the animated topic in voice, and below their reply in chat. The orb and changing text remain. Cards open native title details and return to the same conversation; saved chats retain their cards.
 
-            Recommendations use Tavily research and default to released titles from the last three years, while honoring explicit older-era requests. Simple genre discovery can reuse matching recently researched titles during quotas, without claiming a new search or widening unsupported constraints.
+            Describe and Similar use one Tavily search, one Gemini selection and direct TMDB identity/artwork matching, without Clef or multi-stage narrative verification. Progressive snapshots can improve their order without the client discarding the completed selection. Recommendations honor the requested era instead of forcing recent releases.
 
-            Details prepare playback in the background. Filmo, Serienstream and AniWorld retain a short priority head start while working alternatives race. Dead mirrors, saved server hints and unavailable providers no longer prevent fallback. Play and first-frame transitions fade smoothly. Home's Picked for You keeps its current order when returning from details.
+            Surprise Me presents three distinct choices in a compact sheet. Dislike sits inside the result card and removes it immediately. The My Space update dot sits to the left of Settings.
 
-            Episode lists load independently of ratings. Re-release identities retain verified IMDb scores and original-year Rotten Tomatoes matching; missing critic scores and different series editions are never substituted.
+            Physical Pixel checks cover substantive speech without a greeting, follow-up recommendations, rendered audio, live Describe/Similar, card placement, native details return, immediate dislike and three-choice Surprise Me. These use a debug-signed build because that is the signer already installed on the phone; production APK signing and native/model parity are verified separately. Live model latency and external search availability can vary.
 
-            Physical Pixel checks cover eleven providers' native preparation, reported-title playback/seek paths, metadata, Home stability, modern Talk UI and startup service lifetime. Two independent Firebase clients with isolated stores and a disposable account verified library, resume/completion, audio/Talk/taste/activity/caption changes, history/progress deletion and stale offline conflict handling. The viewer's default account/data were preserved and the test account was deleted. This is not a two-physical-device latency measurement. Authenticated archive isolation also has server regression coverage.
+            ARM64 main APK and universal compatibility bridge retain the release signer and original native libraries/models. TV is unchanged.
 
-            Recent genre discovery can retain verified Tavily research when fresh lookup is quota-limited or returns no verified evidence. AniKuro's public origins timed out and no working file was found for Incoherence. A third CineJoy audio rendition returned an upstream HTTP 502 during an isolated seek/soak probe; the full all-track soak is not claimed. External file availability cannot be guaranteed by an adapter change.
-
-            ARM64 main APK and universal compatibility bridge retain the existing release signer and original native libraries/models. TV is unchanged.
-
-            [Validation and measured limits](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-177-validation.md).
+            [Validation and measured limits](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-178-validation.md).
           files: |
             aliflix-mobile.apk
             update-mobile.json

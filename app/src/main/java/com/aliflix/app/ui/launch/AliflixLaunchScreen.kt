@@ -187,8 +187,14 @@ fun AliflixLaunchOverlay(
     isHomeReady: Boolean,
     onLaunchComplete: () -> Unit,
     modifier: Modifier = Modifier,
+    skip: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    if (skip) {
+        LaunchedEffect(Unit) { onLaunchComplete() }
+        content()
+        return
+    }
     val isReducedMotion = !rememberMobileMotionEnabled()
     val resumed = rememberMobileResumed()
     var clockFinished by remember { mutableStateOf(false) }

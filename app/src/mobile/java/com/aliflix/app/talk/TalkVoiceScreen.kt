@@ -71,6 +71,8 @@ import java.util.Locale
 @Composable
 internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onClose: () -> Unit, touchTracker:DiscoverTouchTracker?=null) {
     val state by session.state.collectAsState()
+    val titleContext=LocalContext.current
+    fun openTitle(title:TalkTitleCard){titleContext.startActivity(Intent(titleContext,TalkTitleActivity::class.java).putExtra("title",title.media().toJson().toString()))}
     val chats by session.history.chats.collectAsState()
     val syncStatus by session.history.status.collectAsState()
     var recent by remember { mutableStateOf(false) }
@@ -111,8 +113,11 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             }
             if(state.textMode) {
                 Row(Modifier.fillMaxWidth().padding(bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
+                    if(state.lines.isNotEmpty()){TalkLiveOrb(state.phase,{state.level},motion,Modifier.size(42.dp).testTag("talk-chat-orb"),tracker);Spacer(Modifier.width(12.dp))}
                     Column(Modifier.weight(1f)) {
-                        Text("Your cinema companion",color=AliflixContentPrimary,fontSize=13.sp,fontWeight=FontWeight.Medium)
+                        AnimatedContent(if(state.lines.isEmpty())"Your cinema companion" else state.words,transitionSpec={fadeIn(tween(if(motion)220 else 0)) togetherWith fadeOut(tween(if(motion)120 else 0))},label="talk-chat-topic") { topic ->
+                            Text(topic,color=AliflixContentPrimary,fontSize=13.sp,fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis)
+                        }
                         Text(talkConnectionLabel(state),color=AliflixContentTertiary,fontSize=11.sp,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite })
                     }
                     AliflixIconButton(onClick={session.newChat();draft=""}) { Icon(Icons.Rounded.AddComment,"New chat",tint=AliflixAccentSecondary) }
@@ -142,6 +147,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                                 modifier=Modifier.widthIn(max=520.dp)) {
                                 SelectionContainer { Text(line.text,Modifier.padding(horizontal=if(line.role=="user")16.dp else 2.dp,vertical=12.dp),color=AliflixContentPrimary,fontSize=16.sp,lineHeight=25.sp) }
                             }
+                            TalkTitleCards(line.titles,::openTitle)
                             line.sources.distinctBy { it.url }.take(4).forEach { SourceLink(it) }
                             if(line.stopped)Text("Stopped",color=AliflixContentTertiary,fontSize=11.sp,modifier=Modifier.padding(top=2.dp))
                             if(line.role=="assistant"&&(!state.sending||index<state.lines.lastIndex)) {
@@ -176,8 +182,13 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     }
                 }
             } else {
-                Box(Modifier.fillMaxWidth().weight(.56f),contentAlignment=Alignment.Center) { TalkLiveOrb(state.phase,{state.level},motion,Modifier.fillMaxWidth(.86f).widthIn(max=320.dp).aspectRatio(1f),tracker) }
+                Box(Modifier.fillMaxWidth().weight(.56f),contentAlignment=Alignment.Center) { TalkLiveOrb(state.phase,{state.level},motion,Modifier.fillMaxWidth(.86f).widthIn(max=320.dp).aspectRatio(1f).testTag("talk-orb"),tracker) }
                 Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,{state.level},motion) }
+                val turnStart=state.lines.indexOfLast{it.role=="user"}
+                val titles=state.lines.drop(turnStart+1).flatMap{it.titles}.distinctBy{it.key}.take(3)
+                AnimatedVisibility(titles.isNotEmpty(),enter=fadeIn(tween(if(motion)260 else 0))+expandVertically(),exit=fadeOut(tween(if(motion)160 else 0))+shrinkVertically()) {
+                    TalkTitleCards(titles,::openTitle,Modifier.padding(bottom=8.dp))
+                }
                 if(idle&&state.phase!="Ready") Text(state.phase,color=AliflixContentSecondary,fontSize=12.sp,modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=12.dp))
                 Row(Modifier.fillMaxWidth().padding(bottom=20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(20.dp,Alignment.CenterHorizontally)) {
                     AliflixIconButton(onClick=session::stopAnswer,modifier=Modifier.size(52.dp)) { Icon(Icons.Rounded.Stop,"Stop response",tint=AliflixContentSecondary) }

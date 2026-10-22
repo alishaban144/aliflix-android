@@ -57,4 +57,11 @@ class TalkFunctionResponseTest {
             assertEquals(1,facts.length())
         }
     }
+    @Test fun aLookupProgressResponseKeepsTheSameCallOpenUntilItsFinalResult() {
+        val progress=talkFunctionResponse("lookup","recommendations",JSONObject().put("status","in_progress"),"WHEN_IDLE",willContinue=true)
+        val final=talkFunctionResponse("lookup","recommendations",JSONObject().put("results",org.json.JSONArray()),"INTERRUPT")
+        assertTrue(progress.getBoolean("willContinue"));assertFalse(final.getBoolean("willContinue"))
+        assertEquals(progress.getString("id"),final.getString("id"))
+        assertFalse(progress.getJSONObject("response").has("willContinue"))
+    }
 }

@@ -20,15 +20,18 @@ internal class AskResearchStream(private val requestId: String) {
             "progress" -> null
             "results" -> {
                 require(event.has("results")) { "Missing research results" }
-                val previous = latest?.optJSONArray("results")
                 val results = event.getJSONArray("results")
                 require(results.length() <= 60) { "Research limit" }
-                if (previous != null) {
-                    require(results.length() >= previous.length()) { "Shrinking research response" }
-                    for (i in 0 until previous.length()) require(
-                        previous.getJSONObject(i).getInt("tmdbId") == results.getJSONObject(i).getInt("tmdbId")
-                    ) { "Reordered research response" }
+                val identities = HashSet<String>()
+                for (i in 0 until results.length()) {
+                    val result = results.getJSONObject(i)
+                    val id = result.getInt("tmdbId")
+                    val type = result.optString("mediaType", "movie")
+                    require(id > 0 && type in setOf("movie", "tv")) { "Invalid research identity" }
+                    require(identities.add("$type:$id")) { "Duplicate research identity" }
                 }
+                // Each revision is authoritative: parallel TMDB matches and
+                // Gemini curation can improve ordering or replace early picks.
                 finished = !event.optBoolean("inProgress")
                 latest = event
                 event

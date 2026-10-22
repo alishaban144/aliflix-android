@@ -30,10 +30,11 @@ class AskProgressiveDeviceTest {
      if(first==0L)first=SystemClock.elapsedRealtime()-started
      assertEquals(request.requestId,value.requestId)
      assertTrue(value.results.isNotEmpty())
-     assertTrue(value.results.all{it.tmdbId>0&&it.finalScore>0&&it.retrievalSources.isNotEmpty()})
+     assertTrue(value.results.all{it.tmdbId>0&&it.title.isNotBlank()&&it.retrievalSources.isNotEmpty()})
      snapshots++
     }
-    assertFalse(result.inProgress);assertTrue(result.results.isNotEmpty());assertTrue(snapshots>0)
+    assertFalse(result.inProgress);assertFalse("A valid reordered stream must complete",result.incomplete)
+    assertTrue("Broad requests should return a useful selection",result.results.size>=12);assertTrue(snapshots>0)
     report.put(JSONObject().put("mode",mode).put("firstResultsMs",first).put("completeMs",SystemClock.elapsedRealtime()-started)
      .put("count",result.results.size).put("snapshots",snapshots).put("incomplete",result.incomplete))
    }

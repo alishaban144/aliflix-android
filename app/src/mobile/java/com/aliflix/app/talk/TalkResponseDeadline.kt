@@ -9,7 +9,7 @@ import kotlinx.coroutines.launch
  * Ownership and generation checks prevent an old timer expiring a newer turn. */
 internal class TalkResponseDeadline(
     private val scope:CoroutineScope,
-    private val timeoutMillis:Long=25000,
+    private val timeoutMillis:Long=12000,
     private val onTimeout:()->Unit,
 ) {
     private var generation=0L

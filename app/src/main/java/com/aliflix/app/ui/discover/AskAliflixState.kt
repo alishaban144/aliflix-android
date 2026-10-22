@@ -13,6 +13,7 @@ sealed interface AskAliflixRequest {
         val previousText: String? = null,
         val refinementText: String? = null,
         val filters: CatalogDiscoverySpec? = null,
+        val resultCount: Int? = null,
     ) : AskAliflixRequest
 
     data class Similar(

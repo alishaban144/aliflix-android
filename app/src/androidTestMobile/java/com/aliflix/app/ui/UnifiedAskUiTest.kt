@@ -15,6 +15,30 @@ import org.junit.Test
 /** No remote research, provider traffic or mutation of the viewer's library. */
 class UnifiedAskUiTest {
  @get:Rule val compose=createComposeRule()
+ @Test fun dislikeLivesInsideTheCompactCardAndRespondsInTheSameFrame(){
+  val movie=Media(27205,MediaType.MOVIE,"Inception",year="2010")
+  var visible by mutableStateOf(true)
+  compose.setContent{AliflixMobileTheme{if(visible)MobileAskResultCard(com.aliflix.app.recommendation.RecommendationCandidate(movie),{},false,{},false,onDislike={visible=false})}}
+  val card=compose.onNodeWithTag("ask-result-${movie.key}").fetchSemanticsNode().boundsInRoot
+  val dislike=compose.onNodeWithTag("ask-result-dislike-${movie.key}").fetchSemanticsNode().boundsInRoot
+  assertTrue("Dislike must be inside the result card",card.contains(dislike.center))
+  compose.onNodeWithTag("ask-result-dislike-${movie.key}").performClick()
+  compose.onNodeWithTag("ask-result-${movie.key}").assertDoesNotExist()
+ }
+ @Test fun surprisePresentsThreeChoicesWithoutOpeningATitle(){
+  var state:AskAliflixUiState by mutableStateOf(AskAliflixUiState.Editing)
+  var opened:Media?=null
+  val movies=listOf(Media(1,MediaType.MOVIE,"First discovery"),Media(2,MediaType.MOVIE,"Second discovery"),Media(3,MediaType.MOVIE,"Third discovery"))
+  compose.setContent{AliflixMobileTheme{UnifiedAskAliflix(state,AskAliflixEditorState(),{}, {request->
+   state=AskAliflixUiState.Results("surprise",com.aliflix.app.recommendation.CatalogDiscoverySpec(mediaKind=com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE),movies.map{com.aliflix.app.recommendation.RecommendationCandidate(it)},activeRequest=request)
+  },{},{},{opened=it},emptyList(),false,{}, {emptyList()},rememberLazyListState(),emptySet(),{},Modifier,dailyProvider={emptyList()})}}
+  compose.onNodeWithText("Surprise Me",useUnmergedTree=true).performClick()
+  compose.onNodeWithTag("ask-surprise-three").assertIsDisplayed()
+  compose.onNodeWithText("Your next three").assertIsDisplayed()
+  compose.runOnIdle{assertNull(opened)}
+  compose.onNodeWithContentDescription("Close discoveries").performClick()
+  compose.onNodeWithTag("ask-surprise-three").assertDoesNotExist()
+ }
  @Test fun dailyLimitDoesNotInviteRepeatedRetries(){
   compose.setContent{AliflixMobileTheme{UnifiedAskAliflix(AskAliflixUiState.Error("query","Daily limit"),AskAliflixEditorState(),{},{},{},{},{},emptyList(),false,{}, {emptyList()},rememberLazyListState(),emptySet(),{},Modifier,dailyProvider={emptyList()})}}
   compose.onNodeWithText("Daily limit").assertIsDisplayed()

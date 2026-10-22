@@ -10,10 +10,11 @@ import { TalkContextSchema } from '../src/talkEvidence';
 
 describe('Talk recent discovery and task continuity',()=>{
  const now=new Date('2026-10-20T12:00:00Z');
- it('bounds generic sci-fi discovery to released recent years',()=>{
-  expect(talkRecommendationPolicy('Suggest a sci-fi movie',now).filters).toEqual({minimumYear:2023,maximumYear:2026});
-  expect(talkRecommendationPolicy('Something like Arrival (2016)',now).filters.minimumYear).toBe(2023);
-  expect(talkRecommendationPolicy('a funny series',new Date('2027-01-02Z')).filters.maximumYear).toBe(2027);
+ it('honors explicit recent discovery without inventing an era for broad themes',()=>{
+  expect(talkRecommendationPolicy('Suggest a recent sci-fi movie',now).filters).toEqual({minimumYear:2023,maximumYear:2026});
+  expect(talkRecommendationPolicy('Something like Arrival (2016)',now).filters).toEqual({});
+  expect(talkRecommendationPolicy('movies about gentlemen',now).filters).toEqual({});
+  expect(talkRecommendationPolicy('a new funny series',new Date('2027-01-02Z')).filters.maximumYear).toBe(2027);
  });
  it('honors an expressly requested older era',()=>{
   for(const query of ['classic sci fi','movies from 2006','1990s thrillers','any era','افلام قديمة','ältere Filme'])
@@ -55,6 +56,15 @@ describe('bounded account chat archive',()=>{
    const stopped={...chat,lines:[{...chat.lines[0],stopped:true}]};
    await store.chats({action:'save',chat:stopped});
    expect(await store.chats({action:'read',id:chat.id})).toEqual({chat:stopped});
+  });
+ });
+ it('restores compact title cards with their reply',async()=>{
+  await runInDurableObject(env.TALK_SESSIONS.getByName('title-card-archive'),async instance=>{
+   const saved={...chat,lines:[{role:'assistant' as const,text:'Try Dark.',sources:[],titles:[{id:70523,type:'tv' as const,title:'Dark',year:'2017',posterPath:'/poster.jpg'}]}]};
+   const parsed=TalkChatsRequestSchema.parse({action:'save',chat:saved});
+   const store=instance as unknown as TalkSession;
+   await store.chats(parsed);
+   expect(await store.chats({action:'read',id:saved.id})).toEqual({chat:saved});
   });
  });
  it('shares an archive across device tokens without consuming live tool capacity or leaking another account',async()=>{

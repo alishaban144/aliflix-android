@@ -333,169 +333,42 @@ describe("unified authenticated research", () => {
         await service.cancel("a", "1");
         await failure;
         expect((await b).evidence).toHaveLength(1);
-        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(fetch.mock.calls.filter(([url])=>String(url).includes("api.tavily.com/search"))).toHaveLength(1);
       },
     );
   });
-  it("returns 24 distinct genuine identities only after evidence, hard constraints and independent Clef acceptance", async () => {
-    const titles = Array.from({ length: 30 }, (_, i) => ({
-      title: "Film " + i,
-      year: 2025,
-      evidence: [0],
-      reason: "Memory and identity are central to its narrative.",
-    }));
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      Response.json({
-        results: [
-          {
-            title: "Research collection",
-            url: "https://www.bfi.org.uk/lists/memory",
-            content: titles
-              .map((t) => t.title + ": memory and identity story.")
-              .join(" "),
-          },
-        ],
-      }),
-    );
-    await runInDurableObject(
-      env.ASK_RESEARCH.getByName("pipeline-complete"),
-      async (instance) => {
-        const e = (instance as any).env;
-        const original = {
-          AI: e.AI,
-          ASK_RESEARCH: e.ASK_RESEARCH,
-          TAVILY_API_KEY: e.TAVILY_API_KEY,
-        };
-        try {
-          e.TAVILY_API_KEY = "test-only";
-          const ai = vi.fn(async (model: string, input: any) =>
-            model.includes("clef")
-              ? {
-                  answers: Object.fromEntries(
-                    Object.keys(input.questions).map((key, i) => [
-                      key,
-                      {
-                        type: "choice",
-                        choice: i === 0 ? "weak" : "strong",
-                        probabilities: {
-                          strong: i === 0 ? 0.1 : 0.9,
-                          relevant: 0.05,
-                          weak: 0.05,
-                          unsupported: 0,
-                        },
-                      },
-                    ]),
-                  ),
-                }
-              : {
-                  response: JSON.stringify(
-                    input.messages[0].content.startsWith("Interpret")
-                      ? {
-                          intent: "Memory and identity",
-                          search: "memory identity film list",
-                          hardFilters: {},
-                        }
-                      : { candidates: titles },
-                  ),
-                },
-          );
-          e.AI = { run: ai };
-          const identity = async (_type: string, title: string) => ({
-            tmdbId: Number(title.split(" ")[1]) + 1,
-            mediaType: "movie",
-            title,
-            releaseDate: "2025-01-01",
-            genres: ["Science Fiction"],
-            originCountries: ["US"],
-            originalLanguage: "en",
-            runtimeMinutes: 110,
-            matchLevel: "Relevant",
-            finalScore: 0,
-            matchReasons: [],
-            retrievalSources: [],
-          });
-          const resolveBatch=vi.fn(async(type:string,items:Array<{title:string}>)=>Promise.all(items.map(p=>identity(type,p.title))));
-          e.ASK_RESEARCH = {
-            getByName: () => ({identity,resolveBatch,
-              evidenceBatch:async(items:Array<{title:string;year:number}>)=>items.map(p=>({title:`${p.title} (${p.year})`,finding:{title:p.title,text:'Memory and identity are central to this story.',url:'https://en.wikipedia.org/wiki/'+p.title.replaceAll(' ','_'),attribution:'Wikipedia contributors · CC BY-SA 4.0'}})),
-            }),
-          };
-          const snapshots:any[]=[];
-          const result:Awaited<ReturnType<AskResearch['recommend']>> = await (instance as any).recommendInternal(
-            "user",
-            request({ filters: { minimumYear: 2024, originalLanguage: "en" } }),
-            (value:any)=>snapshots.push(structuredClone(value)),
-          );
-          expect(snapshots.length).toBeGreaterThan(1);
-          expect(snapshots[0].results.length).toBeGreaterThan(0);
-          expect(snapshots[0].results.length).toBeLessThan(24);
-          expect(snapshots.every(s=>s.results.every((v:any)=>v.finalScore>0&&v.retrievalSources.length>0))).toBe(true);
-          expect(result.metrics.firstResultsMs).toBeLessThanOrEqual(result.metrics.elapsedMs);
-          expect(result.results).toHaveLength(24);
-          expect(new Set(result.results.map((v) => v.tmdbId)).size).toBe(24);
-          expect(result.results.some((v) => v.tmdbId === 1)).toBe(false);
-          expect(
-            result.results.every((v) =>
-              v.retrievalSources[0].startsWith("https://www.bfi.org.uk"),
-            ),
-          ).toBe(true);
-          expect(ai.mock.calls.map((c) => c[0])).toEqual([
-            "@cf/openai/gpt-oss-120b",
-            "@cf/openai/gpt-oss-120b",
-            "@cf/cloudflare/clef-flash",
-            "@cf/cloudflare/clef-flash",
-            "@cf/cloudflare/clef-flash",
-          ]);
-          expect(result.metrics).toMatchObject({
-            gptCalls: 2,
-            clefCalls: 3,
-            verified: 30,
-            tavilyCredits: 1,
-            neurons: null,
-          });
-          const lookups=resolveBatch.mock.calls.length;
-          ai.mockClear();
-          const reranked=await (instance as unknown as AskResearch).recommend('user',request({query:'Different wording about memory and identity',filters:{minimumYear:2024,originalLanguage:'en',excludedTmdbIds:[2]}}));
-          expect(reranked.results).toHaveLength(24);
-          expect(reranked.results.some(v=>v.tmdbId===2)).toBe(false);
-          expect(reranked.metrics).toMatchObject({gptCalls:1,clefCalls:3,tavilyCredits:0,generated:0,reusedCandidates:29});
-          expect(resolveBatch.mock.calls.length).toBe(lookups);
-          expect(ai.mock.calls.filter(c=>!c[0].includes('clef'))).toHaveLength(1);
-
-          // A replenishment pass must retain the first pass's independently
-          // verified evidence even when its titles were not relevant this time.
-          (instance as any).ctx.storage.sql.exec('DELETE FROM ask_cache WHERE key=?','knowledge-pool:movie');
-          let generation=0;
-          ai.mockImplementation(async(model:string,input:any)=>{
-            if(model.includes('clef')){
-              const candidates=JSON.parse(input.state).candidates;
-              return {answers:Object.fromEntries(Object.keys(input.questions).map((key,i)=>[key,{type:'choice',choice:Number(candidates[i].title.split(' ')[1])<30?'weak':'strong',probabilities:{strong:0.9,relevant:0.05,weak:0.05,unsupported:0}}]))};
-            }
-            return {response:JSON.stringify(input.messages[0].content.startsWith('Interpret')?{intent:'Memory and identity',search:'memory identity film list',hardFilters:{}}:{candidates:titles.map(p=>({...p,title:'Film '+(Number(p.title.split(' ')[1])+generation*30)}))})};
-          });
-          const generator=ai.getMockImplementation()!;
-          ai.mockImplementation(async(model:string,input:any)=>{
-            const value=await generator(model,input);
-            if(!model.includes('clef')&&!input.messages[0].content.startsWith('Interpret'))generation++;
-            return value;
-          });
-          const replenished=await (instance as unknown as AskResearch).recommend('user',request({query:'A replenished research pool'}));
-          expect(replenished.results).toHaveLength(24);
-          const retained=await (instance as unknown as AskResearch).recommend('user',request({query:'Rerank the accumulated public knowledge'}));
-          expect(retained.results).toHaveLength(24);
-          expect(retained.metrics).toMatchObject({gptCalls:1,generated:0,reusedCandidates:60});
-          ai.mockClear();
-          const similar=await (instance as unknown as AskResearch).recommend('user',request({mode:'similar',query:'',anchors:[{tmdbId:999,title:'Anchor film',mediaType:'movie'}]}));
-          expect(similar.results).toHaveLength(24);
-          const planner=ai.mock.calls.find(c=>!c[0].includes('clef'))![1];
-          expect(JSON.parse(planner.messages.find((m:any)=>m.role==='user').content).mode).toBe('similar');
-          expect(ai.mock.calls.filter(c=>c[0].includes('clef')).every(c=>JSON.parse(c[1].state).mode==='similar')).toBe(true);
-
-        } finally {
-          Object.assign(e, original);
-        }
-      },
-    );
+  it("uses one Tavily search and one Gemini selection, then streams TMDB matches without Clef",async()=>{
+    const titles=Array.from({length:28},(_,i)=>({title:'Film '+i,year:2025}));
+    const calls:string[]=[];
+    vi.spyOn(globalThis,'fetch').mockImplementation(async(u,init)=>{
+      const url=String(u);calls.push(url);
+      if(url.includes('tavily.com'))return Response.json({results:[{title:'Research',url:'https://www.bfi.org.uk/list',content:'Distinctive movies about identity.'}],usage:{credits:1}});
+      const pair=new WebSocketPair();pair[1].accept();
+      pair[1].addEventListener('message',event=>{
+        const message=JSON.parse(String(event.data));
+        if(message.setup)pair[1].send(JSON.stringify({setupComplete:{}}));
+        if(message.clientContent)pair[1].send(JSON.stringify({toolCall:{functionCalls:[{name:'recommend_titles',args:{candidates:titles}}]}}));
+      });
+      return new Response(null,{status:101,webSocket:pair[0]});
+    });
+    await runInDurableObject(env.ASK_RESEARCH.getByName('fast-pipeline-complete'),async instance=>{
+      const service=instance as unknown as AskResearch,e=(instance as any).env;
+      const old={AI:e.AI,ASK_RESEARCH:e.ASK_RESEARCH,TAVILY_API_KEY:e.TAVILY_API_KEY,GEMINI_API_KEY:e.GEMINI_API_KEY};
+      const run=vi.fn();e.AI={run};e.TAVILY_API_KEY='test';e.GEMINI_API_KEY='test';
+      const identity=vi.fn(async(_type:string,title:string)=>({tmdbId:Number(title.split(' ')[1])+1,mediaType:'movie',title,releaseDate:'2025-01-01',genres:['Science Fiction'],originCountries:['US'],originalLanguage:'en',runtimeMinutes:110,matchLevel:'Relevant',finalScore:0,matchReasons:[],retrievalSources:[]}));
+      e.ASK_RESEARCH={getByName:()=>({identity,resolveBatch:async(type:string,items:Array<{title:string}>)=>Promise.all(items.map(p=>identity(type,p.title)))})};
+      try {
+        const snapshots:any[]=[];const raw=request({filters:{minimumYear:2024,originalLanguage:'en',excludedTmdbIds:[1]}});
+        const result=await (service as any).recommendInternal('owner',raw,(value:any)=>snapshots.push(value));
+        expect(result.results).toHaveLength(24);expect(result.results.some((v:any)=>v.tmdbId===1)).toBe(false);
+        expect(snapshots[0].results).toHaveLength(1);
+        expect(result.metrics).toMatchObject({geminiCalls:1,gptCalls:0,clefCalls:0,tavilyCredits:1,pipeline:'tavily-gemini-tmdb'});
+        expect(run).not.toHaveBeenCalled();expect(calls).toHaveLength(2);
+        const cached=await service.recommend('owner',raw);expect(cached.cached).toBe(true);expect(calls).toHaveLength(2);
+        const similar=await service.recommend('owner',request({mode:'similar',query:'',anchors:[{tmdbId:999,title:'Anchor film',mediaType:'movie'}]}));
+        expect(similar.results).toHaveLength(24);expect(run).not.toHaveBeenCalled();
+      } finally {Object.assign(e,old);}
+    });
   });
 });
 
@@ -537,15 +410,11 @@ it("rejects malformed individual identities without discarding valid researched 
  expect(()=>PicksSchema.parse({candidates:Array(65).fill({title:"A",year:2023})})).toThrow();
 });
 
-it("stops queuing new inference after the provider's daily allocation is exhausted",async()=>{
- await runInDurableObject(env.ASK_RESEARCH.getByName("provider-allocation-stop"),async(instance)=>{
-  const service=instance as unknown as AskResearch;const e=(instance as any).env;const original=e.AI;
-  const run=vi.fn(async()=>{throw Error("4006: daily free allocation exhausted");});
-  e.AI={run};try{
-   await expect(service.recommend("a",request({query:"first identity request"}))).rejects.toThrow("ASK_SERVICE:AI_QUOTA:429");
-   await expect(service.recommend("b",request({query:"different identity request"}))).rejects.toThrow("ASK_SERVICE:AI_QUOTA:429");
-   expect(run).toHaveBeenCalledTimes(1);
-  }finally{e.AI=original;}
+it("reports a Gemini quota failure without retrying or invoking Cloudflare models",async()=>{
+ const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async u=>String(u).includes('tavily.com')?Response.json({results:[{title:'Research',url:'https://example.org/list',content:'Film recommendations'}]}):Response.json({error:{message:'Quota'}},{status:429}));
+ await runInDurableObject(env.ASK_RESEARCH.getByName('fast-quota'),async instance=>{
+  const service=instance as unknown as AskResearch,e=(instance as any).env,old={GEMINI_API_KEY:e.GEMINI_API_KEY,TAVILY_API_KEY:e.TAVILY_API_KEY};e.GEMINI_API_KEY='test';e.TAVILY_API_KEY='test';
+  try{await expect(service.recommend('owner',request())).rejects.toThrow('ASK_SERVICE:AI_QUOTA:429');expect(fetch).toHaveBeenCalledTimes(2);}finally{Object.assign(e,old);}
  });
 });
 
@@ -608,8 +477,8 @@ describe('progressive research transport',()=>{
  it('transfers actual byte streams through Durable Object RPC',async()=>{
   const stub=env.ASK_RESEARCH.getByName('stream-rpc');
   const input=AskRequestSchema.parse(request());
-  const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({...input,requestId:undefined,cursor:undefined})));
-  const key='results-v11:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(researchCacheIdentity(input))));
+  const key='fast-results-v4:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
   await runInDurableObject(stub,async(_instance,state)=>{
    state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)',key,JSON.stringify({...value(24),cachedAt:Date.now()}),Date.now()+86400000);
   });
@@ -659,7 +528,7 @@ describe('progressive research transport',()=>{
    const reader=(await service.recommendStream('owner',request())).getReader();await reader.read();
    const result=decode((await reader.read()).value!);expect(result).toMatchObject({inProgress:false,incomplete:true,results:value(5).results});
    expect((await reader.read()).done).toBe(true);
-   const row=state.storage.sql.exec<{value:string;expires:number}>("SELECT value,expires FROM ask_cache WHERE key LIKE 'results-v11:%'").one();
+   const row=state.storage.sql.exec<{value:string;expires:number}>("SELECT value,expires FROM ask_cache WHERE key LIKE 'fast-results-v4:%'").one();
    expect(JSON.parse(row.value).cachedAt).toBeGreaterThan(Date.now()-1000);expect(row.expires).toBeGreaterThan(Date.now()+86000000);
   });
  });

@@ -10,8 +10,8 @@ internal fun talkArchiveResumeLines(lines:List<TalkLine>):List<TalkLine> {
 
 /** Scheduling is a FunctionResponse protocol field, not model-visible output.
  * Keep one wire encoder for silent local controls and asynchronous knowledge. */
-internal fun talkFunctionResponse(id:String,name:String,result:JSONObject,scheduling:String):JSONObject =
-    JSONObject().put("id",id).put("name",name).put("response",result).put("scheduling",scheduling)
+internal fun talkFunctionResponse(id:String,name:String,result:JSONObject,scheduling:String,willContinue:Boolean=false):JSONObject =
+    JSONObject().put("id",id).put("name",name).put("response",result).put("scheduling",scheduling).put("willContinue",willContinue)
 
 /** A control-only turn still needs to continue the user's answer. Resume once,
  * after its last control, unless an answer or an actual lookup is in flight. */

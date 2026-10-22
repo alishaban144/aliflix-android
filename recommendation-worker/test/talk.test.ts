@@ -93,12 +93,12 @@ describe('Gemini-only live identity and security',()=>{
  it('requires authenticated identity for token issuance and tools',async()=>{
   for(const path of ['session','knowledge','close','viewing'])expect((await talkRoute(new Request('https://test/v1/talk/'+path,{method:'POST',body:'{}'}),config))?.status).toBe(401);
  });
- it('keeps new companion tools opt-in and makes favorite-first taste mandatory',()=>{
+ it('keeps new companion tools opt-in and keeps personal taste optional for direct theme requests',()=>{
   const setup=liveSetup(TalkContextSchema.parse({companionVersion:2,recentProgress:[],library:[{id:694,type:'movie',kind:'favorite'}]}));
   expect(setup.tools[0].functionDeclarations.map(t=>t.name)).toContain('aliflix_app');
   expect(setup.tools[0].functionDeclarations.map(t=>t.name)).toContain('remember_recommendations');
-  expect(setup.systemInstruction.parts[0].text).toContain('Favorites FIRST');
-  expect(setup.systemInstruction.parts[0].text).toContain('Before giving any movie/series recommendation');
+  expect(setup.systemInstruction.parts[0].text).toContain('Favorites are optional background');
+  expect(setup.systemInstruction.parts[0].text).toContain('do not wait on a library lookup');
   expect(TalkContextSchema.safeParse({library:[{type:'movie',kind:'favorite'}]}).success).toBe(false);
  });
  it('resolves favorite pages without IMDb IDs, separates page caches and preserves counts',async()=>{

@@ -26,6 +26,7 @@ import java.util.Locale
 internal fun MobileAskResultCard(
     item: RecommendationCandidate, onClick: () -> Unit, inMyList: Boolean,
     onToggleMyList: () -> Unit, editorial: Boolean, modifier: Modifier = Modifier,
+    onDislike: (() -> Unit)? = null,
 ) {
     AliflixSurface(modifier.fillMaxWidth().testTag("ask-result-${item.media.key}")
         .clickable(role = Role.Button, onClick = onClick),
@@ -56,6 +57,11 @@ internal fun MobileAskResultCard(
                         modifier = Modifier.fillMaxWidth().testTag("ask-result-genre"))
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) { MobileResultScore(if (editorial) item.matchScore else item.media.rating, editorial) }
+                        if (onDislike != null) IconButton(onClick = onDislike,
+                            modifier = Modifier.size(48.dp).testTag("ask-result-dislike-${item.media.key}")) {
+                            Icon(Icons.Rounded.ThumbDownOffAlt, "Not for me: ${item.media.title}",
+                                tint = AliflixContentSecondary, modifier = Modifier.size(17.dp))
+                        }
                         IconButton(onClick = onClick, modifier = Modifier.size(48.dp).testTag("ask-result-details")) {
                             Icon(Icons.AutoMirrored.Rounded.ArrowForward, "View details for ${item.media.title}",
                                 tint = AliflixAccentSecondary, modifier = Modifier.size(19.dp))

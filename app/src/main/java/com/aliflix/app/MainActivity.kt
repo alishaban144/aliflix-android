@@ -13,7 +13,8 @@ import com.aliflix.app.ui.AliflixTvApp
 import com.aliflix.app.ui.theme.AliflixMobileTheme
 import com.aliflix.app.ui.theme.AliflixTheme
 
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
+    protected open val conversationTitle: com.aliflix.app.model.Media? get() = null
     private val viewModel: AliflixViewModel by viewModels()
     private lateinit var playerController: WebPlayerController
 
@@ -41,6 +42,8 @@ class MainActivity : ComponentActivity() {
                     AliflixApp(
                         viewModel = viewModel,
                         playerController = playerController,
+                        initialMedia = conversationTitle,
+                        onInitialDetailClosed = { finish() },
                     )
                 }
             }

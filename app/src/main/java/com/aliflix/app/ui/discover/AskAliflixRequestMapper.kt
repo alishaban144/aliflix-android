@@ -83,7 +83,7 @@ object AskAliflixRequestMapper {
             filters = spec.toWorkerFilters().let { if (request is AskAliflixRequest.Filters) it else it.copy(sortBy = null) },
             // Generated modes return a substantial verified batch. Each signed
             // continuation asks the Worker to find and verify new matches.
-            pageSize = 24,
+            pageSize = (request as? AskAliflixRequest.Describe)?.resultCount?.coerceIn(1, 24) ?: 24,
         ))
     }
 

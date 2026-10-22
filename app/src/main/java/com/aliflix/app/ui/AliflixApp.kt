@@ -518,6 +518,8 @@ internal data class MobileUpdateUiState(
 fun AliflixApp(
     viewModel: AliflixViewModel,
     playerController: WebPlayerController,
+    initialMedia: Media? = null,
+    onInitialDetailClosed: (() -> Unit)? = null,
 ) {
     val home by viewModel.home.collectAsState()
     val pickedForYou by viewModel.pickedForYou.collectAsState()
@@ -556,7 +558,7 @@ fun AliflixApp(
         stateSaver = MobileDestinationStackSaver,
     ) {
         mutableStateOf<List<MobileDestination>>(
-            listOf(MobileDestination.Root(AppTab.HOME)),
+            listOfNotNull(MobileDestination.Root(AppTab.HOME), initialMedia?.let { MobileDestination.Detail(it) }),
         )
     }
     var detailStateSnapshots by remember {
@@ -712,6 +714,9 @@ fun AliflixApp(
 
     fun popDestination() {
         if (destinationStack.size <= 1) return
+        if (initialMedia != null && destinationStack.size == 2 && onInitialDetailClosed != null) {
+            onInitialDetailClosed(); return
+        }
         when (destinationStack.last()) {
             is MobileDestination.Person -> capturePersonScrollPosition()
             is MobileDestination.Genre -> captureGenreScrollPosition()
@@ -997,6 +1002,7 @@ fun AliflixApp(
     AliflixLaunchOverlay(
         isHomeReady = isHomeReady,
         onLaunchComplete = { launchCompleted = true },
+        skip = initialMedia != null,
     ) {
         Box(
             modifier = Modifier
@@ -3321,9 +3327,9 @@ internal fun MySpaceScreen(
                 Box {
                     Icon(Icons.Rounded.Settings, "Open Settings", tint = Color.White, modifier = Modifier.size(17.dp))
                     com.aliflix.app.ui.common.UpdateAvailableDot(!BuildConfig.IS_TV && (updateUi.available != null || updateUi.downloadedApk != null),
-                        Modifier.align(Alignment.CenterEnd).offset(x = 10.dp))
+                        Modifier.align(Alignment.CenterStart).offset(x = (-10).dp))
                 }
-                Spacer(Modifier.width(if (!BuildConfig.IS_TV && (updateUi.available != null || updateUi.downloadedApk != null)) 14.dp else 6.dp))
+                Spacer(Modifier.width(6.dp))
                 Text(
                     text = "Settings",
                     fontSize = 12.sp,

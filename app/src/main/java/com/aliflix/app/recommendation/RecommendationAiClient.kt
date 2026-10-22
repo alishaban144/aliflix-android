@@ -32,7 +32,7 @@ class RecommendationAiClient(
     private val detailsLocks = Array(32) { kotlinx.coroutines.sync.Mutex() }
     suspend fun getRecommendations(request: V3RecommendationRequest, onPartial: (suspend (V3RecommendationResponse) -> Unit)? = null): V3RecommendationResponse = withContext(ioDispatcher) {
         if (!com.aliflix.app.BuildConfig.IS_TV && research != null) {
-            val body=request.toJson().put("aiModel", "cloudflare-gpt-oss-120b").put("geminiModel", "cloudflare-gpt-oss-120b").put("library", researchLibrary())
+            val body=request.toJson().put("aiModel", "gemini-3.8-flash").put("geminiModel", "gemini-3.8-flash").put("library", researchLibrary())
             if(onPartial==null)return@withContext V3RecommendationResponse.fromJson(research.request("recommendations",body))
             var latest:V3RecommendationResponse?=null
             research.recommendations(body).collect{event->

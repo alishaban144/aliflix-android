@@ -24,12 +24,21 @@ class AskResearchStreamTest {
         assertNull(stream.accept(event(2,4)))
         assertEquals(1,stream.latest!!.getJSONArray("results").getJSONObject(0).getInt("tmdbId"))
     }
-    @Test fun foreignRequestAndReorderedResultsAreRejected() {
+    @Test fun curatedSnapshotsCanReorderAndReplaceEarlyMatches() {
         val stream=AskResearchStream("request")
         assertThrows(IllegalArgumentException::class.java){stream.accept(event(1,1).put("requestId","old"))}
         stream.accept(event(2,1,2))
-        assertThrows(IllegalArgumentException::class.java){stream.accept(event(3,2,1))}
-        assertThrows(IllegalArgumentException::class.java){stream.accept(event(4,1))}
+        assertEquals(2,stream.accept(event(3,2,1))!!.getJSONArray("results").getJSONObject(0).getInt("tmdbId"))
+        assertEquals(3,stream.accept(event(4,3,running=false))!!.getJSONArray("results").getJSONObject(0).getInt("tmdbId"))
+        assertTrue(stream.finished)
+        assertFalse(stream.latest!!.optBoolean("incomplete"))
+    }
+    @Test fun invalidAndDuplicateIdentitiesCannotReplaceResults() {
+        val stream=AskResearchStream("request")
+        stream.accept(event(1,1))
+        assertThrows(IllegalArgumentException::class.java){stream.accept(event(2,0))}
+        assertThrows(IllegalArgumentException::class.java){stream.accept(event(3,2,2))}
+        assertEquals(1,stream.latest!!.getJSONArray("results").getJSONObject(0).getInt("tmdbId"))
     }
     @Test fun quotaAfterPartialResultsRetainsGenuineMatches() {
         val stream=AskResearchStream("request")

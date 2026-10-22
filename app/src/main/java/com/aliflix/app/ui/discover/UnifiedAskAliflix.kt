@@ -68,6 +68,8 @@ internal fun UnifiedAskAliflix(
     var sheet by rememberSaveable{mutableStateOf(false)}
     var similar by rememberSaveable{mutableStateOf(editor.mode==1)}
     var surprisePending by rememberSaveable{mutableStateOf(false)}
+    var surpriseChoices by remember { mutableStateOf<List<RecommendationCandidate>>(emptyList()) }
+    var surprisePrompt by rememberSaveable { mutableStateOf("") }
     var sentDraft by rememberSaveable{mutableStateOf("")}
     var dailyRetry by remember{mutableIntStateOf(0)}
     var dailyLoading by remember{mutableStateOf(false)}
@@ -140,7 +142,11 @@ internal fun UnifiedAskAliflix(
             dailyRetry++
         }
     }
-    LaunchedEffect(state,surprisePending) {if(surprisePending&&!busy){surprisePending=false;results.firstOrNull()?.media?.let(onOpen)}}
+    LaunchedEffect(state,surprisePending) {
+        if(surprisePending&&!busy&&(resultState?.activeRequest as? AskAliflixRequest.Describe)?.text==surprisePrompt&&results.size>=3&&!resultState.researching) {
+            surpriseChoices=results.take(3);surprisePending=false
+        } else if(surprisePending&&state is AskAliflixUiState.Error)surprisePending=false
+    }
     BackHandler(sheet){sheet=false}
     CompositionLocalProvider(LocalAskTouchTracker provides tracker) {
     Box(modifier.fillMaxSize().aliflixScreenBackground().observeDiscoverTouches(tracker).testTag("ask-unified")) {
@@ -178,12 +184,13 @@ internal fun UnifiedAskAliflix(
                 AskAction("Similar",Icons.Rounded.Layers,similar,Modifier.weight(1f),AskActionGlyph.Similar){similar=!similar;onEditor(editor.copy(mode=if(similar)1 else 0))}
                 AskAction("Filters",Icons.Rounded.Tune,selectedFilterCount(editor.spec)>0,Modifier.weight(1f),AskActionGlyph.Filters){sheet=true}
                 AskAction("Surprise Me",Icons.Rounded.Shuffle,false,Modifier.weight(1.25f),AskActionGlyph.Surprise){
+                    if(busy)return@AskAction
                     val prefs=context.getSharedPreferences("aliflix-ask-surprises-"+(com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid?:"guest"),0);val prior=prefs.getStringSet("seen",emptySet()).orEmpty()
                     val excluded=(recent+favorites).map{it.key}.toSet()+rejected+prior
                     val genres=favorites.flatMap{it.genres}.groupingBy{it}.eachCount()
-                    val pick=daily.takeIf{dailyResearchBacked&&selectedFilterCount(editor.spec)==0&&editor.describeText.isBlank()&&!similar}.orEmpty().filterNot{it.key in excluded}.shuffled().maxByOrNull{m->m.genres.sumOf{genres[it]?:0}}
-                    if(pick!=null){prefs.edit().putStringSet("seen",(prior+pick.key).toList().takeLast(96).toSet()).apply();onOpen(pick)}
-                    else if(!busy){surprisePending=true;onSubmit(AskAliflixRequest.Describe(type,"A surprising, excellent unwatched ${if(type==MediaType.TV)"series" else "film"} that connects to my Favorites without repeating obvious recommendations.",filters=editor.spec))}
+                    val picks=daily.takeIf{dailyResearchBacked&&selectedFilterCount(editor.spec)==0&&editor.describeText.isBlank()&&!similar}.orEmpty().filterNot{it.key in excluded}.shuffled().sortedByDescending{m->m.genres.sumOf{genres[it]?:0}}.take(3)
+                    if(picks.size==3){prefs.edit().putStringSet("seen",(prior+picks.map{it.key}).toList().takeLast(96).toSet()).apply();surpriseChoices=picks.map{RecommendationCandidate(it)}}
+                    else {surprisePrompt="Choose three distinctive, excellent unwatched ${if(type==MediaType.TV)"series" else "films"}: one inspired by my Favorites, one unexpected gem, and one bold wildcard. Make the three choices genuinely different in atmosphere. ${editor.describeText}";surprisePending=true;onSubmit(AskAliflixRequest.Describe(type,surprisePrompt,filters=editor.spec,resultCount=3))}
                 }
             }
             AnimatedVisibility(similar&&anchors.size<4,enter=expandVertically()+fadeIn(),exit=shrinkVertically()+fadeOut()) {
@@ -212,10 +219,10 @@ internal fun UnifiedAskAliflix(
                 }
                 if(busy)item("progress"){AskResearchProgress(Modifier.fillMaxWidth().height(48.dp),motion)}
                 if(resultState?.refineError!=null)item("refine-error"){AskAction("Retry refinement",Icons.Rounded.Refresh,false,Modifier.fillMaxWidth()){onRefine(sentDraft)}}
-                items(results,key={it.media.key}){item->Column(Modifier.animateItem()) {
-                    MobileAskResultCard(item,{onOpen(item.media)},item.media.key in myListKeys,{onToggleMyList(item.media)},editorial=false)
-                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){AliflixIconButton(onClick={taste.reject(item.media);rejected=taste.rejected()},modifier=Modifier.size(48.dp)){Icon(Icons.Rounded.ThumbDownOffAlt,"Not for me: ${item.media.title}",tint=AliflixContentSecondary,modifier=Modifier.size(16.dp))}}
-                }}
+                items(results,key={it.media.key}){item->
+                    MobileAskResultCard(item,{onOpen(item.media)},item.media.key in myListKeys,{onToggleMyList(item.media)},editorial=false,
+                        modifier=Modifier.animateItem(),onDislike={rejected=rejected+item.media.key;taste.reject(item.media)})
+                }
                 if(resultState?.researching==true)item("research-continuing"){AskResearchProgress(Modifier.fillMaxWidth().height(32.dp).testTag("ask-research-continuing"),motion)}
                 if(!busy&&state !is AskAliflixUiState.Editing&&results.isEmpty())item("empty"){
                     val limited=state is AskAliflixUiState.Error&&state.message=="Daily limit"
@@ -230,6 +237,27 @@ internal fun UnifiedAskAliflix(
             Column(Modifier.fillMaxWidth().fillMaxHeight(.88f).clip(RoundedCornerShape(topStart=28.dp,topEnd=28.dp)).background(AliflixBackgroundBase).navigationBarsPadding().imePadding().testTag("ask-filter-sheet")) {
                 Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),horizontalArrangement=Arrangement.End){AliflixIconButton(onClick={sheet=false}){Icon(Icons.Rounded.Close,"Close filters")}}
                 AskAliflixFilters(editor.spec,{onEditor(editor.copy(spec=it))},{sheet=false;submit(true)},busy,onSearchCompanies,Modifier.weight(1f))
+            }
+        }
+        if(surpriseChoices.isNotEmpty()) androidx.compose.ui.window.Dialog(
+            onDismissRequest={surpriseChoices=emptyList()},
+            properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false),
+        ) {
+            AliflixSurface(Modifier.fillMaxWidth().padding(horizontal=16.dp).testTag("ask-surprise-three"),
+                shape=RoundedCornerShape(28.dp),level=AliflixSurfaceLevel.Content) {
+                LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    item { Row(Modifier.fillMaxWidth().padding(start=4.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("A little unexpected",color=AliflixAccentSecondary,fontSize=11.sp,fontWeight=FontWeight.SemiBold,letterSpacing=1.sp)
+                            Text("Your next three",color=AliflixContentPrimary,fontSize=25.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=4.dp))
+                        }
+                        AliflixIconButton(onClick={surpriseChoices=emptyList()}){Icon(Icons.Rounded.Close,"Close discoveries",tint=AliflixContentSecondary)}
+                    } }
+                    items(surpriseChoices.filterNot{it.media.key in rejected},key={it.media.key}) { pick ->
+                        MobileAskResultCard(pick,{surpriseChoices=emptyList();onOpen(pick.media)},pick.media.key in myListKeys,
+                            {onToggleMyList(pick.media)},editorial=false,onDislike={rejected=rejected+pick.media.key;taste.reject(pick.media)})
+                    }
+                }
             }
         }
     }}

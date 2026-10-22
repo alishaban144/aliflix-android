@@ -25,5 +25,5 @@ internal fun researchBackedAskDailySuggestions(json:JSONObject,type:MediaType):B
     val collection=json.optJSONObject(type.routeName)?:json
     if(collection.optString("source")!="research"||parseAskDailySuggestions(collection,type).isEmpty())return false
     val rows=collection.optJSONArray("results")?:return false
-    return (0 until rows.length()).all{n->val row=rows.optJSONObject(n);row!=null&&row.optDouble("finalScore",0.0)>0.0&&(row.optJSONArray("retrievalSources")?.length()?:0)>0}
+    return (0 until rows.length()).all{n->val row=rows.optJSONObject(n);row!=null&&(row.optJSONArray("retrievalSources")?.length()?:0)>0}
 }
