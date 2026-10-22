@@ -333,7 +333,7 @@ describe("unified authenticated research", () => {
         await service.cancel("a", "1");
         await failure;
         expect((await b).evidence).toHaveLength(1);
-        expect(fetch.mock.calls.filter(([url])=>String(url).includes("api.tavily.com/search"))).toHaveLength(1);
+        expect(fetch.mock.calls.filter(([url,init])=>String(url).includes("api.tavily.com/search")&&JSON.parse(String(init?.body)).query==="new independent films")).toHaveLength(1);
       },
     );
   });

@@ -94,19 +94,18 @@ describe('Gemini-only live identity and security',()=>{
  it('requires authenticated identity for token issuance and tools',async()=>{
   for(const path of ['session','knowledge','close','viewing'])expect((await talkRoute(new Request('https://test/v1/talk/'+path,{method:'POST',body:'{}'}),config))?.status).toBe(401);
  });
- it('allows ordinary shared-network retries after twelve starts while preserving both daily bounds',async()=>{
+ it('ignores obsolete shared-network counters while preserving the global daily bound',async()=>{
   const sub='shared-network-'+crypto.randomUUID(),ip='192.0.2.44';
   const token=await issueIdentity({sub,kind:'guest',exp:Date.now()+60000},config.CURSOR_SIGNING_SECRET);
   const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ip+config.CURSOR_SIGNING_SECRET)))).map(x=>x.toString(16).padStart(2,'0')).join('');
   const quota=env.TALK_SESSIONS.getByName('quota:ip:'+hash);
-  await runInDurableObject(quota,async instance=>expect(await(instance as unknown as TalkSession).reserve(12,24)).toBe(true));
+  await runInDurableObject(quota,async instance=>expect(await(instance as unknown as TalkSession).reserve(24,24)).toBe(true));
   await runInDurableObject(env.TALK_SESSIONS.getByName('user:'+sub),async instance=>{(instance as any).env.GEMINI_API_KEY='test-only';});
   vi.spyOn(globalThis,'fetch').mockImplementation(async()=>Response.json({name:'auth_tokens/shared-network'}));
   const request=(address=ip)=>talkRoute(new Request('https://test/v1/talk/session',{method:'POST',headers:{Authorization:'Bearer '+token,'CF-Connecting-IP':address},body:'{}'}),config);
   expect((await request())?.status).toBe(200);
-  await runInDurableObject(quota,async instance=>expect(await(instance as unknown as TalkSession).reserve(11,24)).toBe(true));
-  expect((await request())?.status).toBe(429);
   await runInDurableObject(env.TALK_SESSIONS.getByName('quota:global'),async instance=>expect(await(instance as unknown as TalkSession).reserve(39,40)).toBe(true));
+  expect((await request())?.status).toBe(429);
   expect((await request('192.0.2.45'))?.status).toBe(429);
  });
  it('keeps new companion tools opt-in and keeps personal taste optional for direct theme requests',()=>{

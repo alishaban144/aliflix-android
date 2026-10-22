@@ -29,11 +29,10 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
   if(!(await env.RECOMMENDATION_RATE_LIMITER.limit({key:'talk-live:'+owner.sub})).success)return json({error:'TRY_LATER'},429);
   const user=env.TALK_SESSIONS.getByName('user:'+owner.sub);
   if(path.endsWith('/session')) {
-   const body=sessionSchema.parse(bodyRaw);const ip=request.headers.get('CF-Connecting-IP')||'unknown';
-   const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ip+env.CURSOR_SIGNING_SECRET)))).map(x=>x.toString(16).padStart(2,'0')).join('');
-   // Shared networks and cancelled connection starts must have enough room for
-   // ordinary conversation retries. The overall daily budget remains bounded.
-   if(!await env.TALK_SESSIONS.getByName('quota:ip:'+hash).reserve(1,24)||!await env.TALK_SESSIONS.getByName('quota:global').reserve(1,40))return json({error:'DAILY_LIMIT'},429);
+   const body=sessionSchema.parse(bodyRaw);
+   // Shared networks must not freeze after connection starts/cancellations.
+   // The per-minute identity limiter and overall daily budget still apply.
+   if(!await env.TALK_SESSIONS.getByName('quota:global').reserve(1,40))return json({error:'DAILY_LIMIT'},429);
    return json(await user.open(body.context));
   }
   if(path.endsWith('/renew')){
