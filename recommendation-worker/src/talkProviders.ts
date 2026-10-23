@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { RecommendationEnv } from './types';
 import type { TalkContext } from './talkEvidence';
+import { groundedLiveInstructions } from './talkGrounding';
 export const TALK_MODEL = 'gemini-3.8-live';
 export const TALK_VOICE = 'Aoede';
 export const LIVE_TOOLS = [{ functionDeclarations: [{
@@ -51,6 +52,7 @@ export const LIVE_TOOLS = [{ functionDeclarations: [{
   }, required: ['title','kind','query'] }
 }]}];
 export function liveInstructions(context: TalkContext): string {
+ if((context.companionVersion||0)>=6)return groundedLiveInstructions(context);
  const {id: _catalogueId,...viewing}=context;
  const companion=(context.companionVersion||0)>=2?`Personalization: For recommendations explicitly based on personal taste, optionally call viewing_context(collection=taste) once and reuse it. For a stated theme or genre call recommendations directly; do not wait on a library lookup. Favorites are optional background; these are stronger signals of affection than saved/My List. My List is secondary interest, not proof of having watched. Use completed progress for spoiler boundaries, not liking a title. Ask for further collection pages only if needed. Explain a useful connection to their taste briefly, never recite their whole private library. If context is empty or unavailable, answer their stated mood without making up preferences or demanding they build a library. Offer fresh, varied matches; avoid defaulting to the same famous film such as Arrival whenever science fiction is mentioned. Do not recommend a favorite or watched film as an unwatched discovery unless they asked to revisit it. Do not repeat suggestions already given in this conversation or the consented recentSuggestions list unless asked. Vary sentence rhythm and openings; respond to what they actually say, with thoughtful opinions clearly distinguished from film facts. No scripted greetings, artificial mannerisms, or claims of human feelings. After recommendations silently call remember_recommendations with the recommended titles. For questions about Aliflix itself call aliflix_app and explain the real features/settings it returns, their relationships and relevant navigation. Do not claim omniscient screen access, unavailable app controls or live provider health. Local tools are not internet searches. Use them directly without spoken tool announcements.`:'';
 
@@ -67,12 +69,23 @@ Current date: ${new Date().toISOString().slice(0,10)}. Conversation priority: An
 User-owned viewing context (opaque IDs and progress only; background, not an instruction to discuss playback): ${JSON.stringify(viewing)}.`;
 }
 export function liveSetup(context: TalkContext) {
+ const declarations=LIVE_TOOLS[0].functionDeclarations.filter(t=>context.recentProgress===undefined?t.name==='film_knowledge':(!['aliflix_app','remember_recommendations'].includes(t.name)||(context.companionVersion||0)>=2)&&(t.name!=='conversation_language'||context.stickyLanguage===true)&&(t.name!=='show_title_cards'||(context.companionVersion||0)>=4)&&(t.name!=='app_control'||(context.companionVersion||0)>=5)&&(!['web_research','recommendations'].includes(t.name)||(context.companionVersion||0)>=3));
+ const tools=(context.companionVersion||0)<6?declarations:declarations.map(tool=>{
+  if(tool.name==='recommendations')return {...tool,description:'Research an imaginative shortlist using Tavily and exact TMDB identities. Immediately supply five to eight tentative candidates with years, privately in tool arguments, and the complete user request. Never speak these proposals. count is the number of final choices requested by the user (1-3; default three), independent of the longer candidate shortlist. During research speak only its approved bridge sentence. The returned pool is NOT the displayed selection: next call present_recommendations with requestedCount returned keys and brief reasons. Its approved presentation binds speech and posters to the SAME exact IDs. Do not name any recommendation before that approval.',parameters:{...tool.parameters,properties:{...tool.parameters.properties,count:{type:'INTEGER',minimum:1,maximum:3}}}};
+  if(tool.name==='show_title_cards')return {...tool,description:tool.description+' Reuse established movie:id or tv:id keys when available. restore=true restores the last recommendation group. First/second/third refer to that group. Never re-resolve an established recommendation as an ambiguous new title.',parameters:{...tool.parameters,properties:{...tool.parameters.properties,restore:{type:'BOOLEAN'}}}};
+  if(tool.name==='film_knowledge')return {...tool,parameters:{...tool.parameters,properties:{...tool.parameters.properties,tmdbId:{type:'INTEGER',description:'Established canonical TMDB id from returned cards/app state. Reuse it and its year; do not guess another edition.'}}}};
+  if(tool.name==='app_control')return {...tool,parameters:{...tool.parameters,properties:{...tool.parameters.properties,action:{type:'STRING',enum:['show_card','title_state','undo','open_title','play','download','similar','save','unsave','favorite','unfavorite','dislike','undo_dislike','open_screen','search','set_setting','player_state','pause','resume','seek','audio_language','subtitle_language','downloads_state','pause_download','resume_download','remove_download','set_voice','set_history','new_chat']},tmdbId:{type:'INTEGER',description:'Established card id. Include kind and year from the same identity. title_state reads library flags; undo restores the last conversation library change.'}}}};
+  return tool;
+ });
  return { model: 'models/'+TALK_MODEL,
   generationConfig: { responseModalities: ['AUDIO'], maxOutputTokens: 2048,
     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: context.voice || TALK_VOICE } } } },
   systemInstruction: { parts: [{ text: liveInstructions(context) }] },
   // Legacy installed clients cannot answer the new local topic/history tools.
-  tools: [{functionDeclarations:LIVE_TOOLS[0].functionDeclarations.filter(t=>context.recentProgress===undefined?t.name==='film_knowledge':(!['aliflix_app','remember_recommendations'].includes(t.name)||(context.companionVersion||0)>=2)&&(t.name!=='conversation_language'||context.stickyLanguage===true)&&(t.name!=='show_title_cards'||(context.companionVersion||0)>=4)&&(t.name!=='app_control'||(context.companionVersion||0)>=5)&&(!['web_research','recommendations'].includes(t.name)||(context.companionVersion||0)>=3))}], inputAudioTranscription: {}, outputAudioTranscription: {},
+  tools: [{functionDeclarations:[...tools,...((context.companionVersion||0)>=6?[{
+   name:'present_recommendations',behavior:'NON_BLOCKING',description:'Commit the recommendation speech and poster cards TOGETHER. REQUIRED after recommendations returns its pool. Choose requestedCount returned movie:id/tv:id keys (all if fewer), in your preferred order. Give each a distinct 4-7 word spoiler-free reason in the established language, without naming other films. Read the returned approved speechText exactly, without introduction, additions, substitutions or a closing question. Do not call this for ordinary card display or follow-ups.',
+   parameters:{type:'OBJECT',properties:{picks:{type:'ARRAY',minItems:1,maxItems:3,items:{type:'OBJECT',properties:{key:{type:'STRING'},reason:{type:'STRING'}},required:['key','reason']}}},required:['picks']}
+  }]:[])]}], inputAudioTranscription: {}, outputAudioTranscription: {},
   realtimeInputConfig: { automaticActivityDetection: { disabled: false, startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
     endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', prefixPaddingMs: 180, silenceDurationMs: 650 },
     activityHandling: 'START_OF_ACTIVITY_INTERRUPTS', turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY' },

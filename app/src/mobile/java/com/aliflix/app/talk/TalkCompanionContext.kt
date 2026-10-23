@@ -31,7 +31,7 @@ internal fun talkAppContext(context:Context):JSONObject {
             .put("recommendationsEnabled",app.recommendationStore.enabled.value))
         .put("actions",JSONArray(listOf("show_title_cards: show, focus or restore real cards in Talk and chat; known cards are local, new cards use the same catalogue search as the app",
             "app_control: show_card, open_title, play (optional season/episode), download (native quality/audio/episode options), similar, search",
-            "app_control: save/unsave My List, favorite/unfavorite, dislike/undo_dislike",
+            "app_control: save/unsave My List, favorite/unfavorite, dislike/undo_dislike; title_state reads these exact flags; undo restores the last conversation library change",
             "app_control: open_screen home, discover, ask, my_list, favorites, history, downloads, settings, account",
             "app_control: set_setting play_next_episode, audio_boost, zoom, auto_subtitles, playback_speed, subtitle_size, subtitle_opacity, subtitle_delay_seconds, subtitle_vertical_offset, preferred_quality, subtitle_language, provider, recommendations_enabled",
             "app_control: player_state, pause, resume, seek, audio_language, subtitle_language on the real active Media3 player")))
@@ -49,7 +49,9 @@ internal fun talkAppContext(context:Context):JSONObject {
             "Settings has inline Auto/Low preferred quality and a read-only Streaming sources list at the end; choosing a source is in the player.",
             "Talk uses Gemini Live, the selected Aoede/Kore/Puck/Charon voice, Tavily research, persistent cards and native app_control actions. It can change the listed settings, manage title lists, open native features, start playback/download options and control the active player. Account verification, download options and destructive confirmations use their real native screens. Stop or leaving releases the microphone."
         )))
-        .put("instruction","These are real native capabilities and current state. For a user action request, USE app_control or show_title_cards; do not merely explain how to do it or claim the app cannot show cards. Only confirm completion from the action result. For an action requiring native options or account verification, open that real screen. Questions about features do not authorize unrelated changes.")
+        .put("settingValues",JSONObject().put("playback_speed",JSONArray(listOf(.5,.75,1.0,1.25,1.5,2.0))).put("preferred_quality",JSONArray(listOf("AUTO","LOW")))
+            .put("providers",JSONArray(com.aliflix.app.model.MobilePlaybackProvider.entries.map{it.name})).put("subtitle_languages",JSONArray(com.aliflix.app.model.SubtitleLanguage.entries.map{it.code})))
+        .put("instruction","These are real native capabilities and current state. For a user action request, USE app_control or show_title_cards. Use canonical id/type/year from conversation for the exact established edition. Read title_state instead of guessing library membership. undo restores only the last Talk library change. Only confirm completion from the action result. Open real native options or account verification when required. Questions about features do not authorize unrelated changes.")
 }
 
 /** A turn-level safety net when Gemini omits the optional visual tool. Never use raw first words. */

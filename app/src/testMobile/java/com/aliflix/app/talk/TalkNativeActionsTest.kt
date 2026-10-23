@@ -28,6 +28,9 @@ class TalkNativeActionsTest {
   assertEquals(listOf(32368),talkCatalogueMatches(rows,"Forbrydelsen","tv",0).map{it.id})
   assertEquals(listOf(247),talkCatalogueMatches(rows,"Killing","movie",1956).map{it.id})
   assertTrue(talkCatalogueMatches(rows,"Unknown unrelated title","tv",0).isEmpty())
+  val feature=row(300668,"Annihilation","movie","2018").copy(tmdbVoteCount=10000)
+  val short=row(883188,"Annihilation","movie","2018").copy(tmdbVoteCount=2)
+  assertEquals(listOf(300668),talkCatalogueMatches(listOf(short,feature),"Annihilation","movie",2018).map{it.id})
  }
  @Test fun explicitListActionsAreIdempotentAndReportActualState()=runBlocking {
   val actions=action();val app=(RuntimeEnvironment.getApplication() as AliflixApplication)
@@ -44,6 +47,14 @@ class TalkNativeActionsTest {
   assertEquals(30f,app.playerSettingsStore.settings.value.subtitleFontSizeSp)
   assertEquals(30.0,result.getJSONObject("current").getDouble("subtitleSizeSp"),0.0)
   assertTrue(runCatching{actions.execute(JSONObject().put("action","set_setting").put("setting","invented"))}.isFailure)
+ }
+ @Test fun undoUsesTheExactEstablishedEditionAndRestoresOnlyTheLastChange()=runBlocking {
+  val actions=action();val app=(RuntimeEnvironment.getApplication() as AliflixApplication)
+  if(app.libraryStore.isInMyList(card.media()))app.libraryStore.toggleMyList(card.media())
+  actions.execute(JSONObject().put("action","save").put("title","it"))
+  assertTrue(app.libraryStore.isInMyList(card.media()))
+  assertFalse(actions.execute(JSONObject().put("action","undo")).value.getBoolean("saved"))
+  assertEquals("nothing_to_undo",actions.execute(JSONObject().put("action","undo")).value.getString("status"))
  }
  @Test fun openingNativeFeaturesIsDeferredAndPreservesExactTitleAndEpisode()=runBlocking {
   val app=(RuntimeEnvironment.getApplication() as AliflixApplication)

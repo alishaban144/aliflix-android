@@ -1,0 +1,64 @@
+package com.aliflix.app.talk
+
+import com.aliflix.app.model.MediaType
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+
+class TalkGroundingTest {
+    private val annihilation=TalkTitleCard(300668,MediaType.MOVIE,"Annihilation","2018","/poster.jpg")
+    private val other=TalkTitleCard(999,MediaType.MOVIE,"Annihilation","2011")
+    @Test fun aReorderedShortlistCommitsItsOwnPostersAndSpeechTogether() {
+        val pool=(1..6).map{TalkTitleCard(it,MediaType.MOVIE,"Film $it","200$it","/poster$it.jpg")}
+        val picks=JSONArray(listOf(5,2,6).map{id->JSONObject().put("key","movie:$id").put("reason","A distinct thoughtful choice")})
+        val plan=talkPresentation(pool,JSONObject().put("picks",picks))
+        assertEquals(listOf(5,2,6),plan.cards.map{it.id})
+        assertEquals(listOf("/poster5.jpg","/poster2.jpg","/poster6.jpg"),plan.cards.map{it.posterPath})
+        assertTrue(talkAnswerNamesAllTitles(plan.speechText,plan.cards,pool))
+        assertEquals(listOf(5,2),talkPresentation(pool,JSONObject().put("picks",JSONArray(listOf(5,2).map{id->JSONObject().put("key","movie:$id").put("reason","A distinct thoughtful choice")})),2).cards.map{it.id})
+        assertTrue(runCatching{talkPresentation(pool,JSONObject().put("picks",JSONArray().put(JSONObject().put("key","movie:99").put("reason","Unknown film"))))}.isFailure)
+        picks.getJSONObject(1).put("key","movie:5")
+        assertTrue(runCatching{talkPresentation(pool,JSONObject().put("picks",picks))}.isFailure)
+    }
+    @Test fun followupsCannotTurnAnEstablishedRecommendationIntoAnEditionQuestion() {
+        val context=TalkCardContext().show(listOf(other)).show(listOf(annihilation))
+        assertEquals(listOf(annihilation),context.question("Tell me more about Annihilation").visible)
+        assertEquals(listOf(annihilation),context.resolve("Annihilation"))
+        assertEquals(listOf(other),context.resolve("Annihilation (2011)"))
+        val args=context.ground(JSONObject().put("title","Annihilation").put("year",2011).put("kind","tv").put("tmdbId",999),"Tell me more about Annihilation")
+        assertEquals(300668,args.getInt("tmdbId"));assertEquals(2018,args.getInt("year"));assertEquals("movie",args.getString("kind"))
+        assertEquals(999,context.ground(args,"Show Annihilation (2011)").getInt("tmdbId"))
+        assertEquals(listOf(annihilation),context.resolve("movie:300668"))
+        assertTrue(talkContinuityTurns(emptyList(),true,context).toString().contains("300668"))
+    }
+    @Test fun aPartialTitleMatchOrWrongSpokenSelectionNeverPassesDelivery() {
+        val bridge=talkResearchBridge("movies about gentlemen","en")
+        assertTrue(talkIsApprovedBridge(bridge,bridge))
+        assertFalse(talkIsApprovedBridge("$bridge Try Arrival, Moon and Gattaca.",bridge))
+        val script="Annihilation (2018): An uncanny journey into change. Arrival (2016): Language reshapes a life. Moon (2009): Isolation and fractured identity."
+        assertTrue(talkSpeechMatchesScript(script.replace(":",", "),script))
+        assertFalse(talkSpeechMatchesScript("$script Try Interstellar too.",script))
+        val cards=listOf(annihilation,TalkTitleCard(1,MediaType.MOVIE,"Arrival"),TalkTitleCard(2,MediaType.MOVIE,"Moon"))
+        assertFalse(talkAnswerNamesAllTitles("Try Annihilation, Ex Machina and Interstellar",cards))
+        assertFalse(talkAnswerNamesAllTitles("Try Annihilation",cards))
+        assertTrue(talkAnswerNamesAllTitles("Annihilation (2018), Arrival and Moon are my three choices.",cards))
+        assertFalse(talkAnswerNamesAllTitles("Annihilation, Arrival, Moon and Interstellar",cards,listOf(TalkTitleCard(3,MediaType.MOVIE,"Interstellar"))))
+        val audio=TalkRecommendationDelivery();audio.hold(byteArrayOf(1,2));audio.clear();audio.hold(byteArrayOf(3,4))
+        assertArrayEquals(byteArrayOf(3,4),audio.drain().single());assertTrue(audio.drain().isEmpty())
+    }
+    @Test fun artworkFormatsAndRestoredGroupsKeepExactIdentities() {
+        val rows=JSONArray("""[{"id":300668,"type":"movie","title":"Annihilation","releaseDate":"2018-02-22","poster_path":"https://image.tmdb.org/t/p/w500/poster.jpg"}]""")
+        assertEquals(annihilation,parseTalkTitles(rows).single())
+        assertNull(talkPosterPath("//evil.example/poster.jpg"));assertNull(talkPosterPath("https://evil.example/poster.jpg"))
+        val group=listOf(TalkTitleCard(1,MediaType.MOVIE,"First"),annihilation,other)
+        val focused=TalkCardContext().show(group).show(listOf(annihilation))
+        assertEquals(listOf(other),focused.resolve("the third one"))
+        assertEquals(group,focused.group)
+        assertEquals(annihilation.id,focused.hydrate(listOf(annihilation.copy(posterPath="/new.jpg"))).visible.single().id)
+        val restored=talkRestoredCards(listOf(TalkLine("assistant","Three choices",titles=group),TalkLine("assistant","Focus",titles=listOf(annihilation.copy(posterPath="/new.jpg")))))
+        assertEquals(group,restored.group)
+        assertEquals("/new.jpg",restored.visible.single().posterPath)
+        assertEquals("/new.jpg",restored.resolve("Annihilation").single().posterPath)
+    }
+}

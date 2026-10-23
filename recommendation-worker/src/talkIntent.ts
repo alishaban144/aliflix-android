@@ -8,7 +8,7 @@ export function talkRecommendationQuery(question:string|undefined,toolQuery:stri
  if(!current)return toolQuery;
  // A relative follow-up needs the model's conversation-grounded expansion.
  // Self-contained requests always replace that expansion.
- return /\b(?:those|these|them|same ones|more like|more of|that kind|similar ones)\b/i.test(current)
+ return /\b(?:those|these|them|same ones|more like|more of|that kind|similar ones|less|still|lighter|darker)\b/i.test(current)
   ? `${toolQuery}\nLatest user follow-up: ${current}` : current;
 }
 

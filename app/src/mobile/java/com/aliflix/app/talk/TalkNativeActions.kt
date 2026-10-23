@@ -20,20 +20,28 @@ internal data class TalkNativeResult(val value:JSONObject,val afterReply:(()->Un
 internal class TalkNativeActions(private val context:Context,private val catalogue:TalkCatalogue,
     private val show:(List<TalkTitleCard>)->Unit) {
     private val app get()=context.applicationContext as AliflixApplication
+    private data class Change(val card:TalkTitleCard,val action:String,val before:Boolean,val after:Boolean)
+    private var lastChange:Change?=null
+    fun clearUndo(){lastChange=null}
     suspend fun execute(args:JSONObject):TalkNativeResult {
         val action=args.optString("action")
-        if(action=="set_setting")return setting(args)
+        if(action=="undo")return undo()
+        if(action=="set_setting"){lastChange=null;return setting(args)}
         if(action=="open_screen"||action=="search")return navigation(args,null)
         if(action in setOf("downloads_state","pause_download","resume_download","remove_download"))return downloads(args)
         if(action in setOf("player_state","pause","resume","seek","audio_language","subtitle_language"))
             return TalkNativeResult(talkPlayerAction(context,args))
-        require(action in setOf("show_card","open_title","play","download","similar","save","unsave","favorite","unfavorite","dislike","undo_dislike")){"Unknown app action"}
-        val cards=catalogue.find(args.optString("title"),args.optString("kind").takeIf{it in setOf("movie","tv")},args.optInt("year"))
+        require(action in setOf("show_card","title_state","open_title","play","download","similar","save","unsave","favorite","unfavorite","dislike","undo_dislike")){"Unknown app action"}
+        val cards=catalogue.find(args.optString("title"),args.optString("kind").takeIf{it in setOf("movie","tv")},args.optInt("year"),args.optInt("tmdbId"))
         if(cards.isEmpty())return TalkNativeResult(JSONObject().put("status","not_found").put("instruction","Catalogue search found no exact title. Ask briefly for the title or edition; do not claim the app cannot show cards."))
         show(cards)
-        if(action=="show_card")return TalkNativeResult(JSONObject().put("status","displayed").put("cards",JSONArray(cards.map{it.json()})).put("instruction","These real title cards ARE now visible in the conversation. Confirm naturally; never claim you cannot display or retrieve cards."))
+        if(action=="show_card")return TalkNativeResult(JSONObject().put("status","displayed").put("cards",JSONArray(cards.map{it.json()})).put("instruction","Continue the substance of the discussion. Do not announce that cards are shown, displayed, visible or on screen. For a card-only request, a brief relevant title remark is enough."))
         if(cards.size!=1)return TalkNativeResult(JSONObject().put("status","choose_edition").put("cards",JSONArray(cards.map{it.json()})).put("instruction","The matching editions are displayed. Ask which one before changing the library or starting playback."))
         val card=cards.single();val media=card.media();val library=app.libraryStore
+        fun current()=when(action){"save","unsave"->library.isInMyList(media);"favorite","unfavorite"->library.isLiked(media);"dislike","undo_dislike"->media.key in AskTaste(context).rejected();else->false}
+        val before=current()
+        if(action=="title_state")return TalkNativeResult(JSONObject().put("status","observed").put("card",card.json())
+            .put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media)).put("disliked",media.key in AskTaste(context).rejected()))
         when(action){
             "save","unsave"->if(library.isInMyList(media)!=(action=="save"))library.toggleMyList(media)
             "favorite","unfavorite"->if(library.isLiked(media)!=(action=="favorite"))library.toggleLike(media)
@@ -41,10 +49,22 @@ internal class TalkNativeActions(private val context:Context,private val catalog
             "undo_dislike"->AskTaste(context).unreject(media)
             else->return navigation(args,card)
         }
+        val after=current();if(before!=after)lastChange=Change(card,action,before,after)
         return TalkNativeResult(JSONObject().put("status","completed").put("title",card.title).put("action",action)
             .put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media)).apply{
                 if(action in setOf("dislike","undo_dislike"))put("disliked",media.key in AskTaste(context).rejected())
             })
+    }
+    private fun undo():TalkNativeResult {
+        val change=lastChange?:return TalkNativeResult(JSONObject().put("status","nothing_to_undo"))
+        lastChange=null
+        val media=change.card.media();val library=app.libraryStore;val taste=AskTaste(context)
+        val current=when(change.action){"save","unsave"->library.isInMyList(media);"favorite","unfavorite"->library.isLiked(media);else->media.key in taste.rejected()}
+        if(current!=change.after)return TalkNativeResult(JSONObject().put("status","changed_since_action").put("instruction","This item changed after your last command. Keep its newer state; explain briefly."))
+        when(change.action){"save","unsave"->library.toggleMyList(media);"favorite","unfavorite"->library.toggleLike(media);else->if(change.before)taste.reject(media)else taste.unreject(media)}
+        show(listOf(change.card))
+        return TalkNativeResult(JSONObject().put("status","completed").put("undone",change.action).put("card",change.card.json()).put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media))
+            .apply{if(change.action in setOf("dislike","undo_dislike"))put("disliked",media.key in taste.rejected())})
     }
     private fun navigation(args:JSONObject,card:TalkTitleCard?):TalkNativeResult {
         val action=args.optString("action")

@@ -40,6 +40,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private val accountListener=FirebaseAuth.AuthStateListener { auth ->
         val owner=auth.currentUser?.uid ?: "guest"
         if(owner!=sessionOwner)scope.launch {
+            nativeActions.clearUndo()
             textSend?.cancel();suspendSession();sessionOwner=owner
             ephemeral=null;backendSession=null;resumeHandle=null;userTurn.incrementAndGet()
             prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()
@@ -94,7 +95,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun beginUserTurn() {
         markStoppedTurn()
         userTurn.incrementAndGet();responseTurn=-1L;turnHasAudio=false;inputTurnActive=true;continueAfterReconnect=false
-        pendingTitles=emptyList();awaitingToolAnswer=false;pendingAnswerNeedsTitle=false;pendingToolReply=null;toolAnswerNudges=0
+        pendingTitles=emptyList();awaitingToolAnswer=false;pendingAnswerNeedsTitle=false;pendingToolReply=null;toolAnswerNudges=0;recommendationDelivery.clear();deliveryCorrections=0;recommendationLookup=false;recommendationPool=emptyList();bridgeDelivered=false
         pendingNativeNavigation=null
         silentReplyNudges=0
         debugRecommendationCount=0;debugRecommendationYears=emptyList();debugRecommendationIssue=""
@@ -148,6 +149,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         sendText(question)
     }
     fun newChat() {
+        nativeActions.clearUndo()
         archiveReadSequence++
         continueAfterReconnect=false
         markStoppedTurn()
@@ -167,7 +169,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if(ticket!=archiveReadSequence||owner!=sessionOwner||closed)return@launch
         if(chat==null){update { it.copy(phase="Ready") };return@launch}
         val restored=talkArchiveResumeLines(chat.lines)
-        newChat();chatId=chat.id;persistedLines=restored;muted=true;update { it.copy(lines=restored,words=chat.title.take(32),textMode=true,muted=true,conversationId=chatId,cards=TalkCardContext(known=restored.flatMap{line->line.titles}.distinctBy{card->card.key}.takeLast(24)).show(restored.lastOrNull{line->line.titles.isNotEmpty()}?.titles.orEmpty())) }
+        newChat();chatId=chat.id;persistedLines=restored;muted=true;update { it.copy(lines=restored,words=chat.title.take(32),textMode=true,muted=true,conversationId=chatId,cards=talkRestoredCards(restored)) }
         if(state.value.textMode)connect()
       }
     }
@@ -198,7 +200,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             if(speaking)answerDeadline.awaiting(3000)
             else if(awaitingToolAnswer&&pendingToolReply!=null&&toolAnswerNudges++<1) {
                 assistantLine=-1;outputText="";turnHasAudio=false;responseTurn=-1L
-                val instruction="The asynchronous lookup for the latest question is complete. Give the substantive answer now using these returned titles or facts. Do not repeat a search, acknowledgement or filler. Latest question: "+lastQuestion+"\nCompleted lookup: "+pendingToolReply.toString().take(16000)
+                val instruction=(if(recommendationPool.isNotEmpty()&&recommendationLookup)"The recommendation pool is ready. Call present_recommendations now with requestedCount returned keys and brief reasons. Do not speak titles before that tool approves speechText. " else "The asynchronous lookup is complete. Answer using its facts or read its approved speechText exactly. ")+"Do not repeat a search, acknowledgement or filler. Latest question: "+lastQuestion+"\nCompleted lookup: "+pendingToolReply.toString().take(16000)
                 val continuation=JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text",instruction))))).put("turnComplete",true)
                 emit(JSONObject().put("clientContent",continuation))
                 answerDeadline.awaiting(12000)
@@ -254,6 +256,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var pendingTitles:List<TalkTitleCard> = emptyList()
     private var awaitingToolAnswer=false
     private var pendingAnswerNeedsTitle=false
+    private var recommendationLookup=false
+    private var recommendationBridge=""
+    private var bridgeDelivered=false
+    private var recommendationPool:List<TalkTitleCard> = emptyList()
+    private var recommendationCount=3
+    private val recommendationDelivery=TalkRecommendationDelivery()
+    private var deliveryCorrections=0
+    internal var debugDeliveryRejections=0
     private var pendingToolReply:JSONObject?=null
     private var toolAnswerNudges=0
     private val tools = java.util.concurrent.ConcurrentHashMap<String,Job>()
@@ -335,7 +345,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("companionVersion",5).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("companionVersion",6).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
@@ -477,6 +487,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     private suspend fun disconnected(ticket:Long,limited:Boolean) {
         if(ticket!=epoch||!permitted)return
+        if(state.value.sending||tools.isNotEmpty()||awaitingToolAnswer)continueAfterReconnect=true
+        commitQuestion()
         update{it.copy(phase="Reconnecting",level=0f)}
         readyWatchdog?.cancel();stopAudio();cancelSocket(ws);ws=null;inputText="";outputText="";assistantLine=-1;finalReferences=emptyList()
         if(limited||++reconnects>3||SystemClock.elapsedRealtime()-startedAt>1200000) {
@@ -500,11 +512,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             readyWatchdog?.cancel();reconnects=0;socketReady=true
             if(continueAfterReconnect){
                 continueAfterReconnect=false
-                scope.launch {delay(750);if(ticket==epoch&&permitted&&!speaking)emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text","Continue answering the latest user question in the restored dialogue. If audio was interrupted, continue from the last complete sentence. Keep the established language, title and spoiler boundaries. Avoid repeating completed speech or acknowledging this reconnection."))))).put("turnComplete",true)))}
+                scope.launch {delay(750);if(ticket==epoch&&permitted&&!speaking){emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text","Finish this unanswered user request: "+lastQuestion+". Reuse the established exact title identities in app state: "+state.value.cards.snapshot()+". If its lookup was interrupted, perform that lookup again. Keep the established language and spoiler boundaries. Avoid repeating completed speech or acknowledging this reconnection."))))).put("turnComplete",true)));answerDeadline.awaiting(45000)}}
             }
             if(state.value.lines.isNotEmpty()) {
                 val restored=if(textSend?.isActive==true&&state.value.lines.lastOrNull()?.role=="user")state.value.lines.dropLast(1) else state.value.lines
-                val history=talkContinuityTurns(restored,resuming)
+                val history=talkContinuityTurns(restored,resuming,state.value.cards)
                 if(history.length()>0)emit(JSONObject().put("clientContent",JSONObject().put("turns",history).put("turnComplete",false)))
             }
             // Prime remote VAD before exposing the microphone as ready. Very
@@ -528,6 +540,32 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             val names=(0 until calls.length()).map{calls.getJSONObject(it).optString("name")}
             for(i in 0 until calls.length()) {
                 val call=calls.getJSONObject(i);val id=call.getString("id")
+                if(call.optString("name")=="present_recommendations") {
+                    if(BuildConfig.DEBUG)debugToolCalls.merge("present_recommendations",1){a,b->a+b}
+                    val presentation=runCatching{talkPresentation(recommendationPool,call.optJSONObject("args")?:JSONObject(),recommendationCount)}
+                    if(presentation.isFailure) {
+                        emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"present_recommendations",JSONObject().put("status","invalid_selection").put("instruction",presentation.exceptionOrNull()?.message).put("allowedKeys",JSONArray(recommendationPool.map{it.key})),"WHEN_IDLE")))))
+                        continue
+                    }
+                    val plan=presentation.getOrThrow()
+                    val reply=if(recommendationResultTurn==userTurn.get()&&pendingToolReply?.has("speechText")==true)pendingToolReply!! else {
+                        pendingTitles=plan.cards;recommendationResultTurn=userTurn.get()
+                        update{it.copy(cards=it.cards.show(plan.cards,replaceGroup=true))}
+                        hydrateCards(plan.cards.filter{it.posterPath==null},userTurn.get(),ticket)
+                        debugRecommendationCount=plan.cards.size
+                        JSONObject().put("status","approved").put("results",JSONArray(plan.cards.map{it.json()})).put("speechText",plan.speechText)
+                            .put("instruction","Read EXACTLY speechText as the entire brief recommendation answer. No introduction, additions, alternatives, rephrasing or closing question. These exact IDs own both the poster cards and the speech. Continue naturally for later follow-ups. Do not announce card display or on-screen visibility.")
+                    }
+                    recommendationLookup=false;pendingAnswerNeedsTitle=true;awaitingToolAnswer=true;pendingToolReply=reply;toolAnswerNudges=0
+                    recommendationDelivery.clear();outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"present_recommendations",reply,"INTERRUPT")))))
+                    answerDeadline.awaiting(18000)
+                    continue
+                }
+                if((recommendationLookup||pendingAnswerNeedsTitle)&&call.optString("name") in setOf("show_title_cards","film_knowledge","app_control")) {
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,call.getString("name"),JSONObject().put("status","presentation_pending").put("instruction","Finish the current recommendation presentation using ALL and ONLY the returned cards first. Do not replace the selection or perform another title lookup. Then handle any additional explicit user command."),"SILENT")))))
+                    continue
+                }
                 val controlScheduling=talkControlScheduling(names,i,speaking||outputText.isNotBlank(),tools.isNotEmpty())
                 if(BuildConfig.DEBUG)debugToolCalls.merge(call.optString("name"),1){a,b->a+b}
                 if(call.optString("name")=="conversation_language") {
@@ -540,9 +578,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     continue
                 }
                 if(call.optString("name") in setOf("aliflix_app","remember_recommendations")) {
-                    val result=if(call.optString("name")=="aliflix_app")talkAppContext(context).put("visibleCards",JSONArray(state.value.cards.visible.map{it.json()})).put("recentCards",JSONArray(state.value.cards.known.take(12).map{it.json()})) else {
+                    val result=if(call.optString("name")=="aliflix_app")talkAppContext(context).put("conversation",state.value.cards.snapshot()) else {
                         val a=call.optJSONObject("args")?.optJSONArray("titles")?:JSONArray()
-                        val titles=(0 until minOf(a.length(),8)).mapNotNull{validatedTalkTopic(a.optString(it))}
+                        val titles=(0 until minOf(a.length(),8)).flatMap{state.value.cards.resolve(a.optString(it))}.filter{card->state.value.cards.group.any{it.key==card.key}}.map{it.title}
                         if(state.value.keepHistory)prefs.edit().putString("suggestions",JSONArray((titles+readSuggestions()).distinct().take(24)).toString())
                             .putLong("suggestions-at",System.currentTimeMillis()).apply()
                         JSONObject().put("accepted",true)
@@ -559,7 +597,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                             delay(650)
                             if(!turnHasAudio&&outputText.isBlank()&&ticket==epoch&&turn==userTurn.get())emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"app_control",JSONObject().put("status","in_progress").put("instruction","The requested native app action is being prepared. Say one short contextual bridge if needed, then wait for its final result. Do not claim success yet or call another tool."),"WHEN_IDLE",willContinue=true)))))
                         }
-                        val result=try{executeNativeCommand(call.optJSONObject("args")?:JSONObject())}
+                        val result=try{executeNativeCommand(state.value.cards.ground(call.optJSONObject("args")?:JSONObject(),inputText.ifBlank{lastQuestion}))}
                         catch(cancelled:CancellationException){throw cancelled}
                         catch(error:Exception){TalkNativeResult(JSONObject().put("status","failed").put("reason",error.message.orEmpty().take(180)).put("instruction","This specific native action failed. Do not claim it succeeded or that all app controls are unavailable. Offer the matching native screen or a corrected argument."))}
                         bridge.cancel()
@@ -593,17 +631,21 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     val requested=(0 until minOf(names.length(),3)).map{names.optString(it)}
                     val keepRecommendationGroup=recommendationResultTurn==userTurn.get()&&state.value.cards.visible.size>1&&requested.size==1
                     val cards=if(keepRecommendationGroup)state.value.cards.visible
-                        else if(requested.isEmpty())state.value.cards.visible.ifEmpty{state.value.cards.known.take(3)} else state.value.cards.select(requested)
+                        else if(args.optBoolean("restore"))state.value.cards.group
+                        else if(requested.isEmpty())state.value.cards.visible.ifEmpty{state.value.cards.known.take(3)} else requested.flatMap{state.value.cards.resolve(it,args.optString("kind").takeIf{v->v in setOf("movie","tv")},args.optInt("year"))}
                     if(keepRecommendationGroup||args.optBoolean("dismiss")||cards.size==requested.size&&cards.isNotEmpty()||requested.isEmpty()&&cards.isNotEmpty()) {
                         update{it.copy(cards=if(args.optBoolean("dismiss"))it.cards.copy(visible=emptyList()) else it.cards.show(cards))}
                         pendingTitles=if(args.optBoolean("dismiss"))emptyList() else cards
                         emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"show_title_cards",
-                            JSONObject().put("shown",JSONArray(pendingTitles.map{it.json()})).put("instruction","The cards are now on screen. Continue answering naturally; do not claim that showing cards is unavailable."),controlScheduling)))))
+                            JSONObject().put("shown",JSONArray(pendingTitles.map{it.json()})).put("instruction","Continue the discussion naturally. Do not announce that a card is shown, displayed, visible or on screen. For a card-only request, a brief relevant title remark is enough."),controlScheduling)))))
                         continue
                     }
                     // A newly named title uses catalogue identity only, not plot research.
                 }
                 if(call.optString("name")=="film_knowledge") {
+                    val args=state.value.cards.ground(call.optJSONObject("args")?:JSONObject(),inputText.ifBlank{lastQuestion})
+                    val established=state.value.cards.resolve(args.optString("title"),args.optString("kind").takeIf{it in setOf("movie","tv")},args.optInt("year"),args.optInt("tmdbId")).singleOrNull()
+                    established?.let{args.put("title",it.title).put("kind",it.type.routeName).put("year",it.year.toIntOrNull()).put("tmdbId",it.id)};call.put("args",args)
                     if(BuildConfig.DEBUG)debugKnowledgeRequest=call.optJSONObject("args")?.toString().orEmpty()
                     val title=call.optJSONObject("args")?.optString("title").orEmpty();rememberFilmTopic(title)
                     validatedTalkTopic(title)?.let{topic->update{it.copy(words=topic,cards=it.cards.topic(topic))}}
@@ -617,13 +659,17 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 val toolTurn=userTurn.get()
                 val toolQuestion=inputText.ifBlank { lastQuestion }
                 val toolSession=ephemeral!!.getString("session")
+                if(call.optString("name")=="recommendations") {
+                    recommendationLookup=true;recommendationBridge=talkResearchBridge(toolQuestion,responseLanguage)
+                    recommendationDelivery.clear()
+                }
                 if(call.optString("name") in setOf("web_research","recommendations")) answerDeadline.awaiting(45000)
                 val lookupJob=scope.launch(start=CoroutineStart.LAZY) {
                     val bridge=launch {
                       delay(650)
-                      if(call.optString("name") in setOf("web_research","recommendations","film_knowledge","show_title_cards")&&!turnHasAudio&&outputText.isBlank()&&ticket==epoch&&toolTurn==userTurn.get()) {
-                        val pending=JSONObject().put("status","in_progress").put("instruction","The lookup is running and its final result will follow automatically. Say ONE brief natural bridging sentence now, tailored to the user's question in the established language. Do not give titles or facts yet, repeat the question, ask for clarification, or call another tool. Then wait for the final result. User question: "+toolQuestion.take(800))
-                        emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,call.getString("name"),pending,"WHEN_IDLE",willContinue=true)))))
+                      if(call.optString("name") in setOf("web_research","recommendations","film_knowledge","show_title_cards")&&(recommendationLookup||!turnHasAudio&&outputText.isBlank())&&ticket==epoch&&toolTurn==userTurn.get()) {
+                        val pending=JSONObject().put("status","in_progress").put("instruction",if(recommendationLookup)"The search is running. Speak EXACTLY this one bridge sentence, with no introduction, titles, additions or further tools: $recommendationBridge Then wait silently for the final result, which follows automatically." else "The lookup is running and its final result will follow automatically. Say ONE brief natural bridging sentence now, tailored to the user's question in the established language. Do not give titles or facts yet, repeat the question, ask for clarification, or call another tool. Then wait for the final result. User question: "+toolQuestion.take(800))
+                        emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,call.getString("name"),pending,if(recommendationLookup)"INTERRUPT" else "WHEN_IDLE",willContinue=true)))))
                       }
                     }
                     val result=runCatching {
@@ -645,10 +691,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         }
                         else if(call.optString("name")=="show_title_cards") {
                             val cards=catalogue.cards(call.getJSONObject("args"))
-                            JSONObject().put("titles",JSONArray(cards.map{it.json()})).put("instruction",if(cards.isNotEmpty())"These real catalogue cards ARE now displayed in the app. Confirm naturally; never claim you cannot show or retrieve cards." else "No exact title was found in catalogue search. Ask for the title or edition briefly. The app CAN show cards; only this identity needs clarification.")
+                            JSONObject().put("titles",JSONArray(cards.map{it.json()})).put("instruction",if(cards.isNotEmpty())"Continue the substance of the discussion. Do not announce card display or on-screen visibility. For a card-only request, give a brief relevant title remark." else "No exact title was found in catalogue search. Ask for the title or edition briefly. The app CAN show cards; only this identity needs clarification.")
                         }
                         else if(call.optString("name") in setOf("web_research","recommendations")) post(if(call.optString("name")=="web_research")"research" else "recommendations",
-                            JSONObject().put("session",toolSession).put("requestId",toolRequestId).put("question",toolQuestion.take(1600)).put("request",call.getJSONObject("args")),43000)
+                            JSONObject().put("session",toolSession).put("requestId",toolRequestId).put("question",toolQuestion.take(1600)).put("request",JSONObject(call.getJSONObject("args").toString()).apply{if(call.optString("name")=="recommendations")put("excludeTitles",JSONArray(state.value.cards.known.map{it.title}.distinct().take(24)))}),43000)
                         else post("knowledge",JSONObject().put("session",toolSession)
                             .put("question",toolQuestion.take(1600)).put("request",call.getJSONObject("args")))
                     }
@@ -662,6 +708,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         }
                     bridge.cancel()
                     if(ticket==epoch&&permitted&&toolTurn==userTurn.get()&&id !in cancelledTools) {
+                        if(call.optString("name")=="recommendations")recommendationLookup=false
                         if(BuildConfig.DEBUG){
                             if(call.optString("name")=="film_knowledge")debugEpisodeEvidence=result.optJSONArray("evidence")?.toString().orEmpty()
                             if(call.optString("name")=="web_research")debugWebEvidenceCount=result.optJSONArray("evidence")?.length()?:0
@@ -674,15 +721,18 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         result.optJSONArray("results")?.let{a->for(n in 0 until minOf(8,a.length()))rememberFilmTopic(a.optJSONObject(n)?.optString("title").orEmpty())}
                         val references=result.optJSONArray("evidence")
                         finalReferences=references?.let {a->(0 until a.length()).map {n->a.getJSONObject(n).let {TalkReference(it.getString("title"),it.getString("url"),it.optString("license",it.optString("attribution","Source")))}}}.orEmpty()
-                        val returnedTitles=parseTalkTitles(result.optJSONArray("results")?:result.optJSONArray("titles"))
-                        if(returnedTitles.isNotEmpty()) {
+                        val needsPresentation=call.optString("name")=="recommendations"&&result.optBoolean("requiresPresentation")
+                        val returnedTitles=parseTalkTitles(result.optJSONArray("results")?:result.optJSONArray("titles"),if(needsPresentation)8 else 3)
+                        if(needsPresentation&&returnedTitles.isNotEmpty()){recommendationPool=returnedTitles;recommendationCount=result.optInt("requestedCount",3).coerceIn(1,3);recommendationLookup=true}
+                        else if(returnedTitles.isNotEmpty()) {
                             if(call.optString("name")=="recommendations")recommendationResultTurn=toolTurn
                             pendingTitles=returnedTitles
-                            update{it.copy(cards=it.cards.show(returnedTitles))}
+                            update{it.copy(cards=it.cards.show(returnedTitles,replaceGroup=call.optString("name")=="recommendations"))}
+                            hydrateCards(returnedTitles.filter{it.posterPath==null},toolTurn,ticket)
                         }
                         // A spoken bridge is not the answer. Force the completed
                         // lookup back into generation and fence its earlier completion.
-                        awaitingToolAnswer=true;pendingAnswerNeedsTitle=call.optString("name")=="recommendations";pendingToolReply=result;toolAnswerNudges=0
+                        awaitingToolAnswer=true;pendingAnswerNeedsTitle=!needsPresentation&&call.optString("name")=="recommendations"&&returnedTitles.isNotEmpty();pendingToolReply=result;toolAnswerNudges=0;recommendationDelivery.clear();deliveryCorrections=0
                         assistantLine=-1;outputText="";turnHasAudio=false;responseTurn=-1L;debugTurnCompleteAt=0
                         val response=talkFunctionResponse(id,call.getString("name"),result,"INTERRUPT")
                         if(BuildConfig.DEBUG&&call.optString("name")=="film_knowledge")debugKnowledgeAppliedAt=SystemClock.elapsedRealtime()
@@ -697,6 +747,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         }
         message.optJSONObject("serverContent")?.let { content->
             if(content.optBoolean("interrupted")) {
+                recommendationDelivery.clear()
                 debugInterruptions++;sequence++;interruptOutput();assistantLine=-1;outputText="";if(!awaitingToolAnswer)finalReferences=emptyList()
                 // FunctionResponse INTERRUPT can also interrupt model output.
                 // Gemini's explicit toolCallCancellation IDs own tool cancellation;
@@ -709,7 +760,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 inputTurnActive=false;answerDeadline.clear()
                 outputText=appendTranscript(outputText,text)
                 commitQuestion()
-                update { v->
+                if(!pendingAnswerNeedsTitle&&!recommendationLookup)update { v->
                     val lines=v.lines.toMutableList();val line=TalkLine("assistant",outputText,finalReferences,titles=pendingTitles)
                     if(assistantLine in lines.indices)lines[assistantLine]=line else{lines.add(line);assistantLine=minOf(lines.lastIndex,63)}
                     v.copy(lines=lines.takeLast(64))
@@ -725,6 +776,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(bytes.isNotEmpty()){turnHasAudio=true;answerDeadline.clear()}
                 if(bytes.isNotEmpty())responseTurn=userTurn.get()
                 require(bytes.size<=192000&&bytes.size%2==0)
+                if(pendingAnswerNeedsTitle||recommendationLookup){recommendationDelivery.hold(bytes);continue}
                 val buffer=audio?:continue
                 val reserved=buffer.bytes.addAndGet(bytes.size)
                 if(reserved>4_800_000 || buffer.chunks.trySend(sequence to bytes).isFailure) {
@@ -735,15 +787,57 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             } }
             // Native generation completion can precede turnComplete while tools
             // settle. It is a finished audio stream, never a stalled answer.
-            if(content.optBoolean("generationComplete")){endOfAudio=true;if(turnHasAudio)answerDeadline.clear()}
+            if(content.optBoolean("generationComplete")){
+                endOfAudio=true;if(turnHasAudio)answerDeadline.clear()
+                if(recommendationLookup&&!bridgeDelivered&&talkIsApprovedBridge(outputText,recommendationBridge)) {
+                    bridgeDelivered=true
+                    addLine(TalkLine("assistant",outputText))
+                    for(bytes in recommendationDelivery.drain())enqueueAudio(bytes,ticket)
+                    outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L
+                    answerDeadline.awaiting(45000)
+                }
+            }
             if(content.optBoolean("turnComplete")&&inputTurnActive&&!awaitingToolAnswer&&!turnHasAudio&&outputText.isBlank()&&tools.isEmpty()&&silentReplyNudges++<1) {
                 // Some Live turns end after a silent local control. Completing
                 // that control must never complete the user's unanswered turn.
                 continueSilentReply();answerDeadline.awaiting(12000)
             }
             if(content.optBoolean("turnComplete")&&responseTurn==userTurn.get()&&(turnHasAudio||outputText.isNotBlank())) {
+                if(recommendationLookup) {
+                    if(!bridgeDelivered&&talkIsApprovedBridge(outputText,recommendationBridge)) {
+                        bridgeDelivered=true
+                        addLine(TalkLine("assistant",outputText))
+                        for(bytes in recommendationDelivery.drain())enqueueAudio(bytes,ticket)
+                    }else recommendationDelivery.clear()
+                    outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L;endOfAudio=true
+                    answerDeadline.awaiting(45000)
+                    return
+                }
+                if(pendingAnswerNeedsTitle) {
+                    val script=pendingToolReply?.optString("speechText").orEmpty()
+                    if(!talkAnswerNamesAllTitles(outputText,pendingTitles,if(script.isBlank())state.value.cards.known else emptyList())||script.isNotBlank()&&!talkSpeechMatchesScript(outputText,script)) {
+                        recommendationDelivery.clear();debugDeliveryRejections++
+                        outputText="";turnHasAudio=false;responseTurn=-1L
+                        if(deliveryCorrections++<2) {
+                            val script=pendingTitles.joinToString("; "){it.title+" ("+it.year+")"}
+                            val correction=if(pendingToolReply?.optString("speechText").orEmpty().isNotBlank())"Read EXACTLY the following completed recommendation presentation. Do not introduce, rephrase, expand or close it, or call a tool: "+pendingToolReply!!.getString("speechText") else "The recommendation presentation was not delivered because it did not match the selected cards. Speak a short answer now in the established language, naming ALL and ONLY these exact titles, in this order: $script. Keep their canonical names. One brief reason per title is enough. Do not search, change cards, ask a question, mention the correction, or name alternatives. This is the completed result of the latest user request: $lastQuestion."
+                            emit(JSONObject().put("clientContent",JSONObject().put("turns",JSONArray().put(JSONObject().put("role","user").put("parts",JSONArray().put(JSONObject().put("text",correction))))).put("turnComplete",true)))
+                            answerDeadline.awaiting(20000)
+                        } else {
+                            // Keep usable results on a provider failure, without ever
+                            // playing contradictory speech or retrying indefinitely.
+                            addLine(TalkLine("assistant",pendingTitles.joinToString(" · "){it.title+" ("+it.year+")"},finalReferences,titles=pendingTitles))
+                            awaitingToolAnswer=false;pendingAnswerNeedsTitle=false;pendingToolReply=null
+                            update{it.copy(sending=false,phase="Reply unavailable")};answerDeadline.clear();endOfAudio=true;debugTurnCompleteAt=SystemClock.elapsedRealtime();persistHistory()
+                        }
+                        return
+                    }
+                    pendingAnswerNeedsTitle=false
+                    addLine(TalkLine("assistant",outputText,finalReferences,titles=pendingTitles))
+                    for(bytes in recommendationDelivery.drain())enqueueAudio(bytes,ticket)
+                }
                 update{it.copy(words=completedTalkTopic(outputText,it.words,synchronized(knownFilmTopics){knownFilmTopics.toList()}))}
-                if(awaitingToolAnswer&&(!pendingAnswerNeedsTitle||pendingTitles.isEmpty()||talkAnswerNamesTitle(outputText,pendingTitles))) {awaitingToolAnswer=false;pendingToolReply=null}
+                if(awaitingToolAnswer) {awaitingToolAnswer=false;pendingToolReply=null}
                 val pending=tools.isNotEmpty()||awaitingToolAnswer
                 inputTurnActive=false;update { it.copy(sending=pending,phase=if(pending)"Thinking" else if(it.textMode)"Listening" else it.phase) }
                 if(!pending)debugTurnCompleteAt=SystemClock.elapsedRealtime();endOfAudio=true;assistantLine=-1;outputText="";finalReferences=emptyList()
@@ -759,6 +853,17 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             val a=JSONArray(prefs.getString("suggestions","[]"));(0 until minOf(a.length(),24)).map{a.getString(it)}
         }
     }.getOrDefault(emptyList())
+    private fun enqueueAudio(bytes:ByteArray,ticket:Long) {
+        val buffer=audio?:return
+        val reserved=buffer.bytes.addAndGet(bytes.size)
+        if(reserved>4_800_000||buffer.chunks.trySend(sequence to bytes).isFailure){buffer.bytes.addAndGet(-bytes.size);scope.launch{disconnected(ticket,false)}}
+    }
+    private fun hydrateCards(cards:List<TalkTitleCard>,turn:Long,ticket:Long) {
+        cards.forEach{card->scope.launch {
+            val hydrated=runCatching{catalogue.hydrate(card)}.getOrNull()?:return@launch
+            if(ticket==epoch&&turn==userTurn.get())update{it.copy(cards=it.cards.hydrate(listOf(hydrated)))}
+        }}
+    }
     private fun commitQuestion() {
         if(inputText.isBlank())return
         stalledRecoveries=0
@@ -905,6 +1010,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         }
     }
     private fun stopAudio() {
+        recommendationDelivery.clear()
         answerDeadline.clear()
         captureJob?.cancel(); captureJob = null
         val record=capture;capture=null

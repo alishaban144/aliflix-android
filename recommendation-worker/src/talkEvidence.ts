@@ -3,10 +3,10 @@ import { boundedJson } from './talkProviders';
 import type { RecommendationEnv } from './types';
 export const TalkLibraryItemSchema=z.object({id:z.number().int().positive().optional(),imdbId:z.string().regex(/^tt\d{1,12}$/).optional(),kind:z.enum(['saved','favorite','watched']),type:z.enum(['movie','tv'])}).strict().refine(v=>!!v.id||!!v.imdbId);
 export const TalkViewingPageSchema=z.object({collection:z.enum(['taste','favorite','saved','watched']),offset:z.number().int().min(0).max(100000),total:z.number().int().min(0).max(100000)}).strict();
-export const TalkContextSchema=z.object({companionVersion:z.union([z.literal(2),z.literal(3),z.literal(4),z.literal(5)]).optional(),voice:z.enum(['Aoede','Kore','Puck','Charon']).optional(),
+export const TalkContextSchema=z.object({companionVersion:z.union([z.literal(2),z.literal(3),z.literal(4),z.literal(5),z.literal(6)]).optional(),voice:z.enum(['Aoede','Kore','Puck','Charon']).optional(),
  rejected:z.array(z.object({id:z.number().int().positive(),type:z.enum(['movie','tv'])}).strict()).max(16).optional(),
  libraryCounts:z.object({favorite:z.number().int().min(0).max(100000),saved:z.number().int().min(0).max(100000),watched:z.number().int().min(0).max(100000)}).strict().optional(),
- recentSuggestions:z.array(z.string().min(1).max(48)).max(24).optional(),stickyLanguage:z.boolean().optional(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional(),id:z.number().int().positive().optional(),type:z.enum(['movie','tv']).optional(),
+ recentSuggestions:z.array(z.string().min(1).max(180)).max(24).optional(),stickyLanguage:z.boolean().optional(),responseLanguage:z.string().regex(/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/).optional(),id:z.number().int().positive().optional(),type:z.enum(['movie','tv']).optional(),
  imdbId:z.string().regex(/^tt\d{1,12}$/).optional(),season:z.number().int().min(0).max(1000).default(1),episode:z.number().int().min(1).max(10000).default(1),
  position:z.number().finite().min(0).max(604800).default(0),completed:z.boolean().default(false),
  library:z.array(TalkLibraryItemSchema).max(48).default([]),
@@ -16,7 +16,7 @@ export const TalkContextSchema=z.object({companionVersion:z.union([z.literal(2),
  viewedRanges:z.array(z.object({season:z.number().int().min(0).max(1000),first:z.number().int().min(1).max(10000),last:z.number().int().min(1).max(10000)}).strict().refine(r=>r.last>=r.first)).max(120).default([])}).strict();
 export type TalkContext=z.infer<typeof TalkContextSchema>;
 export type Evidence={id:string;title:string;text:string;url:string;license:string;season?:number;episode?:number};
-export const KnowledgeSchema=z.object({title:z.string().trim().min(1).max(120),year:z.number().int().min(1880).max(2100).optional(),
+export const KnowledgeSchema=z.object({title:z.string().trim().min(1).max(120),year:z.number().int().min(1880).max(2100).optional(),tmdbId:z.number().int().positive().optional(),
  kind:z.enum(['movie','tv']),season:z.number().int().min(0).max(1000).optional(),episode:z.number().int().min(1).max(10000).optional(),
  query:z.string().trim().max(500)}).strict();
 export type KnowledgeRequest=z.infer<typeof KnowledgeSchema>;

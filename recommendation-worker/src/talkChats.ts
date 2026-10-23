@@ -1,5 +1,5 @@
 import { z } from 'zod';
-const titleCard=z.object({id:z.number().int().positive(),type:z.enum(['movie','tv']),title:z.string().min(1).max(180),year:z.string().max(4),posterPath:z.string().max(200).regex(/^\/(?!\/)/).optional()}).strict();
+const titleCard=z.object({id:z.number().int().positive(),type:z.enum(['movie','tv']),title:z.string().min(1).max(180),originalTitle:z.string().min(1).max(180).optional(),year:z.string().max(4),posterPath:z.string().max(200).regex(/^\/(?!\/)/).optional()}).strict();
 const reference = z.object({ title:z.string().max(160), url:z.url().max(600).refine(v=>new URL(v).protocol==='https:'), license:z.string().max(240) }).strict();
 export const TalkChatSchema = z.object({
   id:z.string().uuid(), title:z.string().trim().min(1).max(100),

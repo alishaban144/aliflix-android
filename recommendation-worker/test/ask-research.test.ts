@@ -370,6 +370,12 @@ describe("unified authenticated research", () => {
         expect(similar.results.some(v=>v.tmdbId===1)).toBe(true);
         expect(similar.results.some(v=>v.tmdbId===2)).toBe(true);
         expect(similar.results.some(v=>v.tmdbId===3)).toBe(false);
+        const beforeHints=calls.length;
+        const shortlist=await service.recommend('talk-owner',request({mediaType,query:'Thoughtful science fiction recommendations',candidateHints:titles.slice(1,8),pageSize:8}));
+        expect(shortlist.results).toHaveLength(7);
+        expect(shortlist.metrics).toMatchObject({geminiCalls:0,clefCalls:0,pipeline:'tavily-gemini-live-tmdb'});
+        expect(shortlist.researchBrief?.excerpts[0]).toMatchObject({url:'https://www.bfi.org.uk/list',text:'Distinctive movies about identity.'});
+        expect(calls.length-beforeHints).toBe(1);
       } finally {Object.assign(e,old);}
     });
   });
@@ -377,6 +383,8 @@ describe("unified authenticated research", () => {
 
 it("enforces declared genres and maps TV catalogue genres without weakening hard filters", () => {
   const empty = planFilters({});
+  expect(researchFilters("movie",empty,empty,"Recommend three thoughtful science fiction movies, with one short reason each.").includedGenres).toEqual(["Science Fiction"]);
+  expect(researchFilters("movie",empty,empty,"Recommend movies without science fiction").excludedGenres).toContain("Science Fiction");
   expect(
     researchFilters(
       "movie",
@@ -496,7 +504,7 @@ describe('progressive research transport',()=>{
   const stub=env.ASK_RESEARCH.getByName('stream-rpc');
   const input=AskRequestSchema.parse(request());
   const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(researchCacheIdentity(input))));
-  const key='fast-results-v5:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const key='fast-results-v7:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
   await runInDurableObject(stub,async(_instance,state)=>{
    state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)',key,JSON.stringify({...value(24),cachedAt:Date.now()}),Date.now()+86400000);
   });
@@ -546,7 +554,7 @@ describe('progressive research transport',()=>{
    const reader=(await service.recommendStream('owner',request())).getReader();await reader.read();
    const result=decode((await reader.read()).value!);expect(result).toMatchObject({inProgress:false,incomplete:true,results:value(5).results});
    expect((await reader.read()).done).toBe(true);
-   const row=state.storage.sql.exec<{value:string;expires:number}>("SELECT value,expires FROM ask_cache WHERE key LIKE 'fast-results-v5:%'").one();
+   const row=state.storage.sql.exec<{value:string;expires:number}>("SELECT value,expires FROM ask_cache WHERE key LIKE 'fast-results-v7:%'").one();
    expect(JSON.parse(row.value).cachedAt).toBeGreaterThan(Date.now()-1000);expect(row.expires).toBeGreaterThan(Date.now()+86000000);
   });
  });

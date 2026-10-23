@@ -42,7 +42,7 @@ class TalkRecommendationAcceptanceDeviceTest {
                     .put("responseAfterInputMs",maxOf(0,session.debugFirstAudioAt-inputFinished))
                     .put("totalMs",SystemClock.elapsedRealtime()-began).put("recommendations",session.debugRecommendationCount).put("issue",session.debugRecommendationIssue))
                 receipt.writeText(JSONObject().put("turns",turns).put("tools",JSONObject(session.debugToolCalls.toMap())).put("stallRecoveries",session.debugStallRecoveries).toString(2))
-                assertTrue("A title answer is required, not just a spoken bridge: $answer",talkAnswerNamesTitle(answer,session.state.value.lines.drop(lastUser+1).flatMap{it.titles}))
+                assertTrue("Every selected title is required, not just one or a bridge: $answer",talkAnswerNamesAllTitles(answer,session.state.value.lines.drop(lastUser+1).flatMap{it.titles}.distinctBy{it.key}))
                 assertTrue("Must speak while searching, without another greeting",session.debugFirstAudioAt>=began&&session.debugFirstAudioAt-inputFinished<10000)
                 assertTrue("Audio must render on the physical phone",session.debugRenderedSamples>0)
                 assertEquals("No silence recovery should be necessary",0,session.debugStallRecoveries)
