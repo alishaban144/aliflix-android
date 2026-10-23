@@ -26,7 +26,7 @@ class TalkRecommendationAcceptanceDeviceTest {
             instrumentation.runOnMainSync { activity=ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<TalkVoiceActivity>().firstOrNull() }
             delay(50)
         } } }
-        val talk=requireNotNull(activity);val session=talk.voice;val turns=JSONArray()
+        val talk=requireNotNull(activity);val session=talk.voice;val turns=JSONArray();val lateBridges=mutableListOf<String>()
         val receipt=File(context.getExternalFilesDir(null),"talk-acceptance-178.json")
         try { runBlocking {
             for((index,prompt)in listOf("movies about gentlemen","Something less violent, but still stylish. Give me two titles.","Find two recent science fiction films about identity.").withIndex()) {
@@ -43,13 +43,16 @@ class TalkRecommendationAcceptanceDeviceTest {
                     .put("totalMs",SystemClock.elapsedRealtime()-began).put("recommendations",session.debugRecommendationCount).put("issue",session.debugRecommendationIssue))
                 receipt.writeText(JSONObject().put("turns",turns).put("tools",JSONObject(session.debugToolCalls.toMap())).put("stallRecoveries",session.debugStallRecoveries).toString(2))
                 assertTrue("Every selected title is required, not just one or a bridge: $answer",talkAnswerNamesAllTitles(answer,session.state.value.lines.drop(lastUser+1).flatMap{it.titles}.distinctBy{it.key}))
-                assertTrue("Must speak while searching, without another greeting",session.debugFirstAudioAt>=began&&session.debugFirstAudioAt-inputFinished<10000)
+                if(session.debugFirstAudioAt<began||session.debugFirstAudioAt-inputFinished>=10000)lateBridges.add(prompt)
                 assertTrue("Audio must render on the physical phone",session.debugRenderedSamples>0)
                 assertEquals("No silence recovery should be necessary",0,session.debugStallRecoveries)
+                assertEquals("One lookup per request; no model search loop",index+1,session.debugToolCalls["recommendations"])
             }
+            assertTrue("Must speak while searching, without another greeting: $lateBridges",lateBridges.isEmpty())
         } } finally {
             receipt.writeText(JSONObject().put("turns",turns).put("tools",JSONObject(session.debugToolCalls.toMap())).put("phase",session.state.value.phase)
-                .put("lines",JSONArray(session.state.value.lines.map{JSONObject().put("role",it.role).put("text",it.text)})).put("issue",session.debugRecommendationIssue).put("connectionIssue",session.debugConnectionIssue).toString(2))
+                .put("lines",JSONArray(session.state.value.lines.map{JSONObject().put("role",it.role).put("text",it.text)})).put("issue",session.debugRecommendationIssue).put("connectionIssue",session.debugConnectionIssue)
+                .put("presentationIssue",session.debugPresentationIssue).put("pool",JSONArray(session.debugRecommendationPoolKeys)).put("deliveryCorrections",session.debugDeliveryRejections).put("bridgeText",session.debugBridgeText).put("events",JSONArray(session.debugWireEvents.toList())).toString(2))
             instrumentation.runOnMainSync { talk.finish() }
         }
     }

@@ -44,20 +44,27 @@ class TalkRenderDeviceTest {
      Box(Modifier.fillMaxWidth().weight(.56f),contentAlignment=Alignment.Center) {
       TalkLiveOrb("Speaking",{energy},true,Modifier.fillMaxWidth(.86f).widthIn(max=320.dp).aspectRatio(1f))
      }
-     Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center){TalkDottedTopic(words,{energy},true)}
+     Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center){TalkDottedTopic(words,true)}
      Spacer(Modifier.height(84.dp))
     }
    }
   }}}
   fun shell(command:String)=android.os.ParcelFileDescriptor.AutoCloseInputStream(i.uiAutomation.executeShellCommand(command)).bufferedReader().use{it.readText()}
+  fun snapshot(name:String) {
+   val bitmap=requireNotNull(i.uiAutomation.takeScreenshot())
+   try {File(context.getExternalFilesDir(null),"talk-wave-180-$name.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}}
+   finally {bitmap.recycle()}
+  }
   try {
    Thread.sleep(2200)
+   snapshot("latin")
    shell("dumpsys gfxinfo ${context.packageName} reset")
    repeat(150) {step->
     i.runOnMainSync {energy=((sin(step*.24)+1)*.3).toFloat();if(step==75)words="السفر عبر الزمن"}
     Thread.sleep(70)
    }
    File(context.getExternalFilesDir(null),"talk-render-172.txt").writeText(shell("dumpsys gfxinfo ${context.packageName}"))
+   snapshot("arabic")
   } finally {i.runOnMainSync {activity.requestedOrientation=previousOrientation;activity.recreate()}}
  }
 }

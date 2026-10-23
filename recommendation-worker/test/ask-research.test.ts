@@ -340,9 +340,10 @@ describe("unified authenticated research", () => {
   it.each(["movie","tv"] as const)("streams %s matches from one Tavily search and Gemini selection without Clef",async(mediaType)=>{
     const titles=Array.from({length:28},(_,i)=>({title:'Film '+i,year:2025}));
     const calls:string[]=[];
+    let sourceText='Distinctive movies about identity.';
     vi.spyOn(globalThis,'fetch').mockImplementation(async(u,init)=>{
       const url=String(u);calls.push(url);
-      if(url.includes('tavily.com'))return Response.json({results:[{title:'Research',url:'https://www.bfi.org.uk/list',content:'Distinctive movies about identity.'}],usage:{credits:1}});
+      if(url.includes('tavily.com'))return Response.json({results:[{title:'Research',url:'https://www.bfi.org.uk/list',content:sourceText}],usage:{credits:1}});
       const pair=new WebSocketPair();pair[1].accept();
       pair[1].addEventListener('message',event=>{
         const message=JSON.parse(String(event.data));
@@ -376,6 +377,12 @@ describe("unified authenticated research", () => {
         expect(shortlist.metrics).toMatchObject({geminiCalls:0,clefCalls:0,pipeline:'tavily-gemini-live-tmdb'});
         expect(shortlist.researchBrief?.excerpts[0]).toMatchObject({url:'https://www.bfi.org.uk/list',text:'Distinctive movies about identity.'});
         expect(calls.length-beforeHints).toBe(1);
+        sourceText='Film 40 (2025). A thoughtful science fiction movie about identity.';
+        const beforeFallback=calls.length;
+        const fallback=await service.recommend('talk-owner',request({mediaType,query:'Other thoughtful science fiction choices',candidateHints:titles.slice(0,2),filters:{excludedTitles:titles.slice(0,2).map(v=>v.title)},pageSize:8}));
+        expect(fallback.results.map(v=>v.tmdbId)).toEqual([41]);
+        expect(fallback.metrics.geminiCalls).toBe(0);
+        expect(calls.length-beforeFallback).toBe(1);
       } finally {Object.assign(e,old);}
     });
   });

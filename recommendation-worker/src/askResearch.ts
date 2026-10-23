@@ -914,7 +914,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         pending.push({pick,index});if(!scheduled){scheduled=true;queueMicrotask(flush);}
       };
       const sourcePicks=tavilyCandidatePicks(research.answer||'',research.evidence);
-      if(!request.candidateHints?.length)sourcePicks.slice(0,12).forEach((pick,index)=>enqueue(pick,100+index));
+      // Tavily's actual titles remain eligible when proposed candidates are
+      // unavailable, excluded or unmatched; reuse this same search, no extra AI.
+      sourcePicks.slice(0,12).forEach((pick,index)=>enqueue(pick,100+index));
       let picks:Array<{title:string;year:number;why?:string}>;
       try {if(request.candidateHints?.length){picks=request.candidateHints;picks.forEach(enqueue);usage.geminiCalls=0;usage.pipeline='tavily-gemini-live-tmdb';}else picks=await liveRecommendationPicks(this.env,{query,mode:request.mode,mediaType:request.mediaType,anchors:await anchorPromise,filters:request.filters,favorites,count:Math.min(24,request.pageSize),searchAnswer:research.answer,sources:research.evidence.map(e=>({...e,text:e.text.slice(0,1200)}))},signal,enqueue);}
       catch(error){

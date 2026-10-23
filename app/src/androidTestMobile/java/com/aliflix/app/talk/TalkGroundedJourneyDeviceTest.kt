@@ -40,7 +40,8 @@ class TalkGroundedJourneyDeviceTest {
    val answer=turn("Recommend three thoughtful science fiction movies, with one short reason each.")
    val group=session.state.value.cards.visible
    assertEquals(3,group.size)
-   assertEquals("The exact speech/poster commit must run",1,session.debugToolCalls["present_recommendations"])
+   assertEquals("One exact speech/poster selection must commit",1,session.debugPresentationCommits)
+   assertFalse("A completed selection cannot append a phantom lookup error",Regex("(?i)system encountered|try again later").containsMatchIn(answer))
    assertTrue("Every spoken recommendation must equal the selected cards: $answer",talkAnswerNamesAllTitles(answer,group))
    val delivered=session.state.value.lines.drop(recommendationFrom).filter{it.role=="assistant"&&!it.stopped}
    assertTrue("Only the approved bridge may precede the selected recommendations",delivered.filter{it.titles.isEmpty()}.all{talkIsApprovedBridge(it.text,talkResearchBridge("science fiction","en"))})

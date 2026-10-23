@@ -2,7 +2,7 @@ import { describe,it,expect } from 'vitest';
 import { env,runInDurableObject } from 'cloudflare:test';
 import { TalkSession, talkRoute } from '../src/talk';
 import { issueIdentity } from '../src/watchParty';
-import { talkRecommendationPolicy, cachedTalkDiscovery, canRetainTalkResearch, talkRecommendationQuery } from '../src/talkIntent';
+import { talkRecommendationPolicy, cachedTalkDiscovery, canRetainTalkResearch, talkRecommendationQuery, talkRecommendationCount } from '../src/talkIntent';
 import type { RecommendationResult } from '../src/types';
 import { TalkChatsRequestSchema } from '../src/talkChats';
 import { liveInstructions } from '../src/talkProviders';
@@ -10,6 +10,12 @@ import { TalkContextSchema } from '../src/talkEvidence';
 
 describe('Talk recent discovery and task continuity',()=>{
  const now=new Date('2026-10-20T12:00:00Z');
+ it('uses the human requested count rather than a missing or mistaken tool count',()=>{
+  expect(talkRecommendationCount('Find two recent science fiction films about identity.',3)).toBe(2);
+  expect(talkRecommendationCount('Recommend three thoughtful science fiction movies, with one short reason each.',1)).toBe(3);
+  expect(talkRecommendationCount('Give me one title',3)).toBe(1);
+  expect(talkRecommendationCount('movies about gentlemen')).toBe(3);
+ });
  it('honors explicit recent discovery without inventing an era for broad themes',()=>{
   expect(talkRecommendationPolicy('Suggest a recent sci-fi movie',now).filters).toEqual({minimumYear:2023,maximumYear:2026});
   expect(talkRecommendationPolicy('Something like Arrival (2016)',now).filters).toEqual({});
@@ -22,7 +28,10 @@ describe('Talk recent discovery and task continuity',()=>{
  });
  it('uses the actual new request while retaining context for relative follow-ups',()=>{
   expect(talkRecommendationQuery('Instead, suggest recent sci-fi movies.','Explain the ending of Dark')).toBe('Instead, suggest recent sci-fi movies.');
-  expect(talkRecommendationQuery('More like those, but shorter.','Recent sci-fi films')).toContain('Recent sci-fi films\nLatest user follow-up: More like those, but shorter.');
+  expect(talkRecommendationQuery('More like those, but shorter.','Recent sci-fi films')).toContain('Recent sci-fi films\nUser refinement: More like those, but shorter.');
+  const refined=talkRecommendationQuery('Something less violent, but still stylish. Give me two titles.','Recent elegant films without violence','movies about gentlemen');
+  expect(refined).toContain('movies about gentlemen');
+  expect(talkRecommendationPolicy(refined,now).filters).toEqual({});
  });
  it('can reuse verified retained research when a fresh search yields no evidence, without hiding request failures',()=>{
   expect(canRetainTalkResearch({status:422,code:'NO_RESEARCH'})).toBe(true);

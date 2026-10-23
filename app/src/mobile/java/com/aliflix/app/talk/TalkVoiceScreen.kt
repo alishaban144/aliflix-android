@@ -188,7 +188,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 }
             } else {
                 Box(Modifier.fillMaxWidth().weight(.56f),contentAlignment=Alignment.Center) { TalkLiveOrb(state.phase,{state.level},motion,Modifier.fillMaxWidth(.86f).widthIn(max=320.dp).aspectRatio(1f).testTag("talk-orb"),tracker) }
-                Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,{state.level},motion) }
+                Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,motion) }
                 TalkTitleCards(state.cards.visible,::openTitle,Modifier.padding(bottom=8.dp),motion=motion)
                 if(idle&&state.phase!="Ready") Text(state.phase,color=AliflixContentSecondary,fontSize=12.sp,modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=12.dp))
                 Row(Modifier.fillMaxWidth().padding(bottom=20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(20.dp,Alignment.CenterHorizontally)) {

@@ -61,4 +61,21 @@ class TalkGroundingTest {
         assertEquals("/new.jpg",restored.visible.single().posterPath)
         assertEquals("/new.jpg",restored.resolve("Annihilation").single().posterPath)
     }
+    @Test fun numericTitlesAndHumanPronounsOverrideWrongModelCardGuesses() {
+        val original=TalkTitleCard(78,MediaType.MOVIE,"Blade Runner","1982")
+        val sequel=TalkTitleCard(335984,MediaType.MOVIE,"Blade Runner 2049","2017")
+        val context=TalkCardContext().show(listOf(original,sequel,annihilation)).show(listOf(sequel))
+        assertEquals(listOf(sequel),context.resolve("Blade Runner 2049"))
+        assertEquals(listOf(original),context.resolve("Blade Runner"))
+        assertEquals(listOf(sequel),context.references("Show its card again."))
+        assertEquals(listOf(sequel),context.question("Tell me more about Blade Runner 2049").visible)
+        assertEquals(listOf(original,sequel),context.references("Compare Blade Runner with Blade Runner 2049"))
+        val wrong=JSONObject().put("title","Blade Runner").put("year",1982).put("tmdbId",78)
+        assertEquals(sequel.id,context.ground(wrong,"Show its card again").getInt("tmdbId"))
+        assertEquals(original.id,context.ground(wrong,"Show Blade Runner (1982)").getInt("tmdbId"))
+        for(title in listOf("1917","2001: A Space Odyssey")) {
+            val numeric=TalkTitleCard(1,MediaType.MOVIE,title,"1968")
+            assertEquals(listOf(numeric),TalkCardContext().show(listOf(numeric)).references("Tell me more about $title"))
+        }
+    }
 }

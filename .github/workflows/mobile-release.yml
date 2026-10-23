@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Talk keeps and elegantly focuses title cards, retrieves mentioned or new titles through the app catalogue, and performs native app commands. Greetings and general conversation receive natural responses, with spoken bridges during searches. Similar uses Tavily, Gemini and TMDB with stronger creative connections. Ask has a compact layout and stable result positioning."
+          RELEASE_NOTES="Talk binds spoken recommendations and poster cards to the same exact titles, preserves editions through follow-ups, and uses Tavily research with conversational bridges. Interrupted lookups continue correctly. Card actions stay quiet, native library state and undo are available, and dotted topic text flows smoothly."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -404,19 +404,19 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Talk keeps movie and series cards visible while you speak. Discussing one recommendation centers its card as the others animate away. You can ask to show a previous card or a new title. Voice and chat retain the orb and changing topic.
+            Spoken recommendations and poster cards now come from one committed selection of exact catalogue identities. Private proposals stay silent until Tavily research and TMDB matching return; mismatched narration is withheld. Poster loading and same-name/year matching are repaired.
 
-            Talk uses the app catalogue for new cards, original names and alternate editions. Native commands open details, playback/episode and download options, search, Similar and app screens; manage My List and favorites; change supported settings and control active playback. Commands report real app state, and actions needing options or account verification use the native screens.
+            Follow-ups retain the selected edition, original recommendation order and focused card. Ask for a prior card, restore the group, or discuss a new title naturally. Card actions stay quiet without announcing what is visible. Native commands include reading saved/favorite/dislike state and undoing the last Talk library change.
 
-            Greetings, small talk and general questions receive natural answers. Film knowledge and recommendations remain available with Tavily search and contextual spoken bridges.
+            Greetings and general conversation receive natural answers. Searches use Tavily with contextual spoken bridges, one lookup per request and continuous follow-ups after an interrupted generation. Mood refinements preserve the actual user constraints.
 
-            Similar resolves canonical title, year, original name, creators and keywords, then uses Tavily and one Gemini selection with TMDB matching. Close matches take priority over novelty. Watched and favorited titles remain eligible for Similar; dislikes and explicit filters still apply. No Clef stages.
+            Dotted topic lettering has a continuous wave, smoothly blended light and seamless word crossfades, preserving the orb and changing topics.
 
-            Ask uses one scrolling page with a two-column discovery grid and clearer title years. New searches and arriving result batches start at the top; deliberate scrolling is preserved. Surprise Me and immediate in-card dislike remain available.
+            Ask and Similar retain the fast Tavily/Gemini/TMDB pipeline, compact layout and stable result positioning. Surprise Me and immediate in-card dislike remain available.
 
             ARM64 mobile APK and universal compatibility bridge preserve the production signer and native/model assets. TV is unchanged. See the validation record for physical-device checks and signer boundaries.
 
-            [Validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-179-validation.md).
+            [Validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-180-validation.md).
           files: |
             aliflix-mobile.apk
             update-mobile.json

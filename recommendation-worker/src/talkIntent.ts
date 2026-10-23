@@ -3,13 +3,17 @@ import type { RecommendationResult } from './types';
 export function canRetainTalkResearch(failure:{status:number;code:string}|undefined):boolean {
  return !!failure&&([429,500,502,503,504].includes(failure.status)||(failure.status===422&&failure.code==='NO_RESEARCH'));
 }
-export function talkRecommendationQuery(question:string|undefined,toolQuery:string):string {
+export function talkRecommendationCount(question:string,proposed?:number):number {
+ const number=/\b(one|two|three|[123])\s+(?:[\p{L}-]+\s+){0,4}(?:titles?|movies?|films?|series|shows?|choices?|recommendations?)\b/iu.exec(question)?.[1]?.toLowerCase();
+ return number?(({one:1,two:2,three:3} as Record<string,number>)[number]||Number(number)):proposed||3;
+}
+export function talkRecommendationQuery(question:string|undefined,toolQuery:string,previousQuery?:string):string {
  const current=question?.trim();
  if(!current)return toolQuery;
- // A relative follow-up needs the model's conversation-grounded expansion.
- // Self-contained requests always replace that expansion.
+ // The captured prior request owns inherited constraints. A model expansion
+ // must not add an unrequested recent-only era to a relative mood refinement.
  return /\b(?:those|these|them|same ones|more like|more of|that kind|similar ones|less|still|lighter|darker)\b/i.test(current)
-  ? `${toolQuery}\nLatest user follow-up: ${current}` : current;
+  ? `${previousQuery||toolQuery}\nUser refinement: ${current}`.slice(-2000) : current;
 }
 
 /** Resolve era preference at the request boundary, rather than trusting model memory. */
