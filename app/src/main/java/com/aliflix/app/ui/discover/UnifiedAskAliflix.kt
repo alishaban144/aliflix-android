@@ -275,7 +275,7 @@ internal fun UnifiedAskAliflix(
             properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false),
         ) {
             AliflixSurface(Modifier.fillMaxWidth().padding(horizontal=16.dp).testTag("ask-surprise-three"),
-                shape=RoundedCornerShape(28.dp),level=AliflixSurfaceLevel.Content) {
+                shape=RoundedCornerShape(28.dp),level=AliflixSurfaceLevel.Content,alpha=1f) {
                 LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                     item { Row(Modifier.fillMaxWidth().padding(start=4.dp),verticalAlignment=Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
