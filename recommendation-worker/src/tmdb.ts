@@ -164,6 +164,9 @@ export class TmdbClient {
   researchDetails(type: MediaType, id: number): Promise<TmdbDetails> {
     return this.request(`/${type}/${id}`, { language:'en-US', ...(type==='tv'?{append_to_response:'external_ids'}:{}) });
   }
+  researchAnchor(type: MediaType, id: number): Promise<TmdbDetails> {
+    return this.request(`/${type}/${id}`, {language:'en-US',append_to_response:type==='tv'?'keywords':'keywords,credits'});
+  }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
     return this.request(`/${type}/${id}`, {
       append_to_response: type === 'tv'

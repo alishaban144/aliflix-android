@@ -14,6 +14,22 @@ import java.util.UUID
 /** Opt-in real HTTPS/auth/client check using already researched requests.
  * Does not replace live model evaluation with fixtures or mutate viewer data. */
 class AskProgressiveDeviceTest {
+ @Test fun exactSeriesSimilarExamplesReturnTheirExpectedMatchesOnThePhone() {
+  Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("liveSimilar179")=="true")
+  val context=InstrumentationRegistry.getInstrumentation().targetContext
+  val client=RecommendationAiClient(BuildConfig.RECOMMENDATION_AI_BASE_URL,research=AskResearchClient(context))
+  val report=JSONArray()
+  runBlocking{withTimeout(120000){
+   for((id,title,expected) in listOf(Triple(1396,"Breaking Bad","Better Call Saul"),Triple(32368,"The Killing","The Chestnut Man"),Triple(34415,"The Killing","The Chestnut Man"))) {
+    val start=SystemClock.elapsedRealtime()
+    val result=client.getRecommendations(V3RecommendationRequest(UUID.randomUUID().toString(),mode="similar",query="",mediaType="tv",anchors=listOf(V3RecommendationAnchor(id,title,"tv"))))
+    assertTrue("$title must include $expected: ${result.results.map{it.title}}",result.results.any{it.title==expected})
+    assertTrue(result.results.all{it.mediaType=="tv"&&it.tmdbId!=id})
+    report.put(JSONObject().put("anchor",id).put("expected",expected).put("titles",JSONArray(result.results.map{it.title})).put("elapsedMs",SystemClock.elapsedRealtime()-start))
+   }
+  }}
+  File(context.getExternalFilesDir(null),"similar-179.json").writeText(report.toString(2))
+ }
  @Test fun authenticatedMobileClientReceivesVerifiedDescribeAndSimilarSnapshots() {
   Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("liveProgressive")=="true")
   val context=InstrumentationRegistry.getInstrumentation().targetContext

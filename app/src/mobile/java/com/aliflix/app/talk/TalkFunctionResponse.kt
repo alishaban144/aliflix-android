@@ -16,7 +16,7 @@ internal fun talkFunctionResponse(id:String,name:String,result:JSONObject,schedu
 /** A control-only turn still needs to continue the user's answer. Resume once,
  * after its last control, unless an answer or an actual lookup is in flight. */
 internal fun talkControlScheduling(names:List<String>,index:Int,hasOutput:Boolean,pendingLookup:Boolean):String {
-    val controls=setOf("conversation_language","conversation_topic")
+    val controls=setOf("conversation_language","conversation_topic","show_title_cards")
     if(hasOutput||pendingLookup||names[index] !in controls)return "SILENT"
     if(names.any{it !in controls&&it!="remember_recommendations"})return "SILENT"
     return if(index==names.indexOfLast{it in controls})"WHEN_IDLE" else "SILENT"

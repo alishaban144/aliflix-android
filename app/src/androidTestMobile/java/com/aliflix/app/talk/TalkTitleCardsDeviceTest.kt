@@ -14,6 +14,27 @@ import java.io.File
 class TalkTitleCardsDeviceTest {
     @get:Rule val compose=createComposeRule()
     private val titles=listOf(TalkTitleCard(27205,MediaType.MOVIE,"Inception","2010","/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg"),TalkTitleCard(70523,MediaType.TV,"Dark","2017","/apbrbWs8M9lyOpJYU5WXrpFbk1Z.jpg"))
+    @Test fun speakingKeepsCardsAndSelectingTheThirdCentersItThroughFollowups() {
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
+        val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)
+        val third=TalkTitleCard(522627,MediaType.MOVIE,"The Gentlemen","2019")
+        try {
+            session.debugPreviewTitles(titles+third,false)
+            compose.setContent{AliflixMobileTheme{TalkVoiceScreen(session,{}, {})}}
+            compose.runOnIdle{session.debugPreviewUserQuestion("Could you tell me more?")}
+            compose.onNodeWithTag("talk-title-movie:27205").assertIsDisplayed()
+            compose.runOnIdle{session.debugPreviewUserQuestion("Tell me about The Gentlemen")}
+            compose.waitForIdle()
+            compose.onNodeWithTag("talk-title-movie:27205").assertDoesNotExist()
+            compose.onNodeWithTag("talk-title-tv:70523").assertDoesNotExist()
+            val card=compose.onNodeWithTag("talk-title-movie:522627").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            val rail=compose.onNodeWithTag("talk-title-cards").fetchSemanticsNode().boundsInRoot
+            assertEquals("The selected card must be centered",rail.center.x,card.center.x,2f)
+            compose.runOnIdle{session.debugPreviewUserQuestion("Why would I enjoy it?")}
+            compose.onNodeWithTag("talk-title-movie:522627").assertIsDisplayed()
+            screenshot("talk-focused-179.png")
+        } finally {session.close();scope.cancel()}
+    }
     @Test fun voiceCardsFitBetweenTheAnimatedTopicAndControls() {
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
         val session=TalkVoiceSession(InstrumentationRegistry.getInstrumentation().targetContext,scope,restoreHistory=false)

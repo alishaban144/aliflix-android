@@ -337,7 +337,7 @@ describe("unified authenticated research", () => {
       },
     );
   });
-  it("uses one Tavily search and one Gemini selection, then streams TMDB matches without Clef",async()=>{
+  it.each(["movie","tv"] as const)("streams %s matches from one Tavily search and Gemini selection without Clef",async(mediaType)=>{
     const titles=Array.from({length:28},(_,i)=>({title:'Film '+i,year:2025}));
     const calls:string[]=[];
     vi.spyOn(globalThis,'fetch').mockImplementation(async(u,init)=>{
@@ -351,22 +351,25 @@ describe("unified authenticated research", () => {
       });
       return new Response(null,{status:101,webSocket:pair[0]});
     });
-    await runInDurableObject(env.ASK_RESEARCH.getByName('fast-pipeline-complete'),async instance=>{
+    await runInDurableObject(env.ASK_RESEARCH.getByName('fast-pipeline-complete-'+mediaType),async instance=>{
       const service=instance as unknown as AskResearch,e=(instance as any).env;
       const old={AI:e.AI,ASK_RESEARCH:e.ASK_RESEARCH,TAVILY_API_KEY:e.TAVILY_API_KEY,GEMINI_API_KEY:e.GEMINI_API_KEY};
       const run=vi.fn();e.AI={run};e.TAVILY_API_KEY='test';e.GEMINI_API_KEY='test';
-      const identity=vi.fn(async(_type:string,title:string)=>({tmdbId:Number(title.split(' ')[1])+1,mediaType:'movie',title,releaseDate:'2025-01-01',genres:['Science Fiction'],originCountries:['US'],originalLanguage:'en',runtimeMinutes:110,matchLevel:'Relevant',finalScore:0,matchReasons:[],retrievalSources:[]}));
-      e.ASK_RESEARCH={getByName:()=>({identity,resolveBatch:async(type:string,items:Array<{title:string}>)=>Promise.all(items.map(p=>identity(type,p.title)))})};
+      const identity=vi.fn(async(_type:string,title:string)=>({tmdbId:Number(title.split(' ')[1])+1,mediaType,title,releaseDate:'2025-01-01',genres:[mediaType==='tv'?'Sci-Fi & Fantasy':'Science Fiction'],originCountries:['US'],originalLanguage:'en',runtimeMinutes:110,matchLevel:'Relevant',finalScore:0,matchReasons:[],retrievalSources:[]}));
+      e.ASK_RESEARCH={getByName:()=>({identity,anchorContext:async()=>({tmdbId:999,mediaType,title:'Anchor film',year:'2020',creators:['A director']}),resolveBatch:async(type:string,items:Array<{title:string}>)=>Promise.all(items.map(p=>identity(type,p.title)))})};
       try {
-        const snapshots:any[]=[];const raw=request({filters:{minimumYear:2024,originalLanguage:'en',excludedTmdbIds:[1]}});
+        const snapshots:any[]=[];const raw=request({mediaType,filters:{minimumYear:2024,originalLanguage:'en',excludedTmdbIds:[1]}});
         const result=await (service as any).recommendInternal('owner',raw,(value:any)=>snapshots.push(value));
         expect(result.results).toHaveLength(24);expect(result.results.some((v:any)=>v.tmdbId===1)).toBe(false);
         expect(snapshots[0].results).toHaveLength(1);
         expect(result.metrics).toMatchObject({geminiCalls:1,gptCalls:0,clefCalls:0,tavilyCredits:1,pipeline:'tavily-gemini-tmdb'});
         expect(run).not.toHaveBeenCalled();expect(calls).toHaveLength(2);
         const cached=await service.recommend('owner',raw);expect(cached.cached).toBe(true);expect(calls).toHaveLength(2);
-        const similar=await service.recommend('owner',request({mode:'similar',query:'',anchors:[{tmdbId:999,title:'Anchor film',mediaType:'movie'}]}));
+        const similar=await service.recommend('owner',request({mediaType,mode:'similar',query:'',anchors:[{tmdbId:999,title:'Anchor film',mediaType}],library:[{id:1,type:mediaType,kind:'watched'},{id:2,type:mediaType,kind:'favorite'},{id:3,type:mediaType,kind:'dislike'}]}));
         expect(similar.results).toHaveLength(24);expect(run).not.toHaveBeenCalled();
+        expect(similar.results.some(v=>v.tmdbId===1)).toBe(true);
+        expect(similar.results.some(v=>v.tmdbId===2)).toBe(true);
+        expect(similar.results.some(v=>v.tmdbId===3)).toBe(false);
       } finally {Object.assign(e,old);}
     });
   });
@@ -478,7 +481,7 @@ describe('progressive research transport',()=>{
   const stub=env.ASK_RESEARCH.getByName('stream-rpc');
   const input=AskRequestSchema.parse(request());
   const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(researchCacheIdentity(input))));
-  const key='fast-results-v4:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const key='fast-results-v5:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
   await runInDurableObject(stub,async(_instance,state)=>{
    state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)',key,JSON.stringify({...value(24),cachedAt:Date.now()}),Date.now()+86400000);
   });
@@ -528,7 +531,7 @@ describe('progressive research transport',()=>{
    const reader=(await service.recommendStream('owner',request())).getReader();await reader.read();
    const result=decode((await reader.read()).value!);expect(result).toMatchObject({inProgress:false,incomplete:true,results:value(5).results});
    expect((await reader.read()).done).toBe(true);
-   const row=state.storage.sql.exec<{value:string;expires:number}>("SELECT value,expires FROM ask_cache WHERE key LIKE 'fast-results-v4:%'").one();
+   const row=state.storage.sql.exec<{value:string;expires:number}>("SELECT value,expires FROM ask_cache WHERE key LIKE 'fast-results-v5:%'").one();
    expect(JSON.parse(row.value).cachedAt).toBeGreaterThan(Date.now()-1000);expect(row.expires).toBeGreaterThan(Date.now()+86000000);
   });
  });

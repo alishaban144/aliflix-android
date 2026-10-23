@@ -88,13 +88,29 @@ internal fun UnifiedAskAliflix(
     val busy=state is AskAliflixUiState.Searching||state is AskAliflixUiState.Interpreting||resultState?.refining==true
     val results=(state as? AskAliflixUiState.Results)?.items.orEmpty().filterNot{it.media.key in rejected}
     val tracker=remember{DiscoverTouchTracker()}
+    var pinResultsToTop by remember { mutableStateOf(false) }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if(interaction is androidx.compose.foundation.interaction.DragInteraction.Start)pinResultsToTop=false
+        }
+    }
+    LaunchedEffect(state is AskAliflixUiState.Searching,resultState?.refining) {
+        if(state is AskAliflixUiState.Searching||resultState?.refining==true) {
+            pinResultsToTop=true;listState.requestScrollToItem(0)
+        }
+    }
+    LaunchedEffect(results.map{it.media.key}) {
+        if(pinResultsToTop&&results.isNotEmpty())listState.requestScrollToItem(0)
+    }
     fun submit(applyFilters:Boolean=false) {
+        pinResultsToTop=true;listState.requestScrollToItem(0)
         keyboard?.hide()
         val active=resultState?.activeRequest
         val sameAnchors=active !is AskAliflixRequest.Similar||active.anchors.map{it.key}==anchors.map{it.key}
+        val sameMode=if(similar)active is AskAliflixRequest.Similar&&sameAnchors&&active.outputMediaType==type else active is AskAliflixRequest.Describe&&active.mediaType==type
         sentDraft=editor.describeText
-        if(!applyFilters&&active!=null&&active !is AskAliflixRequest.Filters&&editor.describeText.isNotBlank()&&sameAnchors){onRefine(editor.describeText);return}
-        val preservingIntent=applyFilters||active!=null&&editor.describeText.isBlank()
+        if(!applyFilters&&sameMode&&editor.describeText.isNotBlank()){onRefine(editor.describeText);return}
+        val preservingIntent=sameMode&&(applyFilters||editor.describeText.isBlank())
         val request=when {
             preservingIntent&&active is AskAliflixRequest.Describe -> active.copy(filters=editor.spec)
             preservingIntent&&active is AskAliflixRequest.Similar -> active.copy(filters=editor.spec,anchors=anchors,anchor=anchors.firstOrNull())
@@ -153,11 +169,14 @@ internal fun UnifiedAskAliflix(
         Column(Modifier.fillMaxSize().then(if(sheet)Modifier.clearAndSetSemantics{}else Modifier)) {
             MobileTopSafeArea(extraPadding=8.dp)
             AskAliflixHeader(onReset={similar=false;onReset()},onBack=onBack,showNewSearch=state !is AskAliflixUiState.Editing)
+            LazyColumn(state=listState,modifier=Modifier.weight(1f).fillMaxWidth().testTag("ask-content"),contentPadding=PaddingValues(bottom=100.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            item("ask-controls") {
+            Column(Modifier.fillMaxWidth()) {
             AskMediaSelector(type,{newType->onEditor(editor.copy(mediaType=newType,spec=editor.spec.copy(mediaKind=if(newType==MediaType.TV)RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE,requiredStatus=if(newType==MediaType.TV)rememberedSeriesStatus else null)));if(state !is AskAliflixUiState.Editing)onReset()},motion)
             AnimatedVisibility(type==MediaType.TV,enter=if(motion)expandVertically(spring(stiffness=550f))+fadeIn() else EnterTransition.None,exit=if(motion)shrinkVertically()+fadeOut() else ExitTransition.None){
                 AskSeriesStatus(editor.spec.requiredStatus,{value->rememberedSeriesStatus=value;onEditor(editor.copy(spec=editor.spec.copy(requiredStatus=value)))},motion)
             }
-            Column(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=12.dp).clip(RoundedCornerShape(24.dp))
+            Column(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=8.dp).clip(RoundedCornerShape(24.dp))
                 .background(AliflixSurfaceDefaults.color()).animateContentSize(spring(stiffness=if(motion)500f else 10000f))) {
                 AnimatedVisibility(similar&&anchors.isNotEmpty()) {
                     LazyRow(contentPadding=PaddingValues(start=12.dp,end=12.dp,top=12.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -194,7 +213,7 @@ internal fun UnifiedAskAliflix(
                 }
             }
             AnimatedVisibility(similar&&anchors.size<4,enter=expandVertically()+fadeIn(),exit=shrinkVertically()+fadeOut()) {
-                Column(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=12.dp)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=8.dp)) {
                     BasicTextField(editor.similarQuery,{onEditor(editor.copy(similarQuery=it,mode=1))},Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(AliflixSurfaceDefaults.color()).padding(15.dp).testTag("ask-anchor-search"),textStyle=TextStyle(color=AliflixContentPrimary,fontSize=15.sp),singleLine=true,cursorBrush=SolidColor(AliflixAccentSecondary),decorationBox={inner->Box{if(editor.similarQuery.isEmpty())Text("Add a title",color=AliflixContentSecondary,fontSize=15.sp);inner()}})
                     if(suggestionsLoading)AskResearchProgress(Modifier.fillMaxWidth().height(32.dp),motion)
                     LazyRow(horizontalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(top=10.dp)){
@@ -202,26 +221,38 @@ internal fun UnifiedAskAliflix(
                             Column(Modifier.width(82.dp).clip(RoundedCornerShape(12.dp)).clickable{val updated=anchors+m;onEditor(editor.copy(selectedAnchors=updated,selectedAnchor=updated.firstOrNull(),similarQuery="",mode=1))}){
                                 AskAliflixPoster(m,Modifier.width(82.dp).height(120.dp),cornerRadius=12.dp)
                                 Text(m.title,Modifier.padding(top=5.dp),color=AliflixContentPrimary,fontSize=11.sp,maxLines=2,overflow=TextOverflow.Ellipsis)
+                                Text(m.year,color=AliflixContentTertiary,fontSize=10.sp)
                             }
                         }
                     }
                 }
             }
-            LazyColumn(state=listState,modifier=Modifier.weight(1f).fillMaxWidth().testTag("ask-content"),contentPadding=PaddingValues(start=20.dp,end=20.dp,top=20.dp,bottom=100.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            } }
+
                 if(state is AskAliflixUiState.Editing||results.isEmpty()) {
-                    item("daily"){AnimatedContent(type to daily,transitionSpec={fadeIn(tween(if(motion)220 else 0)) togetherWith fadeOut(tween(if(motion)120 else 0))},label="ask-daily-type"){ (_, collection)->
-                        if(collection.isNotEmpty())LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp),modifier=Modifier.fillMaxWidth().testTag("ask-daily")){
-                            items(collection,key={it.key}){m->Column(Modifier.width(112.dp).clip(RoundedCornerShape(16.dp)).clickable{onOpen(m)}){AskAliflixPoster(m,Modifier.width(112.dp).height(168.dp),cornerRadius=16.dp);Text(m.title,Modifier.padding(top=8.dp),color=AliflixContentPrimary,fontSize=13.sp,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis);Text(m.year,Modifier.padding(top=3.dp),color=AliflixContentSecondary,fontSize=11.sp)}}
-                        }else if(dailyLoading)AskResearchProgress(Modifier.fillMaxWidth().height(180.dp),motion)
-                        else if(dailyError&&dailyState=="limited")Text("Daily limit",color=AliflixContentSecondary,fontSize=13.sp,modifier=Modifier.padding(vertical=20.dp))
-                        else if(dailyError)AskAction("Retry",Icons.Rounded.Refresh,false,Modifier.fillMaxWidth()){dailyRetry++}
-                    }}
+                    if(daily.isNotEmpty()) {
+                        item("daily-heading"){Text("For you",Modifier.padding(horizontal=20.dp,vertical=4.dp).testTag("ask-daily"),color=AliflixContentPrimary,fontSize=18.sp,fontWeight=FontWeight.SemiBold)}
+                        items(daily.chunked(2),key={row->"daily:"+row.first().key}) { row ->
+                            Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                                row.forEach { m -> Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable{onOpen(m)}.padding(bottom=8.dp)) {
+                                    AskAliflixPoster(m,Modifier.fillMaxWidth().aspectRatio(2f/3f),cornerRadius=16.dp)
+                                    Text(m.title,Modifier.padding(top=8.dp),color=AliflixContentPrimary,fontSize=14.sp,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis)
+                                    Text(m.year,Modifier.padding(top=3.dp),color=AliflixContentSecondary,fontSize=11.sp)
+                                } }
+                                if(row.size==1)Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }else item("daily-loading"){
+                        if(dailyLoading)AskResearchProgress(Modifier.fillMaxWidth().height(80.dp),motion)
+                        else if(dailyError&&dailyState=="limited")Text("Daily limit",color=AliflixContentSecondary,fontSize=13.sp,modifier=Modifier.padding(20.dp))
+                        else if(dailyError)AskAction("Retry",Icons.Rounded.Refresh,false,Modifier.fillMaxWidth().padding(horizontal=20.dp)){dailyRetry++}
+                    }
                 }
                 if(busy)item("progress"){AskResearchProgress(Modifier.fillMaxWidth().height(48.dp),motion)}
                 if(resultState?.refineError!=null)item("refine-error"){AskAction("Retry refinement",Icons.Rounded.Refresh,false,Modifier.fillMaxWidth()){onRefine(sentDraft)}}
                 items(results,key={it.media.key}){item->
                     MobileAskResultCard(item,{onOpen(item.media)},item.media.key in myListKeys,{onToggleMyList(item.media)},editorial=false,
-                        modifier=Modifier.animateItem(),onDislike={rejected=rejected+item.media.key;taste.reject(item.media)})
+                        modifier=Modifier.padding(horizontal=20.dp).animateItem(),onDislike={rejected=rejected+item.media.key;taste.reject(item.media)})
                 }
                 if(resultState?.researching==true)item("research-continuing"){AskResearchProgress(Modifier.fillMaxWidth().height(32.dp).testTag("ask-research-continuing"),motion)}
                 if(!busy&&state !is AskAliflixUiState.Editing&&results.isEmpty())item("empty"){

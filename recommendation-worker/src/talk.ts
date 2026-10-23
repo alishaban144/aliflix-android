@@ -11,9 +11,10 @@ const MINUTE=60000,DAY=86400000;
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
 const sessionSchema=z.object({context:TalkContextSchema.default(()=>TalkContextSchema.parse({}))}).strict();
 const requestSchema=z.object({session:z.string().uuid(),question:z.string().max(1600),request:KnowledgeSchema}).strict();
+const TitlesRequest=z.object({titles:z.array(z.string().trim().min(1).max(180)).min(1).max(3),kind:z.enum(['movie','tv']).optional(),year:z.number().int().min(1870).max(2200).optional(),dismiss:z.boolean().optional()}).strict();
 export async function talkRoute(request:Request,env:RecommendationEnv):Promise<Response|null> {
  const path=new URL(request.url).pathname;if(!path.startsWith('/v1/talk'))return null;
- if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/renew','/v1/talk/knowledge','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel','/v1/talk/chats'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
+ if(request.method!=='POST'||!['/v1/talk/session','/v1/talk/renew','/v1/talk/knowledge','/v1/talk/titles','/v1/talk/close','/v1/talk/viewing','/v1/talk/research','/v1/talk/recommendations','/v1/talk/cancel','/v1/talk/chats'].includes(path))return json({error:'UPDATE_REQUIRED'},426);
  try {
   const owner=await verifyIdentity(request.headers.get('Authorization')?.replace(/^Bearer /,'')||'',env.CURSOR_SIGNING_SECRET);
   if(Number(request.headers.get('Content-Length')||0)>24000)return json({error:'REQUEST_LIMIT'},413);
@@ -44,6 +45,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
    return json(await user.research(b.session,b.requestId,path.endsWith('/cancel')?'cancel':path.endsWith('/research')?'research':'recommendations',b.request,b.question));
   }
   if(path.endsWith('/viewing')) {const body=z.object({session:z.string().uuid(),items:z.array(TalkLibraryItemSchema).max(8).optional(),page:TalkViewingPageSchema.optional()}).strict().parse(bodyRaw);return json(await user.viewing(body.session,body.items,body.page));}
+  if(path.endsWith('/titles')) {const body=z.object({session:z.string().uuid(),request:TitlesRequest}).strict().parse(bodyRaw);return json(await user.titles(body.session,body.request));}
   if(path.endsWith('/close')) {const body=z.object({session:z.string().uuid(),forget:z.boolean().default(false)}).strict().parse(bodyRaw);await user.close(body.session,body.forget);
    if(body.forget&&owner.kind==='account')await env.TALK_SESSIONS.getByName('archive:'+talkChatAccountOwner(owner.sub)).chats({action:'clear'});
    return json({closed:true});}
@@ -223,6 +225,20 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   const results=result.results.map(v=>({tmdbId:v.tmdbId,mediaType:v.mediaType,title:v.title,year:v.releaseDate?.slice(0,4),posterPath:v.posterPath,genres:v.genres,sources:v.retrievalSources}));
   const evidence=[...new Set(result.results.flatMap(v=>v.retrievalSources))].slice(0,12).map(url=>({url,title:result.results.find(v=>v.retrievalSources.includes(url))?.title||'Source',attribution:url.includes('wikipedia.org')?'Wikipedia contributors · CC BY-SA 4.0 · adapted.':'Research source; original publisher retains rights.'}));
   return {results,evidence,available:results.length>0,cached:result.cached,instruction:(retained?'These choices come from a retained Tavily-researched, independently evaluated collection. No fresh verification is claimed. Describe only their verified genre/year fit; never claim live browsing or an unsupported detailed premise. ':'')+'Answer only the latest recommendation request. Present two or three returned titles with their years and a concise, thoughtful reason matching the theme. If none were found, explain the lookup problem briefly and offer a useful next step. No probability is a verified match percentage. Keep source links in the transcript.'};
+ }
+ async titles(session:string,request:z.infer<typeof TitlesRequest>) {
+  const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');
+  if(++state.calls>24)throw Error('TOOL_LIMIT');this.put('live:'+session,state,state.expires);
+  const deadline=Date.now()+3500;
+  const cards=await Promise.all(request.titles.map(async title=>{
+   for(const type of request.kind?[request.kind]:['movie','tv'] as const) {
+    const card=await this.env.ASK_RESEARCH.getByName('talk-title:'+type+':'+title).identity(type,title,request.year||0,undefined,deadline).catch(()=>null);
+    if(card)return {tmdbId:card.tmdbId,mediaType:card.mediaType,title:card.title,year:card.releaseDate?.slice(0,4),posterPath:card.posterPath};
+   }
+   return null;
+  }));
+  if(!this.read<Session>('live:'+session))throw Error('SESSION_EXPIRED');
+  return {titles:cards.filter(Boolean),instruction:cards.some(Boolean)?'These catalogue cards are now displayed. Answer naturally.':'No exact catalogue identity was found. Ask a brief title clarification; never invent a card.'};
  }
  async knowledge(session:string,q:KnowledgeRequest,question:string) {
   const state=this.read<Session>('live:'+session);if(!state)throw Error('SESSION_EXPIRED');

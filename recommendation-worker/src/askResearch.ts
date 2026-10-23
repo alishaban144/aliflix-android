@@ -727,6 +727,17 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     this.put(key, value, 7 * DAY);
     return value;
   }
+  async anchorContext(type:MediaType,id:number) {
+    const key=`anchor-context-v1:${type}:${id}`,cached=this.read<{tmdbId:number;mediaType:MediaType;title?:string;originalTitle?:string;year:string;genres?:string[];countries?:string[];language?:string;creators?:string[];keywords?:string[]}>(key);
+    if(cached)return cached;
+    const d=await new TmdbClient(this.env,3,AbortSignal.timeout(2500)).researchAnchor(type,id);
+    const value={tmdbId:id,mediaType:type,title:d.title||d.name,originalTitle:d.original_title||d.original_name,
+      year:(d.release_date||d.first_air_date||'').slice(0,4),genres:d.genres?.map(v=>v.name),
+      countries:d.origin_country,language:d.original_language,
+      creators:type==='tv'?d.created_by?.map(v=>v.name):d.credits?.crew?.filter(v=>v.job==='Director').map(v=>v.name),
+      keywords:(d.keywords?.keywords||d.keywords?.results)?.slice(0,12).map(v=>v.name)};
+    this.put(key,value,7*DAY);return value;
+  }
   async resolveBatch(
     type: MediaType,
     items: Array<{ title: string; year: number; id?:number }>,
@@ -800,7 +811,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       (this.recommendationWaiters.get(key) || 0) + 1,
     );
     this.controllers.set(job, controller);
-    const progressKey='fast-results-v4:'+key;
+    const progressKey='fast-results-v5:'+key;
     if(onProgress){const listeners=this.progressListeners.get(progressKey)||new Set();listeners.add(onProgress);this.progressListeners.set(progressKey,listeners);const latest=this.latestProgress.get(progressKey);if(latest)onProgress(latest);}
     try {
       if(externalSignal)remaining(externalSignal);
@@ -840,14 +851,16 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     }
   }
   private async build(request: AskRequest, signal: AbortSignal, _editorial=false):Promise<ResearchResult> {
-    const started=Date.now(), key='fast-results-v4:'+await digest(researchCacheIdentity(request));
+    const started=Date.now(), key='fast-results-v5:'+await digest(researchCacheIdentity(request));
     const cached=this.read<ResearchResult>(key);
     if(cached?.results.length)return {...cached,cached:true};
     return this.single(key,async()=>{
       const usage:Usage={elapsedMs:0,tavilyCredits:0,researchCached:false,gptCalls:0,geminiCalls:0,clefCalls:0,generated:0,verified:0,accepted:0,neurons:0,pipeline:'tavily-gemini-tmdb'};
       const anchors=request.anchors||(request.anchor?[request.anchor]:[]);
+      const anchorPromise=Promise.all(anchors.map(a=>this.env.ASK_RESEARCH.getByName(`anchor:${a.mediaType}:${a.tmdbId}`).anchorContext(a.mediaType,a.tmdbId).catch(()=>({...a,year:'',creators:[] as string[],originalTitle:a.title}))));
       const query=[request.previousQuery,request.query,request.refinementQuery].filter(Boolean).join('\n');
-      const searchQuery=[query||'Excellent distinctive films and series',anchors.length?'similar to '+anchors.map(a=>a.title).join(', '):'',request.mediaType==='tv'?'TV series recommendations with release years':'film recommendations titles and release years',request.filters.includedGenres.join(' '),request.filters.minimumYear?'since '+request.filters.minimumYear:'',request.filters.maximumYear?'before '+request.filters.maximumYear:''].filter(Boolean).join(' ').slice(0,600);
+      const canonicalAnchors=await anchorPromise;
+      const searchQuery=[anchors.length?'Best '+(request.mediaType==='tv'?'TV series':'films')+' similar to '+canonicalAnchors.map(a=>'"'+a.title+'" '+a.year+(a.originalTitle!==a.title?' '+a.originalTitle:'')+' '+(a.creators||[]).join(' ')).join(' and '):query||'Excellent distinctive films and series',anchors.length?query:'',anchors.length?'same creator tone atmosphere strongest related recommendations with release years':request.mediaType==='tv'?'TV series recommendations with release years':'film recommendations titles and release years',request.filters.includedGenres.join(' '),request.filters.minimumYear?'since '+request.filters.minimumYear:'',request.filters.maximumYear?'before '+request.filters.maximumYear:''].filter(Boolean).join(' ').slice(0,600);
       const tastePromise=Promise.all(researchTaste(request.library).filter(v=>v.kind==='favorite').slice(0,4).map(v=>this.env.ASK_RESEARCH.getByName('taste:'+v.type+':'+v.id).identity(v.type,'',0,v.id,started+6500).catch(()=>null)));
       let research:Research={evidence:[],cached:false,credits:0,retrievedAt:Date.now()};
       try{research=await this.web({query:searchQuery,recent:false},signal);}
@@ -860,7 +873,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       const favorites=(await tastePromise).filter(v=>!!v).map(v=>({title:v.title,year:v.releaseDate?.slice(0,4)}));
       usage.geminiCalls=1;
       const filters=researchFilters(request.mediaType,request.filters,RecommendationFiltersSchema.parse({}),query);
-      const excluded=new Set([...request.library.filter(v=>v.type===request.mediaType&&v.kind!=='saved').map(v=>v.id),...anchors.filter(a=>a.mediaType===request.mediaType).map(a=>a.tmdbId)]);
+      // Similar is a comparison catalogue: watching/liking a strong match does
+      // not make it dissimilar. Explicit dislikes and filters still exclude it.
+      const excluded=new Set([...request.library.filter(v=>v.type===request.mediaType&&(v.kind==='dislike'||request.mode!=='similar'&&v.kind!=='saved')).map(v=>v.id),...anchors.filter(a=>a.mediaType===request.mediaType).map(a=>a.tmdbId)]);
       const matched=new Map<number,RecommendationResult>();
       const snapshot=()=>[...matched.entries()].sort((a,b)=>a[0]-b[0]).map(v=>v[1]).filter((v,i,a)=>a.findIndex(m=>m.tmdbId===v.tmdbId)===i).slice(0,Math.min(24,request.pageSize));
       const lanes=Array.from({length:3},()=>Promise.resolve());
@@ -868,7 +883,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       let scheduled=false,batchNumber=0;
       const apply=(m:ResearchMedia|null,index:number)=>{
         if(!m||excluded.has(m.tmdbId))return;
-        const c=toCandidate({id:m.tmdbId,title:m.title,release_date:m.releaseDate},request.mediaType,new Map());
+        const c=toCandidate({id:m.tmdbId,...(request.mediaType==='tv'?{name:m.title,first_air_date:m.releaseDate}:{title:m.title,release_date:m.releaseDate})},request.mediaType,new Map());
         if(!c)return;Object.assign(c,m,{productionCompanyIds:m.productionCompanyIds||[]});
         if(!passesHardFilters(c,filters))return;
         remaining(signal);
@@ -896,7 +911,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       const sourcePicks=tavilyCandidatePicks(research.answer||'',research.evidence);
       if(!request.candidateHints?.length)sourcePicks.slice(0,12).forEach((pick,index)=>enqueue(pick,100+index));
       let picks:Array<{title:string;year:number}>;
-      try {if(request.candidateHints?.length){picks=request.candidateHints;picks.forEach(enqueue);usage.geminiCalls=0;usage.pipeline='tavily-gemini-live-tmdb';}else picks=await liveRecommendationPicks(this.env,{query,mode:request.mode,mediaType:request.mediaType,anchors,filters:request.filters,favorites,count:Math.min(24,request.pageSize),sources:research.evidence.map(e=>({...e,text:e.text.slice(0,900)}))},signal,enqueue);}
+      try {if(request.candidateHints?.length){picks=request.candidateHints;picks.forEach(enqueue);usage.geminiCalls=0;usage.pipeline='tavily-gemini-live-tmdb';}else picks=await liveRecommendationPicks(this.env,{query,mode:request.mode,mediaType:request.mediaType,anchors:await anchorPromise,filters:request.filters,favorites,count:Math.min(24,request.pageSize),searchAnswer:research.answer,sources:research.evidence.map(e=>({...e,text:e.text.slice(0,1200)}))},signal,enqueue);}
       catch(error){
         remaining(signal);
         picks=sourcePicks;

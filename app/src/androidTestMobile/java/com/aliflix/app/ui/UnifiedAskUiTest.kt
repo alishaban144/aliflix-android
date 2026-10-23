@@ -15,6 +15,38 @@ import org.junit.Test
 /** No remote research, provider traffic or mutation of the viewer's library. */
 class UnifiedAskUiTest {
  @get:Rule val compose=createComposeRule()
+ @Test fun switchingFromDescribeResultsSubmitsTheSelectedSimilarAnchor(){
+  val anchor=Media(1396,MediaType.TV,"Breaking Bad",year="2008")
+  val spec=com.aliflix.app.recommendation.CatalogDiscoverySpec(mediaKind=com.aliflix.app.recommendation.RecommendationMediaKind.SERIES)
+  val prior=AskAliflixRequest.Describe(MediaType.TV,"crime dramas",filters=spec)
+  val state=AskAliflixUiState.Results("crime dramas",spec,listOf(com.aliflix.app.recommendation.RecommendationCandidate(anchor)),activeRequest=prior)
+  var editor by mutableStateOf(AskAliflixEditorState(mode=1,mediaType=MediaType.TV,selectedAnchors=listOf(anchor),selectedAnchor=anchor,spec=spec))
+  var submitted:AskAliflixRequest?=null
+  compose.setContent{AliflixMobileTheme{UnifiedAskAliflix(state,editor,{editor=it},{submitted=it},{},{},{},emptyList(),false,{}, {emptyList()},rememberLazyListState(),emptySet(),{},Modifier,dailyProvider={emptyList()},onRefine={error("The previous Describe request must not be refined")})}}
+  compose.onNodeWithTag("ask-send").performScrollTo().performClick()
+  compose.runOnIdle{assertEquals(listOf(anchor),(submitted as AskAliflixRequest.Similar).anchors)}
+ }
+ @Test fun newResultsAndReorderedBatchesStartAtTheTopUntilTheUserScrolls(){
+  val spec=com.aliflix.app.recommendation.CatalogDiscoverySpec(mediaKind=com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE)
+  val rows=(1..16).map{com.aliflix.app.recommendation.RecommendationCandidate(Media(90000+it,MediaType.MOVIE,"Result $it",year="2020"))}
+  var state:AskAliflixUiState by mutableStateOf(AskAliflixUiState.Results("old",spec,rows))
+  lateinit var list:androidx.compose.foundation.lazy.LazyListState
+  compose.setContent{AliflixMobileTheme{list=rememberLazyListState();UnifiedAskAliflix(state,AskAliflixEditorState(),{},{},{},{},{},emptyList(),false,{}, {emptyList()},list,emptySet(),{},Modifier,dailyProvider={emptyList()})}}
+  compose.onNodeWithTag("ask-content").performScrollToIndex(10)
+  compose.runOnIdle{state=AskAliflixUiState.Searching("new")}
+  compose.waitForIdle()
+  compose.runOnIdle{state=AskAliflixUiState.Results("new",spec,rows.takeLast(4),researching=true)}
+  compose.waitForIdle()
+  compose.runOnIdle{state=AskAliflixUiState.Results("new",spec,rows,researching=true)}
+  compose.waitForIdle()
+  compose.runOnIdle{assertEquals(0,list.firstVisibleItemIndex);assertEquals(0,list.firstVisibleItemScrollOffset)}
+  compose.onNodeWithTag("ask-content").performTouchInput{swipeUp()}
+  compose.waitForIdle()
+  var key:Any?=null
+  compose.runOnIdle{key=list.layoutInfo.visibleItemsInfo.first().key;state=AskAliflixUiState.Results("new",spec,rows.reversed(),researching=false)}
+  compose.waitForIdle()
+  compose.runOnIdle{assertEquals("Streaming must preserve intentional reading",key,list.layoutInfo.visibleItemsInfo.first().key)}
+ }
  @Test fun dislikeLivesInsideTheCompactCardAndRespondsInTheSameFrame(){
   val movie=Media(27205,MediaType.MOVIE,"Inception",year="2010")
   var visible by mutableStateOf(true)

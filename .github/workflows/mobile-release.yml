@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "268"
-  RELEASE_VERSION_NAME: "3.1.178"
+  RELEASE_VERSION_CODE: "269"
+  RELEASE_VERSION_NAME: "3.1.179"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Talk responds to substantive requests and continues after Tavily searches with brief spoken bridges. Elegant film and series cards keep the orb and animated topic in voice and chat. Faster Describe and Similar recommendations use Tavily, Gemini and TMDB. Surprise Me offers three choices; dislike acts immediately inside the card. Update dot moved left of Settings."
+          RELEASE_NOTES="Talk keeps title cards through follow-ups, elegantly centers the selected title, and can show cards on request. Greetings and general conversation receive natural responses. Similar uses canonical title and creative context while keeping strong watched/favorite matches eligible. Ask has a compact scrolling layout, a two-column discovery grid, and stable result positioning."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -404,19 +404,17 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Talk responds to substantive film requests and continues when asynchronous searches finish. Search uses Tavily. Brief, contextual spoken bridges keep the conversation moving while results arrive; acknowledgments do not count as finished answers. Pending work is still cancelled when a new question replaces it.
+            Talk keeps movie and series cards visible while you speak. Discussing one recommendation centers its card as the others animate away. You can ask to show a previous card or a new title. Voice and chat retain the orb and changing topic.
 
-            Film and series cards appear as a delicate poster rail below the animated topic in voice, and below their reply in chat. The orb and changing text remain. Cards open native title details and return to the same conversation; saved chats retain their cards.
+            Greetings, small talk and general questions receive natural answers. Film knowledge and recommendations remain available with Tavily search and contextual spoken bridges.
 
-            Describe and Similar use one Tavily search, one Gemini selection and direct TMDB identity/artwork matching, without Clef or multi-stage narrative verification. Progressive snapshots can improve their order without the client discarding the completed selection. Recommendations honor the requested era instead of forcing recent releases.
+            Similar resolves canonical title, year, original name, creators and keywords, then uses Tavily and one Gemini selection with TMDB matching. Close matches take priority over novelty. Watched and favorited titles remain eligible for Similar; dislikes and explicit filters still apply. No Clef stages.
 
-            Surprise Me presents three distinct choices in a compact sheet. Dislike sits inside the result card and removes it immediately. The My Space update dot sits to the left of Settings.
+            Ask uses one scrolling page with a two-column discovery grid and clearer title years. New searches and arriving result batches start at the top; deliberate scrolling is preserved. Surprise Me and immediate in-card dislike remain available.
 
-            Physical Pixel checks cover substantive speech without a greeting, follow-up recommendations, rendered audio, live Describe/Similar, card placement, native details return, immediate dislike and three-choice Surprise Me. These use a debug-signed build because that is the signer already installed on the phone; production APK signing and native/model parity are verified separately. Live model latency and external search availability can vary.
+            ARM64 mobile APK and universal compatibility bridge preserve the production signer and native/model assets. TV is unchanged. See the validation record for physical-device checks and signer boundaries.
 
-            ARM64 main APK and universal compatibility bridge retain the release signer and original native libraries/models. TV is unchanged.
-
-            [Validation and measured limits](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-178-validation.md).
+            [Validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-179-validation.md).
           files: |
             aliflix-mobile.apk
             update-mobile.json
