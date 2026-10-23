@@ -12,6 +12,7 @@ This release addresses conversation continuity and the complete discovery journe
 - Series matches were discarded by a final conversion using movie `title`/`release_date` fields instead of TV `name`/`first_air_date`. The regression now exercises both media types through the complete selection/conversion/filter path.
 - Similar resolves canonical anchor identity, release year, original title, creators and keywords, then uses one Tavily search, one Gemini selection and direct TMDB matching. Strong familiar connections take priority over novelty. Watched/favorited titles remain eligible for Similar; explicit dislikes, anchors and filters remain excluded. No Clef stage was added.
 - Submitting Similar after Describe no longer reuses the old Describe request. Ask now has one scrolling content column, a two-column discovery grid, title years, and stable top positioning while batches arrive. A deliberate user scroll preserves reading position.
+- The publication gate exposed stale daily research retained after incomplete refreshes. Daily discovery now serves the existing fresh atomic catalogue fallback when researched collections are stale, while retaining the previous researched pair and bounded retry rules. Catalogue suggestions use canonical identities with no invented AI scores; Describe and Similar still use Tavily/Gemini/TMDB. Surprise Me has an opaque panel for readable contrast.
 
 ## Acceptance checks
 
@@ -31,7 +32,7 @@ Physical UI regressions cover speaking without losing cards, focus/centering, sa
 
 ## Build and publication gates
 
-Local Android unit results: 720 tests, zero failures/errors, three skipped. Mobile lint, debug and device-test assembly pass; shared code also compiles for TV. Worker: 237 tests and typecheck pass. The release workflow repeats unit/lint, phone regressions, production signing, ZIP checks and native/model parity checks before creating draft artifacts. Unit coverage includes original-title and mistaken-year matching, idempotent native library commands, actual clamped setting values and exact deferred episode intents. Actual physical and publication outcomes are recorded separately in the final release evidence.
+Local Android unit results: 720 tests, zero failures/errors, three skipped. Mobile lint, debug and device-test assembly pass; shared code also compiles for TV. Final Worker: 238 tests and typecheck pass, including stale-research catalogue recovery. The release workflow repeats unit/lint, phone regressions, production signing, ZIP checks and native/model parity checks before creating draft artifacts. Unit coverage includes original-title and mistaken-year matching, idempotent native library commands, actual clamped setting values and exact deferred episode intents. A separate physical fixture checks actual Media3 pause, seek and resume. Actual physical and publication outcomes are recorded separately in the final release evidence.
 
 Before public publication verify the downloaded APK, manifest hash/size/version/ABI, production certificate and compatibility bridge. Verify the app's actual `UPDATE_MANIFEST_URL`, which targets `update-mobile-arm64.json`; the legacy manifest intentionally retains the universal compatibility bridge.
 

@@ -464,6 +464,21 @@ it('AI quota cannot blank verified catalogue suggestions or consume another infe
   expect(inference).not.toHaveBeenCalled();
  });
 });
+it('stale research uses a fresh atomic catalogue pair without pretending it is AI research',async()=>{
+ await runInDurableObject(env.ASK_RESEARCH.getByName('catalogue-stale-research'),async(instance,state)=>{
+  const service=instance as unknown as AskResearch;
+  for(const type of ['movie','tv'])state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)','daily:'+type,JSON.stringify({results:[{tmdbId:99}],publishedAt:Date.now()-4*86400000}),Date.now()+86400000);
+  state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)','daily:attempt',JSON.stringify(Date.now()),Date.now()+86400000);
+  const pair=['movie','tv'].map(mediaType=>({results:Array.from({length:24},(_,i)=>({tmdbId:i+1,mediaType,title:'Current '+i,finalScore:0,matchReasons:[],retrievalSources:[`https://www.themoviedb.org/${mediaType}/${i+1}`]})),publishedAt:Date.now(),source:'catalogue'}));
+  vi.spyOn(service,'catalogueDaily').mockResolvedValue(pair as any);
+  const research=vi.spyOn(service,'recommend');
+  expect(await service.dailyForClient('movie')).toMatchObject({state:'ready',...pair[0]});
+  expect(await service.dailyForClient('tv')).toMatchObject({state:'ready',...pair[1]});
+  expect(research).not.toHaveBeenCalled();
+  expect((await service.daily('movie')).results).toEqual([{tmdbId:99}]);
+ });
+});
+
 it('catalogue outage retains the previous valid pair without consuming AI or search budget',async()=>{
  await runInDurableObject(env.ASK_RESEARCH.getByName('catalogue-last-good'),async(instance,state)=>{
   const service=instance as unknown as AskResearch;const pair=['movie','tv'].map(mediaType=>({results:Array.from({length:24},(_,i)=>({tmdbId:i+1,mediaType,title:'Retained '+i})),publishedAt:Date.now()-2*86400000,source:'catalogue'}));

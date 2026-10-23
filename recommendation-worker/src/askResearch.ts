@@ -962,17 +962,18 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
    * long research work; GET stays fast and never starts an unbounded waitUntil. */
   async dailyForClient(type:MediaType) {
     const collection=await this.daily(type);
+    const needsFresh=!collection.results.length||collection.publishedAt<=Date.now()-3*DAY||collection.publishedAt>Date.now()+60000;
     const refreshing=this.flights.has("daily-refresh");
     const budget=this.researchBudget();
     const limited=!!this.read<boolean>('quota:provider-blocked:'+new Date().toISOString().slice(0,10))||budget.limited;
     let pending=this.read<number>('daily:refreshAt');
-    if(!collection.results.length && limited && !budget.limited && (this.read<number>('quota:neurons:'+new Date().toISOString().slice(0,10))||0)+10<=9000 && Date.now()-(this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':checkedAt')||0)>=3600000) {
+    if(needsFresh && limited && !budget.limited && (this.read<number>('quota:neurons:'+new Date().toISOString().slice(0,10))||0)+10<=9000 && Date.now()-(this.read<number>('quota:provider-blocked:'+new Date().toISOString().slice(0,10)+':checkedAt')||0)>=3600000) {
       pending=Date.now()+1000;this.put('daily:refreshAt',pending,2*DAY);await this.ctx.storage.setAlarm(pending);
-      const fallback=collection.results.length?undefined:(await this.catalogueDaily())[type==='tv'?1:0];
-      const visible=collection.results.length?collection:fallback||collection;
+      const fallback=needsFresh?(await this.catalogueDaily())[type==='tv'?1:0]:undefined;
+      const visible=fallback?.results.length?fallback:collection;
       return {...visible,state:visible.results.length?'ready':'warming',retryAt:pending};
     }
-    if(!collection.results.length && !pending && !refreshing) {
+    if(needsFresh && !pending && !refreshing) {
       const attempts=this.read<number>('daily:bootstrap:'+new Date().toISOString().slice(0,10))||0;
       if(limited || attempts<3 && await this.needsRefresh()) {
         pending=limited?this.quotaRetryAt():Date.now()+1000;
@@ -980,8 +981,8 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         await this.ctx.storage.setAlarm(pending);
       }
     }
-    const fallback=collection.results.length?undefined:(await this.catalogueDaily())[type==='tv'?1:0];
-    const visible=collection.results.length?{...collection,source:'research'}:fallback||collection;
+    const fallback=needsFresh?(await this.catalogueDaily())[type==='tv'?1:0]:undefined;
+    const visible=fallback?.results.length?fallback:{...collection,source:'research'};
     return {...visible,state:visible.results.length?'ready':refreshing?'warming':limited?'limited':pending?'warming':'unavailable',retryAt:refreshing?Date.now()+5000:pending||0,budget,lastFailure:this.read('daily:lastFailure'),lastEvaluation:this.read('daily:lastEvaluation')};
   }
   async refreshDaily() {
