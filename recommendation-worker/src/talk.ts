@@ -216,7 +216,7 @@ export class TalkSession extends DurableObject<RecommendationEnv> {
   state.recommendationQuery=query;this.put('live:'+session,state,state.expires);
   const policy=talkRecommendationPolicy(query);
   let retained=false;
-  const result=await service.recommend(session,AskRequestSchema.parse({requestId:id,mode:'describe',mediaType:q.mediaType,candidateHints:q.candidates,query:policy.query.slice(0,2000),filters:{...policy.filters,excludedTitles:[...new Set([...(state.context.recentSuggestions||[]),...(q.excludeTitles||[])])]},pageSize:(state.context.companionVersion||0)>=6?8:3,library:[...state.context.library.filter(v=>!!v.id).map(v=>({id:v.id,type:v.type,kind:v.kind})),...(state.context.rejected||[]).map(v=>({...v,kind:"dislike"}))]})).catch(async error=>{
+  const result=await service.recommend(session,AskRequestSchema.parse({requestId:id,mode:'describe',mediaType:q.mediaType,candidateHints:policy.filters.minimumYear?undefined:q.candidates,query:policy.query.slice(0,2000),filters:{...policy.filters,excludedTitles:[...new Set([...(state.context.recentSuggestions||[]),...(q.excludeTitles||[])])]},pageSize:(state.context.companionVersion||0)>=6?8:3,library:[...state.context.library.filter(v=>!!v.id).map(v=>({id:v.id,type:v.type,kind:v.kind})),...(state.context.rejected||[]).map(v=>({...v,kind:"dislike"}))]})).catch(async error=>{
    const failure=researchFailure(error);
    if(!canRetainTalkResearch(failure))throw error;
    const excluded=new Set([...state.context.library.filter(v=>v.kind!=='saved').map(v=>v.id),...(state.context.rejected||[]).map(v=>v.id)].filter((id):id is number=>!!id));

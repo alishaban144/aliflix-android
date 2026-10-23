@@ -1,10 +1,25 @@
 import {env,runInDurableObject} from 'cloudflare:test';
-import {describe,it,expect} from 'vitest';
+import {describe,it,expect,vi} from 'vitest';
 import {TalkContextSchema} from '../src/talkEvidence';
 import {liveSetup} from '../src/talkProviders';
 import {TalkSession} from '../src/talk';
 
 describe('one canonical Talk selection',()=>{
+ it('curates dated Tavily findings rather than filtering stale private proposals down to one choice',async()=>{
+  await runInDurableObject(env.TALK_SESSIONS.getByName('dated-recommendation-pool'),async(instance,state)=>{
+   const session=crypto.randomUUID(),expires=Date.now()+60000,context=TalkContextSchema.parse({companionVersion:6});
+   state.storage.sql.exec('INSERT INTO memory VALUES(?,?,?)','live:'+session,JSON.stringify({context,expires,calls:0,searches:0,grants:[]}),expires);
+   const binding=(instance as any).env,original=binding.ASK_RESEARCH;
+   const recommend=vi.fn(async(_session:string,_request:{candidateHints?:unknown;filters:{minimumYear?:number}})=>({results:[{tmdbId:1,mediaType:'movie',title:'Recent choice',releaseDate:'2025-01-01',posterPath:'/poster.jpg',genres:['Science Fiction'],matchReasons:['A recent thoughtful choice'],retrievalSources:['https://example.org/research']}]}));
+   binding.ASK_RESEARCH={getByName:()=>({recommend})};
+   try {
+    const result=await (instance as unknown as TalkSession).research(session,crypto.randomUUID(),'recommendations',{query:'Recent sci-fi',mediaType:'movie',count:3,candidates:[{title:'Arrival',year:2016}]},'Find two recent science fiction films about identity.');
+    expect(recommend.mock.calls[0][1].candidateHints).toBeUndefined();
+    expect(recommend.mock.calls[0][1].filters.minimumYear).toBe(new Date().getUTCFullYear()-3);
+    expect(result).toMatchObject({requestedCount:2,requiresPresentation:true,results:[{key:'movie:1',tmdbId:1}]});
+   } finally {binding.ASK_RESEARCH=original;}
+  });
+ });
  it('requires a joint identity-based speech and poster commit on capable clients',()=>{
   const current=liveSetup(TalkContextSchema.parse({companionVersion:6,recentProgress:[],stickyLanguage:true}));
   const tools=current.tools[0].functionDeclarations;
