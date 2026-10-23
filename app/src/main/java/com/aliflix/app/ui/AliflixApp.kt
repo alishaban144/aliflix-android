@@ -519,6 +519,7 @@ fun AliflixApp(
     viewModel: AliflixViewModel,
     playerController: WebPlayerController,
     initialMedia: Media? = null,
+    assistantAction: JSONObject? = null,
     onInitialDetailClosed: (() -> Unit)? = null,
 ) {
     val home by viewModel.home.collectAsState()
@@ -577,6 +578,7 @@ fun AliflixApp(
     val searchScrollState = rememberLazyGridState()
     val recommendationScrollState = rememberLazyListState()
     var askAliflixActive by remember { mutableStateOf(false) }
+    var assistantAskRequest by remember { mutableStateOf<Int?>(null) }
     var libraryCollapseFraction by remember { mutableFloatStateOf(0f) }
     val listScrollState = rememberLazyGridState()
     val favoritesScrollState = rememberLazyGridState()
@@ -891,6 +893,29 @@ fun AliflixApp(
 
     fun playMedia(item: Media) = playSelection(PlaybackSelection(item))
 
+    var assistantActionHandled by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(assistantAction) {
+        val command=assistantAction?:return@LaunchedEffect
+        if(assistantActionHandled)return@LaunchedEffect
+        assistantActionHandled=true
+        when(command.optString("action")) {
+            "open_screen"->when(command.optString("screen")) {
+                "home"->showRoot(AppTab.HOME)
+                "discover"->showRoot(AppTab.SEARCH)
+                "ask"->{showRoot(AppTab.SEARCH);assistantAskRequest=1}
+                "account"->openAccount(if(accountState.isSignedIn)AccountRoute.MANAGE else AccountRoute.SIGN_IN)
+                else->{showRoot(AppTab.MY_SPACE);libraryPage=when(command.optString("screen")){"favorites"->1;"history"->2;"downloads"->3;else->0}}
+            }
+            "search"->{showRoot(AppTab.SEARCH);viewModel.selectSearchMode(com.aliflix.app.SearchMode.TITLE);viewModel.updateSearch(command.optString("query"));viewModel.submitCatalogueSearch(command.optString("query"))}
+            "play"->initialMedia?.let{playSelection(PlaybackSelection(it,seasonNumber=command.optInt("season").takeIf{v->v>0},episodeNumber=command.optInt("episode").takeIf{v->v>0}))}
+            "similar"->initialMedia?.let{media->
+                showRoot(AppTab.SEARCH)
+                val editor=com.aliflix.app.ui.discover.AskAliflixEditorState(mode=1,mediaType=media.type,selectedAnchor=media,selectedAnchors=listOf(media),spec=com.aliflix.app.recommendation.CatalogDiscoverySpec(mediaKind=if(media.type==MediaType.TV)com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE))
+                viewModel.setAskEditorState(editor);viewModel.submitAskAliflix(com.aliflix.app.ui.discover.AskAliflixRequest.Similar(media.type,media));assistantAskRequest=1
+            }
+        }
+    }
+
     fun playEpisode(item: Media, episode: Episode) = playSelection(
         PlaybackSelection(
             media = item,
@@ -990,9 +1015,11 @@ fun AliflixApp(
     }
 
     BackHandler(
-        enabled = shouldReturnHomeOnSystemBack(destinationStack) && !playerVisible,
+        enabled = (shouldReturnHomeOnSystemBack(destinationStack)||assistantAction!=null) && !playerVisible,
     ) {
-        if (destinationStack.size > 1) {
+        if(assistantAction!=null&&destinationStack.size==1&&onInitialDetailClosed!=null) {
+            onInitialDetailClosed()
+        } else if (destinationStack.size > 1) {
             popDestination()
         } else {
             showRoot(AppTab.HOME)
@@ -1002,7 +1029,7 @@ fun AliflixApp(
     AliflixLaunchOverlay(
         isHomeReady = isHomeReady,
         onLaunchComplete = { launchCompleted = true },
-        skip = initialMedia != null,
+        skip = initialMedia != null || assistantAction != null,
     ) {
         Box(
             modifier = Modifier
@@ -1363,12 +1390,14 @@ fun AliflixApp(
                     )
 
                     AppScreen.SEARCH -> DiscoverScreen(
+                        askOpenRequestId = assistantAskRequest,
+                        onAskOpenRequestConsumed = { assistantAskRequest=null },
                         state = search,
                         catalogueStore = viewModel.discoverCatalogue,
                         onPerson = ::openCreatorFromDetails,
                         onCategory = { category -> destinationStack = destinationStack + MobileDestination.DiscoverCategory(category, searchMediaFilter) },
                         onAccount = { openAccount(if (accountState.isSignedIn) AccountRoute.MANAGE else AccountRoute.SIGN_IN) },
-                        aiEnabled = aiRecommendationsEnabled,
+                        aiEnabled = aiRecommendationsEnabled || assistantAction?.optString("action")=="similar" || assistantAction?.optString("screen")=="ask",
                         homeContent = home.content,
                         recent = recent,
                         focusRequestId = discoverFocusRequestId.takeIf {
@@ -1408,6 +1437,7 @@ fun AliflixApp(
                     )
 
                     AppScreen.MY_SPACE -> MySpaceScreen(
+                        initiallyOpenSettings = assistantAction?.optString("screen")=="settings",
                         onCollapseFractionChange = { libraryCollapseFraction = it },
                         myList = myList,
                         likes = likes,
@@ -3206,13 +3236,14 @@ internal fun MySpaceScreen(
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onCollapseFractionChange: (Float) -> Unit = {},
+    initiallyOpenSettings: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val pagerState = rememberPagerState(
         initialPage = page.coerceIn(0, 3),
         pageCount = { 4 },
     )
-    var showSettingsWindow by rememberSaveable { mutableStateOf(false) }
+    var showSettingsWindow by rememberSaveable { mutableStateOf(initiallyOpenSettings) }
     var showClearConfirmation by remember { mutableStateOf(false) }
 
     LaunchedEffect(page) {

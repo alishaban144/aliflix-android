@@ -23,7 +23,20 @@ internal fun talkAppContext(context:Context):JSONObject {
         .put("settings",JSONObject().put("preferredQuality",settings.preferredVideoQuality.label)
             .put("playNextEpisode",settings.playNextEpisode).put("playbackSpeed",settings.playbackSpeed)
             .put("subtitleDelaySeconds",settings.subtitleDelaySeconds).put("subtitleSizeSp",settings.subtitleFontSizeSp)
-            .put("subtitleBackgroundOpacity",settings.subtitleBackgroundOpacity).put("audioBoost",settings.boostAudio))
+            .put("subtitleBackgroundOpacity",settings.subtitleBackgroundOpacity).put("audioBoost",settings.boostAudio)
+            .put("zoom",settings.resizeModeZoom).put("subtitleVerticalOffset",settings.subtitleVerticalOffsetDp)
+            .put("autoSubtitles",app.playbackProviderRepository.preferences.value.autoDisplaySubtitles)
+            .put("subtitleLanguage",app.playbackProviderRepository.preferences.value.preferredSubtitleLanguage.code)
+            .put("provider",app.playbackProviderRepository.preferences.value.effectiveGeneralProvider.name)
+            .put("recommendationsEnabled",app.recommendationStore.enabled.value))
+        .put("actions",JSONArray(listOf("show_title_cards: show, focus or restore real cards in Talk and chat; known cards are local, new cards use the same catalogue search as the app",
+            "app_control: show_card, open_title, play (optional season/episode), download (native quality/audio/episode options), similar, search",
+            "app_control: save/unsave My List, favorite/unfavorite, dislike/undo_dislike",
+            "app_control: open_screen home, discover, ask, my_list, favorites, history, downloads, settings, account",
+            "app_control: set_setting play_next_episode, audio_boost, zoom, auto_subtitles, playback_speed, subtitle_size, subtitle_opacity, subtitle_delay_seconds, subtitle_vertical_offset, preferred_quality, subtitle_language, provider, recommendations_enabled",
+            "app_control: player_state, pause, resume, seek, audio_language, subtitle_language on the real active Media3 player")))
+        .put("moreActions",JSONArray(listOf("app_control: downloads_state, pause_download, resume_download, remove_download for an exact title/episode",
+            "app_control: set_voice (Aoede/Kore/Puck/Charon), set_history (enabled), new_chat; open_screen talk_voices/talk_privacy/recent_chats")))
         .put("features",JSONArray(listOf(
             "Home: For You, Movies, TV Shows, Categories; title details, search, seasons and episode ratings.",
             "Discover > Ask Aliflix: one Movies/Series composer includes All/Running/Ended series status and supports up to four Similar title anchors, contextual Filters, researched daily discovery and Surprise Me. The companion speech icon or Talk opens Talk; Talk starts listening after microphone permission. Transcript and Privacy controls are inside Talk. End or Back returns to the app.",
@@ -34,9 +47,9 @@ internal fun talkAppContext(context:Context):JSONObject {
             "Watch Together is inside Player > More. Private invitations, independent provider streams, host/everyone permissions and room leave/end controls; no video URLs or credentials are shared.",
             "Downloads have their own quality choice, audio/subtitle selection when available, and episode selection; saved downloads are separate from My List. Source tracks can vary by title.",
             "Settings has inline Auto/Low preferred quality and a read-only Streaming sources list at the end; choosing a source is in the player.",
-            "Talk uses microphone audio with Gemini Live, an explicitly chosen Aoede/Kore/Puck/Charon voice pinned during same-model reconnect, authenticated web research and the same researched recommendation pipeline as text Ask. Keep history is opt-in; Delete history clears saved Talk history. Stopping or leaving releases the microphone. Talk cannot change settings, launch playback, delete data or verify live provider status on your behalf."
+            "Talk uses Gemini Live, the selected Aoede/Kore/Puck/Charon voice, Tavily research, persistent cards and native app_control actions. It can change the listed settings, manage title lists, open native features, start playback/download options and control the active player. Account verification, download options and destructive confirmations use their real native screens. Stop or leaving releases the microphone."
         )))
-        .put("instruction","Explain how these real features connect. Use the returned current settings for personal questions. Do not invent hidden controls, device observations or actions. If a capability is absent here, acknowledge that specific limitation briefly.")
+        .put("instruction","These are real native capabilities and current state. For a user action request, USE app_control or show_title_cards; do not merely explain how to do it or claim the app cannot show cards. Only confirm completion from the action result. For an action requiring native options or account verification, open that real screen. Questions about features do not authorize unrelated changes.")
 }
 
 /** A turn-level safety net when Gemini omits the optional visual tool. Never use raw first words. */

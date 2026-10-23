@@ -12,6 +12,7 @@ class AskTaste(context:Context) {
     private val prefs get()=appContext.getSharedPreferences("aliflix-ask-feedback-"+(com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid?:"guest"),Context.MODE_PRIVATE)
     fun rejected():Set<String> = prefs.getStringSet("rejected",emptySet()).orEmpty().toSet()
     fun reject(media:Media){prefs.edit().putStringSet("rejected",(rejected()+media.key).toList().takeLast(160).toSet()).apply()}
+    fun unreject(media:Media){prefs.edit().putStringSet("rejected",rejected()-media.key).apply()}
     fun library(store:LibraryStore):JSONArray {
         val records=store.likes.value.take(24).map{it to "favorite"}+store.myList.value.take(16).map{it to "saved"}+store.recent.value.take(24).map{it to "watched"}
         val array=JSONArray()

@@ -15,10 +15,15 @@ class TalkTitleCardsTest {
         assertEquals(listOf(cards[2]),focused.topic("Third Film").visible)
         assertTrue(focused.question("Let's change subjects. Why are leaves red?").visible.isEmpty())
         assertEquals(listOf(cards[0]),focused.question("Show the first one again").visible)
-        val changed=focused.topic("Travel")
+        assertEquals("A visual keyword is not a card dismissal",focused,focused.topic("ELEGANT CINEMA"))
+        val changed=focused.question("Let's change topics to travel")
         assertTrue(changed.visible.isEmpty())
         assertEquals(cards,changed.show(changed.select(cards.map{it.title})).visible)
         assertTrue(TalkCardContext().visible.isEmpty())
+        assertFalse(talkCanDismissCards("Show me the card of the mentioned title",listOf(cards[2])))
+        assertFalse(talkCanDismissCards("What makes its style interesting?",listOf(cards[2])))
+        assertTrue(talkCanDismissCards("Hide the card",listOf(cards[2])))
+        assertTrue(talkCanDismissCards("Let's change subjects to travel",listOf(cards[2])))
     }
     @Test fun cardsAcceptOnlyRealCatalogueIdentitiesAndSafePosterPaths() {
         val cards=parseTalkTitles(JSONArray("""[{"tmdbId":27205,"mediaType":"movie","title":"Inception","year":"2010","posterPath":"/poster.jpg"},{"id":0,"type":"movie","title":"Invalid"},{"id":27205,"type":"movie","title":"Duplicate"},{"id":70523,"type":"tv","title":"Dark","posterPath":"https://bad.example/a"}]"""))

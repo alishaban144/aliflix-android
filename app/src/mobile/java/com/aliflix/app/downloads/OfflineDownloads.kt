@@ -38,6 +38,7 @@ internal class OfflineDownloads private constructor(val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val handler = Handler(Looper.getMainLooper())
     val entries = MutableStateFlow<List<SavedDownload>>(emptyList())
+    val loaded = MutableStateFlow(false)
     val message = MutableStateFlow<String?>(null)
     private val lock = Any()
     private var pendingBytes = 0L
@@ -98,6 +99,7 @@ internal class OfflineDownloads private constructor(val context: Context) {
             entries.value = values.map { saved -> live[saved.id]?.let {
                 saved.copy(download = it, downloadedBytes = it.bytesDownloaded, percent = it.percentDownloaded)
             } ?: saved }.sortedByDescending { it.download.startTimeMs }
+            loaded.value = true
         }
     } } }
 

@@ -48,7 +48,7 @@ class TalkConversationJourneyDeviceTest {
    assertEquals(listOf(selected.key),session.state.value.cards.visible.map{it.key})
    turn("What makes its style interesting? Briefly.")
    assertEquals("Same subject keeps its card",listOf(selected.key),session.state.value.cards.visible.map{it.key})
-   turn("Show me the movie card for ${selected.title} again.")
+   turn("Show me the card of the title you just mentioned again.")
    assertEquals(listOf(selected.key),session.state.value.cards.visible.map{it.key})
    turn("Show me the card for Dark, the 2017 TV series.")
    assertEquals(listOf("tv:70523"),session.state.value.cards.visible.map{it.key})
@@ -57,6 +57,11 @@ class TalkConversationJourneyDeviceTest {
    turn("Hi",chat=true)
    turn("Show me the card for Dark again.",chat=true)
    assertEquals("Text chat controls the same persistent cards",listOf("tv:70523"),session.state.value.cards.visible.map{it.key})
+   val speed=(context.applicationContext as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.playbackSpeed
+   val controls=session.debugToolCalls["app_control"]?:0
+   turn("Set my playback speed to $speed times.",chat=true)
+   assertTrue("A real native action must execute",(session.debugToolCalls["app_control"]?:0)>controls)
+   assertEquals(speed,(context.applicationContext as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.playbackSpeed)
    assertEquals("No silent stall recovery",0,session.debugStallRecoveries)
   }} finally {
    receipt.writeText(JSONObject().put("turns",turns).put("phase",session.state.value.phase).put("pcmFrames",session.debugPcmFrames).put("events",JSONArray(session.debugWireEvents.toList())).put("lines",JSONArray(session.state.value.lines.map{JSONObject().put("role",it.role).put("text",it.text)})).put("tools",JSONObject(session.debugToolCalls.toMap())).put("connectionIssue",session.debugConnectionIssue).toString(2))

@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Talk keeps title cards through follow-ups, elegantly centers the selected title, and can show cards on request. Greetings and general conversation receive natural responses. Similar uses canonical title and creative context while keeping strong watched/favorite matches eligible. Ask has a compact scrolling layout, a two-column discovery grid, and stable result positioning."
+          RELEASE_NOTES="Talk keeps and elegantly focuses title cards, retrieves mentioned or new titles through the app catalogue, and performs native app commands. Greetings and general conversation receive natural responses, with spoken bridges during searches. Similar uses Tavily, Gemini and TMDB with stronger creative connections. Ask has a compact layout and stable result positioning."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -405,6 +405,8 @@ jobs:
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
             Talk keeps movie and series cards visible while you speak. Discussing one recommendation centers its card as the others animate away. You can ask to show a previous card or a new title. Voice and chat retain the orb and changing topic.
+
+            Talk uses the app catalogue for new cards, original names and alternate editions. Native commands open details, playback/episode and download options, search, Similar and app screens; manage My List and favorites; change supported settings and control active playback. Commands report real app state, and actions needing options or account verification use the native screens.
 
             Greetings, small talk and general questions receive natural answers. Film knowledge and recommendations remain available with Tavily search and contextual spoken bridges.
 

@@ -81,6 +81,10 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     var settings by remember { mutableStateOf(false) }
     var draft by rememberSaveable(state.conversationId) { mutableStateOf("") }
     var deleteHistory by remember { mutableStateOf(false) }
+    LaunchedEffect(state.panelRequest){
+        when(state.panelRequest){"talk_voices"->voices=true;"talk_privacy"->privacy=true;"recent_chats"->{recent=true;session.history.refresh()}}
+        if(state.panelRequest.isNotEmpty())session.consumePanelRequest()
+    }
     val localTracker=remember { DiscoverTouchTracker() }
     val tracker=touchTracker ?: localTracker
     val motion=rememberMobileMotionEnabled() && rememberMobileResumed()

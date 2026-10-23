@@ -137,6 +137,17 @@ internal interface DownloadUiDependencies {
     val selection = PlaybackSelection(media, seasonNumber = episode?.seasonNumber, episodeNumber = episode?.number)
     val id = playbackProgressKey(selection)
     var open by remember(id) { mutableStateOf(false) }
+    val assistantActivity=LocalActivity.current
+    var assistantEpisode by remember(id){mutableStateOf<Episode?>(null)}
+    LaunchedEffect(id) {
+        val intent=assistantActivity?.intent
+        if(intent?.getStringExtra("assistantDownloadKey")==media.key&&episode==null) {
+            intent.removeExtra("assistantDownloadKey")
+            val season=intent.getIntExtra("assistantDownloadSeason",0);val number=intent.getIntExtra("assistantDownloadEpisode",0)
+            assistantEpisode=if(season>0&&number>0)Episode(season,number,"Episode $number")else null
+            open=true
+        }
+    }
     var actionPending by remember(id) { mutableStateOf(false) }
     val store = dependencies ?: rememberDownloadUiDependencies()
     val entries by store.entries.collectAsState()
@@ -219,7 +230,7 @@ internal interface DownloadUiDependencies {
         if (showLabel) Text(action, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = AliflixContentPrimary)
         }
     }
-    if (open) DownloadPicker(media, episode, store) { open = false }
+    if (open) DownloadPicker(media, assistantEpisode?:episode, store) { open = false }
 }
 
 @Composable private fun rememberDownloads(): OfflineDownloads {
@@ -541,7 +552,7 @@ internal interface DownloadUiDependencies {
             }
         }
     }
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().testTag("downloads-section")) {
         message?.let { Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(it, Modifier.weight(1f), color = AliflixError)
             AliflixIconButton(onClick = { store.message.value = null }) { Icon(Icons.Rounded.Close, "Dismiss") }
