@@ -342,7 +342,11 @@ describe("unified authenticated research", () => {
     const calls:string[]=[];
     let sourceText='Distinctive movies about identity.';
     vi.spyOn(globalThis,'fetch').mockImplementation(async(u,init)=>{
-      const url=String(u);calls.push(url);
+      const url=String(u),headers=new Headers(init?.headers);
+      // Daily-bootstrap alarms from other fixtures can run concurrently. Only
+      // this coordinator's credentials belong to this strict request-count check.
+      if(headers.get('Authorization')!=='Bearer fast-pipeline-fixture'&&headers.get('x-goog-api-key')!=='fast-pipeline-fixture')return new Response('Unrelated fixture',{status:503});
+      calls.push(url);
       if(url.includes('tavily.com'))return Response.json({results:[{title:'Research',url:'https://www.bfi.org.uk/list',content:sourceText}],usage:{credits:1}});
       const pair=new WebSocketPair();pair[1].accept();
       pair[1].addEventListener('message',event=>{
@@ -355,7 +359,7 @@ describe("unified authenticated research", () => {
     await runInDurableObject(env.ASK_RESEARCH.getByName('fast-pipeline-complete-'+mediaType),async instance=>{
       const service=instance as unknown as AskResearch,e=(instance as any).env;
       const old={AI:e.AI,ASK_RESEARCH:e.ASK_RESEARCH,TAVILY_API_KEY:e.TAVILY_API_KEY,GEMINI_API_KEY:e.GEMINI_API_KEY};
-      const run=vi.fn();e.AI={run};e.TAVILY_API_KEY='test';e.GEMINI_API_KEY='test';
+      const run=vi.fn();e.AI={run};e.TAVILY_API_KEY='fast-pipeline-fixture';e.GEMINI_API_KEY='fast-pipeline-fixture';
       const identity=vi.fn(async(_type:string,title:string)=>({tmdbId:Number(title.split(' ')[1])+1,mediaType,title,releaseDate:'2025-01-01',genres:[mediaType==='tv'?'Sci-Fi & Fantasy':'Science Fiction'],originCountries:['US'],originalLanguage:'en',runtimeMinutes:110,matchLevel:'Relevant',finalScore:0,matchReasons:[],retrievalSources:[]}));
       e.ASK_RESEARCH={getByName:()=>({identity,anchorContext:async()=>({tmdbId:999,mediaType,title:'Anchor film',year:'2020',creators:['A director']}),resolveBatch:async(type:string,items:Array<{title:string}>)=>Promise.all(items.map(p=>identity(type,p.title)))})};
       try {

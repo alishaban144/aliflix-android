@@ -586,7 +586,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     recommendationReply=reply
                     recommendationLookup=false;pendingAnswerNeedsTitle=true;awaitingToolAnswer=true;pendingToolReply=reply;toolAnswerNudges=0
                     recommendationDelivery.clear();outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L
-                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"present_recommendations",reply,"WHEN_IDLE")))))
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"present_recommendations",reply,"INTERRUPT")))))
                     answerDeadline.awaiting(18000)
                     continue
                 }
@@ -756,6 +756,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     val bridgeUntil=progressSentAt+6000
                     while(call.optString("name")=="recommendations"&&progressSentAt>0&&!bridgeDelivered&&!recommendationBridgeComplete&&ticket==epoch&&toolTurn==userTurn.get()&&SystemClock.elapsedRealtime()<bridgeUntil)delay(25)
                     if(call.optString("name")!="recommendations")withTimeoutOrNull(4000){while(responseTurn==toolTurn&&(turnHasAudio||outputText.isNotBlank())&&ticket==epoch&&toolTurn==userTurn.get())delay(25)}
+                    withTimeoutOrNull(8000){while(speaking)delay(25)}
                     bridge.cancel()
                     if(ticket==epoch&&permitted&&toolTurn==userTurn.get()&&id !in cancelledTools) {
                         if(call.optString("name")=="recommendations"){recommendationLookup=false;recommendationReply=result}
@@ -784,7 +785,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         // lookup back into generation and fence its earlier completion.
                         awaitingToolAnswer=true;pendingAnswerNeedsTitle=!needsPresentation&&call.optString("name")=="recommendations"&&returnedTitles.isNotEmpty();pendingToolReply=result;toolAnswerNudges=0;recommendationDelivery.clear();deliveryCorrections=0
                         assistantLine=-1;outputText="";turnHasAudio=false;responseTurn=-1L;debugTurnCompleteAt=0
-                        val response=talkFunctionResponse(id,wireName,result,"WHEN_IDLE")
+                        val response=talkFunctionResponse(id,wireName,result,"INTERRUPT")
                         if(BuildConfig.DEBUG&&call.optString("name")=="film_knowledge")debugKnowledgeAppliedAt=SystemClock.elapsedRealtime()
                         emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(response))))
                     }
@@ -815,7 +816,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             if(presentationDelivered&&!awaitingToolAnswer&&tools.isEmpty())return
             content.optJSONObject("outputTranscription")?.optString("text")?.let { text->
                 responseTurn=userTurn.get()
-                inputTurnActive=false;answerDeadline.clear()
+                inputTurnActive=false;if(!pendingAnswerNeedsTitle&&!recommendationLookup)answerDeadline.clear()
                 outputText=appendTranscript(outputText,text)
                 commitQuestion()
                 if(!pendingAnswerNeedsTitle&&!recommendationLookup)update { v->
@@ -831,7 +832,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(!data.optString("mimeType").startsWith("audio/pcm"))continue
                 val bytes=Base64.decode(data.getString("data"),Base64.NO_WRAP)
                 if(bytes.isNotEmpty())lastOutputAt=SystemClock.elapsedRealtime()
-                if(bytes.isNotEmpty()){turnHasAudio=true;answerDeadline.clear()}
+                if(bytes.isNotEmpty()){turnHasAudio=true;if(!pendingAnswerNeedsTitle&&!recommendationLookup)answerDeadline.clear()}
                 if(bytes.isNotEmpty())responseTurn=userTurn.get()
                 require(bytes.size<=192000&&bytes.size%2==0)
                 if(pendingAnswerNeedsTitle||recommendationLookup){recommendationDelivery.hold(bytes);continue}
@@ -843,10 +844,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     scope.launch {disconnected(ticket,false)};break
                 }
             } }
-            // Native generation completion can precede turnComplete while tools
-            // settle. It is a finished audio stream, never a stalled answer.
+            // A produced stream can finish before its tool turn. Only approved,
+            // deliverable output may settle the recommendation deadline.
             if(content.optBoolean("generationComplete")){
-                endOfAudio=true;if(turnHasAudio)answerDeadline.clear()
+                endOfAudio=true;if(turnHasAudio&&!pendingAnswerNeedsTitle&&!recommendationLookup)answerDeadline.clear()
                 if(recommendationLookup&&(turnHasAudio||outputText.isNotBlank())){recommendationBridgeComplete=true;if(BuildConfig.DEBUG)debugBridgeText=outputText.take(500)}
                 if(recommendationLookup&&!bridgeDelivered&&talkIsApprovedBridge(outputText,recommendationBridge)) {
                     bridgeDelivered=true
@@ -875,7 +876,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         for(bytes in chunks)enqueueAudio(bytes,ticket)
                     }else recommendationDelivery.clear()
                     outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L;endOfAudio=true
-                    if(!startNativeRecommendations())answerDeadline.awaiting(45000)
+                    if(!startNativeRecommendations())answerDeadline.awaiting(if(recommendationPool.isEmpty())45000 else 18000)
                     return
                 }
                 if(pendingAnswerNeedsTitle) {
@@ -899,6 +900,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     }
                     pendingAnswerNeedsTitle=false
                     presentationDelivered=true
+                    answerDeadline.clear()
                     addLine(TalkLine("assistant",outputText,finalReferences,titles=pendingTitles))
                     for(bytes in recommendationDelivery.drain())enqueueAudio(bytes,ticket)
                 }

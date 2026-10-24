@@ -9,6 +9,19 @@ import org.junit.Test
 /** Replays the provider ordering captured in the physical Annihilation failure. */
 class TalkWireReplayDeviceTest {
     @get:Rule val compose=createAndroidComposeRule<TalkVoiceActivity>()
+    @Test fun withheldOutputCannotCancelTheUnansweredPresentationDeadline() {
+        val session=compose.activity.voice
+        compose.runOnUiThread {
+            session.debugPreviewUserQuestion("Recommend three movies")
+            val deadline=TalkVoiceSession::class.java.getDeclaredField("answerDeadline").apply{isAccessible=true}.get(session) as TalkResponseDeadline
+            deadline.awaiting(60000)
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"outputTranscription":{"text":"Unverified suggestions that have not been committed."},"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"AAAAAA=="}}]}}}"""))
+            assertTrue("Held audio is not a delivered answer",deadline.pending)
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"generationComplete":true}}"""))
+            assertTrue("Unapproved generation completion must still leave a response deadline",deadline.pending)
+            deadline.clear()
+        }
+    }
     @Test fun interruptedLookupAudioCannotCompleteTheUnansweredUserTurn() {
         val session=compose.activity.voice
         fun content(json:String)=session.debugReplayServerMessage(JSONObject().put("serverContent",JSONObject(json)))

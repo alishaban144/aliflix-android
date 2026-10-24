@@ -14,6 +14,7 @@ internal class TalkResponseDeadline(
 ) {
     private var generation=0L
     private var job:Job?=null
+    internal val pending:Boolean get()=synchronized(this){job?.isActive==true}
     @Synchronized fun awaiting(timeout:Long=timeoutMillis) {
         val ticket=++generation
         job?.cancel()
