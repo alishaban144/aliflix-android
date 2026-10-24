@@ -4,7 +4,7 @@ Published **2026-10-24 16:40:04 UTC**. Mobile only. TV UI, version and release a
 
 - Tested Android/Worker source: `f165d1e56d701965171d46a5ef9fd687c7fa8c81`.
 - [Full signed-release workflow](https://github.com/alishaban144/aliflix-android/actions/runs/40110252587), [release](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.180), [implementation and acceptance record](mobile-180-validation.md).
-- Final CI-deployed Worker: `964d79b4-4454-43c4-ad7f-25b2a80832bf`. Watch Party protocol and five live genre shelves pass after deployment.
+- Current production Worker: `3dc22aff-534b-4b5b-ba72-5f74f72bca27`, a same-source tag-triggered redeployment of the fully verified `964d79b4-4454-43c4-ad7f-25b2a80832bf`. Watch Party protocol and five live genre shelves pass in the full workflow. Publishing the tag also triggered a duplicate build; that run was cancelled before replacing any verified public artifacts.
 
 ## Artifacts
 
