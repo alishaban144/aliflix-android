@@ -66,6 +66,8 @@ type ResearchMedia = RecommendationResult & {
   productionCompanyIds?: number[];
   collectionId?: number;
 };
+type RelatedPick={id:number;title:string;year:number;genreIds?:number[];sharedCreator?:boolean;why?:string};
+type ResearchAnchor={tmdbId:number;mediaType:MediaType;title?:string;originalTitle?:string;year:string;genres?:string[];genreIds?:number[];countries?:string[];language?:string;creators?:string[];creatorIds?:number[];keywords?:string[];related?:RelatedPick[]};
 type Research = {
   answer?: string;
   evidence: WebFinding[];
@@ -731,15 +733,46 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     return value;
   }
   async anchorContext(type:MediaType,id:number) {
-    const key=`anchor-context-v1:${type}:${id}`,cached=this.read<{tmdbId:number;mediaType:MediaType;title?:string;originalTitle?:string;year:string;genres?:string[];countries?:string[];language?:string;creators?:string[];keywords?:string[]}>(key);
+    const key=`anchor-context-v3:${type}:${id}`,cached=this.read<ResearchAnchor>(key);
     if(cached)return cached;
     const d=await new TmdbClient(this.env,3,AbortSignal.timeout(2500)).researchAnchor(type,id);
     const value={tmdbId:id,mediaType:type,title:d.title||d.name,originalTitle:d.original_title||d.original_name,
       year:(d.release_date||d.first_air_date||'').slice(0,4),genres:d.genres?.map(v=>v.name),
       countries:d.origin_country,language:d.original_language,
       creators:type==='tv'?d.created_by?.map(v=>v.name):d.credits?.crew?.filter(v=>v.job==='Director').map(v=>v.name),
+      creatorIds:type==='tv'?d.created_by?.map(v=>v.id):d.credits?.crew?.filter(v=>v.job==='Director').map(v=>v.id),
+      genreIds:d.genres?.map(v=>v.id),
+      related:d.recommendations?.results?.slice(0,20).map(v=>({id:v.id,title:v.title||v.name||'',year:Number((v.release_date||v.first_air_date||'').slice(0,4)),genreIds:v.genre_ids})),
       keywords:(d.keywords?.keywords||d.keywords?.results)?.slice(0,12).map(v=>v.name)};
     this.put(key,value,7*DAY);return value;
+  }
+  /** Structured creative relationships run beside the single Tavily/Gemini
+   * selection. They preserve close matches during a generation outage. */
+  async relatedPicks(type:MediaType,id:number):Promise<RelatedPick[]> {
+    const key=`similar-related-v3:${type}:${id}`,cached=this.read<RelatedPick[]>(key);if(cached)return cached;
+    const anchor=await this.anchorContext(type,id),today=new Date().toISOString().slice(0,10);
+    const tmdb=new TmdbClient(this.env,6,AbortSignal.timeout(6000));
+    const creativeAnchors=[anchor];
+    let edition=anchor.related?.find(v=>v.id!==id&&normalize(v.title)===normalize(anchor.title||''));
+    // Older same-name TV editions with a shared informative genre are useful
+    // creative context even when the community list omits the original.
+    if(!edition&&type==='tv'&&anchor.title){
+      const page=await tmdb.searchTitle(type,anchor.title).catch(()=>null);
+      const other=page?.results.filter(v=>v.id!==id&&!v.adult&&(v.vote_count||0)>=10&&normalize(v.name||v.title||'')===normalize(anchor.title||'')&&Number(v.first_air_date?.slice(0,4))<=Number(anchor.year)&&v.genre_ids?.some(g=>g!==18&&anchor.genreIds?.includes(g)))
+        .sort((a,b)=>(b.vote_count||0)-(a.vote_count||0))[0];
+      if(other)edition={id:other.id,title:other.name||other.title||'',year:Number(other.first_air_date?.slice(0,4)),genreIds:other.genre_ids};
+    }
+    if(edition){const original=await this.anchorContext(type,edition.id).catch(()=>null);if(original)creativeAnchors.push(original);}
+    const creators=[0,1].flatMap(index=>creativeAnchors.flatMap(a=>a.creatorIds?.[index]?[{id:a.creatorIds[index],name:a.creators?.[index]}]:[])).filter((v,i,a)=>a.findIndex(other=>other.id===v.id)===i).slice(0,2);
+    const credits=(await Promise.all(creators.map(async(person)=>{
+      const rows=await tmdb.personCombinedCredits(person.id).catch(()=>({crew:[]}));
+      return (rows.crew||[]).filter(v=>v.media_type===type&&/^(?:Creator|Director|Writer|Screenplay|Novel|Story|Original Series Creator|Executive Producer)$/i.test(v.job||''))
+        .map(v=>({...v,creator:person.name}));
+    }))).flat().filter(v=>v.id!==id&&!v.adult&&(v.vote_count||0)>=10&&(v.release_date||v.first_air_date||'')<=today&&!!(v.release_date||v.first_air_date)&&(!anchor.genreIds?.length||v.genre_ids?.some(g=>anchor.genreIds!.includes(g))));
+    const score=(v:typeof credits[number])=>(v.genre_ids||[]).filter(g=>g!==18&&anchor.genreIds?.includes(g)).length*100+(v.job==='Creator'?10:0)+Math.log10((v.vote_count||0)+1);
+    const creative=credits.sort((a,b)=>score(b)-score(a)).slice(0,4).map(v=>({id:v.id,title:v.title||v.name||'',year:Number((v.release_date||v.first_air_date||'').slice(0,4)),sharedCreator:true,why:v.creator?'Creative connection: '+v.creator:undefined}));
+    const related=[...creative,...(edition?[edition]:[]),...(anchor.related||[]).filter(v=>v.id!==id&&v.year>1870&&v.year<=Number(today.slice(0,4)))].filter(v=>v.title&&v.id>0).filter((v,i,a)=>a.findIndex(other=>other.id===v.id)===i).slice(0,16);
+    this.put(key,related,related.length?7*DAY:30000);return related;
   }
   async resolveBatch(
     type: MediaType,
@@ -814,7 +847,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       (this.recommendationWaiters.get(key) || 0) + 1,
     );
     this.controllers.set(job, controller);
-    const progressKey='fast-results-v7:'+key;
+    const progressKey=(request.mode==='similar'?'fast-results-v10:':'fast-results-v7:')+key;
     if(onProgress){const listeners=this.progressListeners.get(progressKey)||new Set();listeners.add(onProgress);this.progressListeners.set(progressKey,listeners);const latest=this.latestProgress.get(progressKey);if(latest)onProgress(latest);}
     try {
       if(externalSignal)remaining(externalSignal);
@@ -854,7 +887,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     }
   }
   private async build(request: AskRequest, signal: AbortSignal, _editorial=false):Promise<ResearchResult> {
-    const started=Date.now(), key='fast-results-v7:'+await digest(researchCacheIdentity(request));
+    const started=Date.now(), key=(request.mode==='similar'?'fast-results-v10:':'fast-results-v7:')+await digest(researchCacheIdentity(request));
     const cached=this.read<ResearchResult>(key);
     if(cached?.results.length)return {...cached,cached:true};
     return this.single(key,async()=>{
@@ -863,6 +896,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       const anchorPromise=Promise.all(anchors.map(a=>this.env.ASK_RESEARCH.getByName(`anchor:${a.mediaType}:${a.tmdbId}`).anchorContext(a.mediaType,a.tmdbId).catch(()=>({...a,year:'',creators:[] as string[],originalTitle:a.title}))));
       const query=[request.previousQuery,request.query,request.refinementQuery].filter(Boolean).join('\n');
       const canonicalAnchors=await anchorPromise;
+      const relatedPromise=request.mode==='similar'?Promise.all(anchors.map(async a=>{
+        try{return await this.env.ASK_RESEARCH.getByName(`anchor:${a.mediaType}:${a.tmdbId}`).relatedPicks(a.mediaType,a.tmdbId);}catch{return [] as RelatedPick[];}
+      })).then(rows=>rows.flat().sort((a,b)=>Number(!!b.sharedCreator)-Number(!!a.sharedCreator)).slice(0,16)):Promise.resolve([] as RelatedPick[]);
       const searchQuery=[anchors.length?'Best '+(request.mediaType==='tv'?'TV series':'films')+' similar to '+canonicalAnchors.map(a=>'"'+a.title+'" '+a.year+(a.originalTitle!==a.title?' '+a.originalTitle:'')+' '+(a.creators||[]).join(' ')).join(' and '):query||'Excellent distinctive films and series',anchors.length?query:'',anchors.length?'same creator tone atmosphere strongest related recommendations with release years':request.mediaType==='tv'?'released TV series recommendations with release years':'released film recommendations titles and release years',!request.filters.minimumYear&&!request.filters.maximumYear?'best matches across decades, not upcoming releases':'',request.filters.includedGenres.join(' '),request.filters.minimumYear?'since '+request.filters.minimumYear:'',request.filters.maximumYear?'before '+request.filters.maximumYear:'',...request.filters.excludedTitles.slice(0,3).map(t=>'-"'+t+'"')].filter(Boolean).join(' ').slice(0,600);
       const tastePromise=Promise.all(researchTaste(request.library).filter(v=>v.kind==='favorite').slice(0,4).map(v=>this.env.ASK_RESEARCH.getByName('taste:'+v.type+':'+v.id).identity(v.type,'',0,v.id,started+6500).catch(()=>null)));
       let research:Research={evidence:[],cached:false,credits:0,retrievedAt:Date.now()};
@@ -881,9 +917,10 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       const excluded=new Set([...request.library.filter(v=>v.type===request.mediaType&&(v.kind==='dislike'||request.mode!=='similar'&&v.kind!=='saved')).map(v=>v.id),...anchors.filter(a=>a.mediaType===request.mediaType).map(a=>a.tmdbId)]);
       const matched=new Map<number,RecommendationResult>();
       const reasons=new Map<number,string>();
+      const catalogueSources=new Map<number,string>();
       const snapshot=()=>[...matched.entries()].sort((a,b)=>a[0]-b[0]).map(v=>v[1]).filter((v,i,a)=>a.findIndex(m=>m.tmdbId===v.tmdbId)===i).slice(0,Math.min(24,request.pageSize));
       const lanes=Array.from({length:3},()=>Promise.resolve());
-      const pending:Array<{pick:{title:string;year:number;why?:string};index:number}>=[];
+      const pending:Array<{pick:{title:string;year:number;id?:number;why?:string};index:number}>=[];
       let scheduled=false,batchNumber=0;
       const apply=(m:ResearchMedia|null,index:number)=>{
         if(!m||excluded.has(m.tmdbId))return;
@@ -891,7 +928,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         if(!c)return;Object.assign(c,m,{productionCompanyIds:m.productionCompanyIds||[]});
         if(!passesHardFilters(c,filters))return;
         remaining(signal);
-        matched.set(index,{...m,finalScore:0,matchReasons:reasons.has(index)?[reasons.get(index)!]:[],retrievalSources:research.evidence.map(e=>e.url)});
+        matched.set(index,{...m,finalScore:0,matchReasons:reasons.has(index)?[reasons.get(index)!]:[],retrievalSources:[...(catalogueSources.has(index)?[catalogueSources.get(index)!]:[]),...research.evidence.map(e=>e.url)]});
         usage.firstResultsMs??=Date.now()-started;
         const progress={results:snapshot(),metrics:{...usage,elapsedMs:Date.now()-started},inProgress:true};
         this.latestProgress.set(key,progress);this.progressListeners.get(key)?.forEach(listener=>listener(progress));
@@ -909,20 +946,23 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
           void lanes[lane].catch(()=>{});
         }
       };
-      const enqueue=(pick:{title:string;year:number;why?:string},index:number)=>{
+      const enqueue=(pick:{title:string;year:number;id?:number;why?:string},index:number)=>{
         if(pick.why)reasons.set(index,pick.why);
+        if(pick.id)catalogueSources.set(index,`https://www.themoviedb.org/${request.mediaType}/${pick.id}`);
         pending.push({pick,index});if(!scheduled){scheduled=true;queueMicrotask(flush);}
       };
       const sourcePicks=tavilyCandidatePicks(research.answer||'',research.evidence);
+      const related=await relatedPromise;
+      related.forEach((pick,index)=>enqueue(pick,pick.sharedCreator&&!query.trim()?-1000+index:100+index));
       // Tavily's actual titles remain eligible when proposed candidates are
       // unavailable, excluded or unmatched; reuse this same search, no extra AI.
-      sourcePicks.slice(0,12).forEach((pick,index)=>enqueue(pick,100+index));
+      sourcePicks.slice(0,12).forEach((pick,index)=>enqueue(pick,(request.mode==='similar'?300:100)+index));
       let picks:Array<{title:string;year:number;why?:string}>;
       try {if(request.candidateHints?.length){picks=request.candidateHints;picks.forEach(enqueue);usage.geminiCalls=0;usage.pipeline='tavily-gemini-live-tmdb';}else picks=await liveRecommendationPicks(this.env,{query,mode:request.mode,mediaType:request.mediaType,anchors:await anchorPromise,filters:request.filters,favorites,count:Math.min(24,request.pageSize),searchAnswer:research.answer,sources:research.evidence.map(e=>({...e,text:e.text.slice(0,1200)}))},signal,enqueue);}
       catch(error){
         remaining(signal);
         picks=sourcePicks;
-        if(!picks.length)throw error;
+        if(!picks.length&&!related.length)throw error;
         usage.pipeline='tavily-tmdb';
         picks.forEach(enqueue);
         console.warn(JSON.stringify({event:'ask_tavily_capacity_recovery',count:picks.length}));

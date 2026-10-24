@@ -168,7 +168,7 @@ export class TmdbClient {
     return this.request(`/${type}/${id}/images`,{include_image_language:'en,null'});
   }
   researchAnchor(type: MediaType, id: number): Promise<TmdbDetails> {
-    return this.request(`/${type}/${id}`, {language:'en-US',append_to_response:type==='tv'?'keywords':'keywords,credits'});
+    return this.request(`/${type}/${id}`, {language:'en-US',append_to_response:type==='tv'?'keywords,recommendations':'keywords,credits,recommendations'});
   }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
     return this.request(`/${type}/${id}`, {

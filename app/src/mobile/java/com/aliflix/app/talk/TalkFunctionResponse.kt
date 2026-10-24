@@ -2,6 +2,11 @@ package com.aliflix.app.talk
 
 import org.json.JSONObject
 
+/** Input transcription can arrive after a tool call. An older greeting must
+ * never replace the new request already understood by the live model. */
+internal fun talkCurrentQuestion(input:String,last:String,lastTurn:Long,turn:Long,fallback:String="") =
+    input.ifBlank{if(lastTurn==turn)last else fallback}
+
 /** A saved unanswered prompt is history, never a newly submitted request. */
 internal fun talkArchiveResumeLines(lines:List<TalkLine>):List<TalkLine> {
     val answered=lines.indexOfLast { it.role=="assistant"&&!it.stopped }

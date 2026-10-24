@@ -89,6 +89,7 @@ export interface SimilarAnchorDocument {
 
 export interface TmdbListItem {
   id: number;
+  adult?: boolean;
   title?: string;
   name?: string;
   original_title?: string;

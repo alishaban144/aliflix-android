@@ -5,6 +5,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkFunctionResponseTest {
+    @Test fun delayedInputTranscriptionNeverTurnsANewRecommendationIntoTheOldGreeting() {
+        val request="movies about gentlemen"
+        assertEquals(request,talkCurrentQuestion("","Hi",1,2,request))
+        assertEquals("",talkCurrentQuestion("","Hi",1,2))
+        assertEquals(request,talkCurrentQuestion(request,"Hi",1,2,"A wrong tool paraphrase"))
+        assertEquals(request,talkCurrentQuestion("",request,2,2,"A wrong tool paraphrase"))
+    }
     @Test fun namedQuotaErrorsStopRetryingAndSavedDanglingQuestionsDoNotBecomeNewTurns() {
         assertTrue(talkFailureIsLimited(TalkHttpException(429,"DAILY_LIMIT")))
         assertTrue(talkFailureIsLimited(TalkHttpException(429,"TRY_LATER")))

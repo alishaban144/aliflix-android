@@ -40,10 +40,11 @@ class TalkWireReplayDeviceTest {
             session.debugPreviewTitles(cards,false)
             fun set(name:String,value:Any)=TalkVoiceSession::class.java.getDeclaredField(name).apply{isAccessible=true}.set(session,value)
             val reply=JSONObject().put("speechText",script)
-            set("pendingTitles",cards);set("pendingAnswerNeedsTitle",true);set("awaitingToolAnswer",true);set("pendingToolReply",reply);set("recommendationReply",reply)
+            set("pendingTitles",cards);set("pendingAnswerNeedsTitle",true);set("awaitingToolAnswer",true);set("pendingToolReply",reply);set("recommendationReply",reply);set("recommendationLookup",false)
             fun content(value:JSONObject)=session.debugReplayServerMessage(JSONObject().put("serverContent",value))
             content(JSONObject().put("outputTranscription",JSONObject().put("text",script)))
             content(JSONObject().put("turnComplete",true))
+            assertTrue("The approved answer must actually be delivered",session.state.value.lines.any{it.text==script})
             val delivered=session.state.value.lines
             session.debugReplayServerMessage(JSONObject("""{"toolCall":{"functionCalls":[{"id":"duplicate","name":"present_recommendations","args":{"picks":[]}}]}}"""))
             content(JSONObject().put("outputTranscription",JSONObject().put("text","The system encountered an error. Please try again later.")))
