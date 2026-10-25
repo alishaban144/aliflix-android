@@ -88,6 +88,7 @@ classes="$classes,com.aliflix.app.ui.UnifiedAskUiTest"
 classes="$classes,com.aliflix.app.talk.TalkTitleCardsDeviceTest"
 classes="$classes,com.aliflix.app.talk.TalkAppNavigationDeviceTest"
 classes="$classes,com.aliflix.app.talk.TalkWireReplayDeviceTest"
+classes="$classes,com.aliflix.app.ui.LibraryMetadataDeviceTest"
 classes="$classes,com.aliflix.app.account.MobileSyncLifetimeTest"
 classes="${ALIFLIX_TEST_CLASSES:-$classes}"
 # Use a deterministic modern phone viewport for full and focused suites alike.

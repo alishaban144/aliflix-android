@@ -5,20 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkTopicMotionTest {
-    @Test fun waveMovesEveryFrameWithoutTheFormerColorStepsOrSettleSnap() {
-        for(hz in listOf(60,90,120))for(column in 0..64) {
-            var previous=talkTopicWave(0f,column/64f)
-            var movement=0f
-            repeat(hz*12) { frame ->
-                val next=talkTopicWave((frame+1f)/hz,column/64f)
-                assertTrue("Bounded velocity at $hz Hz",abs(next-previous)<=1.251f/hz)
-                movement+=abs(next-previous);previous=next
-            }
-            assertTrue("No frozen columns or quantized plateaus",movement>8f)
+    @Test fun lettersOrbitThenStayExactlySettledWhileShineReversesSmoothly() {
+        for(index in 0..40) {
+            assertTrue(abs(talkTopicOrbit(.03f,index).x)+abs(talkTopicOrbit(.03f,index).y)>0f)
+            assertEquals(TalkLetterPose(0f,0f,0f,1f),talkTopicOrbit(.9f,index))
+            assertEquals(talkTopicOrbit(2f,index),talkTopicOrbit(60f,index))
         }
-        for(t in listOf(.32f,1.8f,5.02655f,60f,3600f)) {
-            assertTrue(abs(talkTopicWave(t-.0005f,.3f)-talkTopicWave(t+.0005f,.3f))<.002f)
+        for(hz in listOf(60,90,120)) {
+            var previous=talkTopicShine(0f)
+            repeat(hz*8){frame->val next=talkTopicShine((frame+1f)/hz);assertTrue(abs(next-previous)<1.5f/hz);previous=next}
         }
+        assertTrue(talkTopicShine(1.1f)>.999f)
+        assertTrue(talkTopicShine(2.2f)<.001f)
     }
     @Test fun wordCrossfadeHasNoOpacityJumpAndSharesTheOngoingPhase() {
         assertEquals(0f,talkTopicReveal(-1f),0f)

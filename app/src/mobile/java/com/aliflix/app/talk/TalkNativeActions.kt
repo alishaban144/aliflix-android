@@ -49,8 +49,9 @@ internal class TalkNativeActions(private val context:Context,private val catalog
             "undo_dislike"->AskTaste(context).unreject(media)
             else->return navigation(args,card)
         }
-        val after=current();if(before!=after)lastChange=Change(card,action,before,after)
+        val after=current();lastChange=if(before!=after)Change(card,action,before,after)else null
         return TalkNativeResult(JSONObject().put("status","completed").put("title",card.title).put("action",action)
+            .put("changed",before!=after).put("previousValue",before)
             .put("saved",library.isInMyList(media)).put("favorite",library.isLiked(media)).apply{
                 if(action in setOf("dislike","undo_dislike"))put("disliked",media.key in AskTaste(context).rejected())
             })

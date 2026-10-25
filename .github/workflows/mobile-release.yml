@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "270"
-  RELEASE_VERSION_NAME: "3.1.180"
+  RELEASE_VERSION_CODE: "271"
+  RELEASE_VERSION_NAME: "3.1.181"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Talk binds spoken recommendations and poster cards to the same exact titles, preserves editions through follow-ups, and uses Tavily research with conversational bridges. Interrupted lookups continue correctly. Card actions stay quiet, native library state and undo are available, and dotted topic text flows smoothly."
+          RELEASE_NOTES="Talk understands choosing between your options, checks exact title facts and explains concrete technical limits. Interruption yields promptly, finished chat replies stop showing Writing, and comparison cards retain their exact editions. New orbital dotted lettering settles into a pearl shine. Discover For you rotates hourly with a daily mix. My Space metadata pills are centered and compact."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -404,19 +404,21 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Spoken recommendations and poster cards now come from one committed selection of exact catalogue identities. Private proposals stay silent until Tavily research and TMDB matching return; mismatched narration is withheld. Poster loading and same-name/year matching are repaired.
+            Talk distinguishes choosing between your films from asking for new recommendations. It compares your actual options, checks native catalogue facts such as runtime when needed, preserves exact editions and both comparison cards, and recalls earlier pairs within the session.
 
-            Follow-ups retain the selected edition, original recommendation order and focused card. Ask for a prior card, restore the group, or discuss a new title naturally. Card actions stay quiet without announcing what is visible. Native commands include reading saved/favorite/dislike state and undoing the last Talk library change.
+            Technical-limit questions receive concrete app, network and capability answers. Quoted, hypothetical and negated commands do not mutate the library. Native changes report whether anything actually changed, and undo cannot accidentally target an older no-op request.
 
-            Greetings and general conversation receive natural answers. Searches use Tavily with contextual spoken bridges, one lookup per request and continuous follow-ups after an interrupted generation. Mood refinements preserve the actual user constraints.
+            Spoken interruption flushes pending playback even after a recommendation has been committed. Stop yields locally, late acknowledgements cannot swallow the next question, and a completed chat response stops displaying Writing while delayed playback bookkeeping finishes.
 
-            Dotted topic lettering has a continuous wave, smoothly blended light and seamless word crossfades, preserving the orb and changing topics.
+            Speech input now retains the whole utterance when transcription arrives late. Old turn completion cannot resume old narration while you speak, and native actions wait for the complete request. A shared session-start cap that could disable Talk after modest use is corrected, with a clear message if daily capacity is reached.
 
-            Ask and Similar retain the fast Tavily/Gemini/TMDB pipeline, compact layout and stable result positioning. Surprise Me and immediate in-card dislike remain available.
+            Dotted topic letters enter on brief individual orbits, settle on a fixed baseline and carry a reversing lavender-pearl shine. The old wave is removed; the orb and changing topics remain. Cached glyph images keep animation drawing light.
+
+            Discover For you rotates its existing pool hourly and remixes daily without extra AI research. My Space metadata uses centered single-line rating/runtime pills and a separate type badge. Ask and Similar retain the Tavily/Gemini/TMDB pipeline and immediate in-card dislike.
 
             ARM64 mobile APK and universal compatibility bridge preserve the production signer and native/model assets. TV is unchanged. See the validation record for physical-device checks and signer boundaries.
 
-            [Validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-180-validation.md).
+            [Research and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-181-validation.md).
           files: |
             aliflix-mobile.apk
             update-mobile.json
@@ -432,4 +434,12 @@ jobs:
           if [ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = "true" ]; then
             gh release edit "$RELEASE_TAG" --target "$GITHUB_SHA"
             test "$(gh release view "$RELEASE_TAG" --json targetCommitish --jq .targetCommitish)" = "$GITHUB_SHA"
+          fi
+          # A tag pushed with this workflow's GITHUB_TOKEN does not recursively
+          # trigger another release build when the verified draft is published.
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
+          else
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
           fi

@@ -21,7 +21,7 @@ import kotlin.math.sin
 /** Opt-in rendering fixture: real device frames, synthetic energy, no microphone
  * or AI request. It exercises the exact production orb and dotted glyphs. */
 class TalkRenderDeviceTest {
- @Test fun fineDotsAndContinuousGlowRenderWithLatinAndArabic() {
+ @Test fun orbitalDotsThenPearlShineRenderWithLatinAndArabic() {
   Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("renderTalk")=="true")
   val i=InstrumentationRegistry.getInstrumentation();val context=i.targetContext
   context.startActivity(Intent(context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -35,7 +35,7 @@ class TalkRenderDeviceTest {
   val previousOrientation=activity.requestedOrientation
   i.runOnMainSync{activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
   var energy by mutableFloatStateOf(.2f)
-  var words by mutableStateOf("THE SHINING")
+  var words by mutableStateOf("ALIFLIX")
   i.runOnMainSync {activity.setContent {AliflixMobileTheme {
    Box(Modifier.fillMaxSize().background(AliflixBackgroundBase)) {
     TalkPixelField("","Speaking",{energy},true,Modifier.fillMaxSize().graphicsLayer{alpha=.52f})
@@ -52,18 +52,22 @@ class TalkRenderDeviceTest {
   fun shell(command:String)=android.os.ParcelFileDescriptor.AutoCloseInputStream(i.uiAutomation.executeShellCommand(command)).bufferedReader().use{it.readText()}
   fun snapshot(name:String) {
    val bitmap=requireNotNull(i.uiAutomation.takeScreenshot())
-   try {File(context.getExternalFilesDir(null),"talk-wave-180-$name.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}}
+   try {File(context.getExternalFilesDir(null),"talk-topic-181-$name.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}}
    finally {bitmap.recycle()}
   }
   try {
    Thread.sleep(2200)
+   i.runOnMainSync{words="THE SHINING"}
+   Thread.sleep(120)
+   snapshot("orbital-entry")
+   Thread.sleep(1000)
    snapshot("latin")
    shell("dumpsys gfxinfo ${context.packageName} reset")
    repeat(150) {step->
     i.runOnMainSync {energy=((sin(step*.24)+1)*.3).toFloat();if(step==75)words="السفر عبر الزمن"}
     Thread.sleep(70)
    }
-   File(context.getExternalFilesDir(null),"talk-render-172.txt").writeText(shell("dumpsys gfxinfo ${context.packageName}"))
+   File(context.getExternalFilesDir(null),"talk-render-181.txt").writeText(shell("dumpsys gfxinfo ${context.packageName}"))
    snapshot("arabic")
   } finally {i.runOnMainSync {activity.requestedOrientation=previousOrientation;activity.recreate()}}
  }

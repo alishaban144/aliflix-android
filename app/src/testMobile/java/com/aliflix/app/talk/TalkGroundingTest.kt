@@ -7,6 +7,31 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkGroundingTest {
+    @Test fun dominantFeatureAndNumericTitlesResolveWithoutAddingAnUnrequestedEdition() {
+        fun row(id:Int,title:String,year:Int,votes:Int)=com.aliflix.app.recommendation.V3CatalogMedia.fromJson(JSONObject()
+            .put("tmdbId",id).put("mediaType","movie").put("title",title).put("releaseDate","$year-01-01").put("tmdbVoteCount",votes))
+        val feature=row(264660,"Ex Machina",2015,13000);val short=row(1106784,"EX MACHINA",2023,2)
+        assertEquals(listOf(feature.tmdbId),talkCatalogueMatches(listOf(feature,short),"Ex Machina",null,0).map{it.id})
+        assertEquals(listOf(short.tmdbId),talkCatalogueMatches(listOf(feature,short),"Ex Machina",null,2023).map{it.id})
+        val original=row(78,"Blade Runner",1982,10000);val sequel=row(335984,"Blade Runner 2049",2017,10000)
+        assertEquals(listOf(sequel.tmdbId),talkCatalogueMatches(listOf(original,sequel),"Blade Runner 2049",null,0).map{it.id})
+    }
+    @Test fun comparisonChronologyUsesOnlyExistingIdentitiesAndQuestionOrdinalsDoNotSelectCards() {
+        val first=listOf(TalkTitleCard(1,MediaType.MOVIE,"A choice"),TalkTitleCard(2,MediaType.MOVIE,"B choice"))
+        val later=listOf(TalkTitleCard(3,MediaType.MOVIE,"C choice"),TalkTitleCard(4,MediaType.MOVIE,"D choice"))
+        val cards=TalkCardContext().show(first).compared(first).show(later,true).compared(later)
+        assertEquals(first,cards.choiceGroups.first())
+        assertTrue(cards.references("What did I ask in my first question?").isEmpty())
+        assertTrue(cards.references("Explain the first episode").isEmpty())
+        assertEquals(listOf(later[0]),cards.references("Tell me about the first one"))
+        assertFalse(cards.snapshot().toString().contains("What did I ask"))
+        assertEquals(first,cards.question("Which two films were in my first question?").visible)
+        assertTrue(cards.question("What are your technical limitations?").visible.isEmpty())
+        assertTrue(cards.question("What is thirteen times seventeen?").visible.isEmpty())
+        assertEquals(later,cards.question("Hi").visible)
+        assertEquals(later,cards.question("Why is that?").visible)
+        assertEquals(later,cards.question("Can you explain their differences?").visible)
+    }
     private val annihilation=TalkTitleCard(300668,MediaType.MOVIE,"Annihilation","2018","/poster.jpg")
     private val other=TalkTitleCard(999,MediaType.MOVIE,"Annihilation","2011")
     @Test fun aReorderedShortlistCommitsItsOwnPostersAndSpeechTogether() {

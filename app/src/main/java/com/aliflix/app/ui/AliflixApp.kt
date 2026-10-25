@@ -77,6 +77,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -2687,7 +2688,7 @@ private fun MediaRail(
 }
 
 @Composable
-private fun MediaPoster(
+internal fun MediaPoster(
     item: Media,
     width: androidx.compose.ui.unit.Dp,
     rank: Int? = null,
@@ -2756,32 +2757,44 @@ private fun MediaPoster(
                 )
             }
             if (showLibraryMetadata) {
+                Box(Modifier.align(Alignment.TopStart).padding(7.dp).clip(AliflixCorners.Small)
+                    .background(Color.Black.copy(alpha=.79f)).width(IntrinsicSize.Max).heightIn(min=22.dp).widthIn(min=44.dp)
+                    .padding(horizontal=7.dp,vertical=3.dp),contentAlignment=Alignment.Center) {
+                    Text(if(item.type==MediaType.MOVIE)"MOVIE" else "SERIES",fontSize=8.sp,lineHeight=10.sp,letterSpacing=0.sp,fontWeight=FontWeight.SemiBold,
+                        maxLines=1,softWrap=false,textAlign=androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier=Modifier.fillMaxWidth(),overflow=TextOverflow.Ellipsis,
+                        style=androidx.compose.ui.text.TextStyle(platformStyle=androidx.compose.ui.text.PlatformTextStyle(includeFontPadding=false)))
+                }
                 val posterFacts = listOfNotNull(
                     item.rating.takeIf { it > 0.0 }?.let { "★ %.1f".format(Locale.ROOT, it) },
-                    item.runtime.trim().takeIf(String::isNotBlank),
-                    if (item.type == MediaType.MOVIE) "MOVIE" else "SERIES",
+                    item.runtime.trim().takeIf(String::isNotBlank)?.let(::compactLibraryRuntime),
                 )
                 if (posterFacts.isNotEmpty()) {
                     Row(
                         modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth()
                             .padding(start = 7.dp, end = 7.dp, bottom = 7.dp),
-                        horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Tiny),
+                        horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Tiny,Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         posterFacts.forEachIndexed { index, value ->
+                            Box(Modifier.then(if(posterFacts.size>1)Modifier.weight(if(index==posterFacts.lastIndex)1.3f else 1f)else Modifier.widthIn(min=44.dp,max=68.dp)).heightIn(min=22.dp)
+                                .clip(AliflixCorners.Small).background(Color.Black.copy(alpha=.79f))
+                                .padding(horizontal=3.dp,vertical=3.dp),contentAlignment=Alignment.Center) {
                             Text(
                                 text = value,
                                 color = if (index == 0 && item.rating > 0.0) AliflixAccentSecondary else Color.White,
                                 fontSize = 8.sp,
+                                lineHeight = 10.sp,
+                                letterSpacing = 0.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
+                                softWrap = false,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                style = androidx.compose.ui.text.TextStyle(platformStyle=androidx.compose.ui.text.PlatformTextStyle(includeFontPadding=false)),
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .weight(if (value.endsWith("min")) 1.2f else 1f)
-                                    .clip(AliflixCorners.Small)
-                                    .background(Color.Black.copy(alpha = .79f))
-                                    .padding(horizontal = 3.dp, vertical = AliflixSpacing.Tiny),
+                                modifier = Modifier.fillMaxWidth(),
                             )
+                            }
                         }
                     }
                 }

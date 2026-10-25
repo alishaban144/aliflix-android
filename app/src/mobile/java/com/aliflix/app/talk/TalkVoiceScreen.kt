@@ -155,7 +155,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                             if(line.titles.map{it.key}!=state.cards.visible.map{it.key})TalkTitleCards(line.titles,::openTitle)
                             line.sources.distinctBy { it.url }.take(4).forEach { SourceLink(it) }
                             if(line.stopped)Text("Stopped",color=AliflixContentTertiary,fontSize=11.sp,modifier=Modifier.padding(top=2.dp))
-                            if(line.role=="assistant"&&(!state.sending||index<state.lines.lastIndex)) {
+                            if(line.role=="assistant"&&(!state.sending||state.answerComplete||index<state.lines.lastIndex)) {
                                 val clipboard=LocalClipboard.current
                                 val actionScope=rememberCoroutineScope()
                                 Row(verticalAlignment=Alignment.CenterVertically) {
@@ -165,7 +165,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                             }
                         }
                     }
-                    if(state.sending)item(key="response-status") { Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite }.testTag("talk-response-status")) {
+                    if(talkShowsResponseProgress(state.sending,state.answerComplete))item(key="response-status") { Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite }.testTag("talk-response-status")) {
                         Icon(Icons.Rounded.AutoAwesome,null,tint=AliflixAccentSecondary,modifier=Modifier.size(16.dp));Spacer(Modifier.width(10.dp))
                         Text(if(state.lines.lastOrNull()?.role=="assistant")"Writing…" else "Thinking through your request…",color=AliflixContentTertiary,fontSize=12.sp)
                     } }
@@ -173,7 +173,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                   if(!following&&list.canScrollForward)FilledTonalIconButton(onClick={following=true},modifier=Modifier.align(Alignment.BottomCenter)) { Icon(Icons.Rounded.ArrowDownward,"Latest message") }
                 }
                 if(state.phase in listOf("Reconnect","Try again later","Audio unavailable")) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                    Text(if(state.phase=="Try again later")state.phase else "Connection unavailable",Modifier.weight(1f),color=AliflixContentSecondary,fontSize=12.sp)
+                    Text(state.connectionDetail.ifBlank{if(state.phase=="Try again later")state.phase else "Connection unavailable"},Modifier.weight(1f),color=AliflixContentSecondary,fontSize=12.sp)
                     TextButton(onClick=session::retryLastMessage) { Text("Retry") }
                 }
                 Row(Modifier.fillMaxWidth().padding(top=10.dp,bottom=8.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
@@ -181,7 +181,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                         placeholder={Text("Message Aliflix",fontSize=14.sp)},maxLines=5,shape=RoundedCornerShape(24.dp),
                         keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}),
                         colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=AliflixAccentSecondary,unfocusedBorderColor=AliflixContentTertiary.copy(alpha=.3f),focusedTextColor=AliflixContentPrimary,unfocusedTextColor=AliflixContentPrimary))
-                    val stop=state.sending&&draft.isBlank()
+                    val stop=talkShowsResponseProgress(state.sending,state.answerComplete)&&draft.isBlank()
                     IconButton(onClick={if(stop)session.stopAnswer()else send()},enabled=stop||draft.isNotBlank(),modifier=Modifier.size(48.dp).clip(CircleShape).background(AliflixAccentSecondary.copy(alpha=if(!stop&&draft.isBlank()).12f else .85f)).testTag("talk-send")) {
                         Icon(if(stop)Icons.Rounded.Stop else Icons.Rounded.ArrowUpward,if(stop)"Stop response" else "Send message",tint=if(!stop&&draft.isBlank())AliflixContentTertiary else AliflixBackgroundBase)
                     }

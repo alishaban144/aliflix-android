@@ -8,6 +8,11 @@ import { issueLiveToken, TALK_MODEL, TALK_VOICE, boundedJson } from './talkProvi
 import { talkRecommendationPolicy, cachedTalkDiscovery, canRetainTalkResearch, talkRecommendationQuery, talkRecommendationCount } from './talkIntent';
 import { TalkChat, TalkChatsRequestSchema, talkChatAccountOwner } from './talkChats';
 const MINUTE=60000,DAY=86400000;
+// Starts include legitimate reconnects, chat/voice switches and fresh-turn
+// ownership boundaries, not minutes of generated audio. Forty starts shared
+// by the whole app exhausted ordinary use. Retain a finite daily bound and
+// the existing per-identity minute limiter, with capacity for real sessions.
+export const TALK_DAILY_SESSION_LIMIT=400;
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
 const sessionSchema=z.object({context:TalkContextSchema.default(()=>TalkContextSchema.parse({}))}).strict();
 const requestSchema=z.object({session:z.string().uuid(),question:z.string().max(1600),request:KnowledgeSchema}).strict();
@@ -33,7 +38,7 @@ export async function talkRoute(request:Request,env:RecommendationEnv):Promise<R
    const body=sessionSchema.parse(bodyRaw);
    // Shared networks must not freeze after connection starts/cancellations.
    // The per-minute identity limiter and overall daily budget still apply.
-   if(!await env.TALK_SESSIONS.getByName('quota:global').reserve(1,40))return json({error:'DAILY_LIMIT'},429);
+   if(!await env.TALK_SESSIONS.getByName('quota:global').reserve(1,TALK_DAILY_SESSION_LIMIT))return json({error:'DAILY_LIMIT',retryAt:(Math.floor(Date.now()/DAY)+1)*DAY},429);
    return json(await user.open(body.context));
   }
   if(path.endsWith('/renew')){

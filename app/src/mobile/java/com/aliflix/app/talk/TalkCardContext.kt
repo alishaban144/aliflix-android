@@ -5,7 +5,17 @@ internal data class TalkCardContext(
     val visible: List<TalkTitleCard> = emptyList(),
     val known: List<TalkTitleCard> = emptyList(),
     val group: List<TalkTitleCard> = emptyList(),
+    val choiceGroups:List<List<TalkTitleCard>> = emptyList(),
 ) {
+    /** Reuses catalogue identities already present in this session. No dialogue
+     * text, timestamps, user notes or extra provider/destination is recorded. */
+    fun compared(cards:List<TalkTitleCard>):TalkCardContext {
+        if(cards.size<2)return this
+        val keys=cards.map{it.key}
+        if(choiceGroups.lastOrNull()?.map{it.key}==keys)return this
+        val updated=choiceGroups+listOf(cards.take(3))
+        return copy(choiceGroups=if(updated.size<=8)updated else listOf(updated.first())+updated.takeLast(7))
+    }
     fun show(cards: List<TalkTitleCard>,replaceGroup:Boolean=false): TalkCardContext {
         if (cards.isEmpty()) return this
         return copy(visible = cards.distinctBy { it.key }.take(3),
@@ -33,6 +43,7 @@ internal data class TalkCardContext(
     fun snapshot()=org.json.JSONObject().put("focused",visible.singleOrNull()?.json())
         .put("visible",org.json.JSONArray(visible.map{it.json()})).put("recommendationGroup",org.json.JSONArray(group.map{it.json()}))
         .put("recent",org.json.JSONArray(known.take(24).map{it.json()}))
+        .put("choiceGroups",org.json.JSONArray(choiceGroups.map{cards->org.json.JSONArray(cards.map{it.key})}))
         .put("instruction","These are established catalogue identities, not new requests. Reuse id, type and year for follow-ups. A repeated title refers to this edition unless the user explicitly names another year. First/second/third refer to recommendationGroup order; it/that refers to focused. Never ask which edition of a title you just recommended.")
     fun ground(args:org.json.JSONObject,question:String):org.json.JSONObject {
         val year=explicitYear(question)
@@ -51,9 +62,19 @@ internal data class TalkCardContext(
     }
     fun question(question: String): TalkCardContext {
         val text=question.lowercase(java.util.Locale.ROOT)
+        if(choiceGroups.isNotEmpty()&&Regex("\\b(?:first|initial|earliest)\\s+(?:question|comparison|pair)|\\boriginal (?:two|pair|comparison|choices|options)\\b").containsMatchIn(text))return show(choiceGroups.first())
         val referenced=references(question)
-        if(referenced.isNotEmpty())return show(referenced)
+        if(referenced.isNotEmpty()) {
+            val comparison=referenced.size>1&&talkConversationIntent(question,group.size)==TalkIntent.DECISION
+            return show(referenced,replaceGroup=comparison).let{if(comparison)it.compared(referenced)else it}
+        }
         if(Regex("\\b(?:change (?:the )?(?:subjects?|topics?)|different (?:subject|topic)|something (?:entirely )?else)\\b").containsMatchIn(text))return copy(visible=emptyList())
+        val intent=talkConversationIntent(question,group.size)
+        if(intent==TalkIntent.CAPABILITIES||talkDiscoveryQuestion(question,group.isNotEmpty())||talkExplicitComparisonTitles(question).isNotEmpty())return copy(visible=emptyList())
+        val movieFollowup=Regex("\\b(?:plot|story|ending|character|cast|director|scene|tone|runtime|soundtrack|violence|violent|spoiler|subtitles?|film|movie|series|watch|save|list|favorite|favourite)\\b").containsMatchIn(text)
+        val standalone=Regex("^(?:what (?:is|are)|who (?:is|are)|where|when|why (?:is|does)|how (?:does|do)|can you|translate|tell me about|explain)\\b").containsMatchIn(text)
+        val refersBack=Regex("\\b(?:it|its|this|that|these|those|they|them|their)\\b").containsMatchIn(text)
+        if(standalone&&!movieFollowup&&!refersBack)return copy(visible=emptyList())
         return this
     }
     /** Resolve the human's reference before considering a model's guessed tool
@@ -66,10 +87,10 @@ internal data class TalkCardContext(
         val named=matches.filter{(_,range)->matches.none{(_,other)->other!=range&&other.first<=range.first&&other.last>=range.last}}
         if(named.isNotEmpty())return named.sortedBy{it.second.first}.map{it.first.title}.distinct().flatMap{resolve(it,year=explicitYear(question))}.distinctBy{it.key}.take(3)
         val ordinals=listOf("first|1st","second|2nd","third|3rd|last").flatMapIndexed{index,word->
-            if(Regex("(?i)\\b(?:$word)(?: one| title| movie| film| series)?\\b").containsMatchIn(question))listOfNotNull(group.getOrNull(index))else emptyList()
+            if(Regex("(?i)\\b(?:$word)(?: one| title| movie| film| series| option| choice| recommendation)\\b|\\b(?:$word)[.!?]*$").containsMatchIn(question))listOfNotNull(group.getOrNull(index))else emptyList()
         }
         if(ordinals.isNotEmpty())return ordinals
-        if(explicitYear(question)==0&&Regex("(?i)\\b(?:it|its|this film|that film|this movie|that movie|this series|that series|that one)\\b").containsMatchIn(question))return listOfNotNull(visible.singleOrNull())
+        if(explicitYear(question)==0&&Regex("(?i)\\b(?:it|its|this film|that film|this movie|that movie|this series|that series|that one|this one)\\b").containsMatchIn(question))return listOfNotNull(visible.singleOrNull())
         return emptyList()
     }
     private fun explicitYear(question:String):Int {

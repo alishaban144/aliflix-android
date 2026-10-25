@@ -1,7 +1,13 @@
 package com.aliflix.app.talk
 
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.ComposeShader
+import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.fonts.Font
 import android.graphics.fonts.FontFamily
@@ -15,12 +21,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -36,8 +40,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.*
 
-/** Fine circular lettering with a continuous travelling wave. Rasterization and
- * vector geometry are cached off-main; frames only transform narrow columns. */
+/** Dotted shapes enter on individual damped orbits, settle, then carry a
+ * reversing pearl shine. Font shaping and geometry stay off the frame thread. */
 @Composable
 internal fun TalkDottedTopic(words:String, motion:Boolean) {
     val density=LocalDensity.current
@@ -68,8 +72,8 @@ internal fun TalkDottedTopic(words:String, motion:Boolean) {
     Canvas(Modifier.fillMaxWidth().height(154.dp).onSizeChanged{size=it}
         .testTag("talk-topic").semantics {text=AnnotatedString(words)}) {
         val elapsed=if(!motion)10f else if(began.isNaN())0f else (clock.value-began).coerceAtLeast(0f)
-        if(motion&&elapsed<.32f)former?.draw(this,clock.value,1f-talkTopicReveal(elapsed),motion)
-        current?.draw(this,clock.value,if(motion)talkTopicReveal(elapsed)else 1f,motion)
+        if(motion&&elapsed<.16f)former?.draw(this,10f+clock.value,1f-talkTopicReveal(elapsed),motion)
+        current?.draw(this,elapsed,if(motion)talkTopicReveal(elapsed)else 1f,motion)
     }
 }
 
@@ -77,9 +81,15 @@ internal class TalkDotGlyph(width:Int,height:Int,words:String,fontSize:Float,pri
     private val x:FloatArray
     private val y:FloatArray
     private val coverage:FloatArray
-    private val fixed=Array(64){Path()}
-    private val violet=Color(0xFFB6A0F1)
-    private val pearl=Color(0xFFF7F2FF)
+    private data class Letter(val bitmap:Bitmap,val left:Float,val top:Float,val center:Offset,val index:Int)
+    private val letters:List<Letter>
+    private val canvasWidth=width.toFloat()
+    private val canvasHeight=height.toFloat()
+    private val shineGradient=LinearGradient(-canvasWidth,0f,canvasWidth,0f,
+        intArrayOf(0xFFB6A0F1.toInt(),0xFFF7F2FF.toInt(),0xFFB6A0F1.toInt()),null,Shader.TileMode.CLAMP)
+    private val shineMatrix=Matrix()
+    private val imagePaint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val settledPaint:Paint
     init {
         val bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888)
         val paint=TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -94,8 +104,9 @@ internal class TalkDotGlyph(width:Int,height:Int,words:String,fontSize:Float,pri
         var layout=layoutText()
         if(layout.height>height*.94f) {paint.textSize*=height*.94f/layout.height;layout=layoutText()}
 
+        val left=width*.03f;val top=(height-layout.height)/2f
         android.graphics.Canvas(bitmap).apply {
-            translate(width*.03f,(height-layout.height)/2f)
+            translate(left,top)
             layout.draw(this)
         }
         val pixels=IntArray(width*height)
@@ -114,20 +125,66 @@ internal class TalkDotGlyph(width:Int,height:Int,words:String,fontSize:Float,pri
             xs[count]=px.toFloat();ys[count]=py.toFloat();weights[count]=alpha;count++
         }
         x=xs.copyOf(count);y=ys.copyOf(count);coverage=weights.copyOf(count)
-        val fixedNative=Array(fixed.size){fixed[it].asAndroidPath()}
+        val iterator=android.icu.text.BreakIterator.getCharacterInstance().apply{setText(words)}
+        val boundaries=mutableListOf<Int>();var boundary=iterator.first()
+        while(boundary!=android.icu.text.BreakIterator.DONE){boundaries.add(boundary);boundary=iterator.next()}
+        data class Cell(val index:Int,val line:Int,val first:Float,val last:Float)
+        val cells=boundaries.zipWithNext().mapIndexed { index,(start,end)->
+            val line=layout.getLineForOffset(start)
+            val first=layout.getPrimaryHorizontal(start)+left
+            val last=if(end<words.length&&layout.getLineForOffset(end)!=line)
+                (if(layout.getParagraphDirection(line)>0)layout.getLineRight(line)else layout.getLineLeft(line))+left
+                else layout.getPrimaryHorizontal(end)+left
+            Cell(index,line,minOf(first,last),maxOf(first,last))
+        }
+        val groups=cells.map{android.graphics.Path()}
+        val countByGroup=IntArray(groups.size);val sumX=FloatArray(groups.size);val sumY=FloatArray(groups.size)
+        val byLine=(0 until layout.lineCount).map{line->cells.filter{it.line==line}}
         for(i in x.indices) {
-            val group=(x[i]/width*fixed.size).toInt().coerceIn(0,fixed.lastIndex)
-            fixedNative[group].addCircle(x[i],y[i],sqrt(coverage[i])*step*.43f,android.graphics.Path.Direction.CW)
+            val line=layout.getLineForVertical((y[i]-top).toInt().coerceIn(0,layout.height-1))
+            val cell=byLine[line].minByOrNull{if(x[i]<it.first)it.first-x[i]else if(x[i]>it.last)x[i]-it.last else 0f}?:continue
+            groups[cell.index].addCircle(x[i],y[i],sqrt(coverage[i])*step*.43f,android.graphics.Path.Direction.CW)
+            countByGroup[cell.index]++;sumX[cell.index]+=x[i];sumY[cell.index]+=y[i]
+        }
+        // Rasterize once off the UI thread. Orbit frames transform small cached
+        // images; the settled shine draws one mask, never thousands of circles.
+        val mask=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888)
+        val maskCanvas=android.graphics.Canvas(mask)
+        val maskPaint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=android.graphics.Color.WHITE}
+        val letterPaint=Paint(Paint.ANTI_ALIAS_FLAG).apply{shader=shineGradient}
+        letters=groups.mapIndexedNotNull{index,path->countByGroup[index].takeIf{it>0}?.let{
+            maskCanvas.drawPath(path,maskPaint)
+            val bounds=android.graphics.RectF().also{path.computeBounds(it,true)}
+            val letterLeft=floor(bounds.left)-2f;val letterTop=floor(bounds.top)-2f
+            val image=Bitmap.createBitmap((ceil(bounds.right)-letterLeft+2).toInt().coerceAtLeast(1),
+                (ceil(bounds.bottom)-letterTop+2).toInt().coerceAtLeast(1),Bitmap.Config.ARGB_8888)
+            android.graphics.Canvas(image).apply{translate(-letterLeft,-letterTop);drawPath(path,letterPaint)}
+            image.prepareToDraw()
+            Letter(image,letterLeft,letterTop,Offset(sumX[index]/it,sumY[index]/it),index)
+        }}
+        mask.prepareToDraw()
+        settledPaint=Paint(Paint.ANTI_ALIAS_FLAG).apply{
+            shader=ComposeShader(BitmapShader(mask,Shader.TileMode.CLAMP,Shader.TileMode.CLAMP),shineGradient,PorterDuff.Mode.SRC_IN)
         }
     }
     internal val particleCount get()=x.size
     fun draw(scope:DrawScope,time:Float,alpha:Float,motion:Boolean)=with(scope) {
-        for(i in fixed.indices) {
-            val position=(i+.5f)/fixed.size
-            val wave=if(motion)talkTopicWave(time,position)else 0f
-            val light=if(motion)(talkTopicWave(time+.6f,position)+1f)*.5f else .65f
-            translate(top=wave*step*1.6f) {
-                drawPath(fixed[i],lerp(violet,pearl,light).copy(alpha=alpha.coerceIn(0f,1f)))
+        drawIntoCanvas {canvas->
+            val native=canvas.nativeCanvas
+            if(!motion||time>=.9f) {
+                val shine=if(motion)talkTopicShine(time-.9f)else .5f
+                shineMatrix.setTranslate(canvasWidth*shine,0f)
+                shineGradient.setLocalMatrix(shineMatrix)
+                settledPaint.alpha=(alpha.coerceIn(0f,1f)*255).roundToInt()
+                native.drawRect(0f,0f,canvasWidth,canvasHeight,settledPaint)
+            } else for(letter in letters) {
+                val pose=talkTopicOrbit(time,letter.index)
+                imagePaint.alpha=((alpha*pose.alpha).coerceIn(0f,1f)*255).roundToInt()
+                val checkpoint=native.save()
+                native.translate(pose.x*step*15f,pose.y*step*15f)
+                native.rotate(pose.rotation,letter.center.x,letter.center.y)
+                native.drawBitmap(letter.bitmap,letter.left,letter.top,imagePaint)
+                native.restoreToCount(checkpoint)
             }
         }
     }

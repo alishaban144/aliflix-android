@@ -7,6 +7,15 @@ import org.json.JSONObject
 import org.junit.Test
 import org.junit.Assert.*
 class AskDailySuggestionsTest {
+ @Test fun hourlyWindowsChangeWithoutRepeatingIdentitiesOrMovingWithinTheHour() {
+  val pool=(1..24).map{com.aliflix.app.model.Media(it,MediaType.MOVIE,"Film $it")}
+  val first=com.aliflix.app.ui.discover.rotatingAskDailySuggestions(pool,3_600_001,137)
+  val same=com.aliflix.app.ui.discover.rotatingAskDailySuggestions(pool,7_199_999,137)
+  val next=com.aliflix.app.ui.discover.rotatingAskDailySuggestions(pool,7_200_000,137)
+  assertEquals(first,same);assertEquals(8,first.size);assertTrue(first.none{it in next})
+  assertEquals(pool.toSet(),(0..2).flatMap{com.aliflix.app.ui.discover.rotatingAskDailySuggestions(pool,it*3_600_000L,137)}.toSet())
+  assertNotEquals(first,com.aliflix.app.ui.discover.rotatingAskDailySuggestions(pool,86_400_000L+3_600_001,137))
+ }
  private val movie="""{"results":[{"tmdbId":1,"mediaType":"movie","title":"Verified film"}]}"""
  private val bundle="""{"movie":$movie,"tv":{"results":[{"tmdbId":2,"mediaType":"tv","title":"Verified series"}]}}"""
  @Test fun offlineOrCorruptCacheUsesTheCorrectBundledCatalogue() {

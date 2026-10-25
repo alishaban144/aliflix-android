@@ -7,6 +7,7 @@ import org.json.JSONObject
  * general web tool. Facts, plot discussion, greetings and card controls stay conversational. */
 internal fun talkDiscoveryQuestion(question:String,hasRecommendations:Boolean=false):Boolean {
     val text=question.lowercase(java.util.Locale.ROOT).trim()
+    if(talkConversationIntent(question,if(hasRecommendations)3 else 0)!=TalkIntent.CONVERSATION)return false
     if(Regex("^(?:(?:i|we) (?:recommend|suggest)|(?:don't|do not|stop) (?:recommend|suggest))\\b").containsMatchIn(text))return false
     if(Regex("\\b(?:recommend|suggest) the (?:movie|film|series|show)\\s+\\p{L}").containsMatchIn(text))return false
     val media=Regex("\\b(?:movies?|films?|series|shows?|titles?|recommendations?|sci.?fi|science fiction)\\b|أفلام|افلام|مسلسلات|filme|serien").containsMatchIn(text)

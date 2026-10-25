@@ -80,6 +80,20 @@ internal fun UnifiedAskAliflix(
     var rememberedSeriesStatus by rememberSaveable{mutableStateOf(editor.spec.requiredStatus)}
     LaunchedEffect(type,editor.spec.requiredStatus){if(type==MediaType.TV)rememberedSeriesStatus=editor.spec.requiredStatus}
     var daily by remember(type){mutableStateOf<List<Media>>(emptyList())}
+    var discoveryTime by remember{mutableLongStateOf(System.currentTimeMillis())}
+    val discoverySeed=remember(context){
+        val preferences=context.getSharedPreferences("ask-discovery",android.content.Context.MODE_PRIVATE)
+        if(preferences.contains("rotation-seed"))preferences.getInt("rotation-seed",0)
+        else java.util.UUID.randomUUID().hashCode().also{preferences.edit().putInt("rotation-seed",it).apply()}
+    }
+    val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle){
+        val observer=androidx.lifecycle.LifecycleEventObserver{_,event->if(event==androidx.lifecycle.Lifecycle.Event.ON_RESUME)discoveryTime=System.currentTimeMillis()}
+        lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}
+    }
+    LaunchedEffect(lifecycle){while(true){delay(60_000);if(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))discoveryTime=System.currentTimeMillis()}}
+    val dailyHour=discoveryTime/3_600_000L
+    val displayedDaily=remember(daily,dailyHour,discoverySeed,rejected){rotatingAskDailySuggestions(daily.filterNot{it.key in rejected},discoveryTime,discoverySeed)}
     var dailyResearchBacked by remember(type){mutableStateOf(false)}
     val keyboard=LocalSoftwareKeyboardController.current
     val motion=rememberMobileMotionEnabled()
@@ -120,7 +134,7 @@ internal fun UnifiedAskAliflix(
         };onSubmit(request)
     }
     LaunchedEffect(resultState?.activeRequest,resultState?.refining){if(resultState!=null&&!resultState.refining&&editor.describeText==sentDraft)onEditor(editor.copy(describeText=""))}
-    LaunchedEffect(type,dailyRetry) {
+    LaunchedEffect(type,dailyRetry,dailyHour) {
         dailyLoading=true;dailyError=false
         if(dailyProvider!=null){daily=dailyProvider(type);dailyLoading=false;return@LaunchedEffect}
         val file=java.io.File(context.cacheDir,"ask-daily-${type.routeName}.json")
@@ -232,7 +246,7 @@ internal fun UnifiedAskAliflix(
                 if(state is AskAliflixUiState.Editing||results.isEmpty()) {
                     if(daily.isNotEmpty()) {
                         item("daily-heading"){Text("For you",Modifier.padding(horizontal=20.dp,vertical=4.dp).testTag("ask-daily"),color=AliflixContentPrimary,fontSize=18.sp,fontWeight=FontWeight.SemiBold)}
-                        items(daily.chunked(2),key={row->"daily:"+row.first().key}) { row ->
+                        items(displayedDaily.chunked(2),key={row->"daily:"+row.first().key}) { row ->
                             Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                                 row.forEach { m -> Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable{onOpen(m)}.padding(bottom=8.dp)) {
                                     AskAliflixPoster(m,Modifier.fillMaxWidth().aspectRatio(2f/3f),cornerRadius=16.dp)

@@ -18,6 +18,14 @@ internal fun talkAppContext(context:Context):JSONObject {
     val app=context.applicationContext as AliflixApplication
     val settings=app.playerSettingsStore.settings.value
     return JSONObject().put("version",BuildConfig.VERSION_NAME).put("platform","Android mobile")
+        .put("technicalLimitations",JSONArray(listOf(
+            "Live voice and fresh research require an internet connection; service capacity, provider outages and quota can delay or prevent a lookup.",
+            "Microphone input is captured only in an active permitted Talk session. Leaving/backgrounding releases capture; muted and text mode do not stream microphone audio. No camera, arbitrary screen, other apps or OS control is exposed to Talk.",
+            "Conversation context is bounded and compressed. Archived history is retained only when enabled; recall is not unlimited and may lose details. Read actual app state rather than assuming memory.",
+            "Knowledge and catalogue metadata can be incomplete or stale. Tavily supplies current web evidence, TMDB supplies identity/facts; missing or conflicting information needs an honest qualification. Model reasoning can be mistaken.",
+            "Actions are restricted to the actual supported native tools. Playback/source availability, audio tracks and subtitles vary. Opening download options is not a completed download; native account/option/confirmation flows still need the viewer.",
+            "Undo restores only the last library change made through this conversation, and checks for intervening edits. It does not undo navigation, playback or arbitrary manual changes."
+        )))
         .put("library",JSONObject().put("favorites",app.libraryStore.likes.value.size)
             .put("myList",app.libraryStore.myList.value.size).put("recent",app.libraryStore.recent.value.size))
         .put("settings",JSONObject().put("preferredQuality",settings.preferredVideoQuality.label)

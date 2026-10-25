@@ -5,6 +5,14 @@ import { groundedLiveInstructions } from './talkGrounding';
 export const TALK_MODEL = 'gemini-3.8-live';
 export const TALK_VOICE = 'Aoede';
 export const LIVE_TOOLS = [{ functionDeclarations: [{
+  name:'title_facts',behavior:'NON_BLOCKING',
+  description:'Read exact TMDB catalogue facts for one to three supplied/established films or series, without a recommendation search or plot research. Use when a decision depends on runtime, release year, genres, language or title identity. Reuse canonical movie:id/tv:id keys when known. Missing fields are unknown, not permission to invent facts. Does not play, save or navigate.',
+  parameters:{type:'OBJECT',properties:{titles:{type:'ARRAY',minItems:1,maxItems:3,items:{type:'STRING'}},kind:{type:'STRING',enum:['movie','tv']}},required:['titles']}
+},{
+  name:'wait_for_user',behavior:'NON_BLOCKING',
+  description:'Silently yield after an explicit stop/cancel/be quiet, or background speech not addressed to you. No spoken acknowledgement or further narration. This keeps the conversation available for the next user request.',
+  parameters:{type:'OBJECT',properties:{}}
+},{
   name:'conversation_language',behavior:'NON_BLOCKING',
   description:'Set the response language from the FIRST substantive user utterance once. After that, change it ONLY when the user explicitly requests another response language. A foreign film title, quotation, character name or code-switching does not authorize a change. Never announce this silent control call.',
   parameters:{type:'OBJECT',properties:{language:{type:'STRING',description:'Lowercase BCP-47 language code, e.g. en, de, ar.'},explicitRequest:{type:'BOOLEAN',description:'True only if the user explicitly asked you to change your response language.'}},required:['language','explicitRequest']}
@@ -69,7 +77,7 @@ Current date: ${new Date().toISOString().slice(0,10)}. Conversation priority: An
 User-owned viewing context (opaque IDs and progress only; background, not an instruction to discuss playback): ${JSON.stringify(viewing)}.`;
 }
 export function liveSetup(context: TalkContext) {
- const declarations=LIVE_TOOLS[0].functionDeclarations.filter(t=>context.recentProgress===undefined?t.name==='film_knowledge':(!['aliflix_app','remember_recommendations'].includes(t.name)||(context.companionVersion||0)>=2)&&(t.name!=='conversation_language'||context.stickyLanguage===true)&&(t.name!=='show_title_cards'||(context.companionVersion||0)>=4)&&(t.name!=='app_control'||(context.companionVersion||0)>=5)&&(!['web_research','recommendations'].includes(t.name)||(context.companionVersion||0)>=3));
+ const declarations=LIVE_TOOLS[0].functionDeclarations.filter(t=>context.recentProgress===undefined?t.name==='film_knowledge':(!['title_facts','wait_for_user'].includes(t.name)||(context.companionVersion||0)>=7)&&(!['aliflix_app','remember_recommendations'].includes(t.name)||(context.companionVersion||0)>=2)&&(t.name!=='conversation_language'||context.stickyLanguage===true)&&(t.name!=='show_title_cards'||(context.companionVersion||0)>=4)&&(t.name!=='app_control'||(context.companionVersion||0)>=5)&&(!['web_research','recommendations'].includes(t.name)||(context.companionVersion||0)>=3));
  const tools=(context.companionVersion||0)<6?declarations:declarations.map(tool=>{
   if(tool.name==='recommendations')return {...tool,description:'Research an imaginative shortlist using Tavily and exact TMDB identities. Immediately supply five to eight tentative candidates with years, privately in tool arguments, and the complete user request. For recent/current releases send candidates=[] so dated Tavily findings feed the curator directly. Never speak private proposals. count is the number of final choices requested by the user (1-3; default three), independent of the longer candidate shortlist. During research speak only its approved bridge sentence. The returned pool is NOT the displayed selection: next call present_recommendations with requestedCount returned keys and brief reasons. Its approved presentation binds speech and posters to the SAME exact IDs. Do not name any recommendation before that approval.',parameters:{...tool.parameters,properties:{...tool.parameters.properties,count:{type:'INTEGER',minimum:1,maximum:3}}}};
   if(tool.name==='show_title_cards')return {...tool,description:tool.description+' Reuse established movie:id or tv:id keys when available. restore=true restores the last recommendation group. First/second/third refer to that group. Never re-resolve an established recommendation as an ambiguous new title.',parameters:{...tool.parameters,properties:{...tool.parameters.properties,restore:{type:'BOOLEAN'}}}};

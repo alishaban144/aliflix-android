@@ -1,6 +1,7 @@
 package com.aliflix.app.talk
 
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.*
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
@@ -9,6 +10,73 @@ import org.junit.Test
 /** Replays the provider ordering captured in the physical Annihilation failure. */
 class TalkWireReplayDeviceTest {
     @get:Rule val compose=createAndroidComposeRule<TalkVoiceActivity>()
+    @Test fun lateInputFragmentsUpdateOneUtteranceWithoutRevivingFinishedWriting() {
+        val session=compose.activity.voice
+        compose.runOnUiThread {
+            session.newChat();session.setTextMode(true)
+            fun event(json:String)=session.debugReplayServerMessage(JSONObject(json))
+            event("""{"voiceActivity":{"type":"ACTIVITY_START"}}""")
+            event("""{"serverContent":{"inputTranscription":{"text":"Should I watch Arrival"}}}""")
+            event("""{"serverContent":{"interrupted":true}}""")
+            event("""{"serverContent":{"turnComplete":true}}""")
+            assertEquals(0L,session.debugTurnCompleteAt)
+            assertEquals(0,TalkVoiceSession::class.java.getDeclaredField("silentReplyNudges").apply{isAccessible=true}.getInt(session))
+            event("""{"serverContent":{"outputTranscription":{"text":"Stale narration during user speech."},"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"AAAAAA=="}}]}}}""")
+            assertFalse(session.state.value.lines.any{it.role=="assistant"})
+            event("""{"voiceActivity":{"type":"ACTIVITY_END"}}""")
+            event("""{"serverContent":{"outputTranscription":{"text":"Choose Arrival for its warmth."}}}""")
+            event("""{"serverContent":{"inputTranscription":{"text":" or Ex Machina?"}}}""")
+            event("""{"serverContent":{"generationComplete":true,"turnComplete":true}}""")
+            event("""{"serverContent":{"inputTranscription":{"text":" Pick one."}}}""")
+            assertEquals(listOf("Should I watch Arrival or Ex Machina? Pick one."),session.state.value.lines.filter{it.role=="user"}.map{it.text})
+            assertFalse(session.state.value.sending)
+            assertFalse(talkShowsResponseProgress(session.state.value.sending,session.state.value.answerComplete))
+            event("""{"voiceActivity":{"type":"ACTIVITY_START"}}""")
+            event("""{"serverContent":{"inputTranscription":{"text":"Hello again."}}}""")
+            event("""{"voiceActivity":{"type":"ACTIVITY_END"}}""")
+            event("""{"serverContent":{"outputTranscription":{"text":"Hello."},"generationComplete":true,"turnComplete":true}}""")
+            assertEquals(2,session.state.value.lines.count{it.role=="user"})
+            assertEquals("Hello again.",session.state.value.lines.last{it.role=="user"}.text)
+        }
+    }
+    @Test fun aShortIntraUtterancePauseKeepsBothClausesAndTheirChoices() {
+        val session=compose.activity.voice
+        compose.runOnUiThread {
+            session.newChat();session.setTextMode(true)
+            fun event(json:String)=session.debugReplayServerMessage(JSONObject(json))
+            event("""{"voiceActivity":{"type":"ACTIVITY_START"}}""")
+            event("""{"serverContent":{"inputTranscription":{"text":"Choose between Arrival and Ex Machina."}}}""")
+            event("""{"voiceActivity":{"type":"ACTIVITY_END"}}""")
+            event("""{"voiceActivity":{"type":"ACTIVITY_START"}}""")
+            event("""{"serverContent":{"inputTranscription":{"text":"Pick one for tonight."}}}""")
+            event("""{"voiceActivity":{"type":"ACTIVITY_END"}}""")
+            event("""{"serverContent":{"outputTranscription":{"text":"Arrival for its warmth."},"generationComplete":true,"turnComplete":true}}""")
+            assertEquals(listOf("Choose between Arrival and Ex Machina. Pick one for tonight."),session.state.value.lines.filter{it.role=="user"}.map{it.text})
+        }
+    }
+    @Test fun finishedTextHidesWritingEvenBeforeTheDelayedTurnComplete() {
+        val session=compose.activity.voice
+        compose.runOnUiThread {
+            session.setTextMode(true)
+            session.debugPreviewUserQuestion("Why is the sky blue?")
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"outputTranscription":{"text":"Air scatters blue light."}}}"""))
+            assertTrue(talkShowsResponseProgress(session.state.value.sending,session.state.value.answerComplete))
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"generationComplete":true}}"""))
+            assertFalse(talkShowsResponseProgress(session.state.value.sending,session.state.value.answerComplete))
+        }
+        compose.onAllNodesWithTag("talk-response-status").assertCountEquals(0)
+    }
+    @Test fun aCommittedRecommendationStillYieldsToTheUsersInterruption() {
+        val session=compose.activity.voice
+        compose.runOnUiThread {
+            session.debugPreviewUserQuestion("Recommend three films")
+            TalkVoiceSession::class.java.getDeclaredField("presentationDelivered").apply{isAccessible=true}.setBoolean(session,true)
+            val before=session.debugInterruptions
+            session.debugReplayServerMessage(JSONObject("""{"serverContent":{"interrupted":true}}"""))
+            assertEquals(before+1,session.debugInterruptions)
+            assertFalse(session.debugOutputPlaying)
+        }
+    }
     @Test fun withheldOutputCannotCancelTheUnansweredPresentationDeadline() {
         val session=compose.activity.voice
         compose.runOnUiThread {

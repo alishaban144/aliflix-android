@@ -41,6 +41,17 @@ class TalkNativeActionsTest {
   assertFalse(actions.execute(JSONObject().put("action","unsave").put("title","Dark")).value.getBoolean("saved"))
   assertFalse(actions.execute(JSONObject().put("action","unfavorite").put("title","Dark")).value.getBoolean("favorite"))
  }
+ @Test fun noOpReportsItsPreviousStateAndCannotUndoAnOlderChange()=runBlocking {
+  val actions=action();val app=(RuntimeEnvironment.getApplication() as AliflixApplication)
+  if(app.libraryStore.isInMyList(card.media()))app.libraryStore.toggleMyList(card.media())
+  val input=JSONObject().put("action","save").put("title","Dark")
+  val changed=actions.execute(input).value
+  assertTrue(changed.getBoolean("changed"));assertFalse(changed.getBoolean("previousValue"))
+  val unchanged=actions.execute(input).value
+  assertFalse(unchanged.getBoolean("changed"));assertTrue(unchanged.getBoolean("previousValue"))
+  assertEquals("nothing_to_undo",actions.execute(JSONObject().put("action","undo")).value.getString("status"))
+  assertTrue(app.libraryStore.isInMyList(card.media()))
+ }
  @Test fun settingsReportTheNativeStoresClampedValueAndRejectUnknownControls()=runBlocking {
   val actions=action();val app=(RuntimeEnvironment.getApplication() as AliflixApplication)
   val result=actions.execute(JSONObject().put("action","set_setting").put("setting","subtitle_size").put("numberValue",100)).value

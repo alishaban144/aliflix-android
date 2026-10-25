@@ -1,7 +1,7 @@
 import {env,runInDurableObject} from 'cloudflare:test';
 import {describe,it,expect,vi,afterEach} from 'vitest';
 import {TalkContextSchema,explicitlyRequestsSpoilers,permittedEpisode,reusableUrl,stripMarkup,wikipediaEvidence,requestedEpisodeBoundary,avoidsSpoilers,tavilyEvidence,resolveViewingTitle} from '../src/talkEvidence';
-import {talkRoute,TalkSession} from '../src/talk';
+import {talkRoute,TalkSession,TALK_DAILY_SESSION_LIMIT} from '../src/talk';
 import {issueLiveToken,liveSetup,liveInstructions,TALK_MODEL,TALK_VOICE} from '../src/talkProviders';
 import {issueIdentity} from '../src/watchParty';
 const config={...env,CURSOR_SIGNING_SECRET:'test-only',GEMINI_API_KEY:'test-only'};
@@ -104,8 +104,10 @@ describe('Gemini-only live identity and security',()=>{
   vi.spyOn(globalThis,'fetch').mockImplementation(async()=>Response.json({name:'auth_tokens/shared-network'}));
   const request=(address=ip)=>talkRoute(new Request('https://test/v1/talk/session',{method:'POST',headers:{Authorization:'Bearer '+token,'CF-Connecting-IP':address},body:'{}'}),config);
   expect((await request())?.status).toBe(200);
-  await runInDurableObject(env.TALK_SESSIONS.getByName('quota:global'),async instance=>expect(await(instance as unknown as TalkSession).reserve(39,40)).toBe(true));
-  expect((await request())?.status).toBe(429);
+  expect(TALK_DAILY_SESSION_LIMIT).toBe(400);
+  await runInDurableObject(env.TALK_SESSIONS.getByName('quota:global'),async instance=>expect(await(instance as unknown as TalkSession).reserve(TALK_DAILY_SESSION_LIMIT-1,TALK_DAILY_SESSION_LIMIT)).toBe(true));
+  const full=await request();expect(full?.status).toBe(429);
+  expect(await full?.json()).toMatchObject({error:'DAILY_LIMIT',retryAt:expect.any(Number)});
   expect((await request('192.0.2.45'))?.status).toBe(429);
  });
  it('keeps new companion tools opt-in and keeps personal taste optional for direct theme requests',()=>{
