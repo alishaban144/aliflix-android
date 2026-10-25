@@ -1,6 +1,5 @@
 package com.aliflix.app.talk
 
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.*
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -9,7 +8,7 @@ import org.junit.Test
 
 /** Replays the provider ordering captured in the physical Annihilation failure. */
 class TalkWireReplayDeviceTest {
-    @get:Rule val compose=createAndroidComposeRule<TalkVoiceActivity>()
+    @get:Rule val compose=freshTalkValidationRule()
     @Test fun lateInputFragmentsUpdateOneUtteranceWithoutRevivingFinishedWriting() {
         val session=compose.activity.voice
         compose.runOnUiThread {

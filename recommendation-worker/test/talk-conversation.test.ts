@@ -12,6 +12,8 @@ describe('contextual conversation protocol',()=>{
   const prompt=current.systemInstruction.parts[0].text;
   expect(prompt).toContain('CLOSED decisions');expect(prompt).toContain('technical limitations');
   expect(prompt).toContain('neither fits a hard constraint');expect(prompt).toContain('compound request');
+  expect(prompt).toContain('Playback control is available through app_control');
+  expect(prompt).toContain('Never list these supported actions as limitations');
   expect(current.realtimeInputConfig.activityHandling).toBe('START_OF_ACTIVITY_INTERRUPTS');
  });
 });

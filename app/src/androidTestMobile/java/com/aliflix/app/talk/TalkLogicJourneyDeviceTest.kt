@@ -1,7 +1,6 @@
 package com.aliflix.app.talk
 
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import android.os.SystemClock
 import kotlinx.coroutines.*
@@ -13,7 +12,7 @@ import java.io.File
 /** Real service behavioral checks. Receipts retain the whole answer for a
  * human logic review; passing a keyword assertion alone is not the audit. */
 class TalkLogicJourneyDeviceTest {
-    @get:Rule val compose=createAndroidComposeRule<TalkVoiceActivity>()
+    @get:Rule val compose=freshTalkValidationRule()
     @After fun retainSessionDiagnostics() {
         if(InstrumentationRegistry.getArguments().getString("liveTalk181")!="true")return
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val session=compose.activity.voice
