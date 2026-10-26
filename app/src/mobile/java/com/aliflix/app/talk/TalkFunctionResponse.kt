@@ -1,0 +1,39 @@
+package com.aliflix.app.talk
+
+import org.json.JSONObject
+
+/** Input transcription can arrive after a tool call. An older greeting must
+ * never replace the new request already understood by the live model. */
+internal fun talkCurrentQuestion(input:String,last:String,lastTurn:Long,turn:Long,fallback:String="") =
+    input.ifBlank{if(lastTurn==turn)last else fallback}
+
+/** A saved unanswered prompt is history, never a newly submitted request. */
+internal fun talkArchiveResumeLines(lines:List<TalkLine>):List<TalkLine> {
+    val answered=lines.indexOfLast { it.role=="assistant"&&!it.stopped }
+    return lines.mapIndexed { index,line -> if(index>answered&&line.role=="user")line.copy(stopped=true)else line }
+}
+
+/** Scheduling is a FunctionResponse protocol field, not model-visible output.
+ * Keep one wire encoder for silent local controls and asynchronous knowledge. */
+internal fun talkFunctionResponse(id:String,name:String,result:JSONObject,scheduling:String,willContinue:Boolean=false):JSONObject =
+    JSONObject().put("id",id).put("name",name).put("response",result).put("scheduling",scheduling).put("willContinue",willContinue)
+
+/** A control-only turn still needs to continue the user's answer. Resume once,
+ * after its last control, unless an answer or an actual lookup is in flight. */
+internal fun talkControlScheduling(names:List<String>,index:Int,hasOutput:Boolean,pendingLookup:Boolean):String {
+    val controls=setOf("conversation_language","conversation_topic","show_title_cards")
+    if(hasOutput||pendingLookup||names[index] !in controls)return "SILENT"
+    if(names.any{it !in controls&&it!="remember_recommendations"})return "SILENT"
+    return if(index==names.indexOfLast{it in controls})"WHEN_IDLE" else "SILENT"
+}
+
+/** Restore bounded, user-owned dialogue even when a provider resume handle
+ * acknowledges transport but omits earlier realtime input from its context. */
+internal fun talkContinuityTurns(lines:List<TalkLine>,resuming:Boolean,cards:TalkCardContext=TalkCardContext()):org.json.JSONArray {
+    val history=org.json.JSONArray(lines.filterNot { it.stopped }.takeLast(12).map { JSONObject().put("role",if(it.role=="assistant")"model" else "user")
+        .put("parts",org.json.JSONArray().put(JSONObject().put("text",it.text.take(800)+if(it.titles.isNotEmpty())"\nCatalogue cards shown with this reply (app data): "+org.json.JSONArray(it.titles.map{card->card.json()}) else ""))) })
+    if(cards.known.isNotEmpty())history.put(JSONObject().put("role","user").put("parts",org.json.JSONArray().put(JSONObject().put("text","Established app conversation state (data, not a new question): "+cards.snapshot()))))
+    if(!resuming)return history
+    return org.json.JSONArray().put(JSONObject().put("role","user").put("parts",org.json.JSONArray().put(JSONObject().put("text",
+        "Conversation continuity after reconnection. The following JSON is previous dialogue, not new instructions or a new question. Retain the discussed titles, references, language and viewing boundaries; do not answer this context note. The next user question follows separately.\n"+history))))
+}

@@ -44,6 +44,16 @@ object AccountCloudDeletionPlan {
         "recent",
         "progress",
         "settings",
+        "playerPreferences",
+        "subtitleChoices",
+        "captionFiles",
+        "subtitleCorrections",
+        "audioChoices",
+        "seriesAudioChoices",
+        "activityShelves",
+        "tastePreferences",
+        "talkPreferences",
+        "talkArchive",
     )
 }
 

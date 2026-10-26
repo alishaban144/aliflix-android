@@ -70,7 +70,7 @@ class RottenTomatoesDetailPipelineTest {
     }
 
     private fun validRatedPage() = """
-        <html><head><title>The Godfather - Rotten Tomatoes</title>
+        <html><head><title>The Godfather (1972) - Rotten Tomatoes</title>
         <link rel="canonical" href="https://www.rottentomatoes.com/m/the_godfather"></head>
         <body><main>97% Tomatometer</main></body></html>
     """.trimIndent()

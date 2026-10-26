@@ -4,8 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val mobileVersionCode = 168
-val mobileVersionName = "3.1.78"
+val compatibilityBridge = providers.gradleProperty("aliflix.mobileCompatBridge").orNull == "true"
+val mobileVersionCode = 271
+val mobileVersionName = "3.1.181"
+
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"
 val releaseKeystoreFile = System.getenv("ALIFLIX_KEYSTORE_FILE")
@@ -22,7 +24,7 @@ val githubReleaseBaseUrl =
     "https://github.com/alishaban144/aliflix-android/releases/latest/download"
 val mobileUpdateManifestUrl = providers
     .gradleProperty("ALIFLIX_MOBILE_UPDATE_MANIFEST_URL")
-    .orElse("$githubReleaseBaseUrl/update-mobile.json")
+    .orElse("$githubReleaseBaseUrl/update-mobile-arm64.json")
     .get()
 val tvUpdateManifestUrl = providers
     .gradleProperty("ALIFLIX_TV_UPDATE_MANIFEST_URL")
@@ -37,8 +39,8 @@ android {
         applicationId = "com.aliflix.app"
         minSdk = 29
         targetSdk = 37
-        versionCode = 168
-        versionName = "3.1.78"
+        versionCode = 175
+        versionName = "3.1.85"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField(
@@ -52,8 +54,9 @@ android {
     productFlavors {
         create("mobile") {
             dimension = "formFactor"
-            versionCode = mobileVersionCode
-            versionName = mobileVersionName
+            proguardFile("mobile-proguard-rules.pro")
+            versionCode = if (compatibilityBridge) 265 else mobileVersionCode
+            versionName = if (compatibilityBridge) "3.1.175" else mobileVersionName
             buildConfigField("boolean", "IS_TV", "false")
             buildConfigField(
                 "String",
@@ -99,6 +102,10 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // Install device validation alongside the user's signed production app without clearing its data.
+            providers.gradleProperty("aliflix.testApplicationIdSuffix").orNull?.let { applicationIdSuffix = it }
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -125,6 +132,24 @@ android {
     }
 }
 
+// Compress the original native bytes. TV keeps its existing packaging.
+androidComponents.onVariants(androidComponents.selector().withFlavor("formFactor" to "mobile")) { variant ->
+    variant.packaging.jniLibs.useLegacyPackaging.set(true)
+    variant.packaging.jniLibs.useLegacyPackagingFromBundle.set(true)
+    file("mobile-unused-protobuf-resources.txt").readLines().filter { it.isNotBlank() }.forEach { resource ->
+        variant.packaging.resources.excludes.add(resource)
+    }
+}
+
+androidComponents.onVariants(androidComponents.selector()
+    .withFlavor("formFactor" to "mobile").withBuildType("release")) { variant ->
+    if (!compatibilityBridge) {
+        // Packaging only: never rebuild, strip differently, quantize or replace a library.
+        // Debug retains emulator ABIs; the signed migration bridge remains universal.
+        variant.packaging.jniLibs.excludes.addAll(listOf("**/armeabi-v7a/**", "**/x86/**", "**/x86_64/**"))
+    }
+}
+
 val validateReleaseSigning by tasks.registering {
     group = "verification"
     description = "Fails production release packaging when release signing credentials are unavailable."
@@ -138,9 +163,25 @@ val validateReleaseSigning by tasks.registering {
     }
 }
 
+// Optional real Windows JNI validation; ordinary CI still runs the portable
+// labelled-speech and alignment regressions. No emulator or JVM VAD substitute.
+tasks.withType<Test>().matching { it.name.startsWith("testMobile") }.configureEach {
+    // Filter on the task's name, not the project name. Argument providers append
+    // these optional host paths after AGP's default JNI configuration.
+    jvmArgumentProviders.add(org.gradle.process.CommandLineArgumentProvider {
+        buildList {
+            System.getenv("ALIFLIX_SYNC_HOST_CLASSES")?.let { add("-Xbootclasspath/a:$it") }
+            System.getenv("ALIFLIX_SYNC_JNI_DIR")?.let {
+                add("-Djava.library.path=$it")
+                add("-Donnxruntime.native.path=$it")
+            }
+        }
+    })
+}
+
 // The Firebase project currently registers only the mobile application ID.
 // Account UI and Firebase initialization are intentionally mobile-only; keep
-// the TV flavor buildable until a deliberate TV account experience exists.
+// the TV flavor buildable until a deliberate TV account experience is designed.
 tasks.matching {
     it.name.startsWith("processTv") && it.name.endsWith("GoogleServices")
 }.configureEach {
@@ -148,6 +189,9 @@ tasks.matching {
 }
 
 dependencies {
+    add("mobileImplementation", "com.squareup.okhttp3:okhttp:4.12.0")
+    add("mobileImplementation", files("libs/webrtc-vad-2.0.10.aar"))
+    add("mobileImplementation", "com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     val firebaseBom = platform("com.google.firebase:firebase-bom:34.18.0")
     implementation(composeBom)
@@ -166,7 +210,7 @@ dependencies {
     add("mobileImplementation", "com.google.firebase:firebase-firestore")
     add("mobileImplementation", "org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     add("mobileImplementation", "androidx.fragment:fragment-ktx:1.8.9")
-    listOf("exoplayer", "exoplayer-hls", "session", "ui", "cast").forEach { module ->
+    listOf("exoplayer", "exoplayer-hls", "inspector", "session", "ui", "cast").forEach { module ->
         add("mobileImplementation", "androidx.media3:media3-$module:1.11.0")
     }
 
@@ -179,11 +223,13 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jsoup:jsoup:1.19.1")
 
+    add("testMobileImplementation", "org.robolectric:robolectric:4.16")
+    add("testMobileImplementation", "androidx.media3:media3-test-utils-robolectric:1.11.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
     testImplementation("org.json:json:20250107")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

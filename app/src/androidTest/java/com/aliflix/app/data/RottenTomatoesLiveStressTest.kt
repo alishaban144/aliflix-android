@@ -27,7 +27,11 @@ class RottenTomatoesLiveStressTest {
         )
         val latencies = mutableListOf<Long>()
         val diagnostics = mutableListOf<RtFetchDiagnostic>()
-        val client = RottenTomatoesClient(AndroidRottenTomatoesTransport(), diagnostics::add)
+        val client = RottenTomatoesClient(
+            AndroidRottenTomatoesTransport(),
+            diagnostics::add,
+            RottenTomatoesSearchIndex(),
+        )
         var successes = 0
         titles.forEach { item ->
             diagnostics.clear()

@@ -1,5 +1,7 @@
 package com.aliflix.app.player
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -24,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ViewList
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
@@ -32,6 +35,9 @@ import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,12 +58,7 @@ import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * Top bar matching reference:
- * - 34dp circular translucent dark-grey button, white 18dp chevron, 48dp hit area.
- * - Single-line uppercase title with 12dp gap.
- * - 4 compact 30x30dp rounded-rect buttons on the right (Episodes for TV, Cast, Rotate, More).
- */
+/** Embedded-first mobile player identity and one low-contrast action pill. */
 @Composable
 internal fun MobilePlayerTopBar(
     title: String,
@@ -68,123 +69,61 @@ internal fun MobilePlayerTopBar(
     onRotate: () -> Unit,
     onMore: () -> Unit,
     modifier: Modifier = Modifier,
+    detail: String = "",
+    onQuality: (() -> Unit)? = null,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(start = 24.dp, end = 24.dp, top = 20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // Top-left 34dp circular translucent back button with 48dp touch target
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onBack,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp),
-                )
+    if (!com.aliflix.app.BuildConfig.IS_TV) {
+        MobilePlayerActionHeader(title, detail, isTv, onBack, onEpisodes, onSubtitles, onRotate, onMore, onQuality, modifier)
+        return
+    }
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        val compact = maxWidth < 560.dp
+        val identity: @Composable () -> Unit = {
+            androidx.compose.material3.IconButton(onClick = onBack, modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.07f))) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White, modifier = Modifier.size(22.dp))
             }
         }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        // Title: single line, 16sp, SemiBold/Bold, uppercase
-        Text(
-            text = title.uppercase(Locale.ROOT),
-            color = Color.White,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        // Top-right compact buttons row (8dp gap between buttons)
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (isTv) {
-                CompactTopButton(
-                    icon = Icons.AutoMirrored.Rounded.ViewList,
-                    contentDescription = "Episodes",
-                    onClick = onEpisodes,
-                )
+        val actions: @Composable () -> Unit = {
+            Row(Modifier.clip(RoundedCornerShape(24.dp)).background(Color(0xD912141B))
+                .border(.5.dp, Color.White.copy(alpha = .10f), RoundedCornerShape(24.dp)), verticalAlignment = Alignment.CenterVertically) {
+                if (isTv) CompactTopButton(Icons.AutoMirrored.Rounded.ViewList, "Episodes", onEpisodes)
+                CompactTopButton(Icons.Rounded.Subtitles, "Audio & Subtitles", onSubtitles)
+                onQuality?.let { CompactTopButton(Icons.Rounded.HighQuality, "Quality", it) }
+                CompactTopButton(Icons.Rounded.ScreenRotation, "Rotate", onRotate)
+                if (!compact) CompactTopButton(Icons.Rounded.MoreVert, "More", onMore)
             }
-            CompactTopButton(
-                icon = Icons.Rounded.Subtitles,
-                contentDescription = "Audio & Subtitles",
-                onClick = onSubtitles,
-            )
-            CompactTopButton(
-                icon = Icons.Rounded.ScreenRotation,
-                contentDescription = "Rotate",
-                onClick = onRotate,
-            )
-            CompactTopButton(
-                icon = Icons.Rounded.MoreVert,
-                contentDescription = "More",
-                onClick = onMore,
-            )
+        }
+        androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            identity()
+            androidx.compose.foundation.layout.Column(
+                Modifier.weight(1f).padding(start = 12.dp, end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(title, color = Color.White, fontSize = if (compact) 15.sp else 20.sp,
+                    lineHeight = if (compact) 20.sp else 25.sp,
+                    maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold)
+                if (detail.isNotBlank()) Text(detail, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp,
+                    lineHeight = 16.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+            if (compact) CompactTopButton(Icons.Rounded.MoreVert, "More", onMore) else actions()
+        }
+        if (compact) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { actions() }
         }
     }
 }
 
-/**
- * Compact top-right button:
- * - 30x30dp visual container, RoundedCornerShape(8.dp)
- * - Translucent surface, 18dp white rounded icon, no stroke
- * - Invisible touch target of at least 48x48dp
- */
 @Composable
-private fun CompactTopButton(
-    icon: ImageVector,
-    contentDescription: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .size(48.dp)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color.White.copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                tint = Color.White,
-                modifier = Modifier.size(18.dp),
-            )
-        }
+private fun CompactTopButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) .86f else 1f,
+        tween(140), label = "player-action")
+    androidx.compose.material3.IconButton(onClick = onClick, interactionSource = interactions,
+        modifier = Modifier.size(48.dp).graphicsLayer { scaleX = scale; scaleY = scale }) {
+        Icon(icon, contentDescription, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(20.dp))
     }
 }
 
@@ -210,13 +149,15 @@ internal fun MobilePlayerCenterControls(
     onPlayPause: () -> Unit,
     onSeekBack: () -> Unit,
     onSeekForward: () -> Unit,
+    feedback: SeekFeedbackState? = null,
     hideSeekBack: Boolean = false,
     hideSeekForward: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+    val gap = if (com.aliflix.app.BuildConfig.IS_TV) 48.dp else ((maxWidth - 184.dp) / 2).coerceIn(8.dp,48.dp)
     Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(56.dp),
+        horizontalArrangement = Arrangement.spacedBy(gap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Seek Back 15s
@@ -232,21 +173,22 @@ internal fun MobilePlayerCenterControls(
             contentAlignment = Alignment.Center,
         ) {
             androidx.compose.animation.AnimatedVisibility(
-                visible = !hideSeekBack,
+                visible = !hideSeekBack && feedback?.isForward != false,
                 enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.85f),
                 exit = fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.85f),
             ) {
                 Seek15Icon(
                     isForward = false,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(40.dp).playerActionReveal(rotate = false),
                 )
             }
+            if (feedback?.isForward == false) SeekButtonFeedback(feedback)
         }
 
         // Play / Pause 64dp outlined circle
         Box(
             modifier = Modifier
-                .size(72.dp)
+                .size(80.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -256,18 +198,27 @@ internal fun MobilePlayerCenterControls(
         ) {
             Box(
                 modifier = Modifier
-                    .size(64.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.28f))
-                    .border(BorderStroke(1.5.dp, Color.White), CircleShape),
+                    .size(if (com.aliflix.app.BuildConfig.IS_TV) 72.dp else 76.dp)
+                    .then(if (com.aliflix.app.BuildConfig.IS_TV) Modifier.clip(CircleShape)
+                        .background(Color(0xFFF4F1FA)).border(BorderStroke(.5.dp,Color.White.copy(alpha = .55f)),CircleShape)
+                    else Modifier.background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(
+                        Color.Black.copy(alpha = .28f),Color.Black.copy(alpha = .12f),Color.Transparent)))),
                 contentAlignment = Alignment.Center,
             ) {
+                if (!com.aliflix.app.BuildConfig.IS_TV) MobileMorphPlaybackIcon(isPlaying, Modifier.size(50.dp))
+                else {
+                AnimatedContent(targetState = isPlaying, transitionSpec = {
+                    (fadeIn(tween(180, delayMillis = 45)) + scaleIn(tween(220), initialScale = .65f)) togetherWith
+                        (fadeOut(tween(100)) + scaleOut(tween(160), targetScale = 1.2f))
+                }, label = "play-pause") { active ->
                 Icon(
-                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = Color.White,
-                    modifier = Modifier.size(30.dp),
+                    imageVector = if (active) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    contentDescription = if (active) "Pause" else "Play",
+                    tint = Color(0xFF18151F),
+                    modifier = Modifier.size(32.dp),
                 )
+                }
+                }
             }
         }
 
@@ -284,16 +235,18 @@ internal fun MobilePlayerCenterControls(
             contentAlignment = Alignment.Center,
         ) {
             androidx.compose.animation.AnimatedVisibility(
-                visible = !hideSeekForward,
+                visible = !hideSeekForward && feedback?.isForward != true,
                 enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.85f),
                 exit = fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.85f),
             ) {
                 Seek15Icon(
                     isForward = true,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(40.dp).playerActionReveal(rotate = false),
                 )
             }
+            if (feedback?.isForward == true) SeekButtonFeedback(feedback)
         }
+    }
     }
 }
 
@@ -316,7 +269,7 @@ internal fun Seek15Icon(
             val radius = diameter / 2f
             val center = Offset(size.width / 2f, size.height / 2f)
 
-            if (!isForward) {
+            if (isForward) {
                 // Counter-clockwise circular arc with top arrow pointing left
                 val startAngle = 60f
                 val sweepAngle = 265f
@@ -381,5 +334,19 @@ internal fun Seek15Icon(
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+@Composable
+internal fun SeekButtonFeedback(feedback: SeekFeedbackState) {
+    androidx.compose.runtime.key(feedback.token) {
+        androidx.compose.animation.AnimatedVisibility(visibleState = androidx.compose.runtime.remember {
+            androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true }
+        }, enter = fadeIn(tween(120)) + scaleIn(tween(240), initialScale = .68f)) {
+            Box(Modifier.size(52.dp).background(Color(0x336E59D9), CircleShape), contentAlignment = Alignment.Center) {
+                Text(if (feedback.accumulatedSeconds > 0) "+${feedback.accumulatedSeconds}s" else "${feedback.accumulatedSeconds}s",
+                    color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
     }
 }

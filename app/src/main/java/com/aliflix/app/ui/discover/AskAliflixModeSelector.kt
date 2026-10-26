@@ -1,14 +1,15 @@
 package com.aliflix.app.ui.discover
 
+import androidx.compose.runtime.getValue
+import com.aliflix.app.ui.common.*
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,7 +18,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Search
@@ -27,7 +27,6 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,13 +43,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.model.MediaType
-import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
-import com.aliflix.app.ui.theme.AliflixSurfaceElevated
-import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 
 private data class AskModeTab(
     val label: String,
@@ -68,24 +63,19 @@ fun AskAliflixModeSelector(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 8.dp),
+            .padding(start = AliflixSpacing.Content, end = AliflixSpacing.Content, top = 14.dp, bottom = AliflixSpacing.Small),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(AliflixSurfaceElevated.copy(alpha = 0.86f))
-                .border(1.dp, AliflixBorderSubtle, RoundedCornerShape(16.dp))
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        AliflixSegmentedControl(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Tiny),
         ) {
             MediaType.entries.forEach { type ->
                 val selected = selectedMediaType == type
                 val label = if (type == MediaType.MOVIE) "Movies" else "Series"
                 val icon = if (type == MediaType.MOVIE) Icons.Rounded.Movie else Icons.Rounded.Tv
                 val background by animateColorAsState(
-                    if (selected) AliflixAccentPrimary else Color.Transparent,
+                    if (selected) AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Selected) else Color.Transparent,
                     AskAliflixMotion.chipSpec(),
                     label = "ask-media-background",
                 )
@@ -98,7 +88,7 @@ fun AskAliflixModeSelector(
                     modifier = Modifier
                         .weight(1f)
                         .heightIn(min = 48.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(AliflixCorners.Small)
                         .background(background)
                         .semantics {
                             role = Role.RadioButton
@@ -124,7 +114,7 @@ fun AskAliflixModeSelector(
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
         ) {
             listOf(
                 AskModeTab("Describe", Icons.Rounded.Edit),
@@ -157,14 +147,9 @@ private fun AskModeButton(
         label = "ask-mode-press",
     )
     val background by animateColorAsState(
-        if (selected) AliflixAccentPrimary.copy(alpha = 0.18f) else AliflixSurfaceSecondary.copy(alpha = 0.74f),
+        AliflixSurfaceDefaults.color(if (selected) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content),
         AskAliflixMotion.chipSpec(),
         label = "ask-mode-background",
-    )
-    val border by animateColorAsState(
-        if (selected) AliflixAccentPrimary.copy(alpha = 0.9f) else AliflixBorderSubtle,
-        AskAliflixMotion.chipSpec(),
-        label = "ask-mode-border",
     )
     val foreground by animateColorAsState(
         if (selected) AliflixContentPrimary else AliflixContentSecondary,
@@ -179,15 +164,14 @@ private fun AskModeButton(
                 scaleY = scale
             }
             .heightIn(min = 52.dp)
-            .clip(RoundedCornerShape(15.dp))
+            .clip(AliflixCorners.Card)
             .background(background)
-            .border(1.dp, border, RoundedCornerShape(15.dp))
             .semantics {
                 role = Role.Tab
                 this.selected = selected
             }
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 8.dp),
+            .padding(horizontal = 6.dp, vertical = AliflixSpacing.Small),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {

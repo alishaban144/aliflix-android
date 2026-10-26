@@ -4,7 +4,9 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -37,11 +39,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.semantics
 import kotlin.math.roundToInt
 
-private val AliflixPurple = Color(0xFF6E59D9)
-private val UnplayedTrackColor = Color.White.copy(alpha = 0.32f)
-private val BufferedTrackColor = Color.White.copy(alpha = 0.22f)
+private val AliflixPurple = Color(0xFFC6B6FF)
+private val UnplayedTrackColor = Color.White.copy(alpha = 0.14f)
+private val BufferedTrackColor = Color.White.copy(alpha = 0.30f)
 private val TimeTextColor = Color.White.copy(alpha = 0.82f)
 private val BubbleBackground = Color(0xFF141722)
 
@@ -63,6 +70,9 @@ internal fun MobilePlayerTimeline(
     onScrubbingChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val seek by rememberUpdatedState(onSeek)
+    val scrubbingChanged by rememberUpdatedState(onScrubbingChanged)
+    val latestDuration by rememberUpdatedState(durationMs.coerceAtLeast(0L))
     var isDragging by remember { mutableStateOf(false) }
     var scrubFraction by remember { mutableFloatStateOf(0f) }
 
@@ -121,7 +131,7 @@ internal fun MobilePlayerTimeline(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(36.dp),
+                .height(48.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             val widthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
@@ -130,7 +140,7 @@ internal fun MobilePlayerTimeline(
                 label = "trackHeight",
             )
             val thumbSize by animateDpAsState(
-                targetValue = if (isDragging) 18.dp else 16.dp,
+                targetValue = if (isDragging) 18.dp else 10.dp,
                 label = "thumbSize",
             )
 
@@ -138,55 +148,49 @@ internal fun MobilePlayerTimeline(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(36.dp)
-                    .pointerInput(totalDurationMs) {
-                        detectTapGestures(
-                            onPress = { offset ->
-                                if (totalDurationMs > 0L) {
-                                    val fraction = (offset.x / widthPx).coerceIn(0f, 1f)
-                                    scrubFraction = fraction
-                                    isDragging = true
-                                    onScrubbingChanged(true)
-                                    val targetMs = (fraction * totalDurationMs).toLong()
-                                    onSeek(targetMs)
-                                    val success = tryAwaitRelease()
-                                    if (success) {
-                                        isDragging = false
-                                        onScrubbingChanged(false)
-                                    }
-                                }
-                            },
-                        )
+                    .height(48.dp)
+                    .semantics {
+                        contentDescription = "Playback position"
+                        progressBarRangeInfo = ProgressBarRangeInfo(progressFraction, 0f..1f)
+                        setProgress { fraction ->
+                            if (latestDuration <= 0L) false else {
+                                seek((fraction.coerceIn(0f, 1f) * latestDuration).toLong())
+                                true
+                            }
+                        }
                     }
-                    .pointerInput(totalDurationMs) {
-                        detectHorizontalDragGestures(
-                            onDragStart = { offset ->
-                                if (totalDurationMs > 0L) {
-                                    isDragging = true
-                                    onScrubbingChanged(true)
-                                    scrubFraction = (offset.x / widthPx).coerceIn(0f, 1f)
-                                    val targetMs = (scrubFraction * totalDurationMs).toLong()
-                                    onSeek(targetMs)
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = true)
+                            val duration = latestDuration
+                            if (duration <= 0L) return@awaitEachGesture
+                            down.consume()
+                            isDragging = true
+                            scrubbingChanged(true)
+                            var lastSeekAt = 0L
+                            fun update(x: Float, force: Boolean = false) {
+                                scrubFraction = (x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                val now = android.os.SystemClock.uptimeMillis()
+                                if (force || now - lastSeekAt >= 80L) {
+                                    seek((scrubFraction * duration).toLong())
+                                    lastSeekAt = now
                                 }
-                            },
-                            onDragEnd = {
-                                isDragging = false
-                                onScrubbingChanged(false)
-                            },
-                            onDragCancel = {
-                                isDragging = false
-                                onScrubbingChanged(false)
-                            },
-                            onHorizontalDrag = { change, _ ->
-                                change.consume()
-                                if (totalDurationMs > 0L) {
-                                    val fraction = (change.position.x / widthPx).coerceIn(0f, 1f)
-                                    scrubFraction = fraction
-                                    val targetMs = (fraction * totalDurationMs).toLong()
-                                    onSeek(targetMs)
+                            }
+                            try {
+                                update(down.position.x, true)
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (event.changes.count { it.pressed } > 1) break
+                                    update(change.position.x, !change.pressed)
+                                    change.consume()
+                                    if (!change.pressed) break
                                 }
-                            },
-                        )
+                            } finally {
+                                isDragging = false
+                                scrubbingChanged(false)
+                            }
+                        }
                     },
                 contentAlignment = Alignment.CenterStart,
             ) {
@@ -234,7 +238,7 @@ internal fun MobilePlayerTimeline(
                         .offset {
                             val halfThumb = (thumbSize.toPx() / 2f).roundToInt()
                             IntOffset(
-                                x = (thumbOffsetPx - halfThumb).roundToInt().coerceAtLeast(0),
+                                x = (thumbOffsetPx - halfThumb).roundToInt().coerceIn(0, (widthPx - thumbSize.toPx()).roundToInt().coerceAtLeast(0)),
                                 y = 0,
                             )
                         }

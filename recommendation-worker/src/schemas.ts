@@ -2,11 +2,16 @@ import { z } from 'zod';
 
 const mediaType = z.enum(['movie', 'tv']);
 const trimmed = z.string().trim();
-export const RecommendationAiModelSchema = z.enum([
-  'gemini-3.5-flash',
-  'gemini-3.7-flash',
-  'groq-qwen-3.8-27b',
-]);
+export const RecommendationAiModelSchema = z.preprocess(
+  // Older Android builds persisted the retired Qwen id. Normalize it so every
+  // Groq request runs on GPT-OSS 120B instead of failing or switching provider.
+  value => value === 'groq-qwen-3.8-27b' ? 'groq-gpt-oss-120b' : value,
+  z.enum([
+    'cloudflare-gpt-oss-120b',
+    'gemini-3.8-flash',
+    'groq-gpt-oss-120b',
+  ]),
+);
 
 const RecommendationFiltersObjectSchema = z.object({
   minimumYear: z.number().int().min(1870).max(2200).nullish().transform(value => value ?? undefined),
@@ -150,30 +155,20 @@ export const GeminiDescribeResponseSchema = z.object({
   recommendations: z.array(z.object({
     title: trimmed.min(1).max(300),
     releaseYear: z.number().int().min(1870).max(2200),
-    confidence: z.number().min(0).max(1),
-    reason: trimmed.min(1).max(240),
+    rating: z.number().min(0).max(10),
+    confidence: z.number().default(1),
+    reason: z.string().default(''),
   })).min(1).max(24),
 });
 
 export const GeminiDescribeJsonSchema = {
-  type: 'OBJECT',
-  properties: {
-    recommendations: {
-      type: 'ARRAY',
-      maxItems: 24,
-      items: {
-        type: 'OBJECT',
-        properties: {
-          title: { type: 'STRING' },
-          releaseYear: { type: 'INTEGER' },
-          confidence: { type: 'NUMBER' },
-          reason: { type: 'STRING' },
-        },
-        required: ['title', 'releaseYear', 'confidence', 'reason'],
-      },
-    },
-  },
-  required: ['recommendations'],
+  type: 'OBJECT', properties: {
+    recommendations: { type: 'ARRAY', minItems: 1, maxItems: 24, items: {
+      type: 'OBJECT', properties: {
+        title: { type: 'STRING' }, releaseYear: { type: 'INTEGER' }, rating: { type: 'NUMBER' },
+      }, required: ['title', 'releaseYear', 'rating'],
+    } },
+  }, required: ['recommendations'],
 } as const;
 
 export const GeminiPremiseAssessmentResponseSchema = z.object({

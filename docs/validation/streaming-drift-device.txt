@@ -1,0 +1,1 @@
+oneTap=true,coldStart=true,playbackSpeed=4,offset=-48.88,rate=1.0416666666666667,confidence=0.8767909418340993,elapsedMs=50890,mediaPositionMs=201445

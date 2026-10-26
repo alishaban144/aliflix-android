@@ -25,7 +25,7 @@ internal class FmovieNativeCatalog {
             val embeds = fmoviePageEmbeds(page, selection)
             if (embeds.isNotEmpty()) return@withContext embeds
         }
-        error("${selection.source.provider.displayName} did not provide servers for the selected title")
+        error("${selection.source.identity.displayName} did not provide servers for the selected title")
     }
 }
 

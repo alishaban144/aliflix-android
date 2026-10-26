@@ -66,8 +66,8 @@ class AndroidCatalogCacheStore internal constructor(
     )
 
     private val homeFile = File(cacheDir, "home-v4.json")
-    private val imdbRatingFile = File(cacheDir, "imdb-ratings-v2.json")
-    private val rottenTomatoesRatingFile = File(cacheDir, "rotten-tomatoes-ratings-v3.json")
+    private val imdbRatingFile = File(cacheDir, "imdb-ratings-v3.json")
+    private val rottenTomatoesRatingFile = File(cacheDir, "rotten-tomatoes-ratings-v4.json")
     private val mutex = Mutex()
 
     init {
@@ -77,7 +77,7 @@ class AndroidCatalogCacheStore internal constructor(
                 "recommendation-pages-v3.json",
                 "recommendation-metadata-v1.json",
                 "imdb-ratings-v1.json",
-                "rotten-tomatoes-ratings-v1.json",
+                "rotten-tomatoes-ratings-v2.json",
                 "rotten-tomatoes-ratings-v2.json",
             ).map { File(cacheDir, it) }
                 .filter(File::exists)
@@ -163,6 +163,7 @@ class AndroidCatalogCacheStore internal constructor(
                     voteCount = entry.optInt("votes").takeIf { entry.has("votes") && it >= 0 },
                     state = state,
                     fetchedAtMillis = fetchedAt,
+                    originalReleaseYear = entry.optInt("originalReleaseYear").takeIf { entry.has("originalReleaseYear") && it > 0 },
                 )
             }
         }
@@ -183,6 +184,7 @@ class AndroidCatalogCacheStore internal constructor(
                 snapshot.voteCount?.let { put("votes", it) }
                 put("state", snapshot.state.name)
                 put("fetchedAt", snapshot.fetchedAtMillis)
+                snapshot.originalReleaseYear?.let { put("originalReleaseYear", it) }
             }
         }
     }

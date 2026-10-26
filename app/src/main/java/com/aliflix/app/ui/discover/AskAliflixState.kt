@@ -12,6 +12,8 @@ sealed interface AskAliflixRequest {
         val requiredStatus: String? = null,
         val previousText: String? = null,
         val refinementText: String? = null,
+        val filters: CatalogDiscoverySpec? = null,
+        val resultCount: Int? = null,
     ) : AskAliflixRequest
 
     data class Similar(
@@ -20,6 +22,7 @@ sealed interface AskAliflixRequest {
         val anchor: Media? = anchors.firstOrNull(),
         val requiredStatus: String? = null,
         val refinementText: String? = null,
+        val filters: CatalogDiscoverySpec? = null,
     ) : AskAliflixRequest {
         constructor(outputMediaType: MediaType, anchor: Media, requiredStatus: String? = null, refinementText: String? = null) : this(
             outputMediaType = outputMediaType,
@@ -58,6 +61,7 @@ sealed interface AskAliflixUiState {
         val nextCursor: String? = null,
         val loadMoreError: String? = null,
         val refining: Boolean = false,
+        val researching: Boolean = false,
         val refineError: String? = null,
         val appliedRefinements: List<String> = emptyList(),
         val activeRequest: AskAliflixRequest? = null,

@@ -1,0 +1,8 @@
+Android 17 Pixel 7a
+offset: model=offset,offset=-46.92,rate=1.0,regions=0,confidence=0.8879352247058133,elapsedMs=9680
+generation=2,frames=490,blocks=1,boundaries=5,duplicates=0,unavailable=false,reason=null,captureMs=182,sileroReady=true,sileroFailure=null,queue=0,dropped=0,inferences=306,inferenceMs=428
+drift: model=drift,offset=-48.88,rate=1.0416666666666667,regions=0,confidence=0.8891685947484159,elapsedMs=9127
+generation=2,frames=475,blocks=1,boundaries=5,duplicates=0,unavailable=false,reason=null,captureMs=147,sileroReady=true,sileroFailure=null,queue=0,dropped=0,inferences=290,inferenceMs=407
+piecewise: model=piecewise,offset=-46.92,rate=1.0,regions=2,confidence=0.8236243348662925,elapsedMs=9788
+generation=2,frames=500,blocks=1,boundaries=5,duplicates=0,unavailable=false,reason=null,captureMs=183,sileroReady=true,sileroFailure=null,queue=0,dropped=0,inferences=306,inferenceMs=546
+ambiguous: rejected,originalTimesPreserved=true,elapsedMs=9754

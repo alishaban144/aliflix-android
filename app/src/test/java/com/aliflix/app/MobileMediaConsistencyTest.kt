@@ -4,6 +4,7 @@ import com.aliflix.app.model.ContentRail
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaCreator
+import com.aliflix.app.model.MediaKeyword
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.V3CatalogMedia
 import com.aliflix.app.recommendation.V3CatalogPerson
@@ -51,6 +52,7 @@ class MobileMediaConsistencyTest {
         val details = V3TitleDetails(
             media = catalogMedia(),
             status = "Ended",
+            keywords = listOf(MediaKeyword(123, "time travel")),
             creators = listOf(V3CatalogPerson(66633, "Vince Gilligan", "/vince.jpg")),
             cast = listOf(V3CatalogPerson(17419, "Bryan Cranston", null)),
         ).toStableMobileMedia(tapped)
@@ -58,6 +60,7 @@ class MobileMediaConsistencyTest {
         assertEquals("/tapped-poster.jpg", details.posterPath)
         assertEquals("/tapped-backdrop.jpg", details.backdropPath)
         assertEquals("Ended", details.status)
+        assertEquals("time travel", details.keywords.single().name)
         assertEquals("Vince Gilligan", details.creators.single().name)
         assertEquals(listOf("Drama", "Crime"), details.genres)
         assertEquals(8.9, details.rating, 0.001)
@@ -77,6 +80,7 @@ class MobileMediaConsistencyTest {
             status = "Ended",
             originalLanguage = "en",
             creators = listOf(creator),
+            keywords = listOf(MediaKeyword(123, "time travel")),
         )
         val progressive = stable.copy(
             posterPath = "/legacy.jpg",
@@ -84,6 +88,7 @@ class MobileMediaConsistencyTest {
             status = "",
             originalLanguage = "",
             creators = emptyList(),
+            keywords = emptyList(),
             imdbRating = 9.5,
             rottenTomatoesRating = 96,
         )
@@ -92,9 +97,11 @@ class MobileMediaConsistencyTest {
         assertEquals("/stable.jpg", merged.posterPath)
         assertEquals("/stable-wide.jpg", merged.backdropPath)
         assertEquals(listOf(creator), merged.creators)
+        assertEquals("time travel", merged.keywords.single().name)
         assertEquals("Ended", merged.status)
         assertEquals(9.5, merged.imdbRating)
         assertEquals(96, merged.rottenTomatoesRating)
+
         assertEquals(8.9, merged.rating, 0.001)
     }
 

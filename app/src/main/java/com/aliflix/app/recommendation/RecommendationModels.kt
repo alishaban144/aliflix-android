@@ -50,25 +50,33 @@ enum class RecommendationAiModel(
     val workerValue: String,
     val supportingText: String,
 ) {
-    GROQ_QWEN_3_8_27B(
+    CLOUDFLARE_GPT_OSS_120B(
+        label = "Cloudflare",
+        workerValue = "cloudflare-gpt-oss-120b",
+        supportingText = "Recommended · GPT-OSS 120B",
+    ),
+    GROQ_GPT_OSS_120B(
         label = "Groq",
-        workerValue = "groq-qwen-3.8-27b",
-        supportingText = "Recommended · Qwen 3.8 27B",
+        workerValue = "groq-gpt-oss-120b",
+        supportingText = "GPT-OSS 120B",
     ),
-    GEMINI_3_5_FLASH(
-        label = "Gemini 3.5 Flash",
-        workerValue = "gemini-3.5-flash",
-        supportingText = "Gemini alternative",
-    ),
-    GEMINI_3_7_FLASH(
-        label = "Gemini 3.7 Flash",
-        workerValue = "gemini-3.7-flash",
-        supportingText = "Latest Gemini",
+    GEMINI_3_8_FLASH(
+        label = "Gemini 3.8 Flash",
+        workerValue = "gemini-3.8-flash",
+        supportingText = "",
     );
 
     companion object {
-        fun fromWorkerValue(value: String?): RecommendationAiModel =
-            entries.firstOrNull { it.workerValue == value } ?: GROQ_QWEN_3_8_27B
+        private const val LEGACY_GROQ_QWEN_3_8_27B = "groq-qwen-3.8-27b"
+
+        fun fromWorkerValue(value: String?): RecommendationAiModel = when (value) {
+            CLOUDFLARE_GPT_OSS_120B.workerValue -> CLOUDFLARE_GPT_OSS_120B
+            // Preserve explicit legacy provider choices while making Cloudflare
+            // the default for fresh or unknown settings.
+            GROQ_GPT_OSS_120B.workerValue, LEGACY_GROQ_QWEN_3_8_27B -> GROQ_GPT_OSS_120B
+            GEMINI_3_8_FLASH.workerValue -> GEMINI_3_8_FLASH
+            else -> CLOUDFLARE_GPT_OSS_120B
+        }
     }
 }
 

@@ -24,6 +24,7 @@ data class MediaCreator(
     val tmdbId: Int,
     val name: String,
     val profilePath: String? = null,
+    val role: String? = null,
 ) {
     val profileUrl: String?
         get() = profilePath?.let { path ->
@@ -34,6 +35,8 @@ data class MediaCreator(
             }
         }
 }
+
+data class MediaKeyword(val id: Int, val name: String)
 
 data class Media(
     val id: Int,
@@ -60,6 +63,9 @@ data class Media(
     val omdbGenres: List<String> = emptyList(),
     val omdbFullPlot: String? = null,
     val reviews: List<MediaReview> = emptyList(),
+    val keywords: List<MediaKeyword> = emptyList(),
+    val trailerKey: String? = null,
+    val castPeople: List<MediaCreator> = emptyList(),
 ) {
     val key: String get() = "${type.routeName}:$id"
     val posterUrl: String?
@@ -114,7 +120,7 @@ data class Media(
     ): Boolean {
         val currentImdbId = imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
         val returnedImdbId = omdb.imdbId?.takeIf { it.matches(Regex("tt\\d{5,12}")) }
-        if (currentImdbId != null) return returnedImdbId == currentImdbId
+        if (currentImdbId != null && returnedImdbId != currentImdbId) return false
 
         val returnedType = omdb.type?.lowercase().orEmpty()
         val typeMatches = when (type) {
@@ -134,7 +140,7 @@ data class Media(
         if (returnedTitle.isBlank() || returnedTitle != normalized(title)) return false
 
         val currentYear = year.take(4).toIntOrNull()
-        return currentYear == null || omdb.year == null || kotlin.math.abs(currentYear - omdb.year) <= 2
+        return currentYear == null || (omdb.year != null && currentYear == omdb.year)
     }
 
     private fun String?.isNull_or_blank(): Boolean = this == null || this.isBlank()
@@ -157,6 +163,11 @@ data class Media(
         tmdbVoteCount?.let { put("tmdbVoteCount", it) }
         put("genres", org.json.JSONArray(genres))
         put("cast", org.json.JSONArray(cast))
+        put("castPeople", org.json.JSONArray().apply {
+            castPeople.forEach { person ->
+                put(JSONObject().put("tmdbId", person.tmdbId).put("name", person.name).put("profilePath", person.profilePath).put("role", person.role))
+            }
+        })
         put("status", status)
         put("originalLanguage", originalLanguage)
         put("creators", org.json.JSONArray().apply {
@@ -165,10 +176,13 @@ data class Media(
                     JSONObject()
                         .put("tmdbId", creator.tmdbId)
                         .put("name", creator.name)
-                        .put("profilePath", creator.profilePath),
+                        .put("profilePath", creator.profilePath)
+                        .put("role", creator.role),
                 )
             }
         })
+        put("keywords", org.json.JSONArray().apply { keywords.forEach { put(JSONObject().put("id", it.id).put("name", it.name)) } })
+        put("trailerKey", trailerKey)
         put("runtime", runtime)
         put("omdbGenres", org.json.JSONArray(omdbGenres))
         omdbFullPlot?.let { put("omdbFullPlot", it) }
@@ -185,6 +199,7 @@ data class Media(
 
         fun fromJson(json: JSONObject): Media {
             return Media(
+                keywords = json.optJSONArray("keywords")?.let { a -> (0 until a.length()).map { a.getJSONObject(it).let { k -> MediaKeyword(k.getInt("id"), k.getString("name")) } } }.orEmpty(),
                 id = json.getInt("id"),
                 type = MediaType.from(json.optString("type")),
                 title = json.optString("title", "Untitled"),
@@ -231,6 +246,20 @@ data class Media(
                 }.orEmpty(),
                 status = json.optString("status"),
                 originalLanguage = json.optString("originalLanguage"),
+                castPeople = json.optJSONArray("castPeople")?.let { array ->
+                    (0 until array.length()).mapNotNull { index ->
+                        val person = array.optJSONObject(index) ?: return@mapNotNull null
+                        val id = person.optInt("tmdbId")
+                        val name = person.optString("name").trim()
+                        if (id <= 0 || name.isBlank()) return@mapNotNull null
+                        MediaCreator(
+                            id,
+                            name,
+                            person.optString("profilePath").takeIf { it.isNotBlank() && it != "null" },
+                            person.optString("role").takeIf { it.isNotBlank() && it != "null" },
+                        )
+                    }
+                }.orEmpty(),
                 creators = json.optJSONArray("creators")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         val creator = array.optJSONObject(index) ?: return@mapNotNull null
@@ -242,10 +271,13 @@ data class Media(
                             name = name,
                             profilePath = creator.optString("profilePath")
                                 .takeIf { it.isNotBlank() && it != "null" },
+                            role = creator.optString("role")
+                                .takeIf { it.isNotBlank() && it != "null" },
                         )
                     }
                 }.orEmpty(),
                 runtime = json.optString("runtime", ""),
+                trailerKey = json.optString("trailerKey").takeIf { it.matches(Regex("[a-zA-Z0-9_-]{11}")) },
                 omdbGenres = json.optJSONArray("omdbGenres")?.let { array ->
                     (0 until array.length()).mapNotNull { index ->
                         array.optString(index).takeIf(String::isNotBlank)
@@ -315,7 +347,7 @@ data class PlaybackSelection(
                 append(episodeNumber ?: 1)
             }
             append(":via:")
-            append(source.provider.name.lowercase())
+            append(source.identity.name.lowercase())
             append("@")
             append(source.cleanDomain.lowercase())
         }

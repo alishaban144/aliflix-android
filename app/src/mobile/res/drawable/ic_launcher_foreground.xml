@@ -1,16 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#9A8BB8"
-        android:pathData="M31,60 C24.9,60 20,64.9 20,71 C20,77.1 24.9,82 31,82 C37.1,82 42,77.1 42,71 C42,64.9 37.1,60 31,60 Z" />
-    <path
-        android:fillColor="#6650B8"
-        android:pathData="M60,24 L82,84 L69,84 L57,50 Z" />
-    <path
-        android:fillColor="#EDECF2"
-        android:pathData="M44,24 L60,24 L69,84 L56,84 Z" />
-</vector>
+<!-- Keep the entire canonical mark within adaptive launchers' safe circle. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="10dp" android:drawable="@drawable/aliflix_logo" />

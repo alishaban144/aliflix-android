@@ -9,9 +9,13 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.aliflix.app.model.Media
 import com.aliflix.app.recommendation.ProductionCompanyFilter
+import com.aliflix.app.ui.common.MobileTopSafeArea
 import com.aliflix.app.ui.common.aliflixScreenBackground
 
 @Composable
@@ -23,8 +27,8 @@ fun AskAliflixScreen(
     onReset: () -> Unit,
     onEdit: () -> Unit,
     onOpenMedia: (Media) -> Unit,
-    suggestions: List<Media>,
-    suggestionsLoading: Boolean,
+    suggestions: List<Media> = emptyList(),
+    suggestionsLoading: Boolean = false,
     suggestionsError: String? = null,
     onRetrySuggestions: () -> Unit = {},
     onSearchCompanies: suspend (String) -> List<ProductionCompanyFilter> = { emptyList() },
@@ -39,13 +43,22 @@ fun AskAliflixScreen(
     onToggleMyList: (Media) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    if (!com.aliflix.app.BuildConfig.IS_TV) {
+        UnifiedAskAliflix(uiState, editorState, onEditorStateChanged, onSubmitRequest, onReset, onBack,
+            onOpenMedia, suggestions, suggestionsLoading, onRetry, onSearchCompanies, listState,
+            myListKeys, onToggleMyList, modifier, onRefine=onRefineRequest)
+        return
+    }
+    val tracker = remember { DiscoverTouchTracker() }
+    CompositionLocalProvider(LocalAskTouchTracker provides if (com.aliflix.app.BuildConfig.IS_TV) null else tracker) {
     Box(
         modifier = modifier
             .fillMaxSize()
             .aliflixScreenBackground()
-            .windowInsetsPadding(WindowInsets.statusBars),
+            .then(if (com.aliflix.app.BuildConfig.IS_TV) Modifier else Modifier.observeDiscoverTouches(tracker)),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
+            MobileTopSafeArea(extraPadding = 8.dp)
             AskAliflixHeader(
                 onReset = onReset,
                 onBack = onBack,
@@ -205,4 +218,5 @@ fun AskAliflixScreen(
             }
         }
     }
+}
 }

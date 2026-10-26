@@ -32,9 +32,24 @@ class PhonePlayerPolishTest {
         var played: Media? = null
         compose.mainClock.autoAdvance = false
         compose.setContent { AliflixMobileTheme {
-            HomeFeed(HomeContent(first, listOf(ContentRail("Featured", listOf(first, second)))), TvNetworksUiState(),
-                emptyList(), emptyList(), emptyList(), emptyMap(), {}, {}, { played = it }, {},
-                rememberLazyListState(), HomeFilter.FOR_YOU, {}, Modifier)
+            // Named arguments keep this call honest: the parameter list has grown before and a
+            // positional call silently drifted out of alignment with it.
+            HomeFeed(
+                content = HomeContent(first, listOf(ContentRail("Featured", listOf(first, second)))),
+                tvNetworks = TvNetworksUiState(),
+                editorialPicks = emptyList(),
+                recent = emptyList(),
+                likes = emptyList(),
+                playbackProgress = emptyMap(),
+                onRetryTvNetworks = {},
+                onOpen = {},
+                onPlay = { played = it },
+                onSearch = {},
+                listState = rememberLazyListState(),
+                selectedFilter = HomeFilter.FOR_YOU,
+                onSelectFilter = {},
+                modifier = Modifier,
+            )
         } }
         compose.mainClock.advanceTimeBy(100)
         val bounds = compose.onRoot().fetchSemanticsNode().boundsInRoot
@@ -54,17 +69,77 @@ class PhonePlayerPolishTest {
                 RecommendationAiModel.entries.first(), {}, SubtitleLanguage.ENGLISH, {}, enabled,
                 { enabled = it }, MobileUpdateUiState(), {}, {}, {}, {}, {})
         } }
-        compose.onNodeWithTag("settings-quality-low").performClick().assertIsSelected()
+        compose.onNodeWithTag("settings-quality-low").performScrollTo().performClick()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals(com.aliflix.app.player.PreferredVideoQuality.LOW,
             com.aliflix.app.player.PlayerSettingsStore(context).settings.value.preferredVideoQuality)
-        compose.onNodeWithTag("settings-quality-auto").performClick().assertIsSelected()
+        compose.onNodeWithTag("settings-quality-auto").performScrollTo().performClick()
         compose.onNodeWithText("Auto display").performScrollTo().assertIsDisplayed()
         capture("settings71.png")
         compose.onNodeWithText("Auto display").performClick()
         compose.runOnIdle { assertFalse(enabled) }
         compose.onNodeWithText("Auto display").performClick()
         compose.runOnIdle { assertTrue(enabled) }
+        compose.onNodeWithText("Preferred language").performScrollTo().performClick()
+        compose.onNodeWithText("German").assertIsDisplayed()
+        capture("preferred-language-card.png")
+        compose.onNodeWithText("German").performClick()
+        compose.onNodeWithText("Get in touch").performScrollTo().performClick()
+        compose.onNodeWithText("Aliflixapp@proton.me").assertIsDisplayed()
+        capture("get-in-touch-card.png")
+    }
+
+    @Test fun doubleTapUsesTheControllerCallbackThatArrivesAfterComposition() {
+        var connected by mutableStateOf(false)
+        var position = 30_000L
+        compose.setContent {
+            val ready = connected
+            com.aliflix.app.player.MobileVideoGestureDetector(
+                onToggleControls = {},
+                onSeekRewind = { if (ready) position -= 15_000 },
+                onSeekForward = { if (ready) position += 15_000 },
+            )
+        }
+        compose.runOnIdle { connected = true }
+        compose.onRoot().performTouchInput { doubleClick(androidx.compose.ui.geometry.Offset(width * 0.85f, height * 0.4f)) }
+        compose.runOnIdle { assertEquals(45_000L, position) }
+        compose.onRoot().performTouchInput { doubleClick(androidx.compose.ui.geometry.Offset(width * 0.15f, height * 0.4f)) }
+        compose.runOnIdle { assertEquals(30_000L, position) }
+    }
+
+    @Test fun playerHeaderRetainsFullEpisodeIdentity() {
+        compose.setContent { AliflixMobileTheme {
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                NativePlayerScreen(NativePlayerUi(title = "Silo", detail = "S1 E6 • Prayers and Visions", ready = true), null)
+            }
+        } }
+        compose.onNodeWithText("Silo").assertIsDisplayed()
+        compose.onNodeWithText("S1 E6 • Prayers and Visions").assertIsDisplayed()
+        for (description in listOf("Back", "Subtitles", "Rotate", "More")) {
+            val bounds = compose.onNodeWithContentDescription(description).fetchSemanticsNode().touchBoundsInRoot
+            assertTrue("$description needs a usable touch target", bounds.width >= 48 && bounds.height >= 48)
+        }
+        capture("player79.png")
+    }
+
+    @Test fun subtitleShortcutOffersProviderAudioAndIdentifiesTheOriginalLanguage() {
+        var selected by mutableStateOf("en")
+        val episode = PlaybackSelection(Media(195339, MediaType.TV, "Pantheon", originalLanguage = "en"), 1, 1,
+            source = PlaybackSource(MobilePlaybackProvider.SERIENSTREAM))
+        compose.setContent { AliflixMobileTheme {
+            NativePlayerScreen(NativePlayerUi(title = "Pantheon", ready = true, playbackSelection = episode,
+                sourceAudioLanguage = selected, sourceAudioOptions = listOf(
+                    com.aliflix.app.player.SourceAudioOption("de", "German"),
+                    com.aliflix.app.player.SourceAudioOption("en", "English"))), null,
+                onSourceAudioSelected = { selected = it })
+        } }
+        compose.onNodeWithContentDescription("Subtitles").performClick()
+        compose.onNodeWithText("Languages & subtitles").assertIsDisplayed()
+        compose.onNodeWithText("Original").assertIsDisplayed()
+        compose.onNodeWithText("German").performClick()
+        compose.runOnIdle { assertEquals("de", selected) }
+        compose.onNodeWithText("English").assertIsDisplayed()
+        capture("provider-audio-language-card.png")
     }
 
     @Test fun transportPressHasNoRectangularOrCircularIndication() {
@@ -81,6 +156,73 @@ class PhonePlayerPolishTest {
         assertTrue("Holding Play must not draw a ripple or button plate", before.sameAs(pressed))
         button.performTouchInput { up() }
         before.recycle(); pressed.recycle()
+    }
+
+    @Test fun pinchChangesFitWithoutWaitingForOneLargeFrame() {
+        var zoomed = false
+        compose.setContent { AliflixMobileTheme {
+            NativePlayerScreen(NativePlayerUi(title = "Pinch", ready = true), null, onFit = { zoomed = it })
+        } }
+        // pinch arguments are start0, end0, start1, end1.
+        compose.onRoot().performTouchInput {
+            pinch(androidx.compose.ui.geometry.Offset(width * .35f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .15f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .65f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .85f, height * .5f), 300)
+        }
+        compose.runOnIdle { assertTrue(zoomed) }
+        compose.onRoot().performTouchInput {
+            pinch(androidx.compose.ui.geometry.Offset(width * .15f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .35f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .85f, height * .5f),
+                androidx.compose.ui.geometry.Offset(width * .65f, height * .5f), 300)
+        }
+        compose.runOnIdle { assertFalse(zoomed) }
+    }
+
+    @Test fun librarySwipesCollapseMaterialChromeAndContinueScrolling() {
+        val grid = androidx.compose.foundation.lazy.grid.LazyGridState()
+        val items = (1..150).map { Media(it, MediaType.MOVIE, "Library title $it") }
+        compose.setContent { AliflixMobileTheme {
+            MySpaceScreen(items, emptyList(), emptyList(), AccountState(), {}, {}, {}, {}, {},
+                grid, androidx.compose.foundation.lazy.grid.rememberLazyGridState(), androidx.compose.foundation.lazy.grid.rememberLazyGridState(),
+                0, {}, PlaybackProviderId.MOVIEPIRE, {}, {}, false, {}, RecommendationAiModel.entries.first(), {},
+                SubtitleLanguage.ENGLISH, {}, true, {}, MobileUpdateUiState(), {}, {}, {})
+        } }
+        capture("my-space-restored-tabs.png")
+        compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 500) }
+        compose.waitForIdle()
+        var firstIndex = 0
+        var firstOffset = 0
+        compose.runOnIdle {
+            firstIndex = grid.firstVisibleItemIndex
+            firstOffset = grid.firstVisibleItemScrollOffset
+            assertTrue("One drag must not reach the bottom", grid.layoutInfo.visibleItemsInfo.last().index < items.lastIndex)
+        }
+        compose.onNodeWithText("My Space").assertIsNotDisplayed()
+        compose.onRoot().performTouchInput { swipeUp(startY = height * .85f, endY = height * .35f, durationMillis = 500) }
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue("The next gesture must continue scrolling", grid.firstVisibleItemIndex > firstIndex ||
+            grid.firstVisibleItemIndex == firstIndex && grid.firstVisibleItemScrollOffset > firstOffset) }
+    }
+
+    @Test fun genreTabsFollowTheScrolledSectionAndKeepItsSelectedChipVisible() {
+        val grid = androidx.compose.foundation.lazy.grid.LazyGridState()
+        val genres = listOf("Action","Adventure","Comedy","Crime","Drama","Fantasy","Horror","Mystery","Science Fiction","Thriller")
+        val items = (0 until 150).map { Media(it + 1,MediaType.MOVIE,"Saved title $it",genres = listOf(genres[it / 15])) }
+        val groups = groupMyListByMainGenre(items)
+        val target = groups.last().key
+        val section = libraryGenreSectionIndices(groups).getValue(target)
+        compose.setContent { AliflixMobileTheme {
+            MySpaceScreen(items, emptyList(), emptyList(), AccountState(), {}, {}, {}, {}, {},
+                grid, androidx.compose.foundation.lazy.grid.rememberLazyGridState(), androidx.compose.foundation.lazy.grid.rememberLazyGridState(),
+                0, {}, PlaybackProviderId.MOVIEPIRE, {}, {}, false, {}, RecommendationAiModel.entries.first(), {},
+                SubtitleLanguage.ENGLISH, {}, true, {}, MobileUpdateUiState(), {}, {}, {})
+        } }
+        compose.runOnIdle { kotlinx.coroutines.runBlocking { grid.scrollToItem(section) } }
+        compose.waitForIdle()
+        compose.onNode(hasText(target) and isSelectable()).assertIsSelected().assertIsDisplayed()
+        capture("my-list-active-genre.png")
     }
 
     private fun capture(name: String) {

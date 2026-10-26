@@ -10,9 +10,10 @@ import org.json.JSONObject
 
 internal fun PlaybackSelection.nativeJson(): String = JSONObject().apply {
     put("media", media.toJson()); put("season", seasonNumber); put("episode", episodeNumber)
-    put("episodeTitle", episodeTitle); put("provider", source.provider.name); put("baseUrl", source.baseUrl)
+    put("episodeTitle", episodeTitle); put("provider", source.identity.name); put("baseUrl", source.baseUrl)
     put("episodes", JSONArray().apply { availableEpisodes.forEach { episode ->
-        put(JSONObject().put("season", episode.seasonNumber).put("number", episode.number).put("title", episode.title))
+        put(JSONObject().put("season", episode.seasonNumber).put("number", episode.number).put("title", episode.title).put("stillPath", episode.stillPath).put("runtime", episode.runtime).put("overview", episode.overview)
+            .put("imdbId",episode.imdbId).put("imdbRating",episode.imdbRating).put("imdbVoteCount",episode.imdbVoteCount).put("imdbRatingState",episode.imdbRatingState?.name))
     } })
 }.toString()
 
@@ -22,20 +23,36 @@ internal fun nativeSelection(raw: String): PlaybackSelection = JSONObject(raw).l
         seasonNumber = json.optInt("season", 1), episodeNumber = json.optInt("episode", 1),
         episodeTitle = json.optString("episodeTitle").takeIf { it.isNotBlank() && it != "null" },
         availableEpisodes = (0 until episodes.length()).map { index -> episodes.getJSONObject(index).let {
-            Episode(it.getInt("season"), it.getInt("number"), it.getString("title"))
+            Episode(it.getInt("season"), it.getInt("number"), it.getString("title"),
+                overview = it.optString("overview"), stillPath = it.optString("stillPath").takeIf { path -> path.isNotBlank() && path != "null" }, runtime = it.optString("runtime"),
+                imdbId=it.optString("imdbId").takeIf { value->value.matches(Regex("tt[0-9]+")) },
+                imdbRating=it.optDouble("imdbRating").takeIf { value->value.isFinite() && value>0 },
+                imdbVoteCount=it.optInt("imdbVoteCount").takeIf { _->it.has("imdbVoteCount") && !it.isNull("imdbVoteCount") },
+                imdbRatingState=runCatching { RatingSourceState.valueOf(it.optString("imdbRatingState")) }.getOrNull())
         } },
-        source = PlaybackSource(PlaybackProviderId.valueOf(json.getString("provider")), json.getString("baseUrl")))
+        source = PlaybackSource(PlaybackProvider.valueOf(json.getString("provider")), json.getString("baseUrl")))
+}
+
+// Installed by the mobile room client. Other form factors retain their original launch behavior.
+internal var playbackRoomConsent: ((Activity, PlaybackSelection, () -> Unit) -> Unit)? = null
+internal fun withPlaybackRoomConsent(activity: Activity, selection: PlaybackSelection, proceed: () -> Unit) {
+    playbackRoomConsent?.invoke(activity, selection, proceed) ?: proceed()
 }
 
 internal fun launchNativeSelection(activity: Activity, selection: PlaybackSelection, language: String, autoSubtitles: Boolean) {
+    withPlaybackRoomConsent(activity, selection) {
     activity.startActivity(Intent().setClassName(activity, "com.aliflix.app.player.NativePlayerActivity")
         .putExtra("selection", selection.nativeJson()).putExtra("subtitleLanguage", language)
-        .putExtra("autoSubtitles", autoSubtitles), nativePhoneLaunchOptions())
+        .putExtra("playTapElapsedMs", android.os.SystemClock.elapsedRealtime())
+        .putExtra("autoSubtitles", autoSubtitles), nativePhoneLaunchOptions(activity))
+    }
 }
 
 // Service/notification launches otherwise inherit the last focused (possibly TV) display.
-internal fun nativePhoneLaunchOptions(): android.os.Bundle = ActivityOptions.makeBasic()
-    .setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
+internal fun nativePhoneLaunchOptions(context: android.content.Context? = null): android.os.Bundle =
+    (if (context != null && !com.aliflix.app.BuildConfig.IS_TV)
+        ActivityOptions.makeCustomAnimation(context, com.aliflix.app.R.anim.playback_enter, com.aliflix.app.R.anim.playback_exit)
+    else ActivityOptions.makeBasic()).setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
 
 /** Provider labels can include decorations, e.g. 'Vid • HD'. Avoid matching unrelated Videasy. */
 internal fun nativeServerRank(label: String): Int = listOf("Vid", "Mist", "Mistify", "Flix", "Peach")
@@ -47,9 +64,18 @@ internal fun orderedNativeServers(servers: List<MoviepireServerOption>): List<Mo
 
 /** Same public embeds used by Moviepire, avoiding catalogue/bootstrap round trips. */
 internal fun preferredNativeEmbeds(selection: PlaybackSelection): List<Pair<String, String>> {
-    if (!selection.source.provider.usesMoviepire) return emptyList()
     val route = if (selection.media.type == MediaType.TV) "tv/${selection.media.id}/${selection.seasonNumber ?: 1}/${selection.episodeNumber ?: 1}"
         else "movie/${selection.media.id}"
+    if (selection.source.identity == MobilePlaybackProvider.SEVEN_MOVIES && !com.aliflix.app.BuildConfig.IS_TV) {
+        return listOf(
+            "Direct" to checkNotNull(selection.entryUrl),
+            "Vidbolt" to "https://vidbolt.xyz/$route?autoPlay=true",
+            "Cinezo" to "https://player.cinezo.live/embed/$route?autoplay=true",
+            "Vidstuck" to "https://vidstuck.xyz/embed/$route?autoplay=true&back=false&branding=7Movies",
+            "Bingr" to "https://bingr.one/watch/$route",
+        )
+    }
+    if (!selection.source.identity.usesMoviepire) return emptyList()
     return listOf("Vid" to "https://embed.wplay.me/embed/$route", "Mist" to "https://play.xpass.top/e/$route",
         "Mistify" to "https://vaplayer.ru/embed/$route", "Flix" to "https://vidbolt.xyz/$route",
         "Peach" to "https://peachify.top/embed/$route")
@@ -58,6 +84,19 @@ internal fun preferredNativeEmbeds(selection: PlaybackSelection): List<Pair<Stri
 /** Runs only in the temporary resolver, on approved origins; destroyed after handoff. */
 internal fun nativePreparationScript(): String = """
     (() => {
+      // Fallback for WebView providers without MUTE_AUDIO, installed before page scripts.
+      for (const [name, value] of [['muted', true], ['volume', 0]]) {
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, name);
+        if (descriptor && descriptor.configurable) {
+          Object.defineProperty(HTMLMediaElement.prototype, name, {
+            configurable: true, get() { return value; },
+            set(_) { descriptor.set.call(this, value); }
+          });
+        }
+      }
+      for (const type of [window.AudioContext, window.webkitAudioContext]) {
+        if (type) type.prototype.resume = function() { return Promise.resolve(); };
+      }
       const deadline = Date.now() + 45000;
       const clicked = new WeakMap();
       const host = location.hostname;
@@ -68,6 +107,9 @@ internal fun nativePreparationScript(): String = """
       // Peach uses an icon-only overlay with no accessible label; target that play cover only.
       if (isHost('peachify.top')) selectors.unshift('div.bg-black\\/30.visible > button.pointer-events-auto');
       const prepare = () => {
+        if (isHost('flixer.gd')) {
+          document.querySelectorAll('[role="presentation"]:has(> [aria-labelledby="support-notice-title"]), [class^="fixed z-[60]"]:has(> div.relative > button)').forEach(node => node.remove());
+        }
         document.querySelectorAll('video').forEach(video => {
           if (video.mediaKeys) return;
           video.muted = true;

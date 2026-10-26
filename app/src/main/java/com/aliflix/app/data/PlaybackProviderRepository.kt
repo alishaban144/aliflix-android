@@ -1,11 +1,13 @@
 package com.aliflix.app.data
 
+import com.aliflix.app.model.PlaybackProviderId
+
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.aliflix.app.BuildConfig
 import com.aliflix.app.model.PlaybackPreferences
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.defaultGeneralPlaybackProvider
 import kotlinx.coroutines.channels.BufferOverflow
@@ -15,7 +17,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class PlaybackProviderRepository(context: Context) {
+class PlaybackProviderRepository(private val context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences(
         PREFS_NAME,
         Context.MODE_PRIVATE,
@@ -42,7 +44,7 @@ class PlaybackProviderRepository(context: Context) {
             KEY_LEGACY_ACTIVE_SOURCE_ID,
         ).any(prefs::contains)
 
-    fun selectGeneralProvider(provider: PlaybackProviderId) {
+    fun selectGeneralProvider(provider: PlaybackProvider) {
         if (!provider.supportsGeneralPlayback) return
         prefs.edit { putString(KEY_GENERAL_PROVIDER_ID, provider.name) }
         _preferences.value = _preferences.value.copy(generalProvider = provider)
@@ -97,20 +99,32 @@ class PlaybackProviderRepository(context: Context) {
     }
 
     fun selectPreferredSubtitleLanguage(language: SubtitleLanguage) {
+        if (!BuildConfig.IS_TV) clearLegacySubtitleChoice()
         prefs.edit { putString(KEY_PREFERRED_SUBTITLE_LANGUAGE, language.code) }
         _preferences.value = _preferences.value.copy(preferredSubtitleLanguage = language)
         recordLocalChange()
     }
 
     fun setAutoDisplaySubtitles(enabled: Boolean) {
+        if (!BuildConfig.IS_TV) clearLegacySubtitleChoice()
         prefs.edit { putBoolean(KEY_AUTO_DISPLAY_SUBTITLES, enabled) }
         _preferences.value = _preferences.value.copy(autoDisplaySubtitles = enabled)
         recordLocalChange()
     }
 
+    private fun clearLegacySubtitleChoice() {
+        val choices = context.getSharedPreferences("native-subtitle-choice", Context.MODE_PRIVATE)
+        if (choices.getString("manual-owner", null).isNullOrBlank()) choices.edit {
+            remove("language"); remove("enabled")
+        }
+    }
+
     /** Applies cloud/account-scope settings without creating a write-back loop. */
     fun applySyncedPreferences(value: PlaybackPreferences, updatedAtMillis: Long) {
-        val provider = value.safeGeneralProvider
+        if (!BuildConfig.IS_TV && value.preferredSubtitleLanguage != _preferences.value.preferredSubtitleLanguage) {
+            clearLegacySubtitleChoice()
+        }
+        val provider = value.effectiveGeneralProvider
         _preferences.value = value.copy(generalProvider = provider)
         _updatedAtMillis.value = updatedAtMillis.coerceAtLeast(0L)
         prefs.edit {
@@ -134,6 +148,13 @@ class PlaybackProviderRepository(context: Context) {
     }
 
     private fun loadPreferences(): PlaybackPreferences {
+        if (!BuildConfig.IS_TV && !prefs.getBoolean("flixer_default_v1", false)) {
+            prefs.edit {
+                putBoolean("flixer_default_v1", true)
+                putString(KEY_GENERAL_PROVIDER_ID, com.aliflix.app.model.MobilePlaybackProvider.FLIXER.name)
+                putLong(KEY_UPDATED_AT_MILLIS, System.currentTimeMillis())
+            }
+        }
         val savedRamoflixUrl = prefs.getString(KEY_CUSTOM_RAMOFLIX_URL, null)
         val normalizedRamoflixUrl =
             savedRamoflixUrl?.let(RamoflixConfig::normalizeBaseUrl)
@@ -157,8 +178,8 @@ class PlaybackProviderRepository(context: Context) {
         }
         val storedProvider = prefs.getString(KEY_GENERAL_PROVIDER_ID, null)
             ?: prefs.getString(KEY_LEGACY_ACTIVE_SOURCE_ID, null)
-        val generalProvider = PlaybackProviderId.fromStoredValue(storedProvider)
-            ?.takeIf(PlaybackProviderId::supportsGeneralPlayback)
+        val generalProvider = PlaybackProvider.fromStoredValue(storedProvider)
+            ?.takeIf(PlaybackProvider::supportsGeneralPlayback)
             ?: defaultGeneralPlaybackProvider(isTv = BuildConfig.IS_TV)
         if (storedProvider != null) {
             prefs.edit {
@@ -182,7 +203,7 @@ class PlaybackProviderRepository(context: Context) {
         )
     }
 
-    private companion object {
+    internal companion object {
         const val PREFS_NAME = "aliflix_streaming_sources_prefs"
         const val KEY_CUSTOM_RAMOFLIX_URL = "custom_url_ramoflix"
         const val KEY_CUSTOM_MOVIEPIRE_URL = "custom_url_moviepire"

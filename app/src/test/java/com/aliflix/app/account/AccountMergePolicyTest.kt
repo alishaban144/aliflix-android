@@ -119,7 +119,24 @@ class AccountMergePolicyTest {
     @Test
     fun deletionTargetsOnlyTheDocumentedAccountCollections() {
         assertEquals(
-            listOf("profile", "myList", "favorites", "recent", "progress", "settings"),
+            listOf(
+                "profile",
+                "myList",
+                "favorites",
+                "recent",
+                "progress",
+                "settings",
+                "playerPreferences",
+                "subtitleChoices",
+                "captionFiles",
+                "subtitleCorrections",
+                "audioChoices",
+                "seriesAudioChoices",
+                "activityShelves",
+                "tastePreferences",
+                "talkPreferences",
+                "talkArchive",
+            ),
             AccountCloudDeletionPlan.collections,
         )
     }
@@ -150,7 +167,7 @@ class AccountMergePolicyTest {
         moviepireUrl = "https://moviepire.example/",
         dorabyUrl = "https://doraby.example/",
         askAliflixEnabled = true,
-        recommendationAiModel = "groq-qwen-3.8-27b",
+        recommendationAiModel = "groq-gpt-oss-120b",
         updatedAtMillis = updatedAt,
         preferredSubtitleLanguage = subtitleLanguage,
         autoDisplaySubtitles = autoSubtitles,

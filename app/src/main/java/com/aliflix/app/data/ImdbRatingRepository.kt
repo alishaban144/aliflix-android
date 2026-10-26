@@ -32,6 +32,7 @@ data class ImdbRatingSnapshot(
     val voteCount: Int?,
     val state: RatingSourceState,
     val fetchedAtMillis: Long = System.currentTimeMillis(),
+    val originalReleaseYear: Int? = null,
 )
 
 data class ImdbEpisodeRatingSnapshot(
@@ -134,87 +135,41 @@ class DefaultImdbRatingRepository(
                 cachedIdentityMatches(media, it)
         }
 
-        val resolvedIdentity = try {
-            resolveIdentity(media)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            null
+        val direct = media.imdbId?.takeIf(IMDB_ID_PATTERN::matches)?.let {
+            ImdbTitleIdentity(it, media.title, media.year.take(4).toIntOrNull(), media.type)
         }
-        val identity = resolvedIdentity ?: media.imdbId
-            ?.takeIf(IMDB_ID_PATTERN::matches)
-            ?.let {
-                ImdbTitleIdentity(
-                    imdbId = it,
-                    title = media.title,
-                    year = media.year.take(4).toIntOrNull(),
-                    type = media.type,
-                )
+        var notRated: ImdbRatingSnapshot? = null
+        suspend fun fetch(identity: ImdbTitleIdentity): ImdbRatingSnapshot? {
+            for (endpoint in GRAPHQL_ENDPOINTS) {
+                try {
+                    val parsed = parseGraphQlRating(graphQlTransport.postJson(endpoint,
+                        ratingQuery(identity.imdbId), IMDB_WEB_HEADERS), identity)
+                    if (parsed?.rating != null) {
+                        cacheStore?.saveImdbRating(media.key, parsed)
+                        return parsed
+                    }
+                    if (parsed?.state == RatingSourceState.NOT_RATED) notRated = parsed
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Try the independent source. */ }
             }
-
-        if (identity == null) {
-            return stale?.copy(state = RatingSourceState.STALE)
-                ?: unavailableSnapshot(media)
-        }
-
-        var providerResponded = false
-        for (endpoint in GRAPHQL_ENDPOINTS) {
             try {
-                val parsed = parseGraphQlRating(
-                    graphQlTransport.postJson(
-                        endpoint,
-                        ratingQuery(identity.imdbId),
-                        IMDB_WEB_HEADERS,
-                    ),
-                    identity,
-                )
-                providerResponded = true
-                if (parsed != null && parsed.rating != null && parsed.rating > 0.0) {
+                val html = pageLoader("https://www.imdb.com/title/${identity.imdbId}/")
+                val parsed = parseImdbPageRating(html, identity, nowMillis())
+                if (parsed?.rating != null) {
                     cacheStore?.saveImdbRating(media.key, parsed)
                     return parsed
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                // Each host is independent. Continue to the next source.
-            }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { }
+            return null
         }
-
-        try {
-            val html = pageLoader("https://www.imdb.com/title/${identity.imdbId}/reference/")
-            if (!isVerifiedImdbTitlePage(html, identity)) {
-                throw IOException("IMDb title page identity could not be verified")
-            }
-            providerResponded = true
-            val parsed = parseImdbPageRating(html, identity, nowMillis())
-            if (parsed != null && parsed.rating != null && parsed.rating > 0.0) {
-                cacheStore?.saveImdbRating(media.key, parsed)
-                return parsed
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            // Stale data is preferable to turning a transient outage into "not rated".
+        // TMDB's external ID is queried first; a popular same-name suggestion cannot replace it.
+        direct?.let { fetch(it)?.let { snapshot -> return snapshot } }
+        val suggestion = resolveIdentity(media)
+        if (suggestion != null && suggestion.imdbId != direct?.imdbId) {
+            fetch(suggestion)?.let { return it }
         }
-
-        if (providerResponded) {
-            val notRated = ImdbRatingSnapshot(
-                identity = identity,
-                rating = null,
-                voteCount = null,
-                state = RatingSourceState.NOT_RATED,
-                fetchedAtMillis = nowMillis(),
-            )
-            return notRated
-        }
-        return stale?.copy(state = RatingSourceState.STALE)
-            ?: ImdbRatingSnapshot(
-                identity = identity,
-                rating = null,
-                voteCount = null,
-                state = RatingSourceState.UNAVAILABLE,
-                fetchedAtMillis = nowMillis(),
-            )
+        return stale?.copy(state = RatingSourceState.STALE) ?: notRated ?: unavailableSnapshot(media)
     }
 
     override suspend fun ratingsForEpisodes(
@@ -298,7 +253,10 @@ class DefaultImdbRatingRepository(
                         }
                         episode.number to snapshot
                     }
-                    return resolved
+                    if (com.aliflix.app.BuildConfig.IS_TV) return resolved
+                    resolved.filterValues { it.state == RatingSourceState.VERIFIED || it.state == RatingSourceState.NOT_RATED }
+                        .forEach { (number, snapshot) -> fresh[number] = snapshot }
+                    if (requested.all { it.number in fresh }) return resolved
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Throwable) {
@@ -321,7 +279,10 @@ class DefaultImdbRatingRepository(
         snapshot: ImdbRatingSnapshot,
     ): Boolean {
         if (snapshot.identity.type != media.type) return false
+        if (media.imdbId?.matches(IMDB_ID_PATTERN) == true && media.imdbId != snapshot.identity.imdbId) return false
 
+        if(!com.aliflix.app.BuildConfig.IS_TV && media.imdbId?.matches(IMDB_ID_PATTERN)==true &&
+            media.year.take(4).toIntOrNull()?.let { it==snapshot.identity.year }==true) return true
         val titleMatches = titleIdentityScore(
             normalize(media.title.replace(Regex("\\(\\d{4}\\)"), "").trim()),
             normalize(snapshot.identity.title),
@@ -330,7 +291,7 @@ class DefaultImdbRatingRepository(
 
         val mediaYear = media.year.take(4).toIntOrNull()
         val cachedYear = snapshot.identity.year
-        return mediaYear == null || cachedYear == null || kotlin.math.abs(mediaYear - cachedYear) <= 3
+        return mediaYear == null || (cachedYear != null && mediaYear == cachedYear)
     }
 
     internal suspend fun resolveIdentity(media: Media): ImdbTitleIdentity? {
@@ -340,10 +301,10 @@ class DefaultImdbRatingRepository(
         val encoded = URLEncoder.encode(cleanTitle, StandardCharsets.UTF_8.toString())
         val root = try {
             JSONObject(pageLoader("https://v3.sg.media-imdb.com/suggestion/$initial/$encoded.json"))
-        } catch (_: Throwable) {
+        } catch (cancelled: CancellationException) { throw cancelled } catch (_: Throwable) {
             try {
                 JSONObject(pageLoader("$IMDB_SUGGESTION_URL/$encoded.json"))
-            } catch (_: Throwable) {
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Throwable) {
                 null
             }
         } ?: return null
@@ -371,6 +332,8 @@ class DefaultImdbRatingRepository(
                 if (media.type == MediaType.TV && isFeatureMovie && !isTv) return@mapNotNull null
 
                 val year = candidate.optInt("y").takeIf { it > 0 }
+                if (wantedYear != null && year != wantedYear) return@mapNotNull null
+                if (!isTv && !isFeatureMovie && !isShort) return@mapNotNull null
                 val titleScore = titleIdentityScore(wantedTitle, normalize(title))
                 val typeBonus = when {
                     media.type == MediaType.MOVIE && isFeatureMovie -> 30
@@ -430,6 +393,7 @@ class DefaultImdbRatingRepository(
                 RatingSourceState.VERIFIED
             },
             fetchedAtMillis = nowMillis(),
+            originalReleaseYear = title.optJSONObject("releaseYear")?.optInt("year")?.takeIf { it > 0 && identity.year != null && it != identity.year },
         )
     }
 
@@ -502,63 +466,42 @@ class DefaultImdbRatingRepository(
         fetchedAtMillis: Long = nowMillis(),
     ): ImdbRatingSnapshot? {
         val document = org.jsoup.Jsoup.parse(html, "https://www.imdb.com")
-        document.select("script[type=application/ld+json]").forEach { script ->
-            val json = runCatching { JSONObject(script.data()) }.getOrNull()
-                ?: return@forEach
-            val aggregate = json.optJSONObject("aggregateRating") ?: return@forEach
-            val rating = aggregate.optDouble("ratingValue")
-                .takeIf { !it.isNaN() && it in 0.1..10.0 }
-            val votes = aggregate.optInt("ratingCount")
-                .takeIf { aggregate.has("ratingCount") && it >= 0 }
-            if (rating != null) {
-                return ImdbRatingSnapshot(
-                    identity = identity,
-                    rating = rating,
-                    voteCount = votes,
-                    state = RatingSourceState.VERIFIED,
-                    fetchedAtMillis = fetchedAtMillis,
-                )
-            }
+        for (script in document.select("script[type=application/ld+json]")) {
+            val json = runCatching { JSONObject(script.data()) }.getOrNull() ?: continue
+            if (!schemaIdentityMatches(json, identity, document)) continue
+            val aggregate = json.optJSONObject("aggregateRating") ?: continue
+            val rating = aggregate.optDouble("ratingValue").takeIf { it in .1..10.0 } ?: continue
+            return ImdbRatingSnapshot(identity, rating,
+                aggregate.optInt("ratingCount").takeIf { aggregate.has("ratingCount") && it >= 0 },
+                RatingSourceState.VERIFIED, fetchedAtMillis,
+                json.optString("datePublished").take(4).toIntOrNull()?.takeIf { identity.year!=null&&it!=identity.year })
         }
-        val rating = IMDB_RATING_PATTERN.find(html)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.toDoubleOrNull()
-            ?.takeIf { it in 0.1..10.0 }
-            ?: return null
-        return ImdbRatingSnapshot(
-            identity = identity,
-            rating = rating,
-            voteCount = null,
-            state = RatingSourceState.VERIFIED,
-            fetchedAtMillis = fetchedAtMillis,
-        )
+        // Only the primary title node, never aggregateRating from a recommendation elsewhere on the page.
+        val next = document.selectFirst("script#__NEXT_DATA__")?.data()
+        val title = next?.let { runCatching { JSONObject(it).getJSONObject("props").getJSONObject("pageProps")
+            .getJSONObject("aboveTheFoldData") }.getOrNull() }
+        return title?.let { runCatching {
+            parseGraphQlRating(JSONObject().put("data", JSONObject().put("title", it)).toString(), identity)
+        }.getOrNull() }
     }
 
-    internal fun isVerifiedImdbTitlePage(
-        html: String,
-        identity: ImdbTitleIdentity,
-    ): Boolean {
+    internal fun isVerifiedImdbTitlePage(html: String, identity: ImdbTitleIdentity): Boolean {
         val document = org.jsoup.Jsoup.parse(html, "https://www.imdb.com")
-        val canonicalMatches = document
-            .selectFirst("link[rel=canonical]")
-            ?.attr("href")
-            ?.contains("/title/${identity.imdbId}")
-            ?: false
-        var jsonIdentityMatches = false
-        document.select("script[type=application/ld+json]").forEach { script ->
-            val json = runCatching { JSONObject(script.data()) }.getOrNull()
-                ?: return@forEach
-            val url = json.optString("url")
-            val sameAs = json.optString("sameAs")
-            val name = json.optString("name")
-            val idMatches =
-                url.contains(identity.imdbId) || sameAs.contains(identity.imdbId)
-            val titleMatches = name.isBlank() ||
-                titleIdentityScore(normalize(identity.title), normalize(name)) >= 70
-            if (idMatches && titleMatches) jsonIdentityMatches = true
+        return document.select("script[type=application/ld+json]").any { script ->
+            runCatching { schemaIdentityMatches(JSONObject(script.data()), identity, document) }.getOrDefault(false)
         }
-        return canonicalMatches || jsonIdentityMatches
+    }
+
+    private fun schemaIdentityMatches(json: JSONObject, identity: ImdbTitleIdentity, document: org.jsoup.nodes.Document): Boolean {
+        val url = json.optString("url").ifBlank { document.selectFirst("link[rel=canonical]")?.attr("href").orEmpty() }
+        if (Regex("/title/(tt\\d+)(?:/|$)").find(url)?.groupValues?.get(1) != identity.imdbId) return false
+        val type = json.optString("@type").lowercase()
+        if (type !in if (identity.type == MediaType.TV) setOf("tvseries", "tvminiseries") else setOf("movie")) return false
+        val year = json.optString("datePublished").take(4).toIntOrNull()
+        val canonicalMobileIdentity = !com.aliflix.app.BuildConfig.IS_TV && identity.year != null && year == identity.year
+        if (!canonicalMobileIdentity && titleIdentityScore(normalize(identity.title), normalize(json.optString("name"))) < 70) return false
+        return identity.year == null || (year != null && kotlin.math.abs(identity.year - year) <= 1) ||
+            (!com.aliflix.app.BuildConfig.IS_TV && titleIdentityScore(normalize(identity.title),normalize(json.optString("name")))>=85)
     }
 
     private fun unavailableSnapshot(media: Media) = ImdbRatingSnapshot(
@@ -636,7 +579,13 @@ class DefaultImdbRatingRepository(
         if (snapshot.seasonNumber != episode.seasonNumber || snapshot.episodeNumber != episode.number) {
             return false
         }
-        if (episode.title.equals("Episode ${episode.number}", ignoreCase = true)) return true
+        if (com.aliflix.app.BuildConfig.IS_TV && episode.title.equals("Episode ${episode.number}", ignoreCase = true)) return true
+        if (!com.aliflix.app.BuildConfig.IS_TV) {
+            episode.imdbId?.takeIf(IMDB_ID_PATTERN::matches)?.let { return it == snapshot.imdbId }
+            // Returned nodes belong to the verified parent and exact S/E. IMDb's
+            // original title may differ completely from the localized catalogue.
+            return snapshot.imdbId?.matches(IMDB_ID_PATTERN) == true
+        }
         return titleIdentityScore(normalize(episode.title), normalize(snapshot.title)) >= 65
     }
 
@@ -695,7 +644,9 @@ class DefaultImdbRatingRepository(
             ?.optString("text")
             .orEmpty()
         val score = titleIdentityScore(normalize(expected.title), normalize(returnedTitle))
-        if (score < 45 && !normalize(returnedTitle).contains(normalize(expected.title)) && !normalize(expected.title).contains(normalize(returnedTitle))) {
+        val canonicalMobileIdentity = !com.aliflix.app.BuildConfig.IS_TV && expected.year != null &&
+            payload.optJSONObject("releaseYear")?.optInt("year") == expected.year
+        if (!canonicalMobileIdentity && score < 45 && !normalize(returnedTitle).contains(normalize(expected.title)) && !normalize(expected.title).contains(normalize(returnedTitle))) {
             return false
         }
         val returnedYear = payload.optJSONObject("releaseYear")
@@ -704,7 +655,10 @@ class DefaultImdbRatingRepository(
         if (
             expected.year != null &&
             returnedYear != null &&
-            kotlin.math.abs(expected.year - returnedYear) > 3
+            kotlin.math.abs(expected.year - returnedYear) > 1 &&
+            // A catalogue may date a re-release. Exact IMDb ID + matching title/type
+            // is stronger evidence than that distribution date (e.g. Incoherence).
+            (com.aliflix.app.BuildConfig.IS_TV || score < 85)
         ) {
             return false
         }
@@ -714,7 +668,7 @@ class DefaultImdbRatingRepository(
             .lowercase()
         return when (expected.type) {
             MediaType.MOVIE -> type in IMDB_MOVIE_TYPES || type.contains("movie") || type.contains("film")
-            MediaType.TV -> type in IMDB_TV_TYPES || type.contains("tv") || type.contains("series")
+            MediaType.TV -> type in IMDB_TV_TYPES
         }
     }
 

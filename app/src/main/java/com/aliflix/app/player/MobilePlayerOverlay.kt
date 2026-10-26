@@ -52,6 +52,7 @@ internal fun MobilePlayerOverlay(
     subtitleLanguage: String?,
     onOpenSubtitles: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenSubtitlePicker: () -> Unit = onOpenSubtitles,
 ) {
     val isPlaying by controller.isPlaying.collectAsState()
     val currentPositionMs by controller.currentPositionMs.collectAsState()
@@ -113,35 +114,17 @@ internal fun MobilePlayerOverlay(
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Subtle dark scrim when controls are visible
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
-            modifier = Modifier.fillMaxSize(),
-        ) {
+        // Shared timing keeps every player component on the same reveal frame.
+        MobilePlayerControlsVisibility(visible = controlsVisible,modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(ScrimColor),
-            )
-        }
-
-        // Visible Controls Overlay
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxSize().background(ScrimColor)
                     .windowInsetsPadding(WindowInsets.safeDrawing),
             ) {
                 // Top Bar
                 MobilePlayerTopBar(
-                    title = displayTitle,
+                    title = selection.media.title,
+                    detail = listOfNotNull(seasonEpisodeText, selection.episodeTitle?.takeIf(String::isNotBlank)).joinToString(" • "),
                     isTv = isTv,
                     onBack = onClose,
                     onEpisodes = {
@@ -149,7 +132,7 @@ internal fun MobilePlayerOverlay(
                         interactionToken++
                     },
                     onSubtitles = {
-                        onOpenSubtitles()
+                        onOpenSubtitlePicker()
                     },
                     onRotate = {
                         controller.toggleOrientation()

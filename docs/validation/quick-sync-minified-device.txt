@@ -1,0 +1,1 @@
+PASS: fully minified native app, one tap, synced, reset; version=3.1.148,realFilm=true,normalSpeed=true,buffered=true,offset=-7.32,rate=1.0,confidence=0.8090116946825724,elapsedMs=1043

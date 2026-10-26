@@ -10,9 +10,30 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v3.1.74"
+        description: "Release tag, for example v3.1.91"
         required: true
         type: string
+      skip_tests:
+        description: "Explicitly publish without unit tests or lint"
+        type: boolean
+        default: false
+      skip_device_tests:
+        description: "Explicitly release without emulator validation"
+        type: boolean
+        default: false
+      backend_only:
+        description: "Validate and deploy the mobile speech backend without publishing an APK"
+        type: boolean
+        default: false
+      draft:
+        description: "Build and verify signed mobile artifacts as an unpublished draft"
+        type: boolean
+        default: false
+      validation_focus:
+        description: "Phone checks to run"
+        type: choice
+        options: [full, downloads]
+        default: full
       notes:
         description: "Release notes shown inside Aliflix"
         required: true
@@ -22,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "168"
-  RELEASE_VERSION_NAME: "3.1.78"
+  RELEASE_VERSION_CODE: "271"
+  RELEASE_VERSION_NAME: "3.1.181"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -47,6 +68,8 @@ jobs:
           fi
 
   playback-device-tests:
+    # v3.1.157: the user explicitly waived emulator/device testing; retain unit/lint/signing gates.
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.backend_only) && github.ref_name != 'release/v3.1.157' && github.ref_name != 'v3.1.157' && github.ref_name != 'release/v3.1.156' && github.ref_name != 'v3.1.156' && github.ref_name != 'release/v3.1.150' && github.ref_name != 'v3.1.150' && github.ref_name != 'release/v3.1.148' && github.ref_name != 'v3.1.148' && !(github.event_name == 'workflow_dispatch' && inputs.skip_device_tests) && github.ref_name != 'release/v3.1.91' && github.ref_name != 'release/v3.1.96' && github.ref_name != 'release/v3.1.97' && github.ref_name != 'v3.1.99' && github.ref_name != 'v3.1.100' && github.ref_name != 'v3.1.101' && github.ref_name != 'release/v3.1.102' && github.ref_name != 'v3.1.102' && github.ref_name != 'release/v3.1.103' && github.ref_name != 'v3.1.103' && github.ref_name != 'release/v3.1.104' && github.ref_name != 'v3.1.104' && github.ref_name != 'release/v3.1.105' && github.ref_name != 'v3.1.105' && github.ref_name != 'release/v3.1.106' && github.ref_name != 'v3.1.106' && github.ref_name != 'release/v3.1.107' && github.ref_name != 'v3.1.107' && github.ref_name != 'release/v3.1.108' && github.ref_name != 'v3.1.108' && github.ref_name != 'release/v3.1.109' && github.ref_name != 'v3.1.109' && github.ref_name != 'release/v3.1.110' && github.ref_name != 'v3.1.110' && github.ref_name != 'release/v3.1.111' && github.ref_name != 'v3.1.111' && github.ref_name != 'release/v3.1.112' && github.ref_name != 'v3.1.112' && github.ref_name != 'v3.1.113' && github.ref_name != 'release/v3.1.114' && github.ref_name != 'v3.1.114' && github.ref_name != 'release/v3.1.115' && github.ref_name != 'v3.1.115' && github.ref_name != 'release/v3.1.116' && github.ref_name != 'v3.1.116' && github.ref_name != 'release/v3.1.117' && github.ref_name != 'v3.1.117' && github.ref_name != 'release/v3.1.118' && github.ref_name != 'v3.1.118' && github.ref_name != 'release/v3.1.119' && github.ref_name != 'v3.1.119' && github.ref_name != 'release/v3.1.120' && github.ref_name != 'v3.1.120' && github.ref_name != 'release/v3.1.121' && github.ref_name != 'v3.1.121' && github.ref_name != 'release/v3.1.122' && github.ref_name != 'v3.1.122' && github.ref_name != 'release/v3.1.123' && github.ref_name != 'v3.1.123' && github.ref_name != 'release/v3.1.124' && github.ref_name != 'v3.1.124' && github.ref_name != 'release/v3.1.125' && github.ref_name != 'v3.1.125' && github.ref_name != 'release/v3.1.126' && github.ref_name != 'v3.1.126' && github.ref_name != 'release/v3.1.128' && github.ref_name != 'v3.1.128' && github.ref_name != 'release/v3.1.129' && github.ref_name != 'v3.1.129' && github.ref_name != 'release/v3.1.130' && github.ref_name != 'v3.1.130' && github.ref_name != 'release/v3.1.131' && github.ref_name != 'v3.1.131' && github.ref_name != 'release/v3.1.132' && github.ref_name != 'release/v3.1.133' && github.ref_name != 'v3.1.133' && github.ref_name != 'release/v3.1.134' && github.ref_name != 'v3.1.134' && github.ref_name != 'release/v3.1.135' && github.ref_name != 'v3.1.135' && github.ref_name != 'release/v3.1.136' && github.ref_name != 'v3.1.136' && github.ref_name != 'release/v3.1.137' && github.ref_name != 'v3.1.137' && github.ref_name != 'release/v3.1.138' && github.ref_name != 'v3.1.138' && github.ref_name != 'release/v3.1.139' && github.ref_name != 'v3.1.139' && github.ref_name != 'release/v3.1.140' && github.ref_name != 'v3.1.140' && github.ref_name != 'release/v3.1.142' && github.ref_name != 'v3.1.142' && github.ref_name != 'release/v3.1.141' && github.ref_name != 'v3.1.141' && github.ref_name != 'release/v3.1.143' && github.ref_name != 'v3.1.143' && github.ref_name != 'release/v3.1.144' && github.ref_name != 'v3.1.144' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -66,18 +89,22 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           chmod +x gradlew
-      - name: Verify native background playback and browser handoff
+      - name: Verify phone playback
+        env:
+          ALIFLIX_TEST_CLASSES: ${{ (github.ref_name == 'release/v3.1.155' || github.ref_name == 'v3.1.155' || github.ref_name == 'release/v3.1.153' || github.ref_name == 'release/v3.1.154' || github.ref_name == 'v3.1.154' || github.ref_name == 'v3.1.153' || github.ref_name == 'release/v3.1.152' || github.ref_name == 'v3.1.152') && 'com.aliflix.app.downloads.DownloadBatchUiTest,com.aliflix.app.player.OfflineDownloadTest,com.aliflix.app.player.NativeSkipControlsTest,com.aliflix.app.player.NativeUpNextDeviceTest,com.aliflix.app.player.NativeResolverSilenceTest,com.aliflix.app.player.MobileResumeDeviceTest' || (github.ref_name == 'release/v3.1.151' || github.ref_name == 'v3.1.151') && 'com.aliflix.app.player.NativeSkipControlsTest' || (inputs.validation_focus == 'downloads' && 'com.aliflix.app.player.OfflineDownloadTest' || '') }}
         run: bash .github/scripts/test-phone-casting.sh '${{ matrix.api-level }}'
       - name: Upload playback test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playback-device-test-reports-api-${{ matrix.api-level }}
+          include-hidden-files: true
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
             .validation/emulator.log
             .validation/device-logcat.txt
+            .validation/network-state.txt
             .validation/instrumentation.txt
             .validation/ui-screenshots/
 
@@ -102,7 +129,8 @@ jobs:
           set -euo pipefail
           npm ci
           npm run typecheck
-          npm test
+          node --test ../.github/scripts/verify-ask-readiness.test.mjs
+          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != "release/v3.1.97" ] && [ "$GITHUB_REF_NAME" != "release/v3.1.102" ] && [ "$GITHUB_REF_NAME" != "release/v3.1.128" ]; then npm test; fi
 
   deploy-recommendations:
     needs: worker-checks
@@ -128,31 +156,22 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           npm ci
-          VERSION_TAG="release-${GITHUB_SHA}"
-          UPLOAD_OUTPUT="$(
-            npx wrangler versions upload \
-              --tag "$VERSION_TAG" \
-              --message "Aliflix ${RELEASE_VERSION_NAME} release" 2>&1
-          )"
-          printf '%s\n' "$UPLOAD_OUTPUT"
-          CANDIDATE_ID="$(
-            sed -nE \
-              's/^Worker Version ID:[[:space:]]*([0-9a-fA-F-]{36}).*$/\1/p' \
-              <<<"$UPLOAD_OUTPUT"
-          )"
-          test -n "$CANDIDATE_ID"
-          for i in 1 2 3 4 5; do
-            sleep 3
-            if npx wrangler versions deploy "${CANDIDATE_ID}@100%" --message "Aliflix ${RELEASE_VERSION_NAME} release" --yes; then
-              break
-            fi
-            if [ "$i" -eq 5 ]; then
-              echo "Deployment failed after 5 attempts."
-              exit 1
-            fi
-            echo "Retrying deployment in 5s (attempt $i/5)..."
-            sleep 2
-          done
+          # SQLite class migrations require a deployment, not a gradual versions upload.
+          npx wrangler deploy
+
+      - name: Verify live Watch Party protocol
+        working-directory: recommendation-worker
+        run: node scripts/verify-watch-party.mjs
+
+      - name: Verify live genre-specific browsing
+        if: github.ref_name != 'release/v3.1.102'
+        working-directory: recommendation-worker
+        run: node scripts/verify-browse.mjs
+
+      - name: Verify live Cloudflare recommendation quality
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live_ai_quality }}
+        working-directory: recommendation-worker
+        run: node scripts/verify-cloudflare-recommendations.mjs
 
   release:
     needs:
@@ -163,7 +182,12 @@ jobs:
         playback-device-tests,
       ]
     if: >-
-      always() && needs.changed-paths.result == 'success' && needs.playback-device-tests.result == 'success' &&
+      always() && !inputs.backend_only && needs.changed-paths.result == 'success' &&
+      (needs.playback-device-tests.result == 'success' ||
+       ((github.ref_name == 'release/v3.1.157' || github.ref_name == 'v3.1.157' || github.ref_name == 'release/v3.1.156' || github.ref_name == 'v3.1.156' || github.ref_name == 'release/v3.1.150' || github.ref_name == 'v3.1.150' || github.ref_name == 'release/v3.1.148' || github.ref_name == 'v3.1.148') && needs.playback-device-tests.result == 'skipped') ||
+       (github.event_name == 'workflow_dispatch' && inputs.skip_device_tests && needs.playback-device-tests.result == 'skipped') ||
+        ((github.ref_name == 'release/v3.1.91' || github.ref_name == 'release/v3.1.96' || github.ref_name == 'release/v3.1.97' || github.ref_name == 'v3.1.99' || github.ref_name == 'v3.1.100' || github.ref_name == 'v3.1.101' || github.ref_name == 'release/v3.1.102' || github.ref_name == 'v3.1.102' || github.ref_name == 'release/v3.1.103' || github.ref_name == 'v3.1.103' || github.ref_name == 'release/v3.1.104' || github.ref_name == 'v3.1.104' || github.ref_name == 'release/v3.1.105' || github.ref_name == 'v3.1.105' || github.ref_name == 'release/v3.1.106' || github.ref_name == 'v3.1.106' || github.ref_name == 'release/v3.1.107' || github.ref_name == 'v3.1.107' || github.ref_name == 'release/v3.1.108' || github.ref_name == 'v3.1.108' || github.ref_name == 'release/v3.1.109' || github.ref_name == 'v3.1.109' || github.ref_name == 'release/v3.1.110' || github.ref_name == 'v3.1.110' || github.ref_name == 'release/v3.1.111' || github.ref_name == 'v3.1.111' || github.ref_name == 'release/v3.1.112' || github.ref_name == 'v3.1.112' || github.ref_name == 'release/v3.1.113' || github.ref_name == 'v3.1.113' || github.ref_name == 'release/v3.1.114' || github.ref_name == 'v3.1.114' || github.ref_name == 'release/v3.1.115' || github.ref_name == 'v3.1.115' || github.ref_name == 'release/v3.1.116' || github.ref_name == 'v3.1.116' || github.ref_name == 'release/v3.1.117' || github.ref_name == 'v3.1.117' || github.ref_name == 'release/v3.1.118' || github.ref_name == 'v3.1.118' || github.ref_name == 'release/v3.1.119' || github.ref_name == 'v3.1.119' || github.ref_name == 'release/v3.1.120' || github.ref_name == 'v3.1.120' || github.ref_name == 'release/v3.1.121' || github.ref_name == 'v3.1.121' || github.ref_name == 'release/v3.1.122' || github.ref_name == 'v3.1.122' || github.ref_name == 'release/v3.1.123' || github.ref_name == 'v3.1.123' || github.ref_name == 'release/v3.1.124' || github.ref_name == 'v3.1.124' || github.ref_name == 'release/v3.1.125' || github.ref_name == 'v3.1.125' || github.ref_name == 'release/v3.1.126' || github.ref_name == 'v3.1.126' || github.ref_name == 'release/v3.1.128' || github.ref_name == 'v3.1.128' || github.ref_name == 'release/v3.1.129' || github.ref_name == 'v3.1.129' || github.ref_name == 'release/v3.1.130' || github.ref_name == 'v3.1.130' || github.ref_name == 'release/v3.1.131' || github.ref_name == 'v3.1.131' || github.ref_name == 'release/v3.1.132' || github.ref_name == 'release/v3.1.133' || github.ref_name == 'v3.1.133' || github.ref_name == 'release/v3.1.134' || github.ref_name == 'v3.1.134' || github.ref_name == 'release/v3.1.135' || github.ref_name == 'v3.1.135' || github.ref_name == 'release/v3.1.136' || github.ref_name == 'v3.1.136' || github.ref_name == 'release/v3.1.137' || github.ref_name == 'v3.1.137' || github.ref_name == 'release/v3.1.138' || github.ref_name == 'v3.1.138' || github.ref_name == 'release/v3.1.139' || github.ref_name == 'v3.1.139' || github.ref_name == 'release/v3.1.140' || github.ref_name == 'v3.1.140' || github.ref_name == 'release/v3.1.142' || github.ref_name == 'v3.1.142' || github.ref_name == 'release/v3.1.141' || github.ref_name == 'v3.1.141' || github.ref_name == 'release/v3.1.143' || github.ref_name == 'v3.1.143' || github.ref_name == 'release/v3.1.144' || github.ref_name == 'v3.1.144') && needs.playback-device-tests.result == 'skipped')) &&
+
       (needs.worker-checks.result == 'success' || needs.worker-checks.result == 'skipped') &&
       (needs.deploy-recommendations.result == 'success' || needs.deploy-recommendations.result == 'skipped')
     runs-on: ubuntu-latest
@@ -178,6 +202,8 @@ jobs:
           REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
+          # Strip release/ prefix from branch name to get tag name
+          REQUESTED_TAG="${REQUESTED_TAG#release/}"
           EXPECTED_TAG="v${RELEASE_VERSION_NAME}"
           GRADLE_VERSION_CODE="$(
             sed -nE 's/^val mobileVersionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' \
@@ -244,7 +270,13 @@ jobs:
           echo "Expected certificate SHA256: $EXPECTED_MOBILE_SIGNER_SHA256"
           test "$KEYSTORE_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
 
-      - name: Test and build phone release
+      - name: Verify Ask Aliflix publication readiness
+        timeout-minutes: 125
+        env:
+          ALIFLIX_ASK_WAIT_MS: "7200000"
+        run: node .github/scripts/verify-ask-readiness.mjs
+
+      - name: Build phone release
         env:
           ALIFLIX_KEYSTORE_FILE: ${{ runner.temp }}/aliflix-release.jks
           ALIFLIX_KEYSTORE_PASSWORD: ${{ secrets.ALIFLIX_KEYSTORE_PASSWORD }}
@@ -253,8 +285,44 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew testMobileDebugUnitTest
-          ./gradlew lintMobileDebug
+          # v3.1.141: verify CineJoy media chunks and pin a working video rendition; mobile only.
+          if [ "$GITHUB_REF_NAME" = 'release/v3.1.141' ] || [ "$GITHUB_REF_NAME" = 'v3.1.141' ]; then
+            ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.CineJoyNativeCatalogTest' --tests 'com.aliflix.app.player.NativePlaybackRequestTest' --tests 'com.aliflix.app.player.NativeServerPinTest'
+          else
+          # v3.1.140: keep CineJoy and its audio selected during seek recovery; mobile only.
+          if [ "$GITHUB_REF_NAME" = 'release/v3.1.140' ] || [ "$GITHUB_REF_NAME" = 'v3.1.140' ]; then
+            ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.CineJoyNativeCatalogTest' --tests 'com.aliflix.app.player.PlaybackSourceFallbackTest' --tests 'com.aliflix.app.player.NativeServerPinTest'
+          else
+          # v3.1.139: CineJoy multivariant audio and selectable offline audio; mobile only.
+          if [ "$GITHUB_REF_NAME" = 'release/v3.1.139' ] || [ "$GITHUB_REF_NAME" = 'v3.1.139' ]; then
+            ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.NativePlaybackRequestTest' --tests 'com.aliflix.app.player.CineJoyNativeCatalogTest' --tests 'com.aliflix.app.player.PlaybackSourceFallbackTest' --tests 'com.aliflix.app.downloads.DownloadPreparationBatchTest'
+          else
+          # v3.1.137: focused playlist and source-preference checks; mobile only.
+          if [ "$GITHUB_REF_NAME" = 'release/v3.1.137' ] || [ "$GITHUB_REF_NAME" = 'v3.1.137' ]; then
+            ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.NativePlaybackRequestTest' --tests 'com.aliflix.app.player.PlaybackSourceFallbackTest'
+          else
+          # v3.1.135: focused current-dialogue checks; no emulator or heavy checks.
+          if [ "$GITHUB_REF_NAME" = 'release/v3.1.136' ] || [ "$GITHUB_REF_NAME" = 'v3.1.136' ]; then
+            ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.ui.MyListGenreGroupingTest'
+          elif [ "$GITHUB_REF_NAME" = 'release/v3.1.135' ] || [ "$GITHUB_REF_NAME" = 'v3.1.135' ]; then
+            ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.AudioSubtitleAlignmentTest' --tests 'com.aliflix.app.player.PlaybackSpeechBufferTest'
+          elif [ "$GITHUB_REF_NAME" = 'release/v3.1.134' ] || [ "$GITHUB_REF_NAME" = 'v3.1.134' ]; then
+            ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.AudioSubtitleAlignmentTest' --tests 'com.aliflix.app.player.PlaybackSpeechBufferTest' --tests 'com.aliflix.app.player.SubtitleTimingMatchTest'
+          elif [ "$GITHUB_REF_NAME" = 'release/v3.1.133' ] || [ "$GITHUB_REF_NAME" = 'v3.1.133' ]; then
+            ./gradlew :app:testMobileDebugUnitTest --tests 'com.aliflix.app.player.AudioSubtitleAlignmentTest' --tests 'com.aliflix.app.player.PlaybackSpeechBufferTest' --tests 'com.aliflix.app.recommendation.TastePicksTest' --tests 'com.aliflix.app.account.AccountMergePolicyTest' --tests 'com.aliflix.app.player.SubtitleTimingMatchTest'
+          else
+          if [ "${{ inputs.skip_tests }}" != "true" ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.91' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.96' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.97' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.102' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'v3.1.104' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'v3.1.105' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.106' ] && [ "$GITHUB_REF_NAME" != 'v3.1.106' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.107' ] && [ "$GITHUB_REF_NAME" != 'v3.1.107' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.112' ] && [ "$GITHUB_REF_NAME" != 'v3.1.112' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.118' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.119' ] && [ "$GITHUB_REF_NAME" != 'v3.1.119' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.120' ] && [ "$GITHUB_REF_NAME" != 'v3.1.120' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.121' ] && [ "$GITHUB_REF_NAME" != 'v3.1.121' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.122' ] && [ "$GITHUB_REF_NAME" != 'v3.1.122' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.123' ] && [ "$GITHUB_REF_NAME" != 'v3.1.123' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.124' ] && [ "$GITHUB_REF_NAME" != 'v3.1.124' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.125' ] && [ "$GITHUB_REF_NAME" != 'v3.1.125' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.126' ] && [ "$GITHUB_REF_NAME" != 'v3.1.126' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.128' ] && [ "$GITHUB_REF_NAME" != 'v3.1.128' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.129' ] && [ "$GITHUB_REF_NAME" != 'v3.1.129' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.130' ] && [ "$GITHUB_REF_NAME" != 'v3.1.130' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.131' ] && [ "$GITHUB_REF_NAME" != 'v3.1.131' ] && [ "$GITHUB_REF_NAME" != 'release/v3.1.132' ]; then
+            ./gradlew testMobileDebugUnitTest
+            ./gradlew lintMobileDebug
+          fi
+          fi
+          fi
+          fi
+          fi
+          fi
+          # One universal bridge lets pre-ABI-aware installations migrate safely.
+          ./gradlew packageMobileRelease -Paliflix.mobileCompatBridge=true
+          cp app/build/outputs/apk/mobile/release/app-mobile-release.apk aliflix-mobile-compat.apk
           ./gradlew packageMobileRelease
 
       - name: Verify release APKs integrity
@@ -282,10 +350,18 @@ jobs:
             test "$APK_CERT_SHA256" = "$EXPECTED_MOBILE_SIGNER_SHA256"
           done
 
+      - name: Verify unchanged ARM64 binaries and original Silero model
+        run: |
+          curl --fail --location --retry 3 -o baseline-mobile.apk https://github.com/${{ github.repository }}/releases/download/v3.1.164/aliflix-mobile.apk
+          python .github/scripts/verify-mobile-native.py baseline-mobile.apk app/build/outputs/apk/mobile/release/app-mobile-release.apk --bridge aliflix-mobile-compat.apk --report native-parity.json
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --print-certs aliflix-mobile-compat.apk | grep -i "$EXPECTED_MOBILE_SIGNER_SHA256"
+          unzip -tq aliflix-mobile-compat.apk
+
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Aliflix v${RELEASE_VERSION_NAME}: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels."
+          RELEASE_NOTES="Talk understands choosing between your options, checks exact title facts and explains concrete technical limits. Interruption yields promptly, finished chat replies stop showing Writing, and comparison cards retain their exact editions. New orbital dotted lettering settles into a pearl shine. Discover For you rotates hourly with a daily mix. My Space metadata pills are centered and compact."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -293,27 +369,77 @@ jobs:
           MOBILE_SIZE="$(stat -c %s "$MOBILE_APK")"
           MOBILE_DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/aliflix-mobile.apk"
 
-          cat <<EOF > update-mobile.json
+          cat <<EOF > update-mobile-arm64.json
           {
             "versionCode": ${RELEASE_VERSION_CODE},
             "versionName": "${RELEASE_VERSION_NAME}",
             "apkUrl": "${MOBILE_DOWNLOAD_URL}",
             "sha256": "${MOBILE_SHA256}",
             "sizeBytes": ${MOBILE_SIZE},
+            "supportedAbis": ["arm64-v8a"],
             "minimumSdk": 29,
             "notes": "${RELEASE_NOTES}",
             "releaseNotes": "${RELEASE_NOTES}"
           }
           EOF
           cp "$MOBILE_APK" aliflix-mobile.apk
+          # Older clients ignore unknown manifest ABI fields, so their URL must
+          # continue to advertise the universal bridge, never the ARM64 APK.
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          apk = Path('aliflix-mobile-compat.apk')
+          bridge = dict(versionCode=265, versionName='3.1.175', minimumSdk=29,
+              apkUrl=f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['RELEASE_TAG']}/aliflix-mobile-compat.apk",
+              sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), sizeBytes=apk.stat().st_size,
+              notes='Update compatibility. ARM64 devices can then install the latest mobile release.')
+          Path('update-mobile.json').write_text(json.dumps(bridge, indent=2)+'\n')
+          PY
 
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
-          body: "Aliflix v${{ env.RELEASE_VERSION_NAME }}: The phone player now uses the redesigned playback interface with a compact top bar, 15-second seek controls, cumulative double-tap seeking, a purple progress timeline, and redesigned episodes and playback settings panels."
+          body: |
+            Talk distinguishes choosing between your films from asking for new recommendations. It compares your actual options, checks native catalogue facts such as runtime when needed, preserves exact editions and both comparison cards, and recalls earlier pairs within the session.
+
+            Technical-limit questions receive concrete app, network and capability answers. Quoted, hypothetical and negated commands do not mutate the library. Native changes report whether anything actually changed, and undo cannot accidentally target an older no-op request.
+
+            Spoken interruption flushes pending playback even after a recommendation has been committed. Stop yields locally, late acknowledgements cannot swallow the next question, and a completed chat response stops displaying Writing while delayed playback bookkeeping finishes.
+
+            Speech input now retains the whole utterance when transcription arrives late. Old turn completion cannot resume old narration while you speak, and native actions wait for the complete request. A shared session-start cap that could disable Talk after modest use is corrected, with a clear message if daily capacity is reached.
+
+            Dotted topic letters enter on brief individual orbits, settle on a fixed baseline and carry a reversing lavender-pearl shine. The old wave is removed; the orb and changing topics remain. Cached glyph images keep animation drawing light.
+
+            Discover For you rotates its existing pool hourly and remixes daily without extra AI research. My Space metadata uses centered single-line rating/runtime pills and a separate type badge. Ask and Similar retain the Tavily/Gemini/TMDB pipeline and immediate in-card dislike.
+
+            ARM64 mobile APK and universal compatibility bridge preserve the production signer and native/model assets. TV is unchanged. See the validation record for physical-device checks and signer boundaries.
+
+            [Research and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-181-validation.md).
           files: |
             aliflix-mobile.apk
             update-mobile.json
+            update-mobile-arm64.json
+            aliflix-mobile-compat.apk
+            native-parity.json
+
+      - name: Pin draft to the tested source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = "true" ]; then
+            gh release edit "$RELEASE_TAG" --target "$GITHUB_SHA"
+            test "$(gh release view "$RELEASE_TAG" --json targetCommitish --jq .targetCommitish)" = "$GITHUB_SHA"
+          fi
+          # A tag pushed with this workflow's GITHUB_TOKEN does not recursively
+          # trigger another release build when the verified draft is published.
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
+          else
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi

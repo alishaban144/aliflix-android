@@ -1,17 +1,40 @@
 package com.aliflix.app.player
 
+import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.MobilePlaybackProvider
+
 import android.os.SystemClock
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import com.aliflix.app.data.PlaybackProgressStore
 import com.aliflix.app.model.PlaybackSelection
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 internal class NoNativeServersException : Exception()
+
+/**
+ * CineJoy is a client-rendered single-page app: it boots its bundle, asks its own API for the
+ * title, and only then requests the HLS manifest. A budget tuned for a server-rendered page cuts
+ * that chain off mid-flight, so it gets a longer, still bounded window.
+ */
+internal fun resolveBudgetMillis(provider: PlaybackProvider): Long =
+    if (provider == MobilePlaybackProvider.SERIENSTREAM) 45_000
+    else if (provider == PlaybackProviderId.CINEJOY || provider is MobilePlaybackProvider) 30_000 else 10_000
+
+internal fun <T> selectNativeServer(servers: List<T>, preferredServer: String?, excluded: Set<String>,
+    strictPreferredServer: Boolean = false, label: (T) -> String): T? {
+    if (strictPreferredServer) {
+        require(!preferredServer.isNullOrBlank()) { "A server is required for pinned preparation." }
+        return servers.firstOrNull { label(it) == preferredServer && label(it) !in excluded }
+            ?: throw IllegalStateException("Server '$preferredServer' is unavailable for this episode. Retry this episode.")
+    }
+    return preferredServer?.let { preferred -> servers.firstOrNull { label(it) !in excluded && label(it).equals(preferred, ignoreCase = true) } }
+        ?: servers.firstOrNull { label(it) !in excluded }
+}
 
 /** A short-lived, muted provider adapter. The browser never owns user playback. */
 internal class NativeStreamResolver(
@@ -22,6 +45,8 @@ internal class NativeStreamResolver(
     private var web: WebPlayerController? = null
     private var view: FrameLayout? = null
     private var closed = false
+    private var miruro: MiruroNativeCatalog? = null
+    private var reportServers: (List<String>) -> Unit = {}
     private val children = mutableListOf<NativeStreamResolver>()
 
     suspend fun resolve(
@@ -30,40 +55,156 @@ internal class NativeStreamResolver(
         excluded: Set<String>,
         preferredServer: String? = null,
         onServers: (List<String>) -> Unit = {},
+        strictPreferredServer: Boolean = false,
+        validateSingle: Boolean = true,
+        parallelism: Int = 2,
+        forceLowQuality: Boolean = false,
+        audioLanguage: String? = null,
+        allowVerification: Boolean = true,
         onServer: (String) -> Unit,
     ): NativePlaybackRequest {
-        val catalogueProvider = selection.source.provider in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY)
-        val embeds = if (catalogueProvider) FmovieNativeCatalog().embeds(selection) else preferredNativeEmbeds(selection)
+        reportServers = onServers
+        if (selection.source.identity in setOf(MobilePlaybackProvider.FILMO, MobilePlaybackProvider.ANIWORLD)) {
+            return try { LinkedSiteCatalog(activity).resolve(selection,positionMs,excluded,preferredServer,strictPreferredServer,
+                audioLanguage,onServers,onServer) { label, target ->
+                val child=NativeStreamResolver(activity,progress,host)
+                children.add(child)
+                try { child.resolveSingle(selection,positionMs,emptySet(),label,listOf(label to target),true) {} }
+                finally { child.close();children.remove(child) }
+            } } catch(error:Exception) {
+                currentCoroutineContext().ensureActive()
+                android.util.Log.w("AliflixSite", "${selection.source.identity.name}: ${error.javaClass.simpleName}: ${error.message.orEmpty().replace(Regex("https?://\\S+"),"[url]").take(160)}")
+                throw error
+            }
+        }
+        if (selection.source.identity == MobilePlaybackProvider.SERIENSTREAM) {
+            SerienstreamNativeCatalog.restoreSession(activity)
+            suspend fun resolveCatalogue() = SerienstreamNativeCatalog.resolve(selection, positionMs, excluded, preferredServer,
+                strictPreferredServer, onServers, onServer, audioLanguage,
+                validate={ request -> if(validateSingle) StartupStreamCache.awaitPlayable(activity,request) })
+            return try { resolveCatalogue() } catch (gate: SerienstreamVerificationRequired) {
+                if (!allowVerification) throw gate
+                if (!SerienstreamBrowserSession.approve(activity, host, gate)) throw gate
+                resolveCatalogue()
+            }
+        }
+        if (strictPreferredServer) require(!preferredServer.isNullOrBlank()) { "A server is required for pinned preparation." }
+        if (selection.source.identity == PlaybackProviderId.MIRURO) {
+            val adapter = MiruroNativeCatalog(activity).also { miruro = it }
+            return try {
+                adapter.resolve(selection, positionMs, excluded, preferredServer, strictPreferredServer, onServers, onServer, validateSingle)
+            } finally { adapter.close(); miruro = null }
+        }
+        if (selection.source.identity == PlaybackProviderId.ANIKURO) {
+            return AniKuroNativeCatalog(activity).resolve(
+                selection, positionMs, excluded, preferredServer, strictPreferredServer, onServers, onServer, validateSingle,
+            )
+        }
+        if (selection.source.identity == PlaybackProviderId.CINEJOY) {
+            return CineJoyNativeCatalog.resolve(
+                selection, positionMs, excluded, preferredServer,
+                onServers, strictPreferredServer,
+                lowQuality = forceLowQuality || (activity.application as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality == PreferredVideoQuality.LOW,
+                validate = { request -> if (validateSingle && !strictPreferredServer) StartupStreamCache.awaitPlayable(activity, request) },
+                onServer = onServer,
+            ).also { close() }
+        }
+        if (selection.source.identity == MobilePlaybackProvider.FLIXER) {
+            onServers(listOf("Flixer")); onServer("Flixer")
+            return resolveFlixer(selection, positionMs).also { close() }
+        }
+        val catalogueProvider = selection.source.identity in setOf(PlaybackProviderId.RAMOFLIX, PlaybackProviderId.DORABY)
+        val embeds = when {
+            selection.source.identity in setOf(MobilePlaybackProvider.MOVY, MobilePlaybackProvider.FLIXER) ->
+                listOf(selection.source.identity.displayName to checkNotNull(selection.entryUrl))
+            catalogueProvider -> FmovieNativeCatalog().embeds(selection)
+            else -> preferredNativeEmbeds(selection)
+        }
         if (embeds.isNotEmpty()) onServers(embeds.map { it.first })
-        val candidates = embeds.filter { it.first !in excluded }
-        if (catalogueProvider && candidates.isEmpty()) throw NoNativeServersException()
-        if (preferredServer != null || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, onServer)
+        val history = activity.getSharedPreferences("native-resolver-performance", android.content.Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val candidates = embeds.filter { it.first !in excluded }.sortedWith(compareBy<Pair<String,String>> {
+            if(it.first.equals(preferredServer,ignoreCase=true))0 else 1
+        }.thenBy { (name, _) ->
+            val key = "${selection.source.identity}:$name"
+            if (now - history.getLong("$key:at", 0) < 30 * 60_000) history.getLong("$key:ms", 5_000) else 5_000L
+        })
+        if (strictPreferredServer && (catalogueProvider || embeds.any { it.first == preferredServer })) {
+            selectNativeServer(embeds, preferredServer, excluded, true) { it.first }
+        }
+        if (embeds.isNotEmpty() && candidates.isEmpty()) throw NoNativeServersException()
+        if (strictPreferredServer || candidates.size < 2) return resolveSingle(selection, positionMs, excluded, preferredServer, embeds, strictPreferredServer, onServer).also { close(); if (validateSingle) StartupStreamCache.awaitPlayable(activity, it) }
         val winner = try { firstSuccessful(candidates.map { (name, _) -> suspend {
             val child = NativeStreamResolver(activity, progress, host)
             children.add(child)
-            try { name to child.resolveSingle(selection, positionMs, excluded, name, embeds) {} }
+            val started = SystemClock.elapsedRealtime()
+            val key = "${selection.source.identity}:$name"
+            try {
+                val request = child.resolveSingle(selection, positionMs, excluded, name, embeds) {}
+                child.close()
+                StartupStreamCache.awaitPlayable(activity, request)
+                history.edit().putLong("$key:ms", SystemClock.elapsedRealtime() - started).putLong("$key:at", now).apply()
+                name to request
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                history.edit().putLong("$key:ms", 20_000).putLong("$key:at", now).apply()
+                throw error
+            }
             finally { child.close(); children.remove(child) }
-        } }, parallelism = 2) } catch (error: Exception) {
+        } }, parallelism = parallelism) } catch (error: Exception) {
             currentCoroutineContext().ensureActive()
             // Preferred embeds may all be unavailable while the catalogue has another server.
             if (catalogueProvider) throw error
-            return resolveSingle(selection, positionMs, excluded + candidates.map { it.first }, null, embeds, onServer)
+            return resolveSingle(selection, positionMs, excluded + candidates.map { it.first }, null, embeds, onServer = onServer).also { close(); StartupStreamCache.awaitPlayable(activity, it) }
         }
         onServer(winner.first)
         return winner.second
     }
 
+    /** Keep Flixer's own live server queue running while native Media3 validates each selected URL. */
+    private suspend fun resolveFlixer(selection: PlaybackSelection, positionMs: Long): NativePlaybackRequest =
+        withTimeout(30_000) {
+            val controller = WebPlayerController(activity, progress, nativePreparation = true)
+            web = controller
+            view = controller.viewFor(selection)
+            host.addView(view, FrameLayout.LayoutParams(-1, -1))
+            controller.setVisible(true)
+            val rejected = mutableSetOf<String>()
+            while (true) {
+                controller.probeNativeStreamUrl()
+                val request = controller.preparedNativeRequest(0, positionMs, allowUnready = true)
+                if (request != null && request.url !in rejected) {
+                    try {
+                        android.util.Log.i("AliflixFlixer", "Validating selected Flixer stream")
+                        StartupStreamCache.awaitPlayable(activity, request)
+                        return@withTimeout request
+                    } catch (error: Exception) {
+                        currentCoroutineContext().ensureActive()
+                        rejected.add(request.url)
+                        android.util.Log.w("AliflixFlixer", "Flixer stream failed; awaiting its next selected server", error)
+                    }
+                }
+                delay(150)
+            }
+            @Suppress("UNREACHABLE_CODE") error("Flixer servers unavailable")
+        }
+
     private suspend fun resolveSingle(
         selection: PlaybackSelection, positionMs: Long, excluded: Set<String>, preferredServer: String?,
         allDirect: List<Pair<String, String>>,
+        strictPreferredServer: Boolean = false,
         onServer: (String) -> Unit,
-    ): NativePlaybackRequest = withTimeout(45_000) {
-        val direct = if (preferredServer != null) {
+    ): NativePlaybackRequest = withTimeout(resolveBudgetMillis(selection.source.identity)) {
+        val direct = if (strictPreferredServer) {
+            allDirect.firstOrNull { it.first == preferredServer && it.first !in excluded }
+        } else if (preferredServer != null) {
             allDirect.firstOrNull { it.first.equals(preferredServer, ignoreCase = true) }
         } else {
             allDirect.firstOrNull { it.first !in excluded }
         }
-        val web = WebPlayerController(activity, progress, nativePreparation = true, nativeEmbedUrl = direct?.second)
+        // Site-owned players need their top-level route to initialize their own playback session.
+        val embedUrl = direct?.second?.takeUnless { it == selection.entryUrl }
+        val web = WebPlayerController(activity, progress, nativePreparation = true, nativeEmbedUrl = embedUrl)
         this@NativeStreamResolver.web = web
         view = web.viewFor(selection)
         host.addView(view, FrameLayout.LayoutParams(-1, -1))
@@ -72,24 +213,21 @@ internal class NativeStreamResolver(
             onServer(direct.first)
             while (true) {
                 web.preparedNativeRequest(0, positionMs)?.let { return@withTimeout it }
+                web.probeNativeStreamUrl()
                 delay(200)
             }
         }
-        val discoveryDeadline = SystemClock.elapsedRealtime() + 12_000
+        val discoveryDeadline = SystemClock.elapsedRealtime() + 4_000
         while (web.moviepireServers.value.isEmpty() && SystemClock.elapsedRealtime() < discoveryDeadline) {
             web.refreshNativeServers()
-            if (!selection.source.provider.usesMoviepire && web.preparedNativeRequest(0, positionMs) != null) break
+            if (!selection.source.identity.usesMoviepire && web.preparedNativeRequest(0, positionMs) != null) break
             delay(400)
         }
         val servers = orderedNativeServers(web.moviepireServers.value)
-        val server = if (preferredServer != null) {
-            servers.firstOrNull { it.label.equals(preferredServer, ignoreCase = true) }
-                ?: servers.firstOrNull { it.label !in excluded }
-        } else {
-            servers.firstOrNull { it.label !in excluded }
-        }
+        if (servers.isNotEmpty()) reportServers(servers.map { it.label })
+        val server = selectNativeServer(servers, preferredServer, excluded, strictPreferredServer) { it.label }
         if (servers.isNotEmpty() && server == null && preferredServer == null) throw NoNativeServersException()
-        val label = server?.label ?: preferredServer ?: selection.source.provider.name.lowercase().replaceFirstChar { it.uppercase() }
+        val label = server?.label ?: preferredServer ?: selection.source.identity.name.lowercase().replaceFirstChar { it.uppercase() }
         if (preferredServer == null && label in excluded) throw NoNativeServersException()
         onServer(label)
         val after = SystemClock.elapsedRealtime() + if (server != null && !server.selected) 2_000 else 0
@@ -109,6 +247,7 @@ internal class NativeStreamResolver(
     override fun close() {
         if (closed) return
         closed = true
+        miruro?.close(); miruro = null
         children.toList().forEach { it.close() }
         children.clear()
         web?.destroy(); web = null; view?.let { host.removeView(it) }; view = null

@@ -100,7 +100,7 @@ internal class CastStreamRelay(
         if (upstream == null) { send(output, 404, "text/plain", byteArrayOf()); return }
         var connection: HttpURLConnection? = null
         try {
-            var url = upstream
+            var url = request.resolveStreamUrl(upstream)
             for (redirect in 0..5) {
                 connection = URL(url).openConnection() as HttpURLConnection
                 connection.apply {

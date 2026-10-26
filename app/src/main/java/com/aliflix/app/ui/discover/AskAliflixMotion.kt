@@ -1,5 +1,7 @@
 package com.aliflix.app.ui.discover
 
+import com.aliflix.app.ui.common.AliflixMotion
+
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -14,11 +16,11 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 
 object AskAliflixMotion {
-    const val DURATION_PRESS = 110
-    const val DURATION_CHIP = 160
-    const val DURATION_CONTENT_SMALL = 200
-    const val DURATION_MODE_TRANSITION = 280
-    const val DURATION_STATE_TRANSITION = 360
+    const val DURATION_PRESS = AliflixMotion.Press
+    const val DURATION_CHIP = AliflixMotion.Selection
+    const val DURATION_CONTENT_SMALL = AliflixMotion.Content
+    const val DURATION_MODE_TRANSITION = AliflixMotion.Navigation
+    const val DURATION_STATE_TRANSITION = AliflixMotion.Expressive
 
     fun <T> pressSpec() = tween<T>(DURATION_PRESS, easing = FastOutSlowInEasing)
     fun <T> chipSpec() = tween<T>(DURATION_CHIP, easing = FastOutSlowInEasing)

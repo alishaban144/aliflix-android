@@ -146,7 +146,13 @@ class NativeBackgroundPlaybackTest {
             scenario?.close()
             context.stopService(Intent(context, NativePlaybackService::class.java))
             requestFile.delete()
-            display?.release(); reader.close(); imageThread.quitSafely(); server.close()
+            display?.release()
+            // Stop the listener before closing the reader to avoid a race condition
+            // where the ImageReader is closed while the HandlerThread is still processing images.
+            reader.setOnImageAvailableListener(null, null)
+            imageThread.quitSafely()
+            reader.close()
+            server.close()
         }
     }
 

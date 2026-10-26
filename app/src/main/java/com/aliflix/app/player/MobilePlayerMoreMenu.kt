@@ -1,63 +1,58 @@
 package com.aliflix.app.player
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Cast
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Dns
-import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material.icons.rounded.Subtitles
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackProviderId
 import com.aliflix.app.model.PlaybackSelection
+import com.aliflix.app.ui.theme.AliflixAccentSecondary
 
-private val SheetBackground = Color(0xFF131620)
-private val RowBackground = Color(0xFF1C202C)
-private val AliflixPurple = Color(0xFF6E59D9)
-
+private val SheetBackground = Color(0xFF12141B)
+private val RowBackground = Color.White.copy(alpha = .035f)
 private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+private enum class MorePage { HOME, SOURCES, SERVERS, SPEED }
 
-/**
- * Compact More menu for secondary functions (Audio & Subtitles, Speed, Servers).
- */
+internal data class StreamingSourceOption(
+    val provider: PlaybackProvider,
+    val selected: Boolean = false,
+    val detail: String = "",
+)
+
+internal data class ProviderServerDiscovery(
+    val provider: PlaybackProvider? = null,
+    val loading: Boolean = false,
+    val failed: Boolean = false,
+    val servers: List<MoviepireServerOption> = emptyList(),
+)
+
+/** Browsing is read-only; only choosing a server changes playback. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MobilePlayerMoreSheet(
     visible: Boolean,
@@ -76,218 +71,210 @@ internal fun MobilePlayerMoreSheet(
     onOpenWirelessDisplay: (() -> Unit)? = null,
     castActive: Boolean = false,
     onCast: (() -> Unit)? = null,
+    providers: List<StreamingSourceOption> = emptyList(),
+    onSelectProvider: (PlaybackProvider) -> Unit = {},
+    providerDiscovery: ProviderServerDiscovery = ProviderServerDiscovery(),
+    onRetryProviderServers: () -> Unit = {},
+    onSelectProviderServer: (MoviepireServerOption) -> Unit = {},
+    audioBoost: Boolean = false,
+    audioBoostAvailability: AudioBoostAvailability = AudioBoostAvailability.OFF,
+    onAudioBoostChange: ((Boolean) -> Unit)? = null,
+    onWatchTogether: (() -> Unit)? = null,
+    germanEdition: String? = null,
+    onGermanEdition: (() -> Unit)? = null,
+    synchronizedPlayback: Boolean = false,
 ) {
+    // Removing the sheet resets navigation and scroll positions on its next opening.
     if (!visible) return
-
-    var rememberedSpeed by remember { mutableFloatStateOf(1.0f) }
+    var page by remember(selection.key) { mutableStateOf(MorePage.HOME) }
+    var drilledProvider by remember(selection.key) { mutableStateOf<PlaybackProvider?>(null) }
+    var rememberedSpeed by remember { mutableFloatStateOf(currentSpeed ?: 1f) }
     val activeSpeed = currentSpeed ?: rememberedSpeed
+    val activeProvider = selection.source.identity
+    val sources = providers.ifEmpty { listOf(StreamingSourceOption(activeProvider, selected = true)) }
+    val selectedServer = servers.firstOrNull { it.selected }?.label
+    val goBack = {
+        page = if (page == MorePage.SERVERS) MorePage.SOURCES else MorePage.HOME
+    }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.55f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.BottomCenter,
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        modifier = modifier.testTag("player-more-sheet"),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetMaxWidth = 560.dp,
+        containerColor = SheetBackground,
+        contentColor = Color.White,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        scrimColor = Color.Black.copy(alpha = .48f),
+        properties = ModalBottomSheetProperties(shouldDismissOnBackPress = page == MorePage.HOME),
+        dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = .20f)) },
     ) {
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn() + slideInVertically { it },
-            exit = fadeOut() + slideOutVertically { it },
-        ) {
+        BackHandler(enabled = page != MorePage.HOME) { goBack() }
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            if (page != MorePage.HOME) {
+                IconButton(onClick = goBack, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, when (page) {
+                        MorePage.SERVERS -> "Back to streaming sources"
+                        else -> "Back to More"
+                    })
+                }
+            } else Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(when (page) {
+                    MorePage.HOME -> "More"
+                    MorePage.SOURCES -> "Streaming source"
+                    MorePage.SERVERS -> drilledProvider?.displayName.orEmpty()
+                    MorePage.SPEED -> "Playback speed"
+                }, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            }
+            IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Rounded.Close, "Close More")
+            }
+        }
+        AnimatedContent(
+            targetState = page,
+            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(100)) },
+            label = "more-navigation",
+            modifier = Modifier.weight(1f, fill = false),
+        ) { currentPage ->
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                    .background(SheetBackground)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {},
-                    )
-                    .padding(horizontal = 20.dp, vertical = 18.dp)
-                    .verticalScroll(rememberScrollState()),
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp).padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                // Header
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "PLAYBACK SETTINGS",
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.12f))
-                            .clickable(onClick = onDismiss),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "Close",
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                // Audio & Subtitles option
-                MoreOptionRow(
-                    icon = Icons.Rounded.Subtitles,
-                    title = "Audio & Subtitles",
-                    subtitle = if (subtitlesActive) subtitleLanguage ?: "Active" else "Off",
-                    onClick = {
-                        onDismiss()
-                        onOpenSubtitles()
-                    },
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                if (onCast != null) {
-                    MoreOptionRow(
-                        icon = Icons.Rounded.Cast,
-                        title = "Cast",
-                        subtitle = if (castActive) "Manage device" else "Choose device",
-                        onClick = {
-                            onDismiss()
-                            onCast()
-                        },
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                }
-
-                // Playback Speed option
-                Text(
-                    text = "Playback Speed",
-                    color = Color.White.copy(alpha = 0.70f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    PlaybackSpeeds.forEach { speed ->
-                        val isSelected = kotlin.math.abs(activeSpeed - speed) < 0.01f
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSelected) AliflixPurple else RowBackground)
-                                .clickable {
-                                    rememberedSpeed = speed
-                                    onSelectSpeed(speed)
-                                }
-                                .padding(vertical = 8.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "${speed}x",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            )
+                when (currentPage) {
+                    MorePage.HOME -> {
+                        onWatchTogether?.let { action ->
+                            MoreOptionRow(Icons.Rounded.Groups, "Watch Together", "", onClick = { onDismiss(); action() })
                         }
-                    }
-                }
-
-                // Servers / Provider options
-                if (servers.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Streaming Server",
-                        color = Color.White.copy(alpha = 0.70f),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        servers.forEach { server ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(if (server.selected) AliflixPurple.copy(alpha = 0.20f) else RowBackground)
-                                    .clickable {
-                                        onSelectServer(server)
-                                        onDismiss()
+                        germanEdition?.let { label ->
+                            MoreOptionRow(Icons.Rounded.Language, "German · Serienstream", label,
+                                onClick = { onGermanEdition?.let { onDismiss(); it() } })
+                        }
+                        MoreOptionRow(Icons.Rounded.Subtitles, "Audio & subtitles",
+                            if (subtitlesActive) subtitleLanguage ?: "On" else "Off",
+                            onClick = { onDismiss(); onOpenSubtitles() })
+                        if (!synchronizedPlayback) MoreOptionRow(Icons.Rounded.Speed, "Playback speed", speedLabel(activeSpeed),
+                            onClick = { page = MorePage.SPEED })
+                        onAudioBoostChange?.let { update ->
+                            val detail = when {
+                                !audioBoost -> "Off"
+                                castActive -> "Unavailable while casting"
+                                audioBoostAvailability == AudioBoostAvailability.ACTIVE -> "On"
+                                audioBoostAvailability == AudioBoostAvailability.UNAVAILABLE -> "Unavailable"
+                                else -> "Preparing…"
+                            }
+                            Surface(color = RowBackground, shape = RoundedCornerShape(16.dp)) {
+                                Row(
+                                    Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                                        .toggleable(audioBoost, role = Role.Switch, onValueChange = update)
+                                        .testTag("player-audio-boost-switch")
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(Icons.Rounded.GraphicEq, null, tint = AliflixAccentSecondary, modifier = Modifier.size(22.dp))
+                                    Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                                        Text("Audio Boost", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                        Text(detail, color = Color.White.copy(alpha = .60f), fontSize = 12.sp)
                                     }
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = server.label,
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = if (server.selected) FontWeight.Bold else FontWeight.Normal,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (server.selected) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Check,
-                                        contentDescription = "Selected",
-                                        tint = AliflixPurple,
-                                        modifier = Modifier.size(18.dp),
-                                    )
+                                    com.aliflix.app.ui.common.AliflixLiquidToggle(audioBoost, null)
                                 }
                             }
                         }
+                        Spacer(Modifier.height(8.dp))
+                        MoreOptionRow(Icons.Rounded.Dns, "Streaming source",
+                            if(com.aliflix.app.BuildConfig.IS_TV) listOfNotNull(activeProvider.displayName, selectedServer?.takeUnless { it == activeProvider.displayName }).joinToString(" · ") else activeProvider.displayName,
+                            onClick = { page = MorePage.SOURCES })
+                        onCast?.let { action ->
+                            MoreOptionRow(Icons.Rounded.Cast, "Cast", if (castActive) "Connected" else "",
+                                onClick = { onDismiss(); action() })
+                        }
+                        onOpenWirelessDisplay?.let { action ->
+                            MoreOptionRow(Icons.Rounded.Cast, "Wireless display", "",
+                                onClick = { onDismiss(); action() })
+                        }
+                        onStopPlayback?.let { action ->
+                            Spacer(Modifier.height(8.dp))
+                            MoreOptionRow(Icons.Rounded.Stop, "Stop playback", "",
+                                onClick = { onDismiss(); action() }, showChevron = false)
+                        }
                     }
-                } else if (selection.source.provider == PlaybackProviderId.RAMOFLIX) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    MoreOptionRow(
-                        icon = Icons.Rounded.Dns,
-                        title = "Ramoflix Servers",
-                        subtitle = "Switch streaming host",
-                        onClick = {
-                            onDismiss()
-                            onOpenProviderOptions()
-                        },
-                    )
-                }
-
-                if (onOpenWirelessDisplay != null) {
-                    Spacer(modifier = Modifier.height(14.dp))
-                    MoreOptionRow(
-                        icon = Icons.Rounded.Cast,
-                        title = "Wireless Display",
-                        subtitle = "Screen mirroring",
-                        onClick = {
-                            onDismiss()
-                            onOpenWirelessDisplay()
-                        },
-                    )
-                }
-
-                if (onStopPlayback != null) {
-                    Spacer(modifier = Modifier.height(14.dp))
-                    MoreOptionRow(
-                        icon = Icons.Rounded.Stop,
-                        title = "Stop Playback",
-                        subtitle = "End session",
-                        onClick = {
-                            onDismiss()
-                            onStopPlayback()
-                        },
-                    )
+                    MorePage.SOURCES -> {
+                        sources.forEach { option ->
+                            MoreOptionRow(Icons.Rounded.Dns, option.provider.displayName,
+                                if (com.aliflix.app.BuildConfig.IS_TV && option.selected) "Playing now" else "",
+                                selected = option.selected,
+                                showChevron = com.aliflix.app.BuildConfig.IS_TV,
+                                onClick = {
+                                    if(com.aliflix.app.BuildConfig.IS_TV) {
+                                        drilledProvider = option.provider;page = MorePage.SERVERS;onSelectProvider(option.provider)
+                                    } else { if(!option.selected)onSelectProvider(option.provider);onDismiss() }
+                                })
+                        }
+                    }
+                    MorePage.SERVERS -> {
+                        val provider = drilledProvider
+                        val isCurrent = provider == activeProvider
+                        val matches = providerDiscovery.provider == provider
+                        val options = if (isCurrent) servers else providerDiscovery.servers
+                        when {
+                            !isCurrent && (!matches || providerDiscovery.loading) -> {
+                                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(Modifier.size(20.dp), color = AliflixAccentSecondary, strokeWidth = 2.dp)
+                                    Text("Finding servers…", modifier = Modifier.padding(start = 14.dp), fontSize = 14.sp)
+                                }
+                            }
+                            !isCurrent && (providerDiscovery.failed || options.isEmpty()) -> {
+                                Text("Servers unavailable",
+                                    color = Color.White.copy(alpha = .70f), fontSize = 14.sp,
+                                    modifier = Modifier.padding(vertical = 12.dp))
+                                MoreOptionRow(Icons.Rounded.Refresh, "Try again", "",
+                                    onClick = onRetryProviderServers)
+                            }
+                            options.isNotEmpty() -> options.forEach { server ->
+                                MoreOptionRow(Icons.Rounded.PlayCircle, server.label,
+                                    if (isCurrent && server.selected) "Playing now" else "",
+                                    selected = isCurrent && server.selected,
+                                    showChevron = false,
+                                    onClick = {
+                                        if (!(isCurrent && server.selected)) {
+                                            if (isCurrent) onSelectServer(server) else onSelectProviderServer(server)
+                                        }
+                                        onDismiss()
+                                    })
+                            }
+                            isCurrent && activeProvider == PlaybackProviderId.RAMOFLIX ->
+                                MoreOptionRow(Icons.Rounded.Dns, "Server options", "",
+                                    onClick = { onDismiss(); onOpenProviderOptions() })
+                            else -> Text("No servers available",
+                                color = Color.White.copy(alpha = .70f), fontSize = 14.sp,
+                                modifier = Modifier.padding(vertical = 12.dp))
+                        }
+                    }
+                    MorePage.SPEED -> PlaybackSpeeds.forEach { speed ->
+                        val selected = kotlin.math.abs(activeSpeed - speed) < .01f
+                        Surface(color = if (selected) AliflixAccentSecondary.copy(alpha = .10f) else RowBackground,
+                            shape = RoundedCornerShape(16.dp)) {
+                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                                .selectable(selected, role = Role.RadioButton, onClick = {
+                                    rememberedSpeed = speed
+                                    onSelectSpeed(speed)
+                                    page = MorePage.HOME
+                                }).padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Text(speedLabel(speed), Modifier.weight(1f), fontSize = 15.sp)
+                                if (selected) Icon(Icons.Rounded.Check, "Selected", tint = AliflixAccentSecondary)
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
+
+private fun speedLabel(speed: Float): String = if (speed == 1f) "Normal" else "${speed}×"
 
 @Composable
 private fun MoreOptionRow(
@@ -295,36 +282,27 @@ private fun MoreOptionRow(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    showChevron: Boolean = true,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(RowBackground)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Surface(
+        onClick = onClick,
+        color = if (selected) AliflixAccentSecondary.copy(alpha = .10f) else RowBackground,
+        shape = RoundedCornerShape(16.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = title,
-            color = Color.White,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = subtitle,
-            color = AliflixPurple,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-        )
+        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = if (selected) AliflixAccentSecondary else Color.White.copy(alpha = .8f),
+                modifier = Modifier.size(22.dp))
+            Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                if (subtitle.isNotBlank()) Text(subtitle,
+                    color = if (selected) AliflixAccentSecondary else Color.White.copy(alpha = .60f),
+                    fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            if (selected) Icon(Icons.Rounded.Check, "Playing now", tint = AliflixAccentSecondary, modifier = Modifier.size(18.dp))
+            if (showChevron) Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null,
+                tint = Color.White.copy(alpha = .40f), modifier = Modifier.size(20.dp))
+        }
     }
 }

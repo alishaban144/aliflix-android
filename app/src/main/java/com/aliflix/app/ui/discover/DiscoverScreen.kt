@@ -3,8 +3,14 @@
 
 package com.aliflix.app.ui.discover
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
+import com.aliflix.app.downloads.downloadAtmosphere
+
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -13,23 +19,15 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.aliflix.app.ui.common.MobileTopSafeArea
-import com.aliflix.app.ui.common.aliflixScreenBackground
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,8 +39,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -50,48 +46,33 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -99,17 +80,14 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -121,33 +99,26 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.aliflix.app.SearchMode
-import com.aliflix.app.SearchPhase
 import com.aliflix.app.SearchUiState
 import com.aliflix.app.model.HomeContent
 import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.recommendation.ProductionCompanyFilter
-import com.aliflix.app.ui.launch.AnimatedAliflixHeatmapLogo
-import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
-import com.aliflix.app.ui.theme.AliflixBackgroundBase
-import com.aliflix.app.ui.theme.AliflixBorderStrong
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixError
-import com.aliflix.app.ui.theme.AliflixSurfaceElevated
-import com.aliflix.app.ui.theme.AliflixSurfacePrimary
-import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.launch
 
 @Composable
 internal fun DiscoverScreen(
     state: SearchUiState,
     aiEnabled: Boolean,
+    catalogueStore: DiscoverCatalogueStore? = null,
+    onPerson: (com.aliflix.app.model.MediaCreator) -> Unit = {},
+    onCategory: (String) -> Unit = {},
+    onAccount: () -> Unit = {},
     homeContent: HomeContent?,
     recent: List<Media>,
     focusRequestId: Int?,
@@ -181,6 +152,32 @@ internal fun DiscoverScreen(
     catalogBottomPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
+    val touchTracker = remember { DiscoverTouchTracker() }
+    val context = LocalContext.current
+    val shelves = remember(context) { com.aliflix.app.data.ActivityShelves(context) }
+    var recentSearches by remember { mutableStateOf(shelves.read("search")) }
+    var confirmClear by remember { mutableStateOf(false) }
+    if (confirmClear) androidx.compose.ui.window.Dialog(onDismissRequest = { confirmClear = false }) {
+        AliflixSheet() {
+            Column(Modifier.downloadAtmosphere().padding(AliflixSpacing.Large), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Icon(Icons.Rounded.History, null, Modifier.size(36.dp), tint = AliflixAccentSecondary)
+                    Text("Delete search history?", style = MaterialTheme.typography.titleLarge)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { confirmClear = false }, modifier = Modifier.weight(1f).height(48.dp), shape = AliflixCorners.Card, border = null) { Text("Cancel") }
+                    Button(onClick = {
+                        recentSearches = emptyList()
+                        shelves.clear("search")
+                        confirmClear = false
+                    }, modifier = Modifier.weight(1f).height(48.dp), shape = AliflixCorners.Card,
+                        colors = ButtonDefaults.buttonColors(containerColor = AliflixError)) {
+                        Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Delete")
+                    }
+                }
+            }
+        }
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
     var fieldValue by rememberSaveable(stateSaver = TextFieldValue.Saver) {
@@ -241,7 +238,8 @@ internal fun DiscoverScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .aliflixScreenBackground(),
+            .downloadAtmosphere()
+            .then(if (!com.aliflix.app.BuildConfig.IS_TV) Modifier.observeDiscoverTouches(touchTracker) else Modifier),
     ) {
         AnimatedContent(
             targetState = recommendModeActive,
@@ -342,50 +340,46 @@ internal fun DiscoverScreen(
                         .fillMaxSize()
                         .padding(bottom = preservedCatalogBottomPadding),
                 ) {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        MobileTopSafeArea()
+                    val catalogueHeader: @Composable () -> Unit = { Column {
+                        MobileTopSafeArea(extraPadding = 18.dp)
 
-                        Text(
-                            text = "Discover",
-                            color = AliflixContentPrimary,
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
-                        )
+                        Row(Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Tiny), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Discover", color = AliflixContentPrimary, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        }
 
                         Row(
-
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                                .padding(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             OutlinedTextField(
                                 value = fieldValue,
                                 onValueChange = { updated ->
                                     fieldValue = updated
-                                    onQueryChange(updated.text)
+
                                 },
                                 placeholder = {
                                     Text(
-                                        text = "Title, actor, year, or keyword",
+                                        text = "What are you looking for?",
                                         color = AliflixContentTertiary,
                                         fontSize = 14.sp,
                                     )
                                 },
                                 leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Filled.Search,
-                                        contentDescription = null,
-                                        tint = AliflixContentSecondary,
-                                    )
+                                    AliflixIconButton(onClick = {
+                                        keyboard?.hide()
+                                        fieldValue = fieldValue.copy(text = fieldValue.text.trim())
+                                    }) {
+                                        Icon(Icons.Filled.Search, "Search catalogue", tint = AliflixContentSecondary)
+                                    }
                                 },
                                 trailingIcon = {
                                     if (fieldValue.text.isNotEmpty()) {
-                                        IconButton(
+                                        AliflixIconButton(
                                             onClick = {
                                                 fieldValue = TextFieldValue("")
-                                                onQueryChange("")
+
                                             }
                                         ) {
                                             Icon(
@@ -398,162 +392,75 @@ internal fun DiscoverScreen(
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                                 keyboardActions = KeyboardActions(
-                                    onSearch = { 
+                                    onSearch = {
                                         keyboard?.hide()
-                                        onSubmitSearch(fieldValue.text)
-                                    },
+                                        fieldValue = fieldValue.copy(text = fieldValue.text.trim())
+
+                            },
                                 ),
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                                     color = AliflixContentPrimary,
                                 ),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = AliflixSurfaceElevated,
-                                    unfocusedContainerColor = AliflixSurfaceSecondary,
-                                    focusedBorderColor = AliflixAccentPrimary,
-                                    unfocusedBorderColor = AliflixBorderSubtle,
+                                    focusedContainerColor = AliflixSurfaceDefaults.color(),
+                                    unfocusedContainerColor = AliflixSurfaceDefaults.color(),
+                                    focusedBorderColor = AliflixSurfaceDefaults.Focus,
+                                    unfocusedBorderColor = Color.Transparent,
                                     cursorColor = AliflixAccentSecondary,
                                     focusedTextColor = AliflixContentPrimary,
                                     unfocusedTextColor = AliflixContentPrimary,
                                 ),
-                                shape = RoundedCornerShape(18.dp),
+                                shape = AliflixCorners.Card,
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(56.dp)
                                     .focusRequester(focusRequester)
                                     .testTag("discover-search-field"),
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            val searchInteractionSource = remember { MutableInteractionSource() }
-                            Button(
-                                onClick = {
-                                    keyboard?.hide()
-                                    onSubmitSearch(fieldValue.text)
-                                },
-                                enabled = fieldValue.text.isNotBlank(),
-                                interactionSource = searchInteractionSource,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = AliflixAccentPrimary,
-                                    contentColor = Color.White,
-                                    disabledContainerColor = AliflixSurfaceSecondary,
-                                    disabledContentColor = AliflixContentTertiary,
-                                ),
-                                shape = RoundedCornerShape(18.dp),
-                                modifier = Modifier
-                                    .height(56.dp)
-                                    .aliflixPressScale(searchInteractionSource)
-                                    .testTag("discover-catalogue-submit"),
-                            ) {
-                                AnimatedContent(
-                                    targetState = state.phase == SearchPhase.LOADING,
-                                    transitionSpec = { fadeIn(DiscoverMotion.standard()).togetherWith(fadeOut(DiscoverMotion.standard())) },
-                                    label = "searchIcon"
-                                ) { isLoading ->
-                                    if (isLoading) {
-                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Filled.Search,
-                                            contentDescription = "Search catalogue",
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Search",
-                                    fontWeight = FontWeight.Bold
-                                )
+                            AliflixIconButton(onClick = {
+                                keyboard?.hide()
+                                val query = fieldValue.text.trim()
+                                fieldValue = fieldValue.copy(text = query)
+                                onSubmitSearch(query)
+
+
+
+                            }, modifier = Modifier.padding(start = 8.dp).size(48.dp).aliflixSurface(if (fieldValue.text.isNotBlank()) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content, AliflixCorners.Small).testTag("discover-search-button")) {
+                                Icon(if (fieldValue.text.isNotBlank()) Icons.AutoMirrored.Rounded.ArrowForward else Icons.Filled.Search, "Search", tint = AliflixAccentSecondary)
                             }
                         }
 
-                        AnimatedVisibility(
-                            visible = aiEnabled,
-                            enter = fadeIn(DiscoverMotion.standard()),
-                            exit = fadeOut(DiscoverMotion.standard()),
-                        ) {
-                            Surface(
-                                onClick = {
-                                    recommendModeActive = true
-                                    onModeChange(SearchMode.AI)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                                    .testTag("discover-ask-aliflix-card"),
-                                shape = RoundedCornerShape(22.dp),
-                                color = Color.Transparent,
-                                contentColor = AliflixContentPrimary,
-                                tonalElevation = 0.dp,
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(
-                                            Brush.linearGradient(
-                                                listOf(
-                                                    AliflixAccentPrimary.copy(alpha = 0.32f),
-                                                    AliflixSurfaceElevated,
-                                                    AliflixSurfacePrimary,
-                                                )
-                                            )
-                                        )
-                                        .border(1.dp, AliflixAccentPrimary.copy(alpha = 0.34f), RoundedCornerShape(22.dp))
-                                        .padding(horizontal = 16.dp, vertical = 15.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    AnimatedAliflixHeatmapLogo(
-                                        modifier = Modifier.size(46.dp),
-                                    )
-                                    Spacer(modifier = Modifier.width(13.dp))
-                                    Row(
-                                        modifier = Modifier.weight(1f),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            text = "Ask Aliflix",
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontSize = 17.sp,
-                                            color = AliflixContentPrimary,
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                                        contentDescription = "Open Ask Aliflix recommendations",
-                                        tint = AliflixAccentSecondary,
-                                        modifier = Modifier.size(21.dp)
-                                    )
+                        if (aiEnabled && fieldValue.text.isBlank()) DiscoverAskCard(touchTracker) { mode ->
+                            onSetAskEditorState(askEditorState.copy(mode = mode))
+                            recommendModeActive = true
+                            onModeChange(SearchMode.AI)
+                        }
+
+                        if (fieldValue.text.isBlank() && recentSearches.isNotEmpty()) {
+                            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Recent searches", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                AliflixIconButton(onClick = { confirmClear = true }) { Icon(Icons.Rounded.DeleteOutline, "Delete search history") }
+                            }
+                            LazyRow(contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Small), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(recentSearches, key = Media::key) { media ->
+                                    AsyncImage(media.posterUrl, media.title, contentScale = ContentScale.Fit,
+                                        modifier = Modifier.width(118.dp).aspectRatio(2f / 3f).clip(AliflixCorners.Card).clickable { onOpen(media) })
                                 }
                             }
                         }
-
                         CatalogueTypeSelector(
                             selected = mediaFilter,
                             onSelect = onMediaFilterChange,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (state.phase == SearchPhase.IDLE) 20.dp else 4.dp)
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)
                         )
 
-                        AnimatedContent(
-                            targetState = state to mediaFilter,
-                            transitionSpec = {
-                                fadeIn(DiscoverMotion.standard()).togetherWith(fadeOut(DiscoverMotion.standard()))
-                            },
-                            label = "catalogueContent",
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                        ) { (currentState, currentFilter) ->
-
-                            CatalogueContent(
-                                state = currentState,
-                                mediaFilter = currentFilter,
-                                homeContent = homeContent,
-                                recent = recent,
-                                onOpen = onOpen,
-                                gridState = catalogGridState,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    }
+                    } }
+                    if (catalogueStore != null) DiscoverCatalogueContent(
+                        store = catalogueStore, query = fieldValue.text.trim(), filter = mediaFilter,
+                        onOpen = { if (fieldValue.text.isNotBlank()) { shelves.record("search", it); recentSearches = shelves.read("search") }; onOpen(it) },
+                        onPerson = onPerson, onCategory = onCategory,
+                        modifier = Modifier.fillMaxSize(), header = catalogueHeader,
+                    ) else catalogueHeader()
 
                 }
             }
@@ -568,32 +475,22 @@ private fun CatalogueTypeSelector(
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Small),
     ) {
         listOf("All", "Movies", "Series").forEach { option ->
             val active = option == selected
-            val bgColor by androidx.compose.animation.animateColorAsState(
-                targetValue = if (active) AliflixAccentPrimary.copy(alpha = 0.22f) else AliflixSurfaceSecondary,
-                animationSpec = DiscoverMotion.fast(),
-                label = "catalogueBg"
-            )
-            val borderColor by androidx.compose.animation.animateColorAsState(
-                targetValue = if (active) AliflixAccentPrimary.copy(alpha = 0.72f) else AliflixBorderSubtle,
-                animationSpec = DiscoverMotion.fast(),
-                label = "catalogueBorder"
-            )
             val textColor by androidx.compose.animation.animateColorAsState(
                 targetValue = if (active) AliflixContentPrimary else AliflixContentSecondary,
-                animationSpec = DiscoverMotion.fast(),
+                animationSpec = AliflixMotion.selection(),
                 label = "catalogueText"
             )
             val interactionSource = remember { MutableInteractionSource() }
-            Box(
+            AliflixChip(
+                selected = active,
+                contentPadding = PaddingValues(horizontal = 15.dp),
                 modifier = Modifier
                     .height(48.dp)
-                    .clip(RoundedCornerShape(15.dp))
-                    .background(bgColor)
-                    .border(1.dp, borderColor, RoundedCornerShape(15.dp))
+
                     .aliflixPressScale(interactionSource)
                     .selectable(
                         selected = active,
@@ -602,7 +499,6 @@ private fun CatalogueTypeSelector(
                         indication = androidx.compose.foundation.LocalIndication.current,
                         onClick = { onSelect(option) }
                     )
-                    .padding(horizontal = 15.dp)
                     .testTag("discover-filter-${option.lowercase()}"),
                 contentAlignment = Alignment.Center,
             ) {
@@ -611,238 +507,6 @@ private fun CatalogueTypeSelector(
                     color = textColor,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun CatalogueContent(
-    state: SearchUiState,
-    mediaFilter: String,
-    homeContent: HomeContent?,
-    recent: List<Media>,
-    onOpen: (Media) -> Unit,
-    gridState: LazyGridState,
-    modifier: Modifier = Modifier,
-) {
-    val filteredResults = remember(state.results, mediaFilter) {
-        state.results.filter { item ->
-            when (mediaFilter) {
-                "Movies" -> item.type == MediaType.MOVIE
-                "Series" -> item.type == MediaType.TV
-                else -> true
-            }
-        }
-    }
-
-    if (state.query.isBlank()) {
-        DiscoverIdleContent(
-            homeContent = homeContent,
-            recent = recent,
-            mediaFilter = mediaFilter,
-            onOpen = onOpen,
-            modifier = modifier.testTag("discover-idle"),
-        )
-        return
-    }
-
-    Column(modifier = modifier) {
-        when {
-            state.phase == SearchPhase.LOADING && state.results.isEmpty() -> {
-                CatalogueSkeletonGrid(modifier = Modifier.fillMaxSize())
-                return@Column
-            }
-            state.phase == SearchPhase.EMPTY -> {
-                DiscoverStateMessage(
-                    eyebrow = "NO MATCHES",
-                    title = "Nothing matched that search",
-                    message = "Try a shorter title, a different spelling, or switch to Recommend for a more descriptive request.",
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("discover-catalogue-empty"),
-                )
-                return@Column
-            }
-            state.phase == SearchPhase.ERROR && state.results.isEmpty() -> {
-                DiscoverStateMessage(
-                    eyebrow = "SEARCH UNAVAILABLE",
-                    title = "The catalogue did not answer",
-                    message = state.error.orEmpty(),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("discover-catalogue-error"),
-                )
-                return@Column
-            }
-        }
-
-        if (state.phase == SearchPhase.LOADING || state.phase == SearchPhase.TYPING) {
-            LinearProgressIndicator(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .testTag("discover-catalogue-loading"),
-                color = AliflixAccentSecondary,
-                trackColor = Color.Transparent,
-            )
-        }
-        if (state.phase == SearchPhase.ERROR && state.error != null) {
-            InlineNotice(
-                title = "Could not refresh these results",
-                message = state.error,
-                actionLabel = null,
-                onAction = null,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = when (state.phase) {
-                    SearchPhase.LOADING -> "Updating matches"
-                    else -> "Best catalogue matches"
-                },
-                color = AliflixContentSecondary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = "${filteredResults.size}",
-                color = AliflixContentTertiary,
-                fontSize = 11.sp,
-            )
-        }
-        if (filteredResults.isEmpty()) {
-            DiscoverStateMessage(
-                eyebrow = mediaFilter.uppercase(),
-                title = "No $mediaFilter in these matches",
-                message = "Choose another media filter to see the rest.",
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            LazyVerticalGrid(
-                state = gridState,
-                columns = GridCells.Adaptive(112.dp),
-                contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = 2.dp,
-
-                    bottom = 32.dp,
-                ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("discover-catalogue-results"),
-            ) {
-                items(
-                    items = filteredResults,
-                    key = Media::key,
-                    contentType = { "catalogue-poster" },
-                ) { item ->
-                    DiscoverPosterCard(item = item, onOpen = onOpen)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DiscoverIdleContent(
-    homeContent: HomeContent?,
-    recent: List<Media>,
-    mediaFilter: String,
-    onOpen: (Media) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val accepts: (Media) -> Boolean = remember(mediaFilter) {
-        { item ->
-            when (mediaFilter) {
-                "Movies" -> item.type == MediaType.MOVIE
-                "Series" -> item.type == MediaType.TV
-                else -> true
-            }
-        }
-    }
-    val recentItems = remember(recent, mediaFilter) { recent.filter(accepts).take(12) }
-    val rails = remember(homeContent, mediaFilter) {
-        homeContent?.rails.orEmpty()
-            .map { rail -> rail.copy(items = rail.items.filter(accepts).distinctBy(Media::key)) }
-            .filter { it.items.isNotEmpty() }
-            .take(3)
-    }
-
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
-    ) {
-        if (recentItems.isNotEmpty()) {
-            item(key = "recent", contentType = "media-rail") {
-                DiscoverMediaRail(
-                    title = "Pick up where you left off",
-                    subtitle = null,
-                    items = recentItems,
-                    onOpen = onOpen,
-                )
-            }
-        }
-        items(
-            items = rails,
-            key = { "rail:${it.title}" },
-            contentType = { "media-rail" },
-        ) { rail ->
-            DiscoverMediaRail(
-                title = rail.title,
-                subtitle = null,
-                items = rail.items.take(14),
-                onOpen = onOpen,
-            )
-        }
-        if (recentItems.isEmpty() && rails.isEmpty()) {
-            item(key = "catalogue-warming", contentType = "status") {
-                InlineNotice(
-                    title = "No titles yet",
-                    message = "Browse or search to begin.",
-                    actionLabel = null,
-                    onAction = null,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DiscoverMediaRail(
-    title: String,
-    subtitle: String?,
-    items: List<Media>,
-    onOpen: (Media) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        DiscoverSectionHeader(title = title, subtitle = subtitle)
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(11.dp),
-        ) {
-            items(
-                items = items,
-                key = Media::key,
-                contentType = { "discover-rail-poster" },
-            ) { item ->
-                DiscoverPosterCard(
-                    item = item,
-                    onOpen = onOpen,
-                    modifier = Modifier.width(108.dp),
                 )
             }
         }
@@ -872,7 +536,7 @@ internal fun DiscoverSectionHeader(
 }
 
 @Composable
-private fun DiscoverPosterCard(
+internal fun DiscoverPosterCard(
     item: Media,
     onOpen: (Media) -> Unit,
     modifier: Modifier = Modifier,
@@ -896,8 +560,7 @@ private fun DiscoverPosterCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
-                .clip(RoundedCornerShape(14.dp))
-                .background(AliflixSurfaceSecondary),
+                .aliflixSurface(shape = AliflixCorners.Card),
         )
         Text(
             text = item.title,
@@ -910,7 +573,7 @@ private fun DiscoverPosterCard(
         )
         if (item.year.isNotBlank()) {
             Text(
-                text = item.year,
+                text = listOf(if (item.type == MediaType.MOVIE) "Movie" else "Series", item.year).filter(String::isNotBlank).joinToString(" • "),
                 color = AliflixContentTertiary,
                 fontSize = 10.sp,
                 maxLines = 1,
@@ -940,18 +603,18 @@ private fun CatalogueSkeletonGrid(modifier: Modifier = Modifier) {
         }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(112.dp),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = AliflixSpacing.Content, vertical = AliflixSpacing.Tiny),
+            horizontalArrangement = Arrangement.spacedBy(AliflixSpacing.Medium),
             verticalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.weight(1f),
         ) {
             items(count = 9, key = { "catalogue-skeleton:$it" }, contentType = { "skeleton" }) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(AliflixSpacing.Small)) {
                     ShimmerBox(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(2f / 3f)
-                            .clip(RoundedCornerShape(14.dp)),
+                            .clip(AliflixCorners.Card),
                     )
                     ShimmerBox(
                         modifier = Modifier
@@ -988,11 +651,10 @@ internal fun InlineNotice(
     onAction: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    AliflixSurface(
         modifier = modifier.fillMaxWidth(),
-        color = AliflixSurfacePrimary,
-        shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderSubtle),
+        shape = AliflixCorners.Card,
+        level = AliflixSurfaceLevel.Content,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),

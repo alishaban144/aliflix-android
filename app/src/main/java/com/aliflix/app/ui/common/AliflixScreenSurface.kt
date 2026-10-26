@@ -12,6 +12,6 @@ fun Modifier.aliflixScreenBackground(): Modifier = background(
         0f to AliflixBackgroundBase,
         0.42f to AliflixBackgroundImmersive,
         0.76f to AliflixBackgroundBase,
-        1f to AliflixAccentPrimary.copy(alpha = 0.055f),
+        1f to AliflixBackgroundBase,
     ),
 )

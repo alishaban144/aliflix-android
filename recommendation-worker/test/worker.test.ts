@@ -8,6 +8,7 @@ describe('Cloudflare Worker', () => {
     TMDB_API_KEY: 'test-key',
     SUBDL_API_KEY: 'subdl-test-key',
     CURSOR_SIGNING_SECRET: 'cursor-secret',
+    AI: { run: vi.fn() },
     RECOMMENDATION_RATE_LIMITER: { limit: async () => ({ success: true }) },
   };
   const ctx: any = {
@@ -24,6 +25,7 @@ describe('Cloudflare Worker', () => {
     expect(body).toEqual({
       status: 'ok',
       service: 'aliflix-recommendations',
+      cloudflareAiConfigured: true,
       geminiConfigured: true,
       groqConfigured: true,
       tmdbConfigured: true,
@@ -93,7 +95,7 @@ describe('Cloudflare Worker', () => {
     const parsed: any = {
       requestId: '00000000-0000-4000-8000-000000000045',
       mode: 'describe',
-      aiModel: 'groq-qwen-3.8-27b',
+      aiModel: 'groq-gpt-oss-120b',
       query: 'movies about aliens and ufos',
       mediaType: 'movie',
       filters: {

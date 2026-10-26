@@ -20,7 +20,7 @@ object AskAliflixRequestMapper {
     fun map(
         request: AskAliflixRequest,
         requestId: String = UUID.randomUUID().toString(),
-        aiModel: RecommendationAiModel = RecommendationAiModel.GROQ_QWEN_3_8_27B,
+        aiModel: RecommendationAiModel = RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B,
     ): MappedAskAliflixRequest {
         val outputType = when (request) {
             is AskAliflixRequest.Describe -> request.mediaType
@@ -29,11 +29,11 @@ object AskAliflixRequestMapper {
         }
         val spec = when (request) {
             is AskAliflixRequest.Filters -> request.spec
-            is AskAliflixRequest.Describe -> CatalogDiscoverySpec(
+            is AskAliflixRequest.Describe -> request.filters ?: CatalogDiscoverySpec(
                 if (outputType == MediaType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE,
                 requiredStatus = request.requiredStatus,
             )
-            is AskAliflixRequest.Similar -> CatalogDiscoverySpec(
+            is AskAliflixRequest.Similar -> request.filters ?: CatalogDiscoverySpec(
                 if (outputType == MediaType.TV) RecommendationMediaKind.SERIES else RecommendationMediaKind.MOVIE,
                 requiredStatus = request.requiredStatus,
             )
@@ -80,10 +80,10 @@ object AskAliflixRequestMapper {
             previousQuery = (request as? AskAliflixRequest.Describe)?.previousText,
             refinementQuery = (request as? AskAliflixRequest.Describe)?.refinementText
                 ?: (request as? AskAliflixRequest.Similar)?.refinementText,
-            filters = spec.toWorkerFilters(),
+            filters = spec.toWorkerFilters().let { if (request is AskAliflixRequest.Filters) it else it.copy(sortBy = null) },
             // Generated modes return a substantial verified batch. Each signed
             // continuation asks the Worker to find and verify new matches.
-            pageSize = if (request is AskAliflixRequest.Filters) 24 else 20,
+            pageSize = (request as? AskAliflixRequest.Describe)?.resultCount?.coerceIn(1, 24) ?: 24,
         ))
     }
 

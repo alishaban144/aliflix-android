@@ -15,27 +15,42 @@ internal class IntroDbRepository(context: Context) {
     private val directory = File(context.cacheDir, "introdb-v1")
     private val identities = context.getSharedPreferences("introdb-identities", Context.MODE_PRIVATE)
 
+    suspend fun imdbIdentity(selection: PlaybackSelection): String? = withContext(Dispatchers.IO) {
+        selection.media.imdbId?.takeIf { it.matches(Regex("tt[0-9]+")) }
+            ?: identities.getString(selection.media.id.toString(), null)
+            ?: RecommendationAiClient(BuildConfig.RECOMMENDATION_AI_BASE_URL).getTitleDetails("tv", selection.media.id).imdbId
+                ?.takeIf { it.matches(Regex("tt[0-9]+")) }?.also {
+                    identities.edit().putString(selection.media.id.toString(), it).apply()
+                }
+    }
+
     suspend fun segments(selection: PlaybackSelection): List<IntroSegment> = withContext(Dispatchers.IO) {
         if (selection.media.type != MediaType.TV) return@withContext emptyList()
         try {
-            val id = selection.media.imdbId?.takeIf { it.matches(Regex("tt[0-9]+")) }
-                ?: identities.getString(selection.media.id.toString(), null)
-                ?: RecommendationAiClient(BuildConfig.RECOMMENDATION_AI_BASE_URL).getTitleDetails("tv", selection.media.id).imdbId
-                    ?.takeIf { it.matches(Regex("tt[0-9]+")) }?.also {
-                        identities.edit().putString(selection.media.id.toString(), it).apply()
-                    } ?: return@withContext emptyList()
+            val id = imdbIdentity(selection) ?: return@withContext emptyList()
             val season = selection.seasonNumber ?: 1
             val episode = selection.episodeNumber ?: 1
             val file = File(directory, "$id-$season-$episode.json")
             if (file.exists() && System.currentTimeMillis() - file.lastModified() < 24 * 60 * 60 * 1000) {
-                runCatching { parseIntroSegments(file.readText(), id, season, episode) }.getOrNull()?.let { return@withContext it }
+                runCatching { parseIntroSegments(file.readText(), id, season, episode) }.getOrNull()?.let {
+                    // Empty/outro-less responses can acquire new crowd metadata.
+                    // Do not freeze a missing credits marker for a whole day.
+                    if (it.any { marker -> marker.kind == IntroSegmentKind.OUTRO } ||
+                        System.currentTimeMillis() - file.lastModified() < 5 * 60 * 1000) {
+                        android.util.Log.i("AliflixIntroDb", "segments:cache,intro=${it.count { marker -> marker.kind == IntroSegmentKind.INTRO }},outro=${it.count { marker -> marker.kind == IntroSegmentKind.OUTRO }}")
+                        return@withContext it
+                    }
+                }
             }
             val connection = URL("https://api.introdb.app/segments?imdb_id=$id&season=$season&episode=$episode").openConnection() as HttpURLConnection
             try {
                 connection.connectTimeout = 5000; connection.readTimeout = 5000
                 connection.setRequestProperty("Accept", "application/json")
                 connection.setRequestProperty("User-Agent", "Aliflix/${BuildConfig.VERSION_NAME}")
-                if (connection.responseCode != 200) return@withContext emptyList()
+                if (connection.responseCode != 200) {
+                    android.util.Log.i("AliflixIntroDb", "segments:http_failure,status=${connection.responseCode}")
+                    return@withContext emptyList()
+                }
                 val bytes = connection.inputStream.use { input ->
                     val output = java.io.ByteArrayOutputStream()
                     val buffer = ByteArray(4096)
@@ -50,10 +65,14 @@ internal class IntroDbRepository(context: Context) {
                 ensureActive()
                 val raw = bytes.toString(Charsets.UTF_8)
                 val result = parseIntroSegments(raw, id, season, episode)
+                android.util.Log.i("AliflixIntroDb", "segments:api,intro=${result.count { it.kind == IntroSegmentKind.INTRO }},outro=${result.count { it.kind == IntroSegmentKind.OUTRO }}")
                 directory.mkdirs(); file.writeText(raw)
                 result
             } finally { connection.disconnect() }
         } catch (cancelled: CancellationException) { throw cancelled
-        } catch (_: Exception) { emptyList() }
+        } catch (error: Exception) {
+            android.util.Log.i("AliflixIntroDb", "segments:unavailable,reason=${error.javaClass.simpleName}")
+            emptyList()
+        }
     }
 }

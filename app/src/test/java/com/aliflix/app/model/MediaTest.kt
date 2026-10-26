@@ -4,6 +4,7 @@ import com.aliflix.app.data.RamoflixConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaTest {
@@ -98,7 +99,7 @@ class MediaTest {
             media = item,
             seasonNumber = 2,
             episodeNumber = 3,
-            source = preferences.sourceFor(item),
+            source = preferences.sourceFor(item, PlaybackProviderId.MOVIEPIRE),
         )
 
         assertEquals(
@@ -120,17 +121,23 @@ class MediaTest {
 
         assertEquals(
             PlaybackProviderId.MOVIEPIRE,
-            preferences.sourceFor(item).provider,
+            preferences.sourceFor(item, PlaybackProviderId.MOVIEPIRE).provider,
         )
     }
 
     @Test
-    fun mobilePlaybackProvidersStartWithMoviepire() {
+    fun mobilePlaybackProvidersStartWithFlixer() {
         assertEquals(
             listOf(
+                MobilePlaybackProvider.FLIXER,
+                MobilePlaybackProvider.SERIENSTREAM,
+                PlaybackProviderId.CINEJOY,
                 PlaybackProviderId.MOVIEPIRE,
                 PlaybackProviderId.RAMOFLIX,
                 PlaybackProviderId.DORABY,
+                MobilePlaybackProvider.FILMO,
+                MobilePlaybackProvider.SEVEN_MOVIES,
+                MobilePlaybackProvider.MOVY,
             ),
             mobileGeneralPlaybackProviders(),
         )
@@ -139,13 +146,35 @@ class MediaTest {
     @Test
     fun newInstallDefaultChangesOnlyForMobile() {
         assertEquals(
-            PlaybackProviderId.MOVIEPIRE,
+            MobilePlaybackProvider.FLIXER,
             defaultGeneralPlaybackProvider(isTv = false),
         )
         assertEquals(
             PlaybackProviderId.RAMOFLIX,
             defaultGeneralPlaybackProvider(isTv = true),
         )
+    }
+
+    @Test
+    fun cinejoyBuildsExactTmdbMovieAndEpisodeRoutes() {
+        val movie = Media(id = 550, type = MediaType.MOVIE, title = "Fight Club")
+        val tv = Media(id = 1396, type = MediaType.TV, title = "Breaking Bad")
+
+        assertEquals(
+            "https://cinejoy.pk/watch/movie/550",
+            PlaybackSelection(movie, source = PlaybackSource(PlaybackProviderId.CINEJOY)).entryUrl,
+        )
+        assertEquals(
+            "https://cinejoy.pk/watch/tv/1396/2/3",
+            PlaybackSelection(
+                tv,
+                seasonNumber = 2,
+                episodeNumber = 3,
+                source = PlaybackSource(PlaybackProviderId.CINEJOY),
+            ).entryUrl,
+        )
+        // CineJoy is a mobile source; the TV surface must keep an approved default.
+        assertTrue(PlaybackProviderId.CINEJOY.isAvailableFor(movie))
     }
 
     @Test
@@ -165,7 +194,7 @@ class MediaTest {
 
         assertEquals(
             "https://moviepire-mirror.example/watch/27205",
-            preferences.sourceFor(media).buildEntryUrl(media),
+            preferences.sourceFor(media, PlaybackProviderId.MOVIEPIRE).buildEntryUrl(media),
         )
         assertEquals(PlaybackProviderId.MOVIEPIRE, PlaybackSource.moviepire().provider)
     }

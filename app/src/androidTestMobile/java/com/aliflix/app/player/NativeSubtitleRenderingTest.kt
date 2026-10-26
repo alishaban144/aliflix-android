@@ -17,6 +17,83 @@ import java.io.File
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class NativeSubtitleRenderingTest {
+    private var previousLanguage: String? = null
+    private var previousAuto: Boolean? = null
+    @org.junit.Before fun useTheExplicitEnglishFixtureLanguage() {
+        val context=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val prefs=context.getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME,0)
+        previousLanguage=prefs.getString(com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE,null)
+        previousAuto=if(prefs.contains(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES)) prefs.getBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES,true) else null
+        prefs.edit().putString(com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE,"EN")
+            .putBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES,true).commit()
+    }
+    @org.junit.After fun restoreFixtureLanguage() {
+        val context=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val editor=context.getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME,0).edit()
+        val languageKey=com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE
+        val autoKey=com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES
+        if(previousLanguage==null) editor.remove(languageKey) else editor.putString(languageKey,previousLanguage)
+        if(previousAuto==null) editor.remove(autoKey) else editor.putBoolean(autoKey,previousAuto!!)
+        editor.commit()
+    }
+    @Test fun firstFrameAndLateCaptionsNeverReprepareTheStream() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        grantNativeFixtureNetworkPermission()
+        val server = NativeBackgroundPlaybackTest.FixtureServer(instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() })
+        val request = NativePlaybackRequest(server.url, "video/mp4", "https://fixture.aliflix.test/", "Aliflix test", "", "Startup without subtitles", 0, true, "")
+        val payload = File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json").apply { writeText(request.toJson()) }
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", payload.name), nativePhoneLaunchOptions())
+        var buffering = 0
+        var discontinuities = 0
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_BUFFERING) buffering++ }
+            override fun onPositionDiscontinuity(old: Player.PositionInfo, next: Player.PositionInfo, reason: Int) { discontinuities++ }
+        }
+        try {
+            await("First frame with no external subtitles") { NativePlaybackService.renderedStreamUrl == server.url }
+            scenario.onActivity {
+                assertTrue(it.playbackController!!.playWhenReady)
+                it.playbackController!!.addListener(listener)
+                NativePlaybackService.updateSubtitles("WEBVTT\n\n00:00:00.000 --> 00:01:20.000\nLATE NONBLOCKING CAPTIONS\n\n", "en", "English")
+            }
+            awaitCaptions(scenario, "LATE NONBLOCKING CAPTIONS")
+            scenario.onActivity {
+                assertTrue(it.playbackController!!.playWhenReady)
+                assertEquals("Caption attachment must not buffer", 0, buffering)
+                assertEquals("Caption attachment must not seek/reload", 0, discontinuities)
+                it.playbackController!!.removeListener(listener)
+                it.playbackController!!.pause()
+                it.playbackController!!.seekTo(1000)
+            }
+            await("Ready to verify real double-tap seek") { var ready = false; scenario.onActivity { ready = it.playbackController?.playbackState == Player.STATE_READY && it.playbackUiState.ready }; ready }
+            fun doubleTap(ratio: Float) {
+                repeat(2) {
+                    val down = android.os.SystemClock.uptimeMillis()
+                    scenario.onActivity { activity ->
+                        val root = activity.window.decorView
+                        val event = android.view.MotionEvent.obtain(down, down, android.view.MotionEvent.ACTION_DOWN, root.width * ratio, root.height * 0.4f, 0)
+                        activity.dispatchTouchEvent(event); event.recycle()
+                    }
+                    Thread.sleep(30)
+                    scenario.onActivity { activity ->
+                        val root = activity.window.decorView
+                        val event = android.view.MotionEvent.obtain(down, android.os.SystemClock.uptimeMillis(), android.view.MotionEvent.ACTION_UP, root.width * ratio, root.height * 0.4f, 0)
+                        activity.dispatchTouchEvent(event); event.recycle()
+                    }
+                    Thread.sleep(70)
+                }
+            }
+            var expected = 0L
+            scenario.onActivity { expected = minOf(16_000, it.playbackController!!.duration) }
+            doubleTap(0.9f)
+            await("Double-tap changes the real Media3 position") { var reached = false; scenario.onActivity { reached = kotlin.math.abs(it.playbackController!!.currentPosition - expected) < 300 }; reached }
+            expected = (expected - 15_000).coerceAtLeast(0)
+            doubleTap(0.1f)
+            await("Double-tap rewinds the real Media3 position") { var reached = false; scenario.onActivity { reached = kotlin.math.abs(it.playbackController!!.currentPosition - expected) < 300 }; reached }
+        } finally { scenario.close(); context.stopService(Intent(context, NativePlaybackService::class.java)); server.close(); payload.delete() }
+    }
+
     @Test fun captionsAppearAtStartupAndAfterLateDownloadWithoutPositionControls() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -122,6 +199,78 @@ class NativeSubtitleRenderingTest {
         }
     }
 
+    @Test fun opacityChangesRenderedPixelsAndSubtitleSettingsSurviveRecreation() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        grantNativeFixtureNetworkPermission()
+        val store = (context.applicationContext as AliflixApplication).playerSettingsStore
+        val previous = store.settings.value
+        val server = NativeBackgroundPlaybackTest.FixtureServer(instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() })
+        store.updateSubtitleBackgroundOpacity(0f)
+        store.updateSubtitleFontSize(22f)
+        store.updateSubtitleVerticalOffsetDp(24)
+        store.updateSubtitleDelayTenths(7)
+        val request = NativePlaybackRequest(server.url, "video/mp4", "https://fixture.aliflix.test/", "Test", "", "Opacity", 3000, true,
+            "WEBVTT\n\n00:00:00.000 --> 00:01:20.000\nOPACITY PERSISTENCE\n\n")
+        val payload = File(context.cacheDir, "native-request-${java.util.UUID.randomUUID()}.json").apply { writeText(request.toJson()) }
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java).putExtra("requestFile", payload.name), nativePhoneLaunchOptions())
+        fun darkPixels(): Int {
+            var result = 0
+            scenario.onActivity { activity ->
+                val view = requireNotNull(findSubtitles(activity.window.decorView))
+                val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+                view.draw(Canvas(bitmap))
+                for (y in 0 until bitmap.height step 2) for (x in 0 until bitmap.width step 2) {
+                    val color = bitmap.getPixel(x, y)
+                    if (android.graphics.Color.alpha(color) > 200 && android.graphics.Color.red(color) < 30) result++
+                }
+                bitmap.recycle()
+            }
+            return result
+        }
+        try {
+            awaitCaptions(scenario, "OPACITY PERSISTENCE")
+            val transparent = darkPixels()
+            store.updateSubtitleBackgroundOpacity(1f)
+            scenario.recreate()
+            awaitCaptions(scenario, "OPACITY PERSISTENCE")
+            assertTrue("Opaque caption background must add dark pixels", darkPixels() > transparent + 100)
+            val restored = PlayerSettingsStore(context).settings.value
+            assertEquals(1f, restored.subtitleBackgroundOpacity, 0f)
+            assertEquals(22f, restored.subtitleFontSizeSp, 0f)
+            assertEquals(24, restored.subtitleVerticalOffsetDp)
+            assertEquals(7, restored.subtitleDelayTenths)
+        } finally {
+            scenario.close(); context.stopService(Intent(context, NativePlaybackService::class.java)); server.close(); payload.delete()
+            store.updateSubtitleBackgroundOpacity(previous.subtitleBackgroundOpacity)
+            store.updateSubtitleFontSize(previous.subtitleFontSizeSp)
+            store.updateSubtitleVerticalOffsetDp(previous.subtitleVerticalOffsetDp)
+            store.updateSubtitleDelayTenths(previous.subtitleDelayTenths)
+        }
+    }
+
+    @Test fun startupRaceBuffersPlayableMediaAndCancelsSlowerContender() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        grantNativeFixtureNetworkPermission()
+        val server = NativeBackgroundPlaybackTest.FixtureServer(instrumentation.context.assets.open("cast-test.mp4").use { it.readBytes() })
+        val request = NativePlaybackRequest(server.url, "video/mp4", "https://fixture.aliflix.test/", "Test", "", "Race", 0, false)
+        var loserClosed = false
+        try {
+            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.Main) {
+                val winner = firstSuccessful(listOf(suspend {
+                    try { kotlinx.coroutines.delay(30_000); request.copy(title = "Slow") }
+                    finally { loserClosed = true }
+                }, suspend {
+                    StartupStreamCache.awaitPlayable(context, request)
+                    request
+                }))
+                assertEquals("Race", winner.title)
+                assertTrue("Losing work must close before handing off", loserClosed)
+            }
+        } finally { server.close() }
+    }
+
     private fun awaitCaptions(scenario: ActivityScenario<NativePlayerActivity>, expected: String) = await("Visible $expected") {
         var visible = false
         scenario.onActivity { activity ->
@@ -129,7 +278,7 @@ class NativeSubtitleRenderingTest {
             val view = findSubtitles(activity.window.decorView)
             if (diagnosticCount++ % 20 == 0) android.util.Log.i("SubtitleRenderingTest",
                 "state=${player?.playbackState} error=${player?.playerError} cues=${player?.currentCues?.cues?.map { it.text }} view=${view?.width}x${view?.height} padding=${view?.paddingBottom} children=${view?.childCount} childHeight=${view?.getChildAt(0)?.height} shown=${view?.isShown}")
-            if (player?.playbackState == Player.STATE_READY && player.currentCues.cues.any { it.text.toString().contains(expected) } &&
+            if (player?.playbackState == Player.STATE_READY && NativePlaybackService.currentCaptionCues().any { it.text.toString().contains(expected) } &&
                 view != null && view.isShown && view.width > 0 && view.height > 0) {
                 val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
                 view.draw(Canvas(bitmap))

@@ -138,7 +138,7 @@ fun WebPlayerScreen(
     val moviepireServers by controller.moviepireServers.collectAsState()
     val switchingMoviepireServer by controller.switchingMoviepireServer.collectAsState()
     val playing by controller.playing.collectAsState()
-    val nativePhoneMoviepire = selection.source.provider.usesMoviepire && !BuildConfig.IS_TV
+    val nativePhoneMoviepire = selection.source.identity.usesMoviepire && !BuildConfig.IS_TV
     val playerAccent = AliflixAccentPrimary
     val resumableProgress = remember(selection.key) {
         controller.savedProgressFor(selection)?.takeIf { it.resumeEligible }
@@ -150,6 +150,7 @@ fun WebPlayerScreen(
     var episodeMenuExpanded by remember(selection.key) { mutableStateOf(false) }
     var controlsVisible by remember(selection.key) { mutableStateOf(true) }
     var subtitleDialogVisible by remember(selection.key) { mutableStateOf(false) }
+    var subtitlePickerOnly by remember { mutableStateOf(false) }
     var subtitleTracks by remember(selection.key) { mutableStateOf<List<SubtitleTrack>?>(null) }
     var subtitleSearching by remember(selection.key) { mutableStateOf(false) }
     var subtitleSearchError by remember(selection.key) { mutableStateOf<String?>(null) }
@@ -454,11 +455,13 @@ fun WebPlayerScreen(
                 onSelectEpisode = onSelectEpisode,
                 subtitlesActive = selectedSubtitleTrack != null && activeSubtitleCues.isNotEmpty(),
                 subtitleLanguage = selectedSubtitleTrack?.languageName,
-                onOpenSubtitles = { subtitleDialogVisible = true },
+                onOpenSubtitles = { subtitlePickerOnly = false; subtitleDialogVisible = true },
+                onOpenSubtitlePicker = { subtitlePickerOnly = true; subtitleDialogVisible = true },
             )
 
             if (subtitleDialogVisible) {
                 SubtitleDialog(
+                    pickerOnly = subtitlePickerOnly,
                     tracks = subtitleTracks.orEmpty(),
                     searching = subtitleSearching,
                     searchError = subtitleSearchError,
@@ -524,6 +527,7 @@ fun WebPlayerScreen(
 
 @Composable
 private fun SubtitleDialog(
+    pickerOnly: Boolean = false,
     tracks: List<SubtitleTrack>,
     searching: Boolean,
     searchError: String?,
@@ -597,7 +601,7 @@ private fun SubtitleDialog(
                     }
                 }
 
-                if (selectedTrack != null) {
+                if (selectedTrack != null && !pickerOnly) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1136,7 +1140,7 @@ private fun BoxScope.TvPlayerOverlay(
                                     .padding(horizontal = 8.dp, vertical = 4.dp),
                             ) {
                                 Text(
-                                    text = selection.source.provider.displayName,
+                                    text = selection.source.identity.displayName,
                                     color = AliflixAccentSecondary,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,

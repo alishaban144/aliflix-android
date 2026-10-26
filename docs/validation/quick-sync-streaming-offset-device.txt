@@ -1,0 +1,2 @@
+oneTap=true,cancelNoCommit=true,playbackSpeed=1,buffered=true,offset=-46.92,confidence=0.8750922095089421,elapsedMs=746
+generation=2,frames=6525,blocks=7,boundaries=5,duplicates=0,unavailable=false,reason=null,captureMs=4043,sileroReady=true,sileroFailure=null,queue=0,dropped=0,inferences=4103,inferenceMs=13535

@@ -1,0 +1,10 @@
+{
+  "versionCode": 170,
+  "versionName": "3.1.80",
+  "apkUrl": "https://github.com/alishaban144/aliflix-android/releases/download/v3.1.80/aliflix-mobile.apk",
+  "sha256": "PENDING_BUILD_SHA256",
+  "sizeBytes": 0,
+  "minimumSdk": 29,
+  "notes": "Aliflix v3.1.80: Discover now focuses on Trending, New, and Top Rated sections after removing the quick shortcut tabs.",
+  "releaseNotes": "Aliflix v3.1.80: Discover now focuses on Trending, New, and Top Rated sections after removing the quick shortcut tabs."
+}

@@ -10,7 +10,7 @@ class PlayerSettingsTest {
     fun defaultSettingsHaveExpectedValues() {
         val settings = PlayerSettings()
         assertEquals(16f, settings.subtitleFontSizeSp, 0.01f)
-        assertEquals(0.5f, settings.subtitleBackgroundOpacity, 0.01f)
+        assertEquals(0f, settings.subtitleBackgroundOpacity, 0.01f)
         assertEquals(0, settings.subtitleDelayTenths)
         assertEquals(0.0, settings.subtitleDelaySeconds, 0.001)
         assertEquals(0, settings.subtitleVerticalOffsetDp)

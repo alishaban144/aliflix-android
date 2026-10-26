@@ -50,7 +50,7 @@ class WebStreamHandoffTest {
                 val web = WebView(activity).apply { settings.javaScriptEnabled = true; settings.mediaPlaybackRequiresUserGesture = false }
                 view = web
                 WebViewCompat.addWebMessageListener(web, "AliflixPlaybackProgress", setOf(base)) { _, message, _, _, _ ->
-                    runCatching { JSONObject(message.data.orEmpty()) }.getOrNull()?.let { progress.set(it) }
+                    runCatching { JSONObject(message.data.orEmpty()) }.getOrNull()?.takeIf { it.has("positionSeconds") }?.let { progress.set(it) }
                 }
                 WebViewCompat.addDocumentStartJavaScript(web, nativeStreamDiscoveryScript() + "\n" + mobileMoviepireProgressBridgeScript() + "\n" + nativePreparationScript(), setOf(base))
                 activity.setContentView(FrameLayout(activity).apply { addView(web, FrameLayout.LayoutParams(-1, -1)) })

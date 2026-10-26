@@ -1,5 +1,10 @@
 package com.aliflix.app.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -7,7 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,15 +23,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AccountCircle
-import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.DeleteForever
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Sync
@@ -38,22 +41,18 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,15 +75,12 @@ import com.aliflix.app.ui.common.MobileTopSafeArea
 import com.aliflix.app.ui.common.aliflixScreenBackground
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
-import com.aliflix.app.ui.theme.AliflixBorderStrong
 import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
 import com.aliflix.app.ui.theme.AliflixContentTertiary
 import com.aliflix.app.ui.theme.AliflixError
 import com.aliflix.app.ui.theme.AliflixSuccess
-import com.aliflix.app.ui.theme.AliflixSurfaceElevated
-import com.aliflix.app.ui.theme.AliflixSurfaceSecondary
 import kotlinx.coroutines.launch
 
 @Composable
@@ -93,11 +89,11 @@ internal fun MySpaceAccountCard(
     onOpenAccount: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    AliflixSurface(
         modifier = modifier
             .fillMaxWidth()
             .testTag("my-space-account-card"),
-        color = Color.Transparent,
+        level = AliflixSurfaceLevel.Ambient,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
@@ -134,22 +130,42 @@ internal fun AccountScreen(
     onAccountEnded: (String) -> Unit,
     onCreate: suspend (String, String, String?) -> AccountActionResult,
     onSignIn: suspend (String, String) -> AccountActionResult,
+    onGoogleSignIn: (suspend () -> AccountActionResult)? = null,
     onResetPassword: suspend (String) -> AccountActionResult,
     onSignOut: suspend () -> AccountActionResult,
     onReauthenticateGoogle: suspend () -> AccountActionResult,
     onReauthenticatePassword: suspend (String) -> AccountActionResult,
     onDeleteAccount: suspend () -> AccountActionResult,
+    onRename: suspend (String) -> AccountActionResult = { AccountActionResult(false) },
     onSync: () -> Unit,
     onClearMessage: () -> Unit,
+    shelves: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
     var working by rememberSaveable(route) { mutableStateOf(false) }
     var localMessage by rememberSaveable(route) { mutableStateOf<String?>(null) }
     var localError by rememberSaveable(route) { mutableStateOf<String?>(null) }
+    var editingName by remember { mutableStateOf(false) }
+    var editedName by remember(accountState.displayName) { mutableStateOf(accountState.displayName.orEmpty()) }
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     var showPasswordReauthentication by remember { mutableStateOf(false) }
     val busy = working || accountState.isLoading
+
+    if (editingName) AlertDialog(onDismissRequest = { if (!busy) editingName = false },
+        title = { Text("Display name") }, shape = AliflixCorners.Chrome, containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
+        text = { OutlinedTextField(editedName, { editedName = it.take(60) }, singleLine = true, enabled = !busy,
+            shape = AliflixCorners.Card, label = { Text("Name") },
+        colors = AliflixSurfaceDefaults.textFieldColors(),
+    ) },
+        confirmButton = { TextButton(enabled = !busy && editedName.isNotBlank(), onClick = {
+            scope.launch {
+                working = true
+                val result = onRename(editedName.trim())
+                working = false
+                if (result.succeeded) editingName = false else localError = result.message
+            }
+        }) { Text("Save") } }, dismissButton = { TextButton(enabled = !busy, onClick = { editingName = false }) { Text("Cancel") } })
 
     LaunchedEffect(route) {
         onClearMessage()
@@ -220,10 +236,10 @@ internal fun AccountScreen(
                     Text("Cancel")
                 }
             },
-            containerColor = AliflixSurfaceElevated,
+            containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
             titleContentColor = AliflixContentPrimary,
             textContentColor = AliflixContentSecondary,
-            shape = RoundedCornerShape(24.dp),
+            shape = AliflixCorners.Chrome,
         )
     }
 
@@ -258,9 +274,19 @@ internal fun AccountScreen(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 12.dp),
+                .padding(horizontal = 18.dp, vertical = AliflixSpacing.Medium),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            shelves()
+            if (onGoogleSignIn != null && route in setOf(AccountRoute.SIGN_IN, AccountRoute.CREATE_ACCOUNT)) {
+                OutlinedButton(
+                    onClick = { runAction(action = onGoogleSignIn) },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("account-google-sign-in"),
+                    shape = AliflixCorners.Card,
+                    border = null,
+                ) { Text("Continue with Google", fontWeight = FontWeight.SemiBold) }
+            }
             when (route) {
                 AccountRoute.SIGN_IN -> SignInForm(
                     busy = busy,
@@ -308,12 +334,13 @@ internal fun AccountScreen(
                         )
                     },
                     onDelete = { showDeleteConfirmation = true },
+                    onEditName = { editingName = true },
                 )
             }
 
             if (busy) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = AliflixSpacing.Tiny),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -373,7 +400,7 @@ private fun ColumnScope.SignInForm(
         onClick = ::submit,
         enabled = !busy,
         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
-        shape = RoundedCornerShape(15.dp),
+        shape = AliflixCorners.Card,
         colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
     ) { Text("Sign in", fontWeight = FontWeight.Bold) }
     TextButton(onClick = onForgot, enabled = !busy, modifier = Modifier.align(Alignment.CenterHorizontally)) {
@@ -441,7 +468,7 @@ private fun ColumnScope.CreateAccountForm(
         onClick = ::submit,
         enabled = !busy,
         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
-        shape = RoundedCornerShape(15.dp),
+        shape = AliflixCorners.Card,
         colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
     ) { Text("Create account", fontWeight = FontWeight.Bold) }
     TextButton(onClick = onSignIn, enabled = !busy, modifier = Modifier.align(Alignment.CenterHorizontally)) {
@@ -475,7 +502,7 @@ private fun ColumnScope.ForgotPasswordForm(
         onClick = ::submit,
         enabled = !busy,
         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
-        shape = RoundedCornerShape(15.dp),
+        shape = AliflixCorners.Card,
         colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
     ) { Text("Send reset link", fontWeight = FontWeight.Bold) }
 }
@@ -488,6 +515,7 @@ private fun ManageAccountContent(
     onSync: () -> Unit,
     onSignOut: () -> Unit,
     onDelete: () -> Unit,
+    onEditName: () -> Unit,
 ) {
     val user = accountState.user
     val sync = accountSyncPresentation(syncState)
@@ -504,6 +532,9 @@ private fun ManageAccountContent(
                 )
                 user?.email?.let { Text(it, color = AliflixContentSecondary, fontSize = 12.sp) }
             }
+            AliflixIconButton(onClick = onEditName, enabled = !busy, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Rounded.Edit, "Edit display name", tint = AliflixAccentSecondary, modifier = Modifier.size(18.dp))
+            }
         }
         AccountInfoRow("Sign-in method", accountProviderLabel(user?.providerIds.orEmpty()))
         AccountInfoRow("Cloud sync", sync.label, valueColor = if (sync.isError) AliflixError else AliflixSuccess)
@@ -512,8 +543,8 @@ private fun ManageAccountContent(
             onClick = onSync,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            shape = RoundedCornerShape(14.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixBorderStrong),
+            shape = AliflixCorners.Card,
+            border = null,
         ) {
             Icon(Icons.Rounded.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
@@ -523,7 +554,7 @@ private fun ManageAccountContent(
             Text("Sign out", color = AliflixContentPrimary, fontWeight = FontWeight.Bold)
         }
     }
-    AccountPanel(borderColor = AliflixError.copy(alpha = 0.42f)) {
+    AccountPanel(critical = true) {
         Text("Delete account", color = AliflixError, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
         Text(
             "Permanently remove this account and its Aliflix cloud data. Guest and unrelated local app data are not deleted.",
@@ -535,8 +566,8 @@ private fun ManageAccountContent(
             onClick = onDelete,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            shape = RoundedCornerShape(14.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, AliflixError.copy(alpha = 0.75f)),
+            shape = AliflixCorners.Card,
+            border = null,
         ) {
             Icon(Icons.Rounded.DeleteForever, contentDescription = null, tint = AliflixError, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
@@ -569,14 +600,15 @@ private fun PasswordReauthenticationDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { if (password.isNotBlank()) onConfirm(password) }),
                     trailingIcon = {
-                        IconButton(onClick = { visible = !visible }) {
+                        AliflixIconButton(onClick = { visible = !visible }) {
                             Icon(
                                 if (visible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
                                 contentDescription = if (visible) "Hide password" else "Show password",
                             )
                         }
                     },
-                )
+        colors = AliflixSurfaceDefaults.textFieldColors(),
+    )
             }
         },
         confirmButton = {
@@ -585,20 +617,20 @@ private fun PasswordReauthenticationDialog(
             }
         },
         dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } },
-        containerColor = AliflixSurfaceElevated,
+        containerColor = AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated),
         titleContentColor = AliflixContentPrimary,
         textContentColor = AliflixContentSecondary,
-        shape = RoundedCornerShape(24.dp),
+        shape = AliflixCorners.Chrome,
     )
 }
 
 @Composable
 private fun AccountTopBar(title: String, onBack: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AliflixSpacing.Small, vertical = AliflixSpacing.Tiny),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+        AliflixIconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = AliflixContentPrimary)
         }
         Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
@@ -622,7 +654,7 @@ private fun PrimaryAccountButton(
         onClick = onClick,
         enabled = !loading,
         modifier = modifier.fillMaxWidth().heightIn(min = 50.dp),
-        shape = RoundedCornerShape(15.dp),
+        shape = AliflixCorners.Card,
         colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
     ) {
         if (loading) {
@@ -692,7 +724,7 @@ private fun AccountPasswordField(
         keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
         leadingIcon = { Icon(Icons.Rounded.Lock, contentDescription = null) },
         trailingIcon = {
-            IconButton(onClick = { visible = !visible }, enabled = enabled) {
+            AliflixIconButton(onClick = { visible = !visible }, enabled = enabled) {
                 Icon(
                     if (visible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
                     contentDescription = if (visible) "Hide password" else "Show password",
@@ -729,10 +761,12 @@ private fun AccountTextField(
         visualTransformation = visualTransformation,
         keyboardOptions = keyboardOptions,
         keyboardActions = keyboardActions,
-        shape = RoundedCornerShape(15.dp),
+        shape = AliflixCorners.Card,
         colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = AliflixAccentSecondary,
-            unfocusedBorderColor = AliflixBorderStrong,
+            focusedBorderColor = AliflixSurfaceDefaults.Focus,
+            focusedContainerColor = AliflixSurfaceDefaults.color(),
+            unfocusedContainerColor = AliflixSurfaceDefaults.color(),
+            unfocusedBorderColor = Color.Transparent,
             focusedTextColor = AliflixContentPrimary,
             unfocusedTextColor = AliflixContentPrimary,
             focusedLabelColor = AliflixAccentSecondary,
@@ -743,13 +777,13 @@ private fun AccountTextField(
 
 @Composable
 private fun AccountPanel(
-    borderColor: Color = AliflixBorderSubtle,
+    critical: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().border(1.dp, borderColor, RoundedCornerShape(22.dp)),
-        color = AliflixSurfaceElevated,
-        shape = RoundedCornerShape(22.dp),
+    AliflixSurface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = AliflixCorners.Panel,
+        level = if (critical) AliflixSurfaceLevel.Critical else AliflixSurfaceLevel.Content,
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -805,10 +839,10 @@ private fun InlineAccountMessage(message: String, isError: Boolean) {
         lineHeight = 16.sp,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(AliflixCorners.Small)
             .background(
                 (if (isError) AliflixError else AliflixSuccess).copy(alpha = 0.1f),
             )
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = AliflixSpacing.Medium, vertical = 10.dp),
     )
 }

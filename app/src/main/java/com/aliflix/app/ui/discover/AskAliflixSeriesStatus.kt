@@ -1,13 +1,13 @@
 package com.aliflix.app.ui.discover
 
-import androidx.compose.foundation.BorderStroke
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -15,11 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aliflix.app.ui.theme.AliflixAccentPrimary
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 import com.aliflix.app.ui.theme.AliflixContentSecondary
-import com.aliflix.app.ui.theme.AliflixSurfaceElevated
 
 @Composable
 internal fun AskAliflixSeriesStatusSelector(
@@ -29,7 +26,7 @@ internal fun AskAliflixSeriesStatusSelector(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .padding(horizontal = AliflixSpacing.Content, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -46,11 +43,10 @@ internal fun AskAliflixSeriesStatusSelector(
             "Ended" to "Ended",
         ).forEach { (label, value) ->
             val selected = selectedStatus == value
-            Surface(
+            AliflixSurface(
                 modifier = Modifier.clickable { onStatusSelected(value) },
-                shape = RoundedCornerShape(12.dp),
-                color = if (selected) AliflixAccentPrimary.copy(alpha = .18f) else AliflixSurfaceElevated,
-                border = BorderStroke(1.dp, if (selected) AliflixAccentPrimary else AliflixBorderSubtle),
+                shape = AliflixCorners.Small,
+                level = if (selected) AliflixSurfaceLevel.Selected else AliflixSurfaceLevel.Content,
             ) {
                 Text(
                     text = label,

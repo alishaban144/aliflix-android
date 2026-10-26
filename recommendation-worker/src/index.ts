@@ -1,5 +1,14 @@
+import { AskResearch, askRoute } from './askResearch';
+export { AskResearch };
+import { talkRoute } from './talk';
+export { TalkSession } from './talk';
+import { watchPartyRoute } from './watchParty';
+export { WatchParty } from './watchParty';
+import { browse, categories } from './browse';
+import { catalogueSearch, discoverArguments, discoverCategory, DISCOVER_CATEGORIES, DiscoverCategory } from './discover';
 import { ZodError } from 'zod';
 import { processFilterDiscoveryPage, processRecommendation, supportsDirectFilterPagination } from './engine';
+import { aiProviderName, selectedAiModel } from './ai';
 import { ParsedRecommendationRequest, RecommendationRequestSchema } from './schemas';
 import { ContinuationReservation, createCursor, parseCursor, RecommendationSession, requestFingerprint } from './session';
 import { RecommendationEnv, RecommendationResponse, RecommendationResult, ServiceError } from './types';
@@ -100,6 +109,8 @@ export async function expandGeneratedContinuation(
           event: 'generated_continuation_retry_skipped',
           requestId: parsed.requestId,
           mode: parsed.mode,
+          provider: aiProviderName(selectedAiModel(env)),
+          model: selectedAiModel(env),
           pass: reservation.pass,
           available: availableAfterExpansion,
         }));
@@ -113,6 +124,8 @@ export async function expandGeneratedContinuation(
       event: 'generated_continuation_completed',
       requestId: parsed.requestId,
       mode: parsed.mode,
+      provider: aiProviderName(selectedAiModel(env)),
+      model: selectedAiModel(env),
       pass: reservation.pass,
       added: completed.added,
       available: availableAfterExpansion,
@@ -120,7 +133,7 @@ export async function expandGeneratedContinuation(
       total: completed.count,
       exhausted: completed.exhausted,
     }));
-    if (completed.exhausted || availableAfterExpansion >= target) break;
+    if (completed.exhausted || availableAfterExpansion >= Math.min(20, target)) break;
   }
 }
 
@@ -131,7 +144,16 @@ async function enforceRateLimit(request: Request, env: RecommendationEnv): Promi
 }
 
 function errorResponse(error: unknown): Response {
-  if (error instanceof ServiceError) return json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, error.status);
+  if (error instanceof ServiceError) {
+    // Log only sanitized error codes; never bodies, cursors, or secrets.
+    console.warn(JSON.stringify({
+      event: 'recommendation_request_failed',
+      code: error.code,
+      status: error.status,
+      retryable: error.retryable,
+    }));
+    return json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, error.status);
+  }
   if (error instanceof ZodError) return json({ error: { code: 'INVALID_REQUEST', message: 'The recommendation request is invalid', retryable: false, issues: error.issues } }, 400);
   if (error instanceof SyntaxError) return json({ error: { code: 'INVALID_JSON', message: 'The request body is not valid JSON', retryable: false } }, 400);
   console.error('Unhandled recommendation error', error);
@@ -217,12 +239,19 @@ async function routeRecommendation(request: Request, env: RecommendationEnv): Pr
 }
 
 export default {
-  async fetch(request: Request, env: RecommendationEnv): Promise<Response> {
+  async fetch(request: Request, env: RecommendationEnv, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const ask = await askRoute(request, env, ctx);
+    if (ask) return ask;
+    const talk = await talkRoute(request, env);
+    if (talk) return talk;
+    const party = await watchPartyRoute(request, env);
+    if (party) return party;
     if (url.pathname === '/health' && request.method === 'GET') {
       return json({
         status: 'ok',
         service: 'aliflix-recommendations',
+        cloudflareAiConfigured: Boolean(env.AI?.run),
         geminiConfigured: Boolean(env.GEMINI_API_KEY),
         groqConfigured: Boolean(env.GROQ_API_KEY),
         tmdbConfigured: Boolean(env.TMDB_API_KEY || env.TMDB_READ_ACCESS_TOKEN),
@@ -248,15 +277,52 @@ export default {
         return await downloadSubdlSubtitle(env, subtitleDownloadMatch[1]);
       } catch (error) { return errorResponse(error); }
     }
+    if (url.pathname === '/v3/categories') {
+      if (request.method !== 'GET') return new Response(null, { status: 405 });
+      try { await enforceRateLimit(request, env); return catalogJson(await categories(env)); }
+      catch (error) { return errorResponse(error); }
+    }
+    if (url.pathname === '/v3/discover' || url.pathname === '/v3/search/catalogue') {
+      if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
+      try {
+        const { filter, page } = discoverArguments(url);
+        const category = (url.searchParams.get('category') || 'trending') as DiscoverCategory;
+        if (url.pathname === '/v3/discover' && !DISCOVER_CATEGORIES.includes(category) && !/^(genre|keyword):(movie|tv):\d+(?::[a-z0-9-]+)?$/.test(category))
+          throw new ServiceError('INVALID_REQUEST', 'Unknown Discover category', 400, false);
+        const cacheUrl = new URL(url.origin + url.pathname);
+        cacheUrl.searchParams.set('v', '4'); cacheUrl.searchParams.set('type', filter); cacheUrl.searchParams.set('page', String(page));
+        cacheUrl.searchParams.set(url.pathname === '/v3/discover' ? 'category' : 'query', url.pathname === '/v3/discover' ? category : (url.searchParams.get('query') || '').trim().slice(0, 160));
+        const excluded = (url.searchParams.get('exclude') || '').split(',').map(value => Number(value)).filter(value => Number.isInteger(value) && value > 0).slice(0, 500);
+        if (excluded.length) cacheUrl.searchParams.set('exclude', excluded.join(','));
+        const cacheKey = new Request(cacheUrl.toString());
+        const cached = await caches.default.match(cacheKey);
+        if (cached) return cached;
+        await enforceRateLimit(request, env);
+        const body = url.pathname === '/v3/discover' ? (/^(genre|keyword):/.test(category) ? await browse(env, category, page, excluded) : await discoverCategory(env, category, filter, page))
+          : await catalogueSearch(env, url.searchParams.get('query') || '', filter, page);
+        const response = catalogJson(body);
+        response.headers.set('cache-control', 'public, max-age=900');
+        const cacheWrite = caches.default.put(cacheKey, response.clone());
+        if (ctx) ctx.waitUntil(cacheWrite); else await cacheWrite;
+        return response;
+      } catch (error) { return errorResponse(error); }
+    }
     const titleMatch = /^\/v3\/titles\/(movie|tv)\/(\d+)$/.exec(url.pathname);
     const seasonMatch = /^\/v3\/tv\/([1-9]\d{0,8})\/seasons(?:\/(\d{1,4}))?$/.exec(url.pathname);
     if (seasonMatch) {
       if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
       try {
+        const key=new Request(new URL(url.pathname,url.origin),{method:'GET'});
+        const cached=await caches.default.match(key);
+        if(cached)return cached;
         await enforceRateLimit(request, env);
         const tmdb = new TmdbClient(env, 3);
-        return catalogJson(seasonMatch[2] === undefined ? await tmdb.seasons(Number(seasonMatch[1]))
+        const response=catalogJson(seasonMatch[2] === undefined ? await tmdb.seasons(Number(seasonMatch[1]))
           : await tmdb.episodes(Number(seasonMatch[1]), Number(seasonMatch[2])));
+        response.headers.set('cache-control','public, max-age=21600');
+        const write=caches.default.put(key,response.clone());
+        if(ctx)ctx.waitUntil(write);else await write;
+        return response;
       } catch (error) { return errorResponse(error); }
     }
     const personMatch = /^\/v3\/people\/(\d+)\/credits$/.exec(url.pathname);
@@ -268,8 +334,16 @@ export default {
     if (titleMatch || personMatch || isEditorialPicks || isHomeFeed || isTitleSearch || isCompanySearch || isTvNetworkFeed) {
       if (request.method !== 'GET') return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed', retryable: false } }, 405);
       try {
+        if(titleMatch) {
+          const key=new Request(new URL(url.pathname,url.origin),{method:'GET'});
+          const cached=await caches.default.match(key);if(cached)return cached;
+          await enforceRateLimit(request,env);
+          const response=catalogJson(await titleDetails(env,titleMatch[1] as 'movie'|'tv',Number(titleMatch[2])));
+          response.headers.set('cache-control','public, max-age=21600');
+          const write=caches.default.put(key,response.clone());if(ctx)ctx.waitUntil(write);else await write;
+          return response;
+        }
         await enforceRateLimit(request, env);
-        if (titleMatch) return catalogJson(await titleDetails(env, titleMatch[1] as 'movie' | 'tv', Number(titleMatch[2])));
         if (personMatch) {
           return catalogJson(await personCredits(env, Number(personMatch[1])));
         }
@@ -291,5 +365,11 @@ export default {
       await enforceRateLimit(request, env);
       return await routeRecommendation(request, env);
     } catch (error) { return errorResponse(error); }
+  },
+  async scheduled(_event: ScheduledController, env: RecommendationEnv, ctx: ExecutionContext) {
+    ctx.waitUntil((async()=>{const service=env.ASK_RESEARCH.getByName('shared-v1');if(await service.needsRefresh())await service.refreshDaily();})().catch(error => {
+      console.warn('ask_daily_retained', error instanceof Error ? error.name : 'error');
+      throw error;
+    }));
   },
 } satisfies ExportedHandler<RecommendationEnv>;

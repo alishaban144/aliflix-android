@@ -43,11 +43,12 @@ export interface TmdbWatchProvider {
 
 export interface TmdbDetails extends TmdbListItem {
   genres?: TmdbGenre[]; runtime?: number | null; episode_run_time?: number[]; keywords?: { keywords?: TmdbKeyword[]; results?: TmdbKeyword[] };
-  credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }>; crew?: Array<{ id: number; name: string; job?: string; profile_path?: string | null }> };
-  aggregate_credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null }> };
+  credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null; character?: string | null; roles?: Array<{ character?: string | null }> }>; crew?: Array<{ id: number; name: string; job?: string; profile_path?: string | null }> };
+  aggregate_credits?: { cast?: Array<{ id: number; name: string; profile_path?: string | null; character?: string | null; roles?: Array<{ character?: string | null }> }> };
   status?: string; created_by?: Array<{ id: number; name: string; profile_path?: string | null }>;
   imdb_id?: string | null;
   external_ids?: { imdb_id?: string | null; tvdb_id?: number | null };
+  videos?: { results?: Array<{ key: string; site: string; type: string; official: boolean; iso_639_1?: string }> };
   reviews?: { results?: TmdbReviewItem[] };
   recommendations?: TmdbPage;
   similar?: TmdbPage;
@@ -82,7 +83,7 @@ export class TmdbClient {
   // Filters use the conservative default. Generated Describe/Similar requests
   // explicitly raise this to 40 while capping their AI calls so even the
   // provider-retry path stays below Cloudflare Free's 50-subrequest ceiling.
-  constructor(private readonly env: RecommendationEnv, private readonly budget = 38) {}
+  constructor(private readonly env: RecommendationEnv, private readonly budget = 38, private readonly deadline?: AbortSignal) {}
   get callsUsed(): number { return this.used; }
   get callsRemaining(): number { return this.budget - this.used; }
 
@@ -112,10 +113,12 @@ export class TmdbClient {
     applyTmdbAuthentication(this.env, url, headers);
 
     for (let attempt = 0; attempt < 3; attempt++) {
+      this.deadline?.throwIfAborted();
       let retryDelayMs = 100 * (attempt + 1);
       if (++this.used > this.budget) throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request budget exhausted', 503, true);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8_000);
+      if (this.deadline) this.deadline.addEventListener('abort', () => controller.abort(), { once: true });
       try {
         const response = await fetch(url, { headers, signal: controller.signal,
           ...(cacheTtl ? { cf: { cacheTtl, cacheEverything: true } } : {}) });
@@ -143,6 +146,12 @@ export class TmdbClient {
     throw new ServiceError('TMDB_UNAVAILABLE', 'TMDB request failed', 503, true);
   }
 
+  searchMulti(query: string, page = 1): Promise<TmdbPage<TmdbTrendingItem & { profile_path?: string; adult?: boolean }>> {
+    return this.request('/search/multi', { query, page, include_adult: false, language: 'en-US' }, 300);
+  }
+  trending(type: MediaType, page = 1): Promise<TmdbPage> {
+    return this.request(`/trending/${type}/week`, { page, language: 'en-US' }, 900);
+  }
   searchTitle(type: MediaType, query: string, page = 1): Promise<TmdbPage> { return this.request(`/search/${type}`, { query, page, include_adult: false }); }
   searchKeyword(query: string): Promise<TmdbPage<TmdbKeyword>> { return this.request('/search/keyword', { query, page: 1 }); }
   searchPerson(query: string): Promise<TmdbPage<TmdbPerson>> { return this.request('/search/person', { query, page: 1, include_adult: false }); }
@@ -150,11 +159,22 @@ export class TmdbClient {
   discover(type: MediaType, params: Record<string, string | number | boolean | undefined>): Promise<TmdbPage> {
     return this.request(`/discover/${type}`, { include_adult: false, ...params });
   }
+  /** Identity/hard-filter verification needs structured metadata, not complete
+   * casts, reviews and neighbouring catalogues for every candidate. */
+  researchDetails(type: MediaType, id: number): Promise<TmdbDetails> {
+    return this.request(`/${type}/${id}`, { language:'en-US', ...(type==='tv'?{append_to_response:'external_ids'}:{}) });
+  }
+  researchPosters(type:MediaType,id:number):Promise<{posters:Array<{file_path:string;iso_639_1?:string|null;vote_average?:number}>}> {
+    return this.request(`/${type}/${id}/images`,{include_image_language:'en,null'});
+  }
+  researchAnchor(type: MediaType, id: number): Promise<TmdbDetails> {
+    return this.request(`/${type}/${id}`, {language:'en-US',append_to_response:type==='tv'?'keywords,recommendations':'keywords,credits,recommendations'});
+  }
   details(type: MediaType, id: number): Promise<TmdbDetails> {
     return this.request(`/${type}/${id}`, {
       append_to_response: type === 'tv'
-        ? 'keywords,aggregate_credits,external_ids,reviews,content_ratings,recommendations,similar'
-        : 'keywords,credits,external_ids,reviews,release_dates,recommendations,similar',
+        ? 'keywords,aggregate_credits,external_ids,reviews,videos,content_ratings,recommendations,similar'
+        : 'keywords,credits,external_ids,reviews,videos,release_dates,recommendations,similar',
     });
   }
   externalIds(type: MediaType, id: number): Promise<TmdbExternalIds> {

@@ -1,6 +1,18 @@
-﻿package com.aliflix.app.player
+package com.aliflix.app.player
+
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
+
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.rounded.GraphicEq
+
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 
 import android.content.res.Configuration
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -18,9 +30,14 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.verticalDrag
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,12 +57,14 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.BrightnessHigh
@@ -60,9 +79,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.VolumeDown
-import androidx.compose.material.icons.filled.VolumeMute
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeMute
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -72,17 +91,21 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -90,6 +113,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,10 +122,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -113,8 +141,8 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
 import com.aliflix.app.model.Episode
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
-import com.aliflix.app.ui.launch.AnimatedAliflixHeatmapLogo
 import com.aliflix.app.ui.theme.AliflixAccentPrimary
 import com.aliflix.app.ui.theme.AliflixAccentPrimaryContainer
 import com.aliflix.app.ui.theme.AliflixAccentSecondary
@@ -125,6 +153,9 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 internal data class NativePlayerUi(
+    val videoBottomPx: Int = 0,
+    val captionBottomPx: Int = 0,
+    val captionTopPx: Int = 0,
     val captionDragging: Boolean = false,
     val title: String = "Aliflix",
     val detail: String = "",
@@ -133,22 +164,36 @@ internal data class NativePlayerUi(
     val error: String? = null,
     val server: String = "Auto",
     val availableServers: List<String> = emptyList(),
+    val availableProviders: List<PlaybackProvider> = emptyList(),
+    val providerDiscovery: ProviderServerDiscovery = ProviderServerDiscovery(),
     val ready: Boolean = false,
     val external: Boolean = false,
     val revision: Int = 0,
     val episodes: List<Episode> = emptyList(),
+    val seasons: List<com.aliflix.app.model.Season> = emptyList(),
+    val loadingSeason: Int? = null,
+    val seasonError: String? = null,
     val episodeNumber: Int? = null,
     val subtitleTracks: List<SubtitleTrack> = emptyList(),
     val activeSubtitleTrack: SubtitleTrack? = null,
     val subtitleLoading: Boolean = false,
     val subtitleError: String? = null,
+    val audioSyncState: String? = null,
+    val audioSyncRemainingSeconds: Int? = null,
+    val audioSyncAvailable: Boolean = false,
+    val audioSyncApplied: Boolean = false,
+    val audioSyncMessage: String? = null,
     val message: String? = null,
     val segments: List<IntroSegment> = emptyList(),
     val playbackSelection: PlaybackSelection? = null,
+    val sourceAudioOptions: List<SourceAudioOption> = emptyList(),
+    val sourceAudioLanguage: String = "",
+    val pendingSourceAudioLanguage: String? = null,
+    val verificationRequired: Boolean = false,
 )
 
 private val PlayerInk = Color(0xFF07080C)
-private val PlayerScrimColor = Color.Black.copy(alpha = 0.28f)
+private val PlayerScrimColor = Color.Black.copy(alpha = 0.42f)
 
 private data class HudFeedback(
     val icon: ImageVector,
@@ -158,9 +203,9 @@ private data class HudFeedback(
 
 /**
  * Phone player using the approved v3.1.75 mobile playback redesign:
- * - Compact top bar (back, uppercase title, Episodes / Cast / Rotate / More)
- * - Outlined 64dp play/pause with Â±15 second seek controls
- * - 35% / 30% / 35% double-tap seek zones with cumulative Â±15/Â±30/Â±45 HUD
+ * - Compact top bar (back, complete identity, Episodes / Subtitles / Rotate / More)
+ * - Outlined 64dp play/pause with +/-15 second seek controls
+ * - 35% / 30% / 35% double-tap seek zones with cumulative +/-15/+/-30/+/-45 HUD
  * - Redesigned purple timeline with scrub bubble
  * - Redesigned Episodes panel and playback settings (More) menu
  * - 3-second auto-hide during playback
@@ -177,9 +222,18 @@ internal fun NativePlayerScreen(
     player: Player?,
     settings: PlayerSettings = PlayerSettings(),
     onBack: () -> Unit = {},
+    onResumeClicked: () -> Unit = {},
     onRetry: () -> Unit = {},
+    onVerifyProvider: () -> Unit = {},
+    onWatchTogether: () -> Unit = {},
+    germanEdition: String? = null,
+    onGermanEdition: () -> Unit = {},
     onServer: () -> Unit = {},
     onSelectServer: (String) -> Unit = {},
+    onBrowseProvider: (PlaybackProvider) -> Unit = {},
+    onSelectProviderServer: (PlaybackProvider, String) -> Unit = { _, _ -> },
+    onRetryProviderServers: () -> Unit = {},
+    onSeasonSelected: (Int) -> Unit = {},
     onStop: () -> Unit = {},
     onStopCast: () -> Unit = {},
     onWireless: () -> Unit = {},
@@ -187,77 +241,140 @@ internal fun NativePlayerScreen(
     onRotate: () -> Unit = {},
     onSubtitleSearch: () -> Unit = {},
     onSubtitle: (SubtitleTrack) -> Unit = {},
+    onAudioSelected: (androidx.media3.common.TrackGroup, Int) -> Unit = { _, _ -> },
+    onSourceAudioSelected: (String) -> Unit = {},
     onSubtitleDisable: () -> Unit = {},
     onSubtitleDelayChange: (Int) -> Unit = {},
+    onSyncWithAudio: () -> Unit = {},
+    onResetSubtitleSync: () -> Unit = {},
+    onAudioBoostChange: (Boolean) -> Unit = {},
     onSubtitleVerticalOffsetChange: (Int) -> Unit = {},
     onSubtitleFontSizeChange: (Float) -> Unit = {},
     onSubtitleOpacityChange: (Float) -> Unit = {},
     onSpeedChange: (Float) -> Unit = {},
     onEpisode: (Episode) -> Unit = {},
+    onAutoEpisode: (Episode) -> Unit = {},
     onReceiver: () -> Unit = {},
     onBrightnessSwipe: (Float) -> Float = { 0.5f },
     onVolumeSwipe: (Float) -> Float = { 0.5f },
+    onVolumeGestureStarted: () -> Unit = {},
     onControlsVisibilityChanged: (Boolean) -> Unit = {},
     onOverlayVisibilityChanged: (Boolean) -> Unit = {},
 ) {
     val subtitleTracks = remember(state.subtitleTracks) { normalizeMobileSubtitleTracks(state.subtitleTracks) }
+    val partyContext = androidx.compose.ui.platform.LocalContext.current
+    val partyState by remember(partyContext) { com.aliflix.app.party.WatchPartyClient.get(partyContext) }.state.collectAsState()
     var controls by remember { mutableStateOf(true) }
     var interaction by remember { mutableIntStateOf(0) }
     var isScrubbing by remember { mutableStateOf(false) }
     var episodesVisible by remember { mutableStateOf(false) }
     var moreVisible by remember { mutableStateOf(false) }
+    var partyTopBarHeight by remember { mutableIntStateOf(56) }
     var sheet by remember { mutableStateOf<String?>(null) }
+    var trackRevision by remember(player) { mutableIntStateOf(0) }
+    DisposableEffect(player) {
+        val observer = object : Player.Listener {
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) { trackRevision++ }
+        }
+        player?.addListener(observer)
+        onDispose { player?.removeListener(observer) }
+    }
     var fill by rememberSaveable { mutableStateOf(settings.resizeModeZoom) }
     var hudFeedback by remember { mutableStateOf<HudFeedback?>(null) }
+    var hudVisible by remember { mutableStateOf(false) }
+    var levelGestureActive by remember { mutableStateOf(false) }
     var hudTimerJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val audioSelection by (NativePlaybackService.audioSelectionState ?: remember {
+        kotlinx.coroutines.flow.MutableStateFlow(AudioSelectionState())
+    }).collectAsState()
+    LaunchedEffect(audioSelection.failed) { audioSelection.failed?.let { snackbar.showSnackbar(it) } }
     val seekFeedback = remember { SeekFeedbackController() }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val density = LocalDensity.current
+    val levelGestureEdge = with(density) { 18.dp.toPx() }
+    val layoutDirection = LocalLayoutDirection.current
+    val safeInsets = WindowInsets.safeDrawing
+    val safeLeftInset = safeInsets.getLeft(density, layoutDirection).toFloat()
+    val safeTopInset = safeInsets.getTop(density).toFloat()
+    val safeRightInset = safeInsets.getRight(density, layoutDirection).toFloat()
+    val safeBottomInset = safeInsets.getBottom(density).toFloat()
+    var viewportHeight by remember { mutableIntStateOf(0) }
+    var nextCardHeight by remember { mutableIntStateOf(0) }
+    val startVolumeGesture = rememberUpdatedState(onVolumeGestureStarted)
+    val hudTopPadding = when {
+        controls && isLandscape -> 84.dp
+        controls -> 104.dp
+        isLandscape -> 28.dp
+        else -> 72.dp
+    }
 
+    LaunchedEffect(seekFeedback.state?.token) {
+        if (seekFeedback.state != null) { delay(650); seekFeedback.dismiss() }
+    }
     val overlayOpen = sheet != null || episodesVisible || moreVisible
+    androidx.activity.compose.BackHandler(enabled = episodesVisible || moreVisible) {
+        episodesVisible = false
+        moreVisible = false
+    }
     LaunchedEffect(overlayOpen) { onOverlayVisibilityChanged(overlayOpen) }
     LaunchedEffect(controls) { onControlsVisibilityChanged(controls) }
     LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it) } }
-    val preparing = state.stage != null || (!state.ready && state.error == null && player?.mediaItemCount != 0)
+    val preparing = state.stage != null || (!state.ready && state.error == null && player?.mediaItemCount != 0 && (player?.duration ?: 0L) <= 0L)
     val playing = player?.isPlaying == true
     val ended = player?.playbackState == Player.STATE_ENDED
     val duration = (player?.duration ?: 0L).coerceAtLeast(0L)
     val position = (player?.currentPosition ?: 0L).coerceIn(0L, duration.coerceAtLeast(1L))
-    val next = state.episodes.dropWhile { it.number != state.episodeNumber }.drop(1).firstOrNull()
+    val currentSeason = state.playbackSelection?.seasonNumber
+    val currentEpisode = state.episodeNumber
+    val next = if (currentSeason != null && currentEpisode != null) {
+        state.episodes
+            .asSequence()
+            .filter { it.seasonNumber > currentSeason || (it.seasonNumber == currentSeason && it.number > currentEpisode) }
+            .minWithOrNull(compareBy<com.aliflix.app.model.Episode>({ it.seasonNumber }, { it.number }))
+    } else null
+    val activeIntro = state.segments.firstOrNull {
+        it.kind == IntroSegmentKind.INTRO && it.isActive(position, duration)
+    }
 
-    // Next episode countdown
-    var countdownCancelled by remember(state.episodeNumber) { mutableStateOf(false) }
+    // Keep the offer through credits and the ended state, including titles without markers.
+    var countdownCancelled by remember(state.playbackSelection?.key, state.episodeNumber) { mutableStateOf(false) }
+    var episodeAdvanced by remember(state.playbackSelection?.key, state.episodeNumber) { mutableStateOf(false) }
     val remainingMs = duration - position
-    val isNearEnd = duration > 45_000 && remainingMs in 1..25_000
-    val showCountdown = next != null && isNearEnd && !countdownCancelled && !ended && !preparing && state.error == null
+    val nextWindowStart = upNextWindowStart(duration, state.segments)
+    val withinNextWindow = ended || (nextWindowStart != null && position >= nextWindowStart)
+    val showCountdown = next != null && withinNextWindow && !countdownCancelled &&
+        !episodeAdvanced && !preparing && state.error == null
+    val autoAdvanceArmed = settings.playNextEpisode && (!partyState.active || partyState.host) && showCountdown && (playing || ended)
 
-    LaunchedEffect(showCountdown, remainingMs) {
-        if (showCountdown && remainingMs <= 1200 && next != null) {
-            onEpisode(next)
+    LaunchedEffect(autoAdvanceArmed, remainingMs) {
+        if (autoAdvanceArmed && remainingMs <= 1200 && next != null) {
+            episodeAdvanced = true
+            onAutoEpisode(next)
         }
     }
 
     fun showHud(icon: ImageVector, text: String, progress: Float? = null) {
         hudFeedback = HudFeedback(icon, text, progress)
+        hudVisible = true
         hudTimerJob?.cancel()
         hudTimerJob = coroutineScope.launch {
-            delay(1200)
-            hudFeedback = null
-        }
-    }
-
-    fun seekByMs(deltaMs: Long) {
-        player?.let { p ->
-            if (p.isCurrentMediaItemSeekable) {
-                p.seekTo((p.currentPosition + deltaMs).coerceIn(0L, p.duration.coerceAtLeast(0L)))
-            }
+            delay(900)
+            while (levelGestureActive) delay(100)
+            hudVisible = false
         }
     }
 
     fun seekWithFeedback(forward: Boolean) {
+        val current = player ?: return
+        if (!current.isCurrentMediaItemSeekable || !current.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) return
+        val from = current.currentPosition
+        val durationMs = current.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+        val target = (from + if (forward) 15_000L else -15_000L).coerceIn(0L, durationMs)
+        if (target == from) return
+        current.seekTo(target)
         seekFeedback.triggerSeek(forward)
-        seekByMs(if (forward) 15_000L else -15_000L)
         interaction++
     }
 
@@ -273,44 +390,96 @@ internal fun NativePlayerScreen(
     Box(
         Modifier
             .fillMaxSize()
+            .onSizeChanged { viewportHeight = it.height }
             .pointerInput(preparing, state.error) {
                 if (preparing || state.error != null) return@pointerInput
-                detectTransformGestures { _, _, zoomChange, _ ->
-                    if (zoomChange > 1.15f && !fill) {
-                        fill = true
-                        onFit(true)
-                        showHud(Icons.Default.AspectRatio, "Fill Screen")
-                    } else if (zoomChange < 0.85f && fill) {
-                        fill = false
-                        onFit(false)
-                        showHud(Icons.Default.AspectRatio, "Fit to Screen")
+                awaitPointerEventScope {
+                    var accumulatedZoom = 1f
+                    var pinching = false
+                    while (true) {
+                        val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        if (event.changes.count { it.pressed } >= 2) {
+                            pinching = true
+                            val zoomChange = event.calculateZoom()
+                            if ((accumulatedZoom > 1f && zoomChange < 1f) || (accumulatedZoom < 1f && zoomChange > 1f)) accumulatedZoom = 1f
+                            accumulatedZoom *= zoomChange
+                            if (accumulatedZoom > 1.06f && !fill) {
+                                accumulatedZoom = 1f
+                                fill = true
+                                onFit(true)
+                                showHud(Icons.Default.AspectRatio, "Fill Screen")
+                            } else if (accumulatedZoom < 0.94f && fill) {
+                                accumulatedZoom = 1f
+                                fill = false
+                                onFit(false)
+                                showHud(Icons.Default.AspectRatio, "Fit to Screen")
+                            }
+                        }
+                        if (pinching) event.changes.forEach { it.consume() }
+                        if (event.changes.none { it.pressed }) {
+                            accumulatedZoom = 1f
+                            pinching = false
+                        }
                     }
                 }
             }
-            .pointerInput(preparing, state.error) {
-                if (preparing || state.error != null) return@pointerInput
-                var dragStartedInValidZone = false
-                detectVerticalDragGestures(
-                    onDragStart = { offset ->
-                        dragStartedInValidZone = offset.y in (size.height * 0.20f)..(size.height * 0.80f)
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        if (!dragStartedInValidZone) return@detectVerticalDragGestures
-                        change.consume()
-                        val isLeft = change.position.x < size.width / 2
-                        val delta = -dragAmount / (size.height * 0.7f)
-                        if (isLeft) {
-                            val level = onBrightnessSwipe(delta)
-                            val icon = if (level > 0.65f) Icons.Default.BrightnessHigh else if (level > 0.35f) Icons.Default.BrightnessMedium else Icons.Default.BrightnessLow
-                            showHud(icon, "Brightness ${(level * 100).toInt()}%", level)
-                        } else {
-                            val level = onVolumeSwipe(delta)
-                            @Suppress("DEPRECATION")
-                            val icon = if (level <= 0.01f) Icons.Default.VolumeMute else if (level < 0.5f) Icons.Default.VolumeDown else Icons.Default.VolumeUp
-                            showHud(icon, "Volume ${(level * 100).toInt()}%", level)
+            .pointerInput(preparing, state.error, overlayOpen, levelGestureEdge, safeLeftInset, safeTopInset, safeRightInset, safeBottomInset) {
+                if (preparing || state.error != null || overlayOpen) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = PointerEventPass.Initial,
+                    )
+                    if (!playerLevelGestureAllowed(
+                            down.position.x,
+                            down.position.y,
+                            size.width.toFloat(),
+                            size.height.toFloat(),
+                            levelGestureEdge,
+                            safeLeftInset,
+                            safeTopInset,
+                            safeRightInset,
+                            safeBottomInset,
+                        )) return@awaitEachGesture
+                    awaitPointerEvent(PointerEventPass.Final)
+                    if (down.isConsumed && isScrubbing) return@awaitEachGesture
+                    val isLeft = down.position.x < size.width / 2f
+                    fun adjust(amount: Float) {
+                        val delta = -amount / (size.height * .7f).coerceAtLeast(1f)
+                        val level = if (isLeft) onBrightnessSwipe(delta) else onVolumeSwipe(delta)
+                        val icon = when {
+                            isLeft && level <= .25f -> Icons.Default.BrightnessLow
+                            isLeft && level < .75f -> Icons.Default.BrightnessMedium
+                            isLeft -> Icons.Default.BrightnessHigh
+                            level <= .01f -> Icons.AutoMirrored.Filled.VolumeMute
+                            level < .5f -> Icons.AutoMirrored.Filled.VolumeDown
+                            else -> Icons.AutoMirrored.Filled.VolumeUp
                         }
+                        showHud(icon, if (isLeft) "Brightness" else "Volume", level)
                     }
-                )
+                    var claimed = false
+                    var total = androidx.compose.ui.geometry.Offset.Zero
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed || event.changes.count { it.pressed } > 1) break
+                            if (change.isConsumed && !claimed) break
+                            val delta = change.position - change.previousPosition
+                            total += delta
+                            if (!claimed) {
+                                if (kotlin.math.abs(total.x) > viewConfiguration.touchSlop && kotlin.math.abs(total.x) >= kotlin.math.abs(total.y)) break
+                                if (kotlin.math.abs(total.y) <= viewConfiguration.touchSlop) continue
+                                claimed = true
+                                if (!isLeft) startVolumeGesture.value()
+                                levelGestureActive = true
+                                adjust(total.y - kotlin.math.sign(total.y) * viewConfiguration.touchSlop)
+                            } else adjust(delta.y)
+                            change.consume()
+                        }
+                    } finally { levelGestureActive = false }
+
+                }
             }
     ) {
         // Fullscreen tap / double-tap seek layer (35% / 30% / 35% zones)
@@ -326,41 +495,22 @@ internal fun NativePlayerScreen(
             )
         }
 
+        if (!controls) SeekFeedbackHud(seekFeedback.state, { seekFeedback.dismiss() })
+
         // Artwork Background
-        if (preparing || state.error != null || state.external || ended) {
+        AnimatedVisibility(visible = preparing || state.error != null || state.external || ended,
+            enter = fadeIn(tween(180)), exit = fadeOut(tween(520, easing = androidx.compose.animation.core.FastOutSlowInEasing))) {
             Box(Modifier.fillMaxSize().background(PlayerInk)) {
-                AsyncImage(state.artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.28f)
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PlayerInk.copy(alpha = 0.4f), PlayerInk.copy(alpha = 0.96f)))))
+                AsyncImage(state.artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.42f)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PlayerInk.copy(alpha = 0.32f), PlayerInk.copy(alpha = 0.92f)))))
             }
         }
 
         // Preparing / Loading Overlay
-        if (preparing) {
-            Column(
-                Modifier.align(Alignment.Center).widthIn(max = 520.dp).padding(horizontal = 32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                AnimatedAliflixHeatmapLogo(Modifier.size(56.dp))
-                Text(
-                    state.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (state.detail.isNotBlank()) {
-                    Text(state.detail, color = Color.White.copy(alpha = 0.65f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
-                }
-                LinearProgressIndicator(
-                    Modifier.width(180.dp).height(3.dp).clip(CircleShape),
-                    color = AliflixAccentPrimary,
-                    trackColor = Color.White.copy(alpha = 0.12f)
-                )
-                Text(state.stage ?: "Preparing your video", color = AliflixAccentSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                Text("Sit back. Playback will begin shortly.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
-            }
+        AnimatedVisibility(visible = preparing, modifier = Modifier.align(Alignment.Center),
+            enter = fadeIn(tween(160)) + androidx.compose.animation.scaleIn(tween(180), initialScale = .96f),
+            exit = fadeOut(tween(220)) + androidx.compose.animation.scaleOut(tween(280), targetScale = .92f)) {
+            HmsLoadingIndicator(Modifier.size(104.dp))
         }
 
         // In-Player Failure / Error Card (Keeping user inside player)
@@ -377,30 +527,31 @@ internal fun NativePlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Icon(Icons.Default.CloudOff, contentDescription = null, tint = AliflixError, modifier = Modifier.size(42.dp))
-                    Text("Playback Problem", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Icon(if (state.verificationRequired) Icons.Rounded.VerifiedUser else Icons.Default.CloudOff, contentDescription = null,
+                        tint = if (state.verificationRequired) AliflixAccentSecondary else AliflixError, modifier = Modifier.size(42.dp))
+                    Text(if (state.verificationRequired) "Verify streaming source" else "Playback Problem", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     Text(state.error, color = Color.White.copy(alpha = 0.75f), textAlign = TextAlign.Center, fontSize = 13.sp)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedButton(
-                            onClick = onServer,
+                            onClick = { moreVisible = true },
                             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Dns, null, modifier = Modifier.size(16.dp), tint = Color.White)
                             Spacer(Modifier.width(6.dp))
-                            Text("Switch Server", color = Color.White, fontSize = 13.sp)
+                            Text("Streaming source", color = Color.White, fontSize = 13.sp)
                         }
                         Button(
-                            onClick = onRetry,
+                            onClick = if (state.verificationRequired) onVerifyProvider else onRetry,
                             colors = ButtonDefaults.buttonColors(containerColor = AliflixAccentPrimary),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp), tint = Color.White)
                             Spacer(Modifier.width(6.dp))
-                            Text("Retry", color = Color.White, fontSize = 13.sp)
+                            Text(if (state.verificationRequired) "Verify" else "Retry", color = Color.White, fontSize = 13.sp)
                         }
                     }
                 }
@@ -419,36 +570,31 @@ internal fun NativePlayerScreen(
                     Icon(Icons.Default.CastConnected, null, tint = AliflixAccentSecondary, modifier = Modifier.size(22.dp))
                     Column {
                         Text("Playing on your TV", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                        Text("Use other apps. Control playback from this screen.", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
                     }
                 }
             }
         }
 
-        // Subtle dark scrim when controls are visible
-        AnimatedVisibility(
-            visible = controls,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            Box(Modifier.fillMaxSize().background(PlayerScrimColor))
+        if (preparing) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .padding(20.dp).size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = .07f))) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = Color.White)
+            }
         }
 
-        // Redesigned controls overlay (compact top bar, outlined center controls, purple timeline)
-        AnimatedVisibility(
-            visible = controls,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
+        // One visibility transition owns the header, transport, timeline and scrim.
+        MobilePlayerControlsVisibility(
+            visible = controls && !preparing,
             modifier = Modifier.fillMaxSize(),
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing),
+                    .fillMaxSize().background(PlayerScrimColor),
             ) {
                 MobilePlayerTopBar(
                     title = state.title,
+                    detail = state.detail,
                     // The approved top bar shows the Episodes button for TV content;
                     // the native player knows episode availability directly.
                     isTv = state.episodes.isNotEmpty(),
@@ -458,7 +604,11 @@ internal fun NativePlayerScreen(
                         interaction++
                     },
                     onSubtitles = {
-                        sheet = "Audio & subtitles"
+                        sheet = if (state.sourceAudioOptions.isNotEmpty()) "Languages & subtitles" else "Subtitles"
+                        interaction++
+                    },
+                    onQuality = {
+                        sheet = "Quality"
                         interaction++
                     },
                     onRotate = {
@@ -469,28 +619,31 @@ internal fun NativePlayerScreen(
                         moreVisible = true
                         interaction++
                     },
-                    modifier = Modifier.align(Alignment.TopCenter),
+                    modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(top = 8.dp).onSizeChanged { partyTopBarHeight = it.height },
                 )
 
-                if (!preparing && state.error == null) {
+                com.aliflix.app.party.PartyIndicator(onWatchTogether,
+                    Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(top = with(LocalDensity.current) { partyTopBarHeight.toDp() } + 16.dp, end = 20.dp))
+
+                if (!preparing && state.error == null && !(isLandscape && showCountdown)) {
                     MobilePlayerCenterControls(
                         isPlaying = playing,
                         onPlayPause = {
                             player?.let { p ->
+                                if (p.playerError != null) p.prepare()
                                 if (ended) p.seekTo(0)
-                                if (p.playWhenReady && !ended) p.pause() else p.play()
+                                if (p.playWhenReady && !ended) p.pause() else { onResumeClicked(); p.play() }
                             }
                             interaction++
                         },
                         onSeekBack = { seekWithFeedback(false) },
                         onSeekForward = { seekWithFeedback(true) },
-                        hideSeekBack = seekFeedback.state?.isForward == false,
-                        hideSeekForward = seekFeedback.state?.isForward == true,
+                        feedback = seekFeedback.state,
                         modifier = Modifier.align(Alignment.Center),
                     )
                 }
 
-                MobilePlayerTimeline(
+                if (!preparing && state.error == null && duration > 0L) MobilePlayerTimeline(
                     currentPositionMs = position,
                     durationMs = duration,
                     bufferedPositionMs = player?.bufferedPosition ?: 0L,
@@ -504,13 +657,14 @@ internal fun NativePlayerScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
                         .padding(bottom = 20.dp),
                 )
             }
         }
 
         // IN-PLAYER BUFFERING INDICATOR (pulsing ring loader)
-        if (!preparing && state.error == null && player?.playbackState == Player.STATE_BUFFERING) {
+        if (!preparing && !isScrubbing && state.error == null && player?.playbackState == Player.STATE_BUFFERING) {
             Box(modifier = Modifier.align(Alignment.Center), contentAlignment = Alignment.Center) {
                 val infiniteTransition = rememberInfiniteTransition(label = "pulse")
                 val pulseScale by infiniteTransition.animateFloat(
@@ -540,72 +694,59 @@ internal fun NativePlayerScreen(
             }
         }
 
-        // NEXT EPISODE COUNTDOWN CARD
+        // Hulu end-card action hierarchy in a smaller floating Aliflix control.
+        val portraitTop = with(density) {
+            val videoBottom = state.videoBottomPx.takeIf { it > 0 } ?: (viewportHeight / 2)
+            val captionBottom = state.captionBottomPx.takeIf { it > 0 } ?: videoBottom
+            val contentBottom = maxOf(videoBottom, captionBottom)
+            val controlsSpace = if (controls) 150.dp.toPx() else 24.dp.toPx()
+            val maximum = (viewportHeight - safeBottomInset - controlsSpace - nextCardHeight).coerceAtLeast(safeTopInset)
+            (contentBottom + 24.dp.toPx()).coerceIn(safeTopInset, maximum).toDp()
+        }
+        val animatedPortraitTop by animateDpAsState(portraitTop, spring(dampingRatio = .9f, stiffness = 380f), label = "next-placement")
+        val landscapeBottom = with(density) {
+            val controlsBottom = (if (controls) 140.dp else 24.dp).toPx()
+            val captionsBottom = if (state.captionTopPx > 0) viewportHeight - state.captionTopPx + 16.dp.toPx() else 0f
+            maxOf(controlsBottom, captionsBottom).toDp()
+        }
         AnimatedVisibility(
             visible = showCountdown,
-            enter = fadeIn(tween(250)) + slideInVertically(tween(250)) { it / 2 },
-            exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { it / 2 },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
+            enter = fadeIn(tween(180, delayMillis = 40)) + scaleIn(spring(dampingRatio = .88f, stiffness = 430f), initialScale = .94f) +
+                slideInVertically(spring(dampingRatio = .9f, stiffness = 430f)) { it / 8 },
+            exit = fadeOut(tween(140)) + scaleOut(tween(160), targetScale = .97f) + slideOutVertically(tween(160)) { it / 10 },
+            modifier = if (isLandscape) Modifier.align(Alignment.BottomEnd)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-                .padding(end = 16.dp, bottom = if (controls) 140.dp else 24.dp)
+                .padding(end = 20.dp, bottom = landscapeBottom)
+            else Modifier.align(Alignment.TopCenter).offset(y = animatedPortraitTop).padding(horizontal = 20.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xF212151E),
-                border = BorderStroke(1.dp, AliflixAccentPrimary.copy(alpha = 0.6f)),
-                shadowElevation = 16.dp,
-                modifier = Modifier.widthIn(max = 360.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        val sec = (remainingMs / 1000).toInt().coerceIn(1, 25)
-                        CircularProgressIndicator(
-                            progress = { (remainingMs.toFloat() / 25_000f).coerceIn(0f, 1f) },
-                            color = AliflixAccentPrimary,
-                            trackColor = Color.White.copy(alpha = 0.15f),
-                            modifier = Modifier.size(36.dp),
-                            strokeWidth = 3.dp,
-                        )
-                        Text("$sec", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text("UP NEXT", color = AliflixAccentSecondary, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.sp)
-                        Text("E${next!!.number} Â· ${next.title}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    OpenPlayerButton(
-                        onClick = { next?.let { onEpisode(it) } },
-                        modifier = Modifier.size(36.dp).background(AliflixAccentPrimary, CircleShape)
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = "Play Now", tint = Color.White, modifier = Modifier.size(20.dp))
-                    }
-                    OpenPlayerButton(
-                        onClick = { countdownCancelled = true },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
-                    }
-                }
-            }
+            MobileUpNextCard(
+                episode = next!!,
+                progress = nextWindowStart?.let { start ->
+                    (remainingMs.toFloat() / (duration - start).coerceAtLeast(1L)).coerceIn(0f, 1f)
+                } ?: 0f,
+                onPlay = { if (!episodeAdvanced) next?.let { episodeAdvanced = true; onEpisode(it) } },
+                onCredits = { countdownCancelled = true },
+                modifier = Modifier.onSizeChanged { nextCardHeight = it.height },
+            )
         }
 
-        // Intro / Skip Segment Button
-        val segment = state.segments.firstOrNull { it.isActive(position, duration) }
+        // Intro skip control. Outro is represented exclusively by Up Next above.
+        val skipSegment = activeIntro
         if (!preparing && state.error == null && !overlayOpen && player?.isCurrentMediaItemSeekable == true && !showCountdown) {
             AnimatedVisibility(
-                segment != null,
+                skipSegment != null,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-                    .padding(end = 20.dp, bottom = if (controls) 140.dp else 24.dp)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                    .padding(end = 20.dp, bottom = if (isLandscape) {
+                        if (controls) 140.dp else 24.dp
+                    } else with(density) {
+                        (viewportHeight - state.videoBottomPx.coerceIn(0, viewportHeight)).toDp() + 12.dp
+                    })
             ) {
-                segment?.let { marker ->
+                skipSegment?.let { marker ->
                     Button(
                         onClick = { player.seekTo(marker.endMs); interaction++ },
                         shape = RoundedCornerShape(12.dp),
@@ -622,43 +763,39 @@ internal fun NativePlayerScreen(
 
         // HUD Indicator (Brightness / Volume / Pinch)
         AnimatedVisibility(
-            visible = hudFeedback != null,
-            enter = fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.88f),
-            exit = fadeOut(tween(220)) + scaleOut(tween(220), targetScale = 0.88f),
-            modifier = Modifier.align(Alignment.Center)
+            visible = hudVisible,
+            enter = fadeIn(tween(180)) + scaleIn(tween(220, easing = FastOutSlowInEasing), initialScale = 0.96f),
+            exit = fadeOut(tween(240)) + scaleOut(tween(240), targetScale = 0.98f),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = hudTopPadding)
         ) {
             hudFeedback?.let { item ->
+                val displayedLevel by animateFloatAsState(item.progress ?: 0f,
+                    spring(dampingRatio = 1f, stiffness = 800f), label = "player-level")
                 Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = Color(0xF212151E),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
-                    shadowElevation = 16.dp,
+                    shape = RoundedCornerShape(50), color = Color(0xDC171922),
+                    border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.12f)),
+                    shadowElevation = 4.dp,
                 ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(item.icon, contentDescription = null, tint = AliflixAccentSecondary, modifier = Modifier.size(34.dp))
-                        Text(item.text, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Row(Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(item.icon, item.text, tint = Color.White.copy(alpha = .9f), modifier = Modifier.size(20.dp))
                         if (item.progress != null) {
                             LinearProgressIndicator(
-                                progress = { item.progress },
-                                modifier = Modifier.width(110.dp).height(4.dp).clip(CircleShape),
-                                color = AliflixAccentPrimary,
-                                trackColor = Color.White.copy(alpha = 0.15f),
+                                progress = { displayedLevel },
+                                modifier = Modifier.width(92.dp).height(3.dp).clip(CircleShape),
+                                color = Color.White.copy(alpha = .9f), trackColor = Color.White.copy(alpha = .14f),
                             )
-                        }
+                            Text("${(item.progress * 100).toInt()}%", modifier = Modifier.width(36.dp),
+                                color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
+                        } else Text(item.text, color = Color.White, fontSize = 12.sp)
                     }
                 }
             }
         }
 
-        // Cumulative double-tap / Â±15s seek feedback HUD
-        SeekFeedbackHud(
-            feedback = seekFeedback.state,
-            onDismiss = { seekFeedback.dismiss() },
-        )
+        // Cumulative double-tap / +/-15s seek feedback HUD
+
 
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp))
     }
@@ -668,7 +805,8 @@ internal fun NativePlayerScreen(
         visible = episodesVisible,
         isLandscape = isLandscape,
         episodes = state.episodes,
-        currentSeason = state.episodes.firstOrNull { it.number == state.episodeNumber }?.seasonNumber,
+        seasonOptions = state.seasons,contentKey=state.title, loadingSeason = state.loadingSeason, seasonError = state.seasonError, onSeasonSelected = onSeasonSelected,
+        currentSeason = state.playbackSelection?.seasonNumber,
         currentEpisode = state.episodeNumber,
         onSelectEpisode = { episode ->
             episodesVisible = false
@@ -679,16 +817,41 @@ internal fun NativePlayerScreen(
     )
 
     // Redesigned playback settings (More) menu
+    val boostAvailability by AudioBoostStatus.availability.collectAsState()
     val playbackSelection = state.playbackSelection
     if (playbackSelection != null) {
         val serverOptions = remember(state.availableServers, state.server) {
             (state.availableServers.ifEmpty { listOf(state.server).filter { it.isNotBlank() } })
                 .map { name -> MoviepireServerOption(key = name, label = name, selected = name.equals(state.server, ignoreCase = true)) }
         }
+        val activeProvider = playbackSelection.source.identity
+        val providerOptions = remember(state.availableProviders, activeProvider, state.server) {
+            state.availableProviders.map { provider ->
+                StreamingSourceOption(
+                    provider = provider,
+                    selected = provider == activeProvider,
+                    detail = if (provider == activeProvider) state.server else "Choose server",
+                )
+            }
+        }
         MobilePlayerMoreSheet(
+            synchronizedPlayback = partyState.active,
+            onWatchTogether = onWatchTogether,
+            germanEdition = germanEdition,
+            onGermanEdition = onGermanEdition,
             visible = moreVisible,
+            audioBoost = settings.boostAudio,
+            audioBoostAvailability = boostAvailability,
+            onAudioBoostChange = onAudioBoostChange,
             selection = playbackSelection,
             servers = serverOptions,
+            providers = providerOptions,
+            providerDiscovery = state.providerDiscovery,
+            onSelectProvider = { provider -> onSelectProviderServer(provider, "Auto") },
+            onRetryProviderServers = onRetryProviderServers,
+            onSelectProviderServer = { option ->
+                onSelectProviderServer(state.providerDiscovery.provider ?: activeProvider, option.key)
+            },
             subtitlesActive = state.activeSubtitleTrack != null,
             subtitleLanguage = state.activeSubtitleTrack?.languageName,
             onOpenSubtitles = {
@@ -735,49 +898,102 @@ internal fun NativePlayerScreen(
     if (sheet != null) {
         ModalBottomSheet(
             onDismissRequest = { sheet = null; interaction++ },
-            containerColor = Color(0xFF141620),
+            containerColor = Color(0xFF12141B),
             contentColor = Color.White,
-            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = 0.3f)) }
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            sheetMaxWidth = 560.dp,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            scrimColor = Color.Black.copy(alpha = .48f),
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = .20f)) }
         ) {
+            Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(if (sheet == "CastOptions") "Cast" else sheet!!, Modifier.weight(1f),
+                    fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                IconButton(onClick = { sheet = null; interaction++ }, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Default.Close, "Close player options", tint = Color.White.copy(alpha = .65f))
+                }
+            }
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .weight(1f, fill = false)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 36.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = sheet!!,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
-
                 when (sheet) {
                     "CastOptions" -> {
-                        SheetOption("Stop Casting", "Disconnect TV and return playback to phone") {
+                        SheetOption("Stop casting") {
                             sheet = null
                             onStopCast()
                         }
-                        SheetOption("Switch Device", "Connect to another Google Cast receiver") {
+                        SheetOption("Switch device") {
                             sheet = null
                             onReceiver()
                         }
                     }
 
                     "Quality" -> {
-                        SheetOption("Auto", "Adapts dynamically to network connection", selected = player?.trackSelectionParameters?.overrides?.values?.none { it.type == C.TRACK_TYPE_VIDEO } == true) {
+                        SheetOption("Auto", selected = player?.trackSelectionParameters?.overrides?.values?.none { it.type == C.TRACK_TYPE_VIDEO } == true) {
                             player?.let { it.trackSelectionParameters = it.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build() }
                             sheet = null
                         }
-                        TrackOptions(player, C.TRACK_TYPE_VIDEO) { sheet = null }
+                        TrackOptions(player, C.TRACK_TYPE_VIDEO, trackRevision) { _, _ -> sheet = null }
                     }
 
-                    "Audio & subtitles" -> {
+                    "Audio & subtitles", "Languages & subtitles", "Subtitles" -> {
+                        if (sheet != "Subtitles") {
+                        Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        if (state.sourceAudioOptions.isNotEmpty()) {
+                            val nativeGroups=player?.currentTracks?.groups.orEmpty().filter{it.type==C.TRACK_TYPE_AUDIO}
+                            val nativeLanguages=nativeGroups.flatMap{g->(0 until g.length).mapNotNull{g.getTrackFormat(it).language?.substringBefore('-')}}
+                            state.sourceAudioOptions.filter{nativeGroups.sumOf{it.length}<=1||it.language !in nativeLanguages}.forEach { audio ->
+                                SheetOption(audio.label,
+                                    if (audio.language.equals(state.playbackSelection?.media?.originalLanguage, true)) "Original" else "",
+                                    selected = audio.language == state.sourceAudioLanguage && state.pendingSourceAudioLanguage == null,
+                                    pending = audio.language == state.pendingSourceAudioLanguage) {
+                                    onSourceAudioSelected(audio.language)
+                                }
+                            }
+                            if(nativeGroups.sumOf{it.length}>1) TrackOptions(player,C.TRACK_TYPE_AUDIO,trackRevision,pendingAudio=audioSelection.pending,confirmedAudio=audioSelection.selected.takeUnless{state.external},onTrackSelected=onAudioSelected){_,_->}
+                        } else TrackOptions(player, C.TRACK_TYPE_AUDIO, trackRevision, pendingAudio = audioSelection.pending, confirmedAudio = audioSelection.selected.takeUnless { state.external }, onTrackSelected = onAudioSelected) { _, _ -> }
+                        Spacer(Modifier.height(4.dp))
+                        }
+                        if (sheet == "Audio & subtitles") {
                         // Subtitle Sync / Delay
                         Text("SUBTITLE SYNC", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        val syncing = state.audioSyncState in setOf("Syncing…")
+                        val retry = state.audioSyncState != null && !syncing && state.audioSyncState != "Synced"
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalButton(
+                            onClick = onSyncWithAudio,
+                            enabled = state.audioSyncAvailable || syncing,
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = AliflixAccentPrimary.copy(alpha = .18f), contentColor = AliflixAccentSecondary),
+                        ) {
+                            if (syncing) com.aliflix.app.ui.common.AliflixSyncBars(Modifier.size(22.dp, 28.dp))
+                            else Icon(if (retry) Icons.Filled.Refresh else Icons.Rounded.GraphicEq, null, Modifier.size(20.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text(if (retry) "Retry" else state.audioSyncState ?: "Sync with Audio", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.width(6.dp))
+                            Text("BETA", color = AliflixAccentSecondary, fontSize = 8.sp, lineHeight = 10.sp,
+                                fontWeight = FontWeight.Bold, letterSpacing = .5.sp, maxLines = 1,
+                                modifier = Modifier.clip(RoundedCornerShape(5.dp))
+                                    .background(AliflixAccentSecondary.copy(alpha = .12f))
+                                    .padding(horizontal = 5.dp, vertical = 2.dp))
+                            if (syncing) {
+                                Spacer(Modifier.weight(1f))
+                                Text("Cancel", fontSize = 11.sp)
+                            }
+                        }
+                        if (state.audioSyncApplied) TextButton(onClick = onResetSubtitleSync) {
+                            Text("Reset", color = AliflixAccentSecondary, fontSize = 11.sp)
+                        }
+                        }
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = Color.White.copy(alpha = 0.05f),
@@ -797,10 +1013,10 @@ internal fun NativePlayerScreen(
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     FilledTonalIconButton(
                                         onClick = { onSubtitleDelayChange(settings.subtitleDelayTenths - 1) },
-                                        modifier = Modifier.size(38.dp),
+                                        modifier = Modifier.size(48.dp),
                                         colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
                                     ) {
-                                        Text("âˆ’0.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                        Text("\u22120.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                     if (settings.subtitleDelayTenths != 0) {
                                         TextButton(onClick = { onSubtitleDelayChange(0) }) {
@@ -809,7 +1025,7 @@ internal fun NativePlayerScreen(
                                     }
                                     FilledTonalIconButton(
                                         onClick = { onSubtitleDelayChange(settings.subtitleDelayTenths + 1) },
-                                        modifier = Modifier.size(38.dp),
+                                        modifier = Modifier.size(48.dp),
                                         colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.White.copy(alpha = 0.1f), contentColor = Color.White)
                                     ) {
                                         Text("+0.1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
@@ -820,7 +1036,7 @@ internal fun NativePlayerScreen(
 
                         // Subtitle Size Selection
                         Text("SUBTITLE SIZE", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(13f to "Small", 16f to "Normal", 19f to "Medium", 23f to "Large").forEach { (size, label) ->
                                 FilterChip(
                                     selected = kotlin.math.abs(settings.subtitleFontSizeSp - size) < 1.5f,
@@ -837,7 +1053,7 @@ internal fun NativePlayerScreen(
 
                         // Subtitle Background Opacity
                         Text("BACKGROUND OPACITY", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(top = 8.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(0f to "0%", 0.25f to "25%", 0.5f to "50%", 0.75f to "75%", 1f to "100%").forEach { (op, label) ->
                                 FilterChip(
                                     selected = kotlin.math.abs(settings.subtitleBackgroundOpacity - op) < 0.1f,
@@ -869,10 +1085,7 @@ internal fun NativePlayerScreen(
                         }
 
                         Spacer(Modifier.height(4.dp))
-                        Text("AUDIO", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        TrackOptions(player, C.TRACK_TYPE_AUDIO) { }
-
-                        Spacer(Modifier.height(4.dp))
+                        }
                         Text("SUBTITLES", color = AliflixAccentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         SheetOption(
                             "Off",
@@ -881,7 +1094,7 @@ internal fun NativePlayerScreen(
                             player?.let { it.trackSelectionParameters = it.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build() }
                             onSubtitleDisable()
                         }
-                        TrackOptions(player, C.TRACK_TYPE_TEXT) { }
+                        TrackOptions(player, C.TRACK_TYPE_TEXT, trackRevision) { _, _ -> }
 
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("More Subtitles", Modifier.weight(1f), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
@@ -890,7 +1103,7 @@ internal fun NativePlayerScreen(
                         if (state.subtitleLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = AliflixAccentPrimary)
                         state.subtitleError?.let { Text(it, color = AliflixError, fontSize = 13.sp) }
                         if (!state.subtitleLoading && subtitleTracks.isEmpty()) {
-                            Text("No external subtitles found for this title.", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                            Text("No subtitles", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                         }
                         var language by remember { mutableStateOf<String?>(null) }
                         val languages = remember(subtitleTracks) {
@@ -952,14 +1165,17 @@ private fun SheetOption(
     title: String,
     subtitle: String = "",
     selected: Boolean = false,
+    pending: Boolean = false,
     onClick: () -> Unit,
 ) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) AliflixAccentPrimaryContainer else Color.Transparent)
+            .heightIn(min = 56.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) AliflixAccentPrimaryContainer.copy(alpha = .55f) else Color.White.copy(alpha = .035f))
             .clickable(onClick = onClick)
+            .semantics { this.selected = selected; stateDescription = if (pending) "Applying" else if (selected) "Selected" else "" }
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -969,7 +1185,9 @@ private fun SheetOption(
                 Text(subtitle, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (selected) {
+        if (pending) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = AliflixAccentSecondary)
+        } else if (selected) {
             Icon(Icons.Default.Check, "Selected", tint = AliflixAccentSecondary, modifier = Modifier.size(20.dp))
         }
     }
@@ -977,22 +1195,27 @@ private fun SheetOption(
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-private fun TrackOptions(player: Player?, type: Int, onSelect: () -> Unit) {
-    val groups = player?.currentTracks?.groups.orEmpty().filter { it.type == type }
+private fun TrackOptions(player: Player?, type: Int, revision: Int,
+    pendingAudio: String? = null,
+    confirmedAudio: String? = null,
+    onTrackSelected: ((androidx.media3.common.TrackGroup, Int) -> Unit)? = null, onSelect: (String?, String?) -> Unit) {
+    val groups = remember(player, type, revision) { player?.currentTracks?.groups.orEmpty().filter { it.type == type } }
     groups.forEach { group ->
-        (0 until group.length).filter { group.isTrackSupported(it) }.forEach { index ->
+        (0 until group.length).filter { group.isTrackSupported(it, true) }.forEach { index ->
             val format = group.getTrackFormat(index)
-            val label = if (type == C.TRACK_TYPE_VIDEO) "${format.height.takeIf { it > 0 } ?: "Auto"}p"
+            val label = if (type == C.TRACK_TYPE_VIDEO) formatVideoTrackLabel(format.height)
+            else if (type == C.TRACK_TYPE_AUDIO) formatAudioTrackLabel(format.language, format.label)
             else format.label ?: format.language?.let { Locale.forLanguageTag(it).displayLanguage }
-            ?: if (type == C.TRACK_TYPE_AUDIO) "Original audio" else "Subtitles"
-            SheetOption(label, selected = group.isTrackSelected(index)) {
-                player?.let {
+            ?: "Subtitles"
+            SheetOption(label, selected = (if (type == C.TRACK_TYPE_AUDIO && confirmedAudio != null) confirmedAudio == nativeAudioKey(format) else group.isTrackSelected(index)) && pendingAudio != nativeAudioKey(format), pending = pendingAudio == nativeAudioKey(format)) {
+                if (onTrackSelected != null) onTrackSelected(group.mediaTrackGroup, index)
+                else player?.let {
                     it.trackSelectionParameters = it.trackSelectionParameters.buildUpon()
                         .setTrackTypeDisabled(type, false)
                         .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
                         .build()
                 }
-                onSelect()
+                onSelect(format.language, format.label)
             }
         }
     }

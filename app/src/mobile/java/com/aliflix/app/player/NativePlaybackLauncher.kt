@@ -7,6 +7,7 @@ internal object NativePlaybackLauncher {
     fun ownsStream(url: String?): Boolean = url != null && NativePlaybackService.activeStreamUrl == url
 
     fun launch(activity: Activity, request: NativePlaybackRequest) {
+        withPlaybackRoomConsent(activity, nativeSelection(request.selectionJson)) {
         // The Activity starts/binds the service while visible, satisfying background-start rules.
         val intent = Intent(activity, NativePlayerActivity::class.java)
         if (NativePlaybackService.activeStreamUrl != request.url) {
@@ -14,7 +15,8 @@ internal object NativePlaybackLauncher {
             java.io.File(activity.cacheDir, name).writeText(request.toJson())
             intent.putExtra("requestFile", name)
         }
-        activity.startActivity(intent, nativePhoneLaunchOptions())
+        activity.startActivity(intent, nativePhoneLaunchOptions(activity))
+        }
     }
 }
 

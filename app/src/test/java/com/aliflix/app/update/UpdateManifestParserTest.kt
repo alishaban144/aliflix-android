@@ -5,6 +5,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UpdateManifestParserTest {
+    @Test fun architectureAwareManifestBlocksUnsupportedDevicesAndKeepsLegacyManifestsCompatible() {
+        val manifest = """{"versionCode":256,"versionName":"3.1.166","apkUrl":"https://example.com/arm64.apk","sha256":"${"a".repeat(64)}","supportedAbis":["arm64-v8a"]}"""
+        val info = UpdateManifestParser.parse(manifest)
+        assertTrue(updateSupportsDevice(info, listOf("arm64-v8a", "armeabi-v7a")))
+        assertTrue(!updateSupportsDevice(info, listOf("armeabi-v7a", "armeabi")))
+        assertTrue(!updateSupportsDevice(info, listOf("x86_64")))
+        assertTrue(updateSupportsDevice(info.copy(supportedAbis = emptyList()), listOf("x86_64")))
+    }
+
     @Test
     fun parsesValidManifest() {
         val info = UpdateManifestParser.parse(

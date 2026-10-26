@@ -1,0 +1,192 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+package com.aliflix.app.player
+
+import android.content.Intent
+import android.os.SystemClock
+import androidx.test.core.app.ActivityScenario
+import androidx.test.platform.app.InstrumentationRegistry
+import com.aliflix.app.model.*
+import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+import org.junit.Before
+import org.junit.After
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+/** Normal provider resolution and automatic captions. No timing answers or
+ * replacement subtitle editions enter the player. PCM stays in private evidence
+ * for a separate, independently timed check after this test finishes. */
+class AutomaticTerminatorSyncDeviceTest {
+    private val savedPreferences=mutableListOf<Pair<android.content.SharedPreferences,Map<String,*>>>()
+    @Before fun preservePreferences() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        for(name in listOf(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME,"native-subtitle-choice")) {
+            val prefs=context.getSharedPreferences(name,0);savedPreferences.add(prefs to prefs.all.toMap())
+        }
+    }
+    @After fun restorePreferences() {
+        for((prefs,values) in savedPreferences) {
+            val editor=prefs.edit().clear()
+            for((key,value) in values) when(value) {
+                is String -> editor.putString(key,value)
+                is Boolean -> editor.putBoolean(key,value)
+                is Int -> editor.putInt(key,value)
+                is Long -> editor.putLong(key,value)
+                is Float -> editor.putFloat(key,value)
+            }
+            editor.commit()
+        }
+    }
+    @Test fun normalAutomaticEnglishCaptionsRecoverAndSynchronizeAcrossScenes() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("liveAutomaticTerminator") == "true")
+        val language = InstrumentationRegistry.getArguments().getString("captionLanguage") ?: "en"
+        val singleScene = InstrumentationRegistry.getArguments().getString("singleScene") == "true"
+        val playedSeconds = InstrumentationRegistry.getArguments().getString("playedSeconds")?.toDoubleOrNull()?.coerceIn(.5, 60.0) ?: 48.0
+        val pauseOnSync = InstrumentationRegistry.getArguments().getString("pauseOnSync") == "true"
+        grantNativeFixtureNetworkPermission()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val choices = context.getSharedPreferences("native-subtitle-choice", android.content.Context.MODE_PRIVATE)
+        val oldLanguage = choices.getString("language", null)
+        val oldEnabled = choices.getBoolean("enabled", true)
+        choices.edit().clear().putString("language", language).putBoolean("enabled", true).commit()
+        context.getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME,0).edit()
+            .putString(com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE,language.uppercase())
+            .putBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES,true).commit()
+        val selection = PlaybackSelection(Media(218, MediaType.MOVIE, "The Terminator", year = "1984",
+            imdbId = "tt0088247", originalLanguage = "en"))
+        val output = File(context.getExternalFilesDir(null), "automatic-terminator-$language-private").apply { mkdirs() }
+        output.listFiles()?.filter { it.name.startsWith("reference-") || it.name == "receipt.json" }?.forEach { it.delete() }
+        File(output, "selection.json").writeText(selection.nativeJson())
+        val report = JSONObject()
+        try {
+            ActivityScenario.launch<NativePlayerActivity>(Intent(context, NativePlayerActivity::class.java)
+                .putExtra("selection", selection.nativeJson()).putExtra("autoSubtitles", true)
+                .putExtra("subtitleLanguage", language), nativePhoneLaunchOptions()).use { scenario ->
+                await("Normal playback and automatic captions", 120_000) {
+                    var ready = false
+                    scenario.onActivity { activity ->
+                        activity.playbackUiState.error?.let { fail(it) }
+                        if (activity.playbackUiState.subtitleTracks.isNotEmpty()) {
+                            File(output, "catalogue.json").writeText(JSONArray().apply {
+                                activity.playbackUiState.subtitleTracks.forEach { track -> put(JSONObject()
+                                    .put("file", track.fileName).put("release", track.releaseName).put("fps", track.fps)) }
+                            }.toString())
+                        }
+                        ready = activity.playbackUiState.ready && !activity.playbackUiState.subtitleLoading &&
+                            NativePlaybackService.originalSubtitles() != null && activity.playbackUiState.audioSyncAvailable
+                    }
+                    ready
+                }
+                val raw = requireNotNull(NativePlaybackService.originalSubtitles())
+                assertEquals(language.uppercase(),canonicalSubtitleLanguageCode(NativePlaybackService.activeRequest!!.subtitleLanguage.orEmpty()))
+                File(output, "original-cues.json").writeText(raw)
+                val frames = java.util.Collections.synchronizedList(mutableListOf<Pair<Double, ShortArray>>())
+                NativePlaybackService.debugObserveSpeech { time, pcm -> frames.add(time to pcm) }
+                try {
+                    val scenes = JSONArray()
+                    for ((index, start) in (if (singleScene) listOf(3196.058) else listOf(1275.619, 3196.058)).withIndex()) {
+                        scenario.onActivity { it.playbackController!!.seekTo((start * 1000).toLong()); it.playbackController!!.play() }
+                        await("Played dialogue scene $index", 90_000) {
+                            var played = false
+                            scenario.onActivity { played = it.playbackController!!.currentPosition / 1000.0 >= start + playedSeconds }
+                            played
+                        }
+                        var position = 0.0
+                        scenario.onActivity { position = it.playbackController!!.currentPosition / 1000.0 }
+                        val audio = synchronized(frames) { frames.toList() }.filter { it.first >= start && it.first + .02 <= position }
+                        val runs=mutableListOf<MutableList<Pair<Double,ShortArray>>>()
+                        audio.forEach { frame ->
+                            if(runs.isEmpty() || kotlin.math.abs(frame.first-runs.last().last().first-.02)>=.003) runs.add(mutableListOf())
+                            runs.last().add(frame)
+                        }
+                        val observed=runs.filter { it.size>=50 }
+                        assertTrue("Insufficient decoded played PCM",observed.sumOf { it.size }>=playedSeconds*50*.60)
+                        val clocks=JSONArray()
+                        observed.forEachIndexed { part,run ->
+                            val name="scene-$index-run-$part.wav"
+                            writeWave(File(output,name),run)
+                            clocks.put(JSONObject().put("file",name).put("start",run.first().first).put("end",run.last().first+.02))
+                        }
+                        File(output, "scene-$index-clock.json").writeText(JSONObject().put("runs",clocks).toString())
+                        scenes.put(JSONObject().put("position", position).put("diagnostics", NativePlaybackService.speechDiagnostics()))
+                    }
+                    scenario.onActivity { activity ->
+                        activity.preparedSyncReferences.forEachIndexed { index, reference ->
+                            File(output, "reference-$index.json").writeText(JSONArray().apply {
+                                reference.cues.forEach { cue -> put(JSONArray().put(cue.startSeconds).put(cue.endSeconds).put(cue.text)) }
+                            }.toString())
+                        }
+                    }
+                    scenario.onActivity { activity ->
+                        val position = activity.playbackController!!.currentPosition / 1000.0
+                        File(output, "heard.json").writeText(JSONArray().apply {
+                            NativePlaybackService.dialogueWordHistory(position).forEach { word ->
+                                put(JSONArray().put(word.text).put(word.start).put(word.end))
+                            }
+                        }.toString())
+                    }
+                    var began = 0L
+                    scenario.onActivity {
+                        if (pauseOnSync) it.playbackController!!.pause()
+                        it.resetSubtitleSync(); began = SystemClock.elapsedRealtime(); it.syncWithAudio()
+                    }
+                    await("Bounded sync completion", 19_500) {
+                        var done = false
+                        scenario.onActivity { done = it.playbackUiState.audioSyncState != "Syncing…" }
+                        done
+                    }
+                    scenario.onActivity { activity ->
+                        val elapsed = SystemClock.elapsedRealtime() - began
+                        val state = activity.playbackUiState.audioSyncState
+                        val request = requireNotNull(NativePlaybackService.activeRequest)
+                        val key = subtitleCorrectionKey(request, requireNotNull(activity.playbackUiState.playbackSelection).key,
+                            raw, NativePlaybackService.selectedAudioFingerprint())
+                        val correction = SubtitleCorrectionStore(context).get(key)
+                        report.put("state", state).put("elapsedMs", elapsed).put("scenes", scenes)
+                            .put("videoFrameRate", NativePlaybackService.selectedVideoFrameRate())
+                            .put("captionFile", activity.playbackUiState.activeSubtitleTrack?.fileName)
+                            .put("correction", correction?.let { JSONObject().put("offset", it.offset).put("rate", it.rate) })
+                            .put("source", nativeSelection(request.selectionJson).source.identity.name)
+                            .put("manualDelay", (context.applicationContext as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.subtitleDelaySeconds)
+                        File(output, "receipt.json").writeText(report.toString())
+                        assertEquals("Automatic caption route: $report", "Synced", state)
+                        assertNotNull(correction)
+                        assertTrue("Deadline: $elapsed", elapsed < 19_500)
+                        assertEquals("Original automatic caption edition changed", raw, NativePlaybackService.originalSubtitles())
+                        val manual = (context.applicationContext as com.aliflix.app.AliflixApplication).playerSettingsStore.settings.value.subtitleDelaySeconds
+                        val originals = parseTimedTextSubtitleCues(nativeSubtitlesVtt(raw, 0.0))
+                        val rendered = parseTimedTextSubtitleCues(NativePlaybackService.activeRequest!!.subtitlesVtt)
+                        val expected = correction!!.apply(originals, manual)
+                        assertEquals(expected.size, rendered.size)
+                        rendered.zip(expected).forEach { (actual, checked) ->
+                            assertEquals(checked.startSeconds, actual.startSeconds, .002)
+                            assertEquals(checked.endSeconds, actual.endSeconds, .002)
+                        }
+                        assertEquals(!pauseOnSync, activity.playbackController!!.isPlaying)
+                    }
+                } finally { NativePlaybackService.debugObserveSpeech(null) }
+            }
+        } finally {
+            choices.edit().putString("language", oldLanguage).putBoolean("enabled", oldEnabled).commit()
+        }
+    }
+    private fun writeWave(file: File, frames: List<Pair<Double, ShortArray>>) {
+        assertTrue("No decoded played PCM", frames.isNotEmpty())
+        assertTrue("PCM contains a seek gap", frames.zipWithNext().all { kotlin.math.abs(it.second.first - it.first.first - .02) < .003 })
+        val data = ByteBuffer.allocate(frames.size * 320 + 44).order(ByteOrder.LITTLE_ENDIAN)
+        data.put("RIFF".toByteArray()).putInt(frames.size * 320 + 36).put("WAVEfmt ".toByteArray()).putInt(16)
+            .putShort(1).putShort(1).putInt(8_000).putInt(16_000).putShort(2).putShort(16)
+            .put("data".toByteArray()).putInt(frames.size * 320)
+        frames.forEach { (_, values) -> values.forEach(data::putShort) }
+        file.writeBytes(data.array())
+    }
+    private fun await(message: String, timeout: Long, condition: () -> Boolean) {
+        val deadline = SystemClock.elapsedRealtime() + timeout
+        while (SystemClock.elapsedRealtime() < deadline) { if (condition()) return; Thread.sleep(100) }
+        fail("$message; ${NativePlaybackService.speechDiagnostics()}")
+    }
+}

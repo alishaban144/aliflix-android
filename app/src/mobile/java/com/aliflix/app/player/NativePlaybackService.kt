@@ -1,5 +1,8 @@
 package com.aliflix.app.player
 
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+
 import android.app.PendingIntent
 import android.app.Notification
 import android.app.NotificationChannel
@@ -46,7 +49,7 @@ import androidx.core.app.ServiceCompat
 import androidx.media3.ui.PlayerView
 import com.aliflix.app.AliflixApplication
 import com.aliflix.app.model.Media
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.PlaybackSelection
 import com.aliflix.app.model.PlaybackSource
 import com.google.android.gms.cast.MediaQueueItem
@@ -58,14 +61,84 @@ import java.net.Inet4Address
 /** Owns decoding, session, notification and TV surface. No Activity/WebView references. */
 @androidx.annotation.OptIn(UnstableApi::class)
 class NativePlaybackService : MediaSessionService() {
+    private var partyBridge: com.aliflix.app.party.PartyPlaybackBridge? = null
+    private val boost = LocalAudioBoost()
+    private val embeddedLanguageSample = ArrayDeque<SubtitleCue>()
+    private val subtitlePreferences by lazy {
+        getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME, MODE_PRIVATE)
+    }
+    private val subtitlePreferenceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES ||
+            key == com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE) {
+            handler.post { applyAutomaticSubtitlePreferences() }
+        }
+    }
+    private fun applyAutomaticSubtitlePreferences() {
+        val current = request ?: return
+        val choices = getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
+        val manual = scopedManualSubtitleChoice(choices.getString("manual-owner", null), choices.getString("manual-content", null),
+            if (choices.contains("enabled")) choices.getBoolean("enabled", false) else null, selection) != null
+        if (manual) return
+        val enabled = subtitlePreferences.getBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES, true)
+        val language = canonicalSubtitleLanguageCode(subtitlePreferences.getString(
+            com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE, "EN").orEmpty()).lowercase()
+        externalCaptionCues = emptyList()
+        originalCaptionJson = null
+        embeddedSubtitlesActive = false
+        embeddedLanguageSample.clear()
+        request = current.copy(preferEmbeddedSubtitles = enabled, subtitleLanguage = language, subtitlesVtt = "")
+        activeRequest = request
+        relay?.updateSubtitles("")
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT).setPreferredTextLanguage(language)
+            .setSelectUndeterminedTextLanguage(false).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+        if (enabled) {
+            val match = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { group ->
+                (0 until group.length).map { group to it }
+            }.firstOrNull { (group, index) ->
+                group.isTrackSupported(index) && !group.getTrackFormat(index).id.orEmpty().contains("aliflix-external") &&
+                    canonicalSubtitleLanguageCode(group.getTrackFormat(index).language.orEmpty()) == language.uppercase()
+            }
+            if (match != null) {
+                embeddedSubtitlesActive = true
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second))
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build()
+            }
+        }
+    }
+    private val preferenceScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
+    private val audioRoutes by lazy { getSystemService(android.media.AudioManager::class.java) }
+    private val routeCallback = object : android.media.AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(devices: Array<android.media.AudioDeviceInfo>) = updateBoost(true)
+        override fun onAudioDevicesRemoved(devices: Array<android.media.AudioDeviceInfo>) = updateBoost(true)
+    }
+    private fun updateBoost(routeChanged: Boolean = false) {
+        if (releasing || !::localPlayer.isInitialized || !::player.isInitialized) return
+        boost.update((application as AliflixApplication).playerSettingsStore.settings.value.boostAudio,
+            localPlayer.audioSessionId, player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE, routeChanged)
+    }
     private var session: MediaSession? = null
+    private var startupVolume: Float? = null
+    private var pendingResumeMs: Long? = null
     private lateinit var localPlayer: ExoPlayer
     private lateinit var player: Player
     private val httpFactory = DefaultHttpDataSource.Factory()
     private var relay: CastStreamRelay? = null
     private var request: NativePlaybackRequest? = null
     private var preferredQualityApplied = false
+    private var preferredAudioLabelApplied = false
+    private lateinit var cineJoyRecovery: CineJoyPlayerRecovery
     private var originalItem: MediaItem? = null
+    private var externalCaptionCues: List<SubtitleCue> = emptyList()
+    private var originalCaptionJson: String? = null
+    private val speechCapture = PlaybackSpeechBuffer()
+    private val videoClock = PlaybackVideoClock()
+    private var dialogueRecognition: RecentDialogueRecognition? = null
+    private var dialogueRecognitionIdentity: String? = null
+    private val embeddedSyncReference = EmbeddedSyncReference()
+    private var playedUntil = 0.0
+    private var lastAudioFingerprint = ""
     private val subtitleFiles = mutableListOf<java.io.File>()
     private var selection: PlaybackSelection? = null
     private var presentation: Presentation? = null
@@ -80,6 +153,31 @@ class NativePlaybackService : MediaSessionService() {
     private var relayWakeLock: PowerManager.WakeLock? = null
     private var releasing = false
     private val handler = Handler(Looper.getMainLooper())
+    private val audioSelection by lazy { NativeAudioSelection(player, { choice ->
+        preferredAudioLabelApplied = true
+        if (player.deviceInfo.playbackType != DeviceInfo.PLAYBACK_TYPE_LOCAL ||
+            !cineJoyRecovery.select(choice.mediaTrackGroup, choice.trackIndices.first())) {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_AUDIO).setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                .setOverrideForType(choice).build()
+        }
+    }, { speechCapture.generation to speechCapture.decodedFrameCount }, { localPlayer.audioFormat }, ::saveAudioChoice) }
+    private val captionTask = object : Runnable {
+        override fun run() {
+            if (releasing) return
+            cineJoyRecovery.tick()
+            audioSelection.tick()
+            if (player.deviceInfo.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE)
+                playedUntil = maxOf(playedUntil, player.currentPosition / 1000.0)
+            if (android.os.Build.VERSION.SDK_INT >= 34 && player.isPlaying &&
+                player.deviceInfo.playbackType != DeviceInfo.PLAYBACK_TYPE_REMOTE)
+                dialogueRecognition?.recordPlayed(player.currentPosition / 1000.0, speechCapture.generation, speechCapture.continuityEpoch())
+            val cues = currentCaptionCues()
+            presentationPlayerView?.subtitleView?.setCues(cues)
+            NativeCastActivity.renderCaptions(cues)
+            handler.postDelayed(this, 100)
+        }
+    }
     private val progressTask = object : Runnable {
         override fun run() { saveProgress(false); handler.postDelayed(this, 5000) }
     }
@@ -97,6 +195,7 @@ class NativePlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        speechCapture.enableNeural(applicationContext)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Video playback", NotificationManager.IMPORTANCE_LOW),
         )
@@ -104,20 +203,60 @@ class NativePlaybackService : MediaSessionService() {
             .setNotificationId(NOTIFICATION_ID).setChannelId(CHANNEL_ID).build())
         val scopedHttp = ResolvingDataSource.Factory(httpFactory) { spec ->
             val current = request
-            if (current != null && current.cookie.isNotBlank() && spec.uri.host == android.net.Uri.parse(current.url).host) {
-                spec.withRequestHeaders(spec.httpRequestHeaders + ("Cookie" to current.cookie))
-            } else spec
+            current?.resolveStreamSpec(spec) ?: spec
         }
         localPlayer = ExoPlayer.Builder(this)
-            .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true))
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 3_000, 6_000).build())
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, scopedHttp)))
+            .setRenderersFactory(SpeechCaptureRenderers(this, speechCapture).setEnableDecoderFallback(true))
+            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(30_000, 60_000, 250, 1_000).build())
+            .setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory {
+                if (request?.offlineDownloadId?.isNotBlank() == true) DefaultDataSource(this, com.aliflix.app.downloads.OfflineDownloads.get(this).offlineFactory().createDataSource())
+                else {
+                val fragments = androidx.media3.datasource.DataSource.Factory {
+                    val source = scopedHttp.createDataSource()
+                    val current = request
+                    if (current?.referer == CineJoyNativeCatalog.REFERER)
+                        CineJoyFragmentDataSource(source, current.url) else source
+                }
+                val playlists = androidx.media3.datasource.DataSource.Factory {
+                    val source = fragments.createDataSource()
+                    val current = request
+                    if (current?.referer == CineJoyNativeCatalog.REFERER)
+                        CineJoyAudioPlaylistDataSource(source, current.url, fragments) else source
+                }
+                val upstream = StartupStreamCache.factory(this, DefaultDataSource.Factory(this, playlists)).createDataSource()
+                    val current = request
+                    if (current != null && current.referer == CineJoyNativeCatalog.REFERER)
+                        CineJoyManifestDataSource(upstream, current,
+                            adaptiveVideo = (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality != PreferredVideoQuality.LOW,
+                        ) else upstream
+                }
+            }, ReferenceExtractorsFactory(embeddedSyncReference)).setLoadErrorHandlingPolicy(CineJoyLoadErrorPolicy { request?.referer == CineJoyNativeCatalog.REFERER }))
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
+        localPlayer.setVideoFrameMetadataListener { timeUs, _, _, _ -> videoClock.frame(timeUs) }
         localPlayer.addListener(object : Player.Listener {
-            override fun onRenderedFirstFrame() { renderedStreamUrl = activeStreamUrl }
+            override fun onAudioSessionIdChanged(audioSessionId: Int) { updateBoost() }
+            override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                if (!embeddedSubtitlesActive || request?.preferEmbeddedSubtitles != true) return
+                val text = cueGroup.cues.mapNotNull { it.text?.toString() }.joinToString(" ").trim()
+                if (text.isEmpty()) return
+                embeddedLanguageSample.addLast(SubtitleCue(0.0, 1.0, text))
+                while (embeddedLanguageSample.size > 80) embeddedLanguageSample.removeFirst()
+                if (!subtitleLanguageIsPlausible(embeddedLanguageSample.toList(), request?.subtitleLanguage.orEmpty())) {
+                    embeddedSubtitlesActive = false
+                    request = request?.copy(preferEmbeddedSubtitles = false)
+                    localPlayer.trackSelectionParameters = localPlayer.trackSelectionParameters.buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+                }
+            }
+            override fun onRenderedFirstFrame() {
+                if (!restorePendingResume()) return
+                renderedStreamUrl = activeStreamUrl
+                releaseStartupMute()
+                PlaybackStartupTiming.mark("first_frame")
+            }
         })
         player = runCatching {
             CastPlayer.Builder(this).setLocalPlayer(localPlayer)
@@ -125,13 +264,33 @@ class NativePlaybackService : MediaSessionService() {
                 .build()
         }.onFailure { android.util.Log.e("AliflixCast", "Google Cast initialization failed", it) }
             .getOrDefault(localPlayer)
+        cineJoyRecovery = CineJoyPlayerRecovery(player, handler, ::saveAudioChoice)
+        subtitlePreferences.registerOnSharedPreferenceChangeListener(subtitlePreferenceListener)
+        audioRoutes.registerAudioDeviceCallback(routeCallback, handler)
+        preferenceScope.launch {
+            (application as AliflixApplication).playerSettingsStore.settings.collect { updateBoost() }
+        }
+        partyBridge = com.aliflix.app.party.PartyPlaybackBridge(player,
+            com.aliflix.app.party.WatchPartyClient.get(this), preferenceScope) { selection }
+        player.addListener(cineJoyRecovery)
         player.addListener(object : Player.Listener {
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                val fingerprint = selectedAudioFingerprint()
+                if (fingerprint.isNotBlank() && fingerprint != lastAudioFingerprint) {
+                    speechCapture.reset(); playedUntil = player.currentPosition / 1000.0
+                    lastAudioFingerprint = fingerprint
+                }
                 if (!preferredQualityApplied && (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality == PreferredVideoQuality.LOW && lowestVideoTrack(tracks) != null) {
                     preferredQualityApplied = true
                     applyLowestVideoTrack(player, tracks)
                 }
-                if (request?.preferEmbeddedSubtitles != true || embeddedSubtitlesActive) return
+                applySavedAudioChoice(tracks)
+                val preferences = getSharedPreferences(com.aliflix.app.data.PlaybackProviderRepository.PREFS_NAME, MODE_PRIVATE)
+                val automaticEnabled = preferences.getBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES, true)
+                val choices = getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
+                val manual = scopedManualSubtitleChoice(choices.getString("manual-owner", null), choices.getString("manual-content", null),
+                    if (choices.contains("enabled")) choices.getBoolean("enabled", false) else null, selection) != null
+                if (request?.preferEmbeddedSubtitles != true || embeddedSubtitlesActive || !automaticEnabled || manual) return
                 val language = canonicalSubtitleLanguageCode(request?.subtitleLanguage.orEmpty())
                 val match = tracks.groups.asSequence().filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { group ->
                     (0 until group.length).asSequence().map { group to it }
@@ -142,13 +301,28 @@ class NativePlaybackService : MediaSessionService() {
                 } ?: return
                 embeddedSubtitlesActive = true
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                    .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second)).build()
+                    .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second))
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build()
             }
             override fun onEvents(player: Player, events: Player.Events) {
                 if (releasing) return
+                updateBoost()
                 playbackReady = player.playbackState == Player.STATE_READY
+                if (playbackReady) {
+                    PlaybackStartupTiming.mark("ready")
+                    applySavedAudioChoice(player.currentTracks)
+                }
                 playbackFailure = player.playerError
                 hasSelectedAudio = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
+                val audioOnly = playbackReady && hasSelectedAudio && player.currentTracks.groups.none { it.type == C.TRACK_TYPE_VIDEO }
+                // Cast receivers and audio-only media do not emit a local first
+                // video frame. Confirm their resumed media clock before saving.
+                if (playbackReady && (audioOnly || player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) && restorePendingResume()) {
+                    if (audioOnly) {
+                        renderedStreamUrl = activeStreamUrl
+                        releaseStartupMute()
+                    }
+                }
                 updateWifiLock()
                 updateDisplay()
                 if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) || events.contains(Player.EVENT_IS_PLAYING_CHANGED) || events.contains(Player.EVENT_POSITION_DISCONTINUITY) || events.contains(Player.EVENT_DEVICE_INFO_CHANGED)) saveProgress(true)
@@ -198,6 +372,7 @@ class NativePlaybackService : MediaSessionService() {
         }, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         activeService = this
         handler.post(progressTask)
+        handler.post(captionTask)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -219,9 +394,12 @@ class NativePlaybackService : MediaSessionService() {
                             .setContentTitle(next.title).setContentText("Preparing video").setOnlyAlertOnce(true).build(),
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
                 }
+                activeRequestId = intent.getStringExtra("requestFile")
                 load(next)
             }.onFailure {
                 android.util.Log.e("AliflixPlayback", "Unable to start native playback", it)
+                playbackFailure = androidx.media3.common.PlaybackException("Unable to start native playback", it,
+                    androidx.media3.common.PlaybackException.ERROR_CODE_UNSPECIFIED)
                 player.stop(); player.clearMediaItems(); stopSelf()
             }
         }
@@ -230,21 +408,51 @@ class NativePlaybackService : MediaSessionService() {
     }
 
     private fun load(next: NativePlaybackRequest) {
+        audioSelection.reset()
+        cineJoyRecovery.reset(false)
+        speechCapture.reset()
+        embeddedSyncReference.reset(); playedUntil = 0.0
+        lastAudioFingerprint = ""
         saveProgress(true)
+        pendingResumeMs = next.positionMs.takeIf { it > 0 }
         player.stop(); player.clearMediaItems()
         relay?.close(); relay = null
         request = next
         preferredQualityApplied = false
+        preferredAudioLabelApplied = false
+        val preferredAudio = next.sourceAudioLanguage.takeIf { it.isNotBlank() }?.substringBefore('-')
+            ?: getSharedPreferences("native-audio-choice", MODE_PRIVATE).getString("language", null)
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .setPreferredAudioLanguage(preferredAudio)
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+            .build()
         player.trackSelectionParameters = preferredQualityParameters(player.trackSelectionParameters,
             (application as AliflixApplication).playerSettingsStore.settings.value.preferredVideoQuality)
+        // CineJoy can mislabel dimensions (Dark's 1080p decodes to 2160x1080).
+        // Keep its AVC quality ladder for Auto rather than forcing that heavy rendition.
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setMinVideoSize(0, 0)
+            .build()
+        externalCaptionCues = if (next.offlineDownloadId.isNotBlank() && !next.offlineAutoSubtitles) emptyList()
+            else parseTimedTextSubtitleCues(next.subtitlesVtt)
+        originalCaptionJson = externalCaptionCues.takeIf { it.isNotEmpty() }?.let(::subtitleCuesJson)
+        val delay = (application as AliflixApplication).playerSettingsStore.settings.value.subtitleDelaySeconds
+        val initialVtt = if (externalCaptionCues.isEmpty()) next.subtitlesVtt else correctedMobileVtt(externalCaptionCues, null, delay)
+        val prepared = next.copy(subtitlesVtt = initialVtt)
+        request = prepared
+        externalCaptionCues = parseTimedTextSubtitleCues(initialVtt)
         embeddedSubtitlesActive = false
+        embeddedLanguageSample.clear()
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setPreferredTextLanguage(next.subtitleLanguage)
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, next.subtitlesVtt.isBlank() && !next.preferEmbeddedSubtitles).build()
-        relay = runCatching { CastStreamRelay(next, lanAddress()) }.getOrNull()
+            .setSelectUndeterminedTextLanguage(false)
+            // Enable embedded text only after onTracksChanged finds this exact language.
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, next.subtitlesVtt.isBlank()).build()
+        relay = if (next.offlineDownloadId.isBlank()) runCatching { CastStreamRelay(prepared, lanAddress()) }.getOrNull() else null
         playbackReady = false; playbackFailure = null; hasSelectedAudio = false
-        activeRequest = next
+        activeRequest = prepared
         activeStreamUrl = next.url
         renderedStreamUrl = null
         selection = runCatching {
@@ -252,17 +460,19 @@ class NativePlaybackService : MediaSessionService() {
             PlaybackSelection(Media.fromJson(json.getJSONObject("media")),
                 seasonNumber = json.optInt("season", 1), episodeNumber = json.optInt("episode", 1),
                 episodeTitle = json.optString("episodeTitle").takeIf { it.isNotBlank() },
-                source = PlaybackSource(PlaybackProviderId.valueOf(json.getString("provider")), json.getString("baseUrl")))
+                source = PlaybackSource(PlaybackProvider.valueOf(json.getString("provider")), json.getString("baseUrl")))
         }.getOrNull()
         val headers = mutableMapOf("Referer" to next.referer, "Origin" to java.net.URI(next.referer).let { "${it.scheme}://${it.rawAuthority}" })
         // Cookie forwarding for segmented streams is handled per origin by the relay.
         httpFactory.setUserAgent(next.userAgent).setDefaultRequestProperties(headers)
-        val itemBuilder = MediaItem.Builder().setMediaId(selection?.key ?: next.title).setUri(next.url)
+        val saved = if (next.offlineDownloadId.isNotBlank()) com.aliflix.app.downloads.OfflineDownloads.get(this).manager.downloadIndex.getDownload(next.offlineDownloadId) else null
+        require(next.offlineDownloadId.isBlank() || saved?.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) { "Download unavailable" }
+        val itemBuilder = (saved?.request?.toMediaItem()?.buildUpon() ?: MediaItem.Builder()).setMediaId(selection?.key ?: next.title).setUri(next.url)
             .setMimeType(next.mimeType).setMediaMetadata(MediaMetadata.Builder().setTitle(next.title)
                 .setSubtitle(selection?.episodeTitle)
                 .setArtworkUri(selection?.media?.backdropUrl?.let(android.net.Uri::parse)).build())
         if (next.subtitlesVtt.isNotBlank()) {
-            val file = java.io.File(cacheDir, "native-playback-subtitles.vtt").apply { writeText(next.subtitlesVtt) }
+            val file = java.io.File(cacheDir, "native-playback-subtitles.vtt").apply { writeText(initialVtt) }
             val lang = next.subtitleLanguage.ifBlank { "en" }
             itemBuilder.setSubtitleConfigurations(listOf(MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(file))
                 .setId("aliflix-external").setMimeType("text/vtt").setLanguage(lang).setLabel(next.subtitleLabel)
@@ -273,16 +483,75 @@ class NativePlaybackService : MediaSessionService() {
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                 .build()
         }
+        if (next.offlineDownloadId.isNotBlank() && !next.offlineAutoSubtitles) {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+        }
         originalItem = itemBuilder.build()
-        player.setMediaItem(checkNotNull(originalItem), next.positionMs)
+        cineJoyRecovery.reset(next.offlineDownloadId.isBlank() && next.referer == CineJoyNativeCatalog.REFERER)
+        // Even direct/offline requests cannot emit local sound ahead of the first video frame.
+        startupVolume = startupVolume ?: localPlayer.volume
+        localPlayer.volume = 0f
+        videoClock.reset()
+        player.setMediaItem(localCaptionItem(checkNotNull(originalItem)), next.positionMs)
+        PlaybackStartupTiming.mark("media3_prepare")
         player.prepare()
         player.playWhenReady = next.playing
         updateDisplay()
     }
 
+    private fun restorePendingResume(): Boolean {
+        val pending = pendingResumeMs ?: return true
+        val duration = player.duration
+        if (duration <= 0) return false
+        val target = pending.coerceAtMost((duration - 1_000).coerceAtLeast(0))
+        if (kotlin.math.abs(player.currentPosition - target) > 3_000) {
+            player.seekTo(target)
+            return false
+        }
+        pendingResumeMs = null
+        return true
+    }
+
+    private fun releaseStartupMute() {
+        startupVolume?.let { localPlayer.volume = it }
+        startupVolume = null
+    }
+
+    private fun applySavedAudioChoice(tracks: androidx.media3.common.Tracks) {
+        if (preferredAudioLabelApplied) return
+        val savedLabel = selection?.let {
+            getSharedPreferences("native-audio-choice", MODE_PRIVATE).getString("label:${it.source.identity.name}:${it.key}", null)
+        }
+        if (savedLabel.isNullOrBlank()) { preferredAudioLabelApplied = true; return }
+        val match = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { group ->
+            (0 until group.length).map { group to it }
+        }.firstOrNull { (group, index) -> group.isTrackSupported(index, true) && group.getTrackFormat(index).label == savedLabel } ?: return
+        // v142 could persist a failed choice. Establish default audio first, then
+        // restore the preference transactionally so a bad saved track cannot trap startup.
+        if (cineJoyRecovery.enabled && player.playbackState != Player.STATE_READY) return
+        preferredAudioLabelApplied = true
+        if (cineJoyRecovery.enabled) cineJoyRecovery.select(match.first.mediaTrackGroup, match.second)
+        else player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+            .setOverrideForType(androidx.media3.common.TrackSelectionOverride(match.first.mediaTrackGroup, match.second)).build()
+    }
+
+    private fun saveAudioChoice(language: String?, label: String?) {
+        val prefs = getSharedPreferences("native-audio-choice", MODE_PRIVATE).edit()
+        val key = selection?.let { "label:${it.source.identity.name}:${it.key}" }
+        if (!language.isNullOrBlank() && language != "und") {
+            prefs.putString("language", language)
+            key?.let(prefs::remove)
+        } else if (!label.isNullOrBlank()) {
+            prefs.remove("language")
+            key?.let { prefs.putString(it, label) }
+        }
+        prefs.remove("label").apply()
+    }
+
     private fun relayConverter(): MediaItemConverter = object : MediaItemConverter {
         private val delegate = DefaultMediaItemConverter()
-        override fun toMediaItem(item: MediaQueueItem): MediaItem = originalItem ?: delegate.toMediaItem(item)
+        override fun toMediaItem(item: MediaQueueItem): MediaItem = localCaptionItem(originalItem ?: delegate.toMediaItem(item))
         override fun toMediaQueueItem(item: MediaItem): MediaQueueItem {
             val current = checkNotNull(request)
             val currentRelay = relay ?: CastStreamRelay(current, lanAddress()).also { relay = it }
@@ -293,6 +562,16 @@ class NativePlaybackService : MediaSessionService() {
             val queueItem = delegate.toMediaQueueItem(builder.build())
             return withCastSubtitles(queueItem, current, currentRelay.subtitleUrl)
         }
+    }
+
+    private fun localCaptionItem(item: MediaItem): MediaItem {
+        // Local external captions already render from the owned cue timeline.
+        // Keep their configuration in originalItem and the Cast converter, but
+        // do not merge a redundant text source into local audio/video: its
+        // renderer can prevent EOS after seeking past its final short cue.
+        val configs = item.localConfiguration?.subtitleConfigurations ?: return item
+        return if (configs.none { it.id == "aliflix-external" }) item else item.buildUpon()
+            .setSubtitleConfigurations(configs.filterNot { it.id == "aliflix-external" }).build()
     }
 
     private fun lanAddress(): String {
@@ -384,13 +663,24 @@ class NativePlaybackService : MediaSessionService() {
 
     private fun saveProgress(urgent: Boolean) {
         val current = selection ?: return
-        if (player.currentMediaItem?.mediaId != current.key || player.playbackState !in setOf(Player.STATE_READY, Player.STATE_ENDED)) return
+        if (!canRecordProgress || player.currentMediaItem?.mediaId != current.key ||
+            player.playbackState !in setOf(Player.STATE_READY, Player.STATE_BUFFERING, Player.STATE_ENDED)) return
         val duration = player.duration
         if (duration <= 0) return
         (application as AliflixApplication).playbackProgressStore.savePlayerProgress(current, player.currentPosition / 1000.0, duration / 1000.0, urgent, ended = player.playbackState == Player.STATE_ENDED)
     }
 
     override fun onDestroy() {
+        partyBridge?.close(); partyBridge = null
+        releasing = true
+        subtitlePreferences.unregisterOnSharedPreferenceChangeListener(subtitlePreferenceListener)
+        preferenceScope.cancel()
+        audioRoutes.unregisterAudioDeviceCallback(routeCallback)
+        boost.close()
+        AudioBoostStatus.update(AudioBoostAvailability.OFF)
+        speechCapture.dialogueFrameObserver = null
+        if (android.os.Build.VERSION.SDK_INT >= 34) dialogueRecognition?.close()
+        dialogueRecognition = null
         saveProgress(true)
         releasing = true
         if (activeService === this) activeService = null
@@ -418,7 +708,50 @@ class NativePlaybackService : MediaSessionService() {
     companion object {
         private var activeService: NativePlaybackService? = null
 
+        internal val handlesCineJoyRecovery get() = activeService?.let {
+            it.cineJoyRecovery.enabled && it.cineJoyRecovery.hasPlayed && !it.cineJoyRecovery.exhausted &&
+                it.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL
+        } == true
+        internal val cineJoyRecoveryExhausted get() = activeService?.cineJoyRecovery?.let { it.enabled && it.exhausted } == true
+        internal val cineJoyRecoveryMessage get() = activeService?.cineJoyRecovery?.message
+
+        internal fun retryCineJoyPlayback(manual: Boolean = false): Boolean {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            if (!handlesCineJoyRecovery) return false
+            activeService?.cineJoyRecovery?.recover(manual)
+            return true
+        }
+
+        internal fun saveAudioPreference(language: String?, label: String?) {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            activeService?.saveAudioChoice(language, label)
+        }
+
+        internal fun selectAudio(group: androidx.media3.common.TrackGroup, index: Int) {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            val service = activeService ?: return
+            service.audioSelection.select(group, index)
+        }
+
+        internal val audioSelectionState get() = activeService?.audioSelection?.state
+
         internal val isPlaybackRequested get() = activeService?.player?.playWhenReady == true
+
+        internal val decodedAudioEvidence get() = activeService?.speechCapture?.let {
+            it.generation to it.decodedFrameCount
+        }
+
+        /** Main-thread diagnostic for device acceptance; never exposes media bytes. */
+        internal fun playbackEvidence(): String {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            val service = activeService ?: return "Service absent"
+            return listOf("local" to service.localPlayer, "session" to service.player).joinToString("\n") { (name, player) ->
+                "$name state=${player.playbackState},position=${player.currentPosition},buffer=${player.totalBufferedDuration},playing=${player.isPlaying},requested=${player.playWhenReady},error=${player.playerError?.stackTraceToString()}"
+            } + "\nrecovery=${service.cineJoyRecovery.message},enabled=${service.cineJoyRecovery.enabled},hasPlayed=${service.cineJoyRecovery.hasPlayed}"
+        }
+
+        internal fun positionForParty(current: PlaybackSelection): Long? = activeService
+            ?.takeIf { mobileSameContent(it.selection, current) }?.player?.currentPosition
 
         internal fun pauseFromBack() {
             check(Looper.myLooper() == Looper.getMainLooper())
@@ -451,9 +784,105 @@ class NativePlaybackService : MediaSessionService() {
             }
         }
 
+        internal fun currentCaptionCues(): List<androidx.media3.common.text.Cue> {
+            val service = activeService ?: return emptyList()
+            if (embeddedSubtitlesActive || service.externalCaptionCues.isEmpty()) return service.localPlayer.currentCues.cues.map(::mobileCaptionCue)
+            val seconds = service.player.currentPosition / 1000.0
+            return service.externalCaptionCues.asSequence().filter { seconds >= it.startSeconds && seconds < it.endSeconds }
+                .map { androidx.media3.common.text.Cue.Builder().setText(mobileCaptionText(it.text)).build() }.toList()
+        }
+
+        internal fun speechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.windows(it.playedUntil) }.orEmpty()
+        internal val canRecordProgress: Boolean get() = activeService?.let {
+            it.pendingResumeMs == null && (renderedStreamUrl == activeStreamUrl ||
+                it.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE)
+        } == true
+        internal fun quickSpeechEvidence(): List<SpeechWindow> = activeService?.let { it.speechCapture.quickWindows(it.playedUntil) }.orEmpty()
+        internal fun recentSpeechWindow(positionSeconds: Double): SpeechWindow? = activeService?.speechCapture?.recentWindow(positionSeconds)
+        internal fun configureDialogueRecognition(identity: String?, captionLanguage: String, originalLanguage: String = "") {
+            val service = activeService ?: return
+            if (android.os.Build.VERSION.SDK_INT < 34) return
+            val language = dialogueRecognitionLanguage(selectedAudioLanguage(), captionLanguage, originalLanguage)
+            val enabledIdentity = identity?.takeIf { language != null && localSpeechPermissionGranted(service) }
+            if (enabledIdentity == service.dialogueRecognitionIdentity) return
+            service.speechCapture.dialogueFrameObserver = null
+            service.dialogueRecognition?.close(); service.dialogueRecognition = null
+            service.dialogueRecognitionIdentity = enabledIdentity
+            if (enabledIdentity != null && android.speech.SpeechRecognizer.isOnDeviceRecognitionAvailable(service)) {
+                val recognition = RecentDialogueRecognition(service.applicationContext, requireNotNull(language))
+                service.dialogueRecognition = recognition
+                service.speechCapture.dialogueFrameObserver = recognition::offer
+            }
+        }
+        internal fun playedDialoguePcm(position: Double): PlayedDialoguePcm? = activeService?.speechCapture?.playedDialoguePcm(position)
+        internal fun pauseContinuousRecognition(paused: Boolean) {
+            if (android.os.Build.VERSION.SDK_INT >= 34) activeService?.dialogueRecognition?.pauseForFiniteRecognition(paused)
+        }
+        internal fun recentDialogueWords(position: Double): List<HeardWord> {
+            val service = activeService ?: return emptyList()
+            if (android.os.Build.VERSION.SDK_INT < 34) return emptyList()
+            return service.dialogueRecognition?.current(position, service.speechCapture.generation,
+                service.speechCapture.continuityEpoch()).orEmpty()
+        }
+        internal fun dialogueWordHistory(position: Double): List<HeardWord> {
+            val service = activeService ?: return emptyList()
+            if (android.os.Build.VERSION.SDK_INT < 34) return emptyList()
+            return service.dialogueRecognition?.observedHistory(position, service.speechCapture.generation).orEmpty()
+        }
+        internal fun speechDiagnostics(): String = activeService?.let { it.speechCapture.diagnostics() +
+            if (android.os.Build.VERSION.SDK_INT >= 34) ";${it.dialogueRecognition?.diagnostics()}" else "" } ?: "service_absent"
+        internal fun debugObserveSpeech(observer: ((Double, ShortArray) -> Unit)?) {
+            if (com.aliflix.app.BuildConfig.DEBUG) activeService?.speechCapture?.debugFrameObserver = observer
+        }
+        internal fun embeddedReference(): EmbeddedSyncReference.Reference? = activeService?.embeddedSyncReference?.observed()
+        internal fun originalSubtitles(): String? = activeService?.originalCaptionJson
+        internal fun rememberOriginalSubtitles(json: String?) { activeService?.originalCaptionJson = json }
+        internal val speechGeneration: Long get() = activeService?.speechCapture?.generation ?: -1L
+        internal val speechContinuity: Long get() = activeService?.speechCapture?.continuityEpoch() ?: -1L
+        internal val speechCaptureUnavailable: Boolean get() = activeService?.speechCapture?.unavailable == true
+
+        internal fun selectedAudioFingerprint(): String {
+            val service = activeService ?: return ""
+            val selected = service.localPlayer.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { group ->
+                (0 until group.length).filter { group.isTrackSelected(it) }.map { index ->
+                    val f = group.getTrackFormat(index)
+                    audioSyncFingerprint(f, service.localPlayer.currentMediaItem?.localConfiguration?.subtitleConfigurations?.isNotEmpty() == true)
+                }
+            }.joinToString(";")
+            // HLS duration changes as its timeline loads; it is not an audio-track
+            // identity. Exact source/rendition/content are already in the cache key.
+            return selected.ifBlank { service.lastAudioFingerprint }
+        }
+
+        internal fun selectedVideoFrameRate(): Float = activeService?.let { service ->
+            service.videoClock.frameRate.takeIf { it > 0 } ?: service.localPlayer.videoFormat?.frameRate
+        } ?: -1f
+
+        internal fun selectedAudioLanguage(): String = activeService?.let { service ->
+            val metadata = service.localPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+                .flatMap { group -> (0 until group.length).filter { group.isTrackSelected(it) }
+                    .map { group.getTrackFormat(it).language.orEmpty() } }
+                .firstOrNull { it.isNotBlank() && it != "und" }.orEmpty()
+            // VOE often exposes an unlabeled single soundtrack. The resolved
+            // episode edition is authoritative before a show's original language.
+            resolvedDialogueLanguage(metadata, service.request?.sourceAudioLanguage.orEmpty())
+        }.orEmpty()
+
+        internal fun refreshAutomaticSubtitlePreferences() { activeService?.applyAutomaticSubtitlePreferences() }
+
         internal fun updateSubtitles(vtt: String, language: String = "", label: String = "", automatic: Boolean = false) {
             val service = activeService ?: return
-            if (automatic && embeddedSubtitlesActive) return
+            if (automatic) {
+                val preferences = service.subtitlePreferences
+                val choices = service.getSharedPreferences("native-subtitle-choice", MODE_PRIVATE)
+                val manual = scopedManualSubtitleChoice(choices.getString("manual-owner", null), choices.getString("manual-content", null),
+                    if (choices.contains("enabled")) choices.getBoolean("enabled", false) else null, service.selection) != null
+                if (!automaticSubtitleMayActivate(
+                    preferences.getBoolean(com.aliflix.app.data.PlaybackProviderRepository.KEY_AUTO_DISPLAY_SUBTITLES, true),
+                    manual, language, preferences.getString(com.aliflix.app.data.PlaybackProviderRepository.KEY_PREFERRED_SUBTITLE_LANGUAGE, "EN").orEmpty(),
+                    embeddedSubtitlesActive)) return
+            }
             if (!automatic) {
                 embeddedSubtitlesActive = false
                 service.request = service.request?.copy(preferEmbeddedSubtitles = false)
@@ -466,6 +895,7 @@ class NativePlaybackService : MediaSessionService() {
             )
             service.request = updated
             activeRequest = updated
+            service.externalCaptionCues = parseTimedTextSubtitleCues(vtt)
             service.relay?.updateSubtitles(vtt)
             val lang = updated.subtitleLanguage.ifBlank { "en" }
             val configs = if (vtt.isBlank()) emptyList() else {
@@ -478,25 +908,20 @@ class NativePlaybackService : MediaSessionService() {
             }
             service.player.trackSelectionParameters = service.player.trackSelectionParameters.buildUpon()
                 .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                .setPreferredTextLanguage(lang).setSelectUndeterminedTextLanguage(true)
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, vtt.isBlank()).build()
+                .setPreferredTextLanguage(lang).setSelectUndeterminedTextLanguage(false)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
             val item = service.originalItem?.buildUpon()?.setSubtitleConfigurations(configs)?.build() ?: return
             service.originalItem = item
-            // Progressive sources may accept replaceMediaItem without rebuilding their merged
-            // text sources. Explicitly prepare the updated item at the same playback position.
-            if (service.player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL && service.player.currentMediaItemIndex >= 0) {
-                val position = service.player.currentPosition
-                val playing = service.player.playWhenReady
-                service.player.setMediaItem(item, position)
-                service.player.prepare()
-                service.player.playWhenReady = playing
-            }
+            // The Activity renders local external cues against currentPosition. Keep
+            // the updated item for Cast handoff, without interrupting native decoding.
+
         }
 
         internal var embeddedSubtitlesActive = false
             private set
         internal var playbackReady = false
             private set
+        internal var activeRequestId: String? = null
         internal var playbackFailure: androidx.media3.common.PlaybackException? = null
             private set
         internal var hasSelectedAudio = false

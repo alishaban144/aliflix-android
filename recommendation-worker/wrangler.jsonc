@@ -8,13 +8,20 @@
   ],
   "observability": {
     "enabled": true,
-    "logs": { "enabled": true, "invocation_logs": true }
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
   },
   "placement": {
     "mode": "smart"
   },
+  "ai": {
+    "binding": "AI"
+  },
   "vars": {
-    "GEMINI_GENERATION_MODEL": "gemini-3.5-flash",
+    "AI_GENERATION_MODEL": "cloudflare-gpt-oss-120b",
+    "GEMINI_GENERATION_MODEL": "gemini-3.8-flash",
     "GEMINI_EMBEDDING_MODEL": "gemini-embedding-001"
   },
   "durable_objects": {
@@ -22,20 +29,60 @@
       {
         "name": "RECOMMENDATION_SESSIONS",
         "class_name": "RecommendationSession"
+      },
+      {
+        "name": "WATCH_PARTIES",
+        "class_name": "WatchParty"
+      },
+      {
+        "name": "TALK_SESSIONS",
+        "class_name": "TalkSession"
+      },
+      {
+        "name": "ASK_RESEARCH",
+        "class_name": "AskResearch"
       }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["RecommendationSession"]
+      "new_sqlite_classes": [
+        "RecommendationSession"
+      ]
+    },
+    {
+      "tag": "v2-watch-party",
+      "new_sqlite_classes": [
+        "WatchParty"
+      ]
+    },
+    {
+      "tag": "v3-talk",
+      "new_sqlite_classes": [
+        "TalkSession"
+      ]
+    },
+    {
+      "tag": "v4-ask-research",
+      "new_sqlite_classes": [
+        "AskResearch"
+      ]
     }
   ],
   "ratelimits": [
     {
       "name": "RECOMMENDATION_RATE_LIMITER",
       "namespace_id": "1001",
-      "simple": { "limit": 30, "period": 60 }
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
     }
-  ]
+  ],
+  "triggers": {
+    "crons": [
+      "7 0 * * *"
+    ]
+  }
 }

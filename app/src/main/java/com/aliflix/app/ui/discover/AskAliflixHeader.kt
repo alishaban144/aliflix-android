@@ -1,5 +1,8 @@
 package com.aliflix.app.ui.discover
 
+import com.aliflix.app.ui.common.*
+import com.aliflix.app.ui.common.AliflixSurface
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,8 +15,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AddCircle
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -23,8 +24,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aliflix.app.ui.launch.AnimatedAliflixHeatmapLogo
-import com.aliflix.app.ui.theme.AliflixAccentPrimary
-import com.aliflix.app.ui.theme.AliflixBorderSubtle
 import com.aliflix.app.ui.theme.AliflixContentPrimary
 
 @Composable
@@ -34,25 +33,26 @@ fun AskAliflixHeader(
     showNewSearch: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val touchTracker = LocalAskTouchTracker.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
-            .padding(start = 8.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = AliflixSpacing.Small, end = 10.dp, top = AliflixSpacing.Small, bottom = AliflixSpacing.Small),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
+            AliflixIconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                     contentDescription = "Back to Search",
                     tint = AliflixContentPrimary,
                 )
             }
-            AnimatedAliflixHeatmapLogo(
-                modifier = Modifier.size(42.dp),
-            )
+            if (touchTracker != null) DiscoverLiveOrb(touchTracker, Modifier.size(38.dp))
+            else AnimatedAliflixHeatmapLogo(modifier = Modifier.size(42.dp))
             Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = "Ask Aliflix",
@@ -66,16 +66,20 @@ fun AskAliflixHeader(
             )
         }
 
+        if (!com.aliflix.app.BuildConfig.IS_TV) {
+            AliflixIconButton(onClick = {
+                context.startActivity(android.content.Intent().setClassName(context, "com.aliflix.app.talk.TalkVoiceActivity"))
+            }) {
+                AliflixCompanionIcon(Modifier.size(27.dp))
+            }
+        }
+
         if (showNewSearch) {
-            Surface(
+            AliflixSurface(
                 onClick = onReset,
                 modifier = Modifier.heightIn(min = 48.dp),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp),
-                color = AliflixAccentPrimary.copy(alpha = 0.2f),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    AliflixBorderSubtle,
-                ),
+                shape = AliflixCorners.Card,
+                level = AliflixSurfaceLevel.Content,
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
@@ -99,3 +103,5 @@ fun AskAliflixHeader(
         }
     }
 }
+
+internal val LocalAskTouchTracker = androidx.compose.runtime.staticCompositionLocalOf<DiscoverTouchTracker?> { null }

@@ -27,6 +27,9 @@ class NativeProviderPlaybackTest {
         val selections = if (timingTitles) listOf(
             PlaybackSelection(Media(1339713, MediaType.MOVIE, "Obsession", year = "2026"), source = PlaybackSource.moviepire()),
             PlaybackSelection(Media(1233413, MediaType.MOVIE, "Sinners", year = "2025"), source = PlaybackSource.moviepire()),
+        ) else if (InstrumentationRegistry.getArguments().getString("liveTitle") == "undone") listOf(
+            PlaybackSelection(Media(86340, MediaType.TV, "Undone", year = "2019", imdbId = "tt8101850"), 1, 1, "The Crash",
+                source = PlaybackSource(MobilePlaybackProvider.FLIXER))
         ) else if (InstrumentationRegistry.getArguments().getString("liveTitle") == "got") listOf(
             PlaybackSelection(Media(1399, MediaType.TV, "Game of Thrones"), 1, 1, "Winter Is Coming",
                 source = PlaybackSource(PlaybackProviderId.MOVIEPIRE, "https://moviepire.ru"))
@@ -63,6 +66,9 @@ class NativeProviderPlaybackTest {
                         android.util.Log.i("AliflixProviderTest", "$index $stage")
                         last = stage
                     }
+                    if (state.stage != null) scenario.onActivity {
+                        assertFalse("Audio must not play behind preparation", it.playbackController?.isPlaying == true)
+                    }
                     if (state.error != null) break
                     if (state.ready && state.stage == null) {
                         if (autoSubtitles) {
@@ -75,7 +81,7 @@ class NativeProviderPlaybackTest {
                             if (forceFallback && checkedStream == null) scenario.onActivity {
                                 assertTrue("Fallback must reapply saved position before playback", it.playbackController!!.currentPosition >= 270000)
                                 val actual = nativeSelection(requireNotNull(NativePlaybackService.activeRequest).selectionJson)
-                                assertNotEquals("Unavailable source must fall back automatically", selection.source.provider, actual.source.provider)
+                                assertNotEquals("Unavailable source must fall back automatically", selection.source.identity, actual.source.identity)
                                 assertEquals(com.aliflix.app.data.playbackProgressKey(selection), com.aliflix.app.data.playbackProgressKey(actual))
                             }
                             checkedStream = stream; stableSince = android.os.SystemClock.elapsedRealtime()

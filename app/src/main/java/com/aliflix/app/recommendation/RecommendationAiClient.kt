@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -24,13 +25,49 @@ class RecommendationAiClientException(
 class RecommendationAiClient(
     private val baseUrl: String,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val metadataCacheDir: java.io.File? = null,
+    private val research: AskResearchClient? = null,
+    private val researchLibrary: () -> JSONArray = { JSONArray() },
 ) {
-    suspend fun getRecommendations(request: V3RecommendationRequest): V3RecommendationResponse = withContext(ioDispatcher) {
+    private val detailsLocks = Array(32) { kotlinx.coroutines.sync.Mutex() }
+    suspend fun getRecommendations(request: V3RecommendationRequest, onPartial: (suspend (V3RecommendationResponse) -> Unit)? = null): V3RecommendationResponse = withContext(ioDispatcher) {
+        if (!com.aliflix.app.BuildConfig.IS_TV && research != null) {
+            val body=request.toJson().put("aiModel", "gemini-3.8-flash").put("geminiModel", "gemini-3.8-flash").put("library", researchLibrary())
+            if(onPartial==null)return@withContext V3RecommendationResponse.fromJson(research.request("recommendations",body))
+            var latest:V3RecommendationResponse?=null
+            research.recommendations(body).collect{event->
+                val value=V3RecommendationResponse.fromJson(event)
+                latest=value
+                if(value.results.isNotEmpty())onPartial(value)
+            }
+            return@withContext requireNotNull(latest){"Missing research response"}
+        }
         V3RecommendationResponse.fromJson(JSONObject(postJson("$baseUrl/v3/recommendations", request.toJson())))
     }
 
     suspend fun getTitleDetails(mediaType: String, tmdbId: Int): V3TitleDetails = withContext(ioDispatcher) {
-        V3TitleDetails.fromJson(JSONObject(getJson("$baseUrl/v3/titles/$mediaType/$tmdbId")))
+        if (metadataCacheDir == null) return@withContext V3TitleDetails.fromJson(JSONObject(getJson("$baseUrl/v3/titles/$mediaType/$tmdbId")))
+        require(mediaType in setOf("movie", "tv") && tmdbId > 0)
+        val detailsLock = detailsLocks[(31 * mediaType.hashCode() + tmdbId) and 31]
+        detailsLock.lock()
+        try {
+            val file = metadataCacheDir?.let { java.io.File(it, "$mediaType-$tmdbId.json") }
+            fun parse(raw: String) = V3TitleDetails.fromJson(JSONObject(raw)).also {
+                check(it.media.tmdbId == tmdbId && it.media.mediaType == mediaType)
+            }
+            val cached = file?.takeIf { it.isFile && System.currentTimeMillis() - it.lastModified() < 7L * 86_400_000 }
+                ?.let { runCatching { parse(it.readText()) }.getOrNull() }
+            if (cached != null) cached else {
+                val raw = getJson("$baseUrl/v3/titles/$mediaType/$tmdbId")
+                val parsed = parse(raw)
+                if (file != null) runCatching {
+                    file.parentFile?.mkdirs()
+                    file.writeText(raw)
+                    metadataCacheDir?.listFiles()?.sortedByDescending { it.lastModified() }?.drop(256)?.forEach { it.delete() }
+                }
+                parsed
+            }
+        } finally { detailsLock.unlock() }
     }
 
     suspend fun getSeasonDocument(tmdbId: Int, season: Int? = null): JSONObject = withContext(ioDispatcher) {
@@ -60,6 +97,23 @@ class RecommendationAiClient(
         JSONObject(getJson("$baseUrl/v3/search/titles?query=$encoded"))
             .optJSONArray("results")
             .toStringList { V3CatalogMedia.fromJson(it) }
+    }
+
+    suspend fun categories(): JSONObject = withContext(ioDispatcher) { JSONObject(getJson("$baseUrl/v3/categories")) }
+
+    suspend fun cataloguePage(
+        category: String?,
+        query: String,
+        filter: String,
+        page: Int,
+        excludedTmdbIds: Set<Int> = emptySet(),
+    ): JSONObject = withContext(ioDispatcher) {
+        val type = when (filter) { "Movies" -> "movie"; "Series" -> "tv"; else -> "all" }
+        val endpoint = if (category != null) "discover?category=${URLEncoder.encode(category, "UTF-8")}" else
+            "search/catalogue?query=${URLEncoder.encode(query.trim(), "UTF-8")}"
+        val exclusions = excludedTmdbIds.filter { it > 0 }.take(500).joinToString(",")
+        val exclusionQuery = if (exclusions.isBlank()) "" else "&exclude=$exclusions"
+        JSONObject(getJson("$baseUrl/v3/$endpoint&type=$type&page=$page$exclusionQuery"))
     }
 
     suspend fun searchCompanies(query: String): List<ProductionCompanyFilter> = withContext(ioDispatcher) {
@@ -117,10 +171,10 @@ class RecommendationAiClient(
             connection = URL(url).openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.connectTimeout = 8_000
-            // The Worker makes one quota-bounded provider attempt, then verifies
+            // The Worker generates an editorial list, then resolves
             // identities and metadata through TMDB. Keep the mobile deadline
-            // just above that bounded pipeline so failures return promptly.
-            connection.readTimeout = 40_000
+            // above the bounded generation and identity-resolution pipeline.
+            connection.readTimeout = 120_000
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             continuation.invokeOnCancellation { connection.disconnect() }
@@ -184,7 +238,7 @@ data class V3RecommendationFilters(
 data class V3RecommendationRequest(
     val requestId: String,
     val mode: String = "describe",
-    val aiModel: String = RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue,
+    val aiModel: String = RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B.workerValue,
     val query: String,
     val mediaType: String,
     val anchor: V3RecommendationAnchor? = null,
@@ -192,7 +246,7 @@ data class V3RecommendationRequest(
     val previousQuery: String? = null,
     val refinementQuery: String? = null,
     val filters: V3RecommendationFilters = V3RecommendationFilters(),
-    val pageSize: Int = 20,
+    val pageSize: Int = 24,
     val cursor: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -222,6 +276,8 @@ data class V3RecommendationResponse(
     val totalResults: Int,
     val nextCursor: String?,
     val hasMore: Boolean,
+    val inProgress: Boolean = false,
+    val incomplete: Boolean = false,
 ) {
     companion object {
         fun fromJson(json: JSONObject): V3RecommendationResponse {
@@ -235,6 +291,8 @@ data class V3RecommendationResponse(
                 nextCursor = json.optString("nextCursor")
                     .takeIf { it.isNotBlank() && it != "null" },
                 hasMore = json.optBoolean("hasMore"),
+                inProgress = json.optBoolean("inProgress"),
+                incomplete = json.optBoolean("incomplete"),
             )
         }
     }
@@ -266,12 +324,14 @@ data class V3CatalogPerson(
     val tmdbId: Int,
     val name: String,
     val profilePath: String?,
+    val role: String? = null,
 ) {
     companion object {
         fun fromJson(json: JSONObject) = V3CatalogPerson(
             tmdbId = json.getInt("tmdbId"),
             name = json.getString("name"),
             profilePath = json.nullableString("profilePath"),
+            role = json.nullableString("role"),
         )
     }
 }
@@ -399,6 +459,8 @@ data class V3Review(
 }
 
 data class V3TitleDetails(
+    val keywords: List<com.aliflix.app.model.MediaKeyword> = emptyList(),
+    val trailerKey: String? = null,
     val media: V3CatalogMedia,
     val imdbId: String? = null,
     val status: String?,
@@ -409,6 +471,8 @@ data class V3TitleDetails(
 ) {
     companion object {
         fun fromJson(json: JSONObject) = V3TitleDetails(
+            keywords = json.optJSONArray("keywords").toStringList { com.aliflix.app.model.MediaKeyword(it.getInt("id"), it.getString("name")) },
+            trailerKey = json.nullableString("trailerKey")?.takeIf { it.matches(Regex("[a-zA-Z0-9_-]{11}")) },
             media = V3CatalogMedia.fromJson(json),
             imdbId = json.nullableString("imdbId"),
             status = json.nullableString("status"),

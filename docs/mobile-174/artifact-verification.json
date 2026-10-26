@@ -1,0 +1,59 @@
+{
+  "aliflix-mobile.apk": {
+    "bytes": 26238353,
+    "sha256": "d495246d78c8b42186bc00dbcdd21317c3e70d82ac08b40ab2ea6069ff65b510",
+    "versionCode": 264,
+    "versionName": "3.1.174",
+    "abis": [
+      "arm64-v8a"
+    ],
+    "signer": "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47",
+    "zipValid": true,
+    "manifestMatches": true
+  },
+  "aliflix-mobile-compat.apk": {
+    "bytes": 66617839,
+    "sha256": "ffa3205780cbd82d3d6adf967445cbf1fd9d43afd6df6bd97c091cfe58f1712f",
+    "versionCode": 263,
+    "versionName": "3.1.173",
+    "abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86",
+      "x86_64"
+    ],
+    "signer": "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47",
+    "zipValid": true,
+    "manifestMatches": true
+  },
+  "nativeParity": {
+    "baselineBytes": 66266641,
+    "apkBytes": 26238353,
+    "reductionBytes": 40028288,
+    "reductionPercent": 60.40488456326012,
+    "sha256": "d495246d78c8b42186bc00dbcdd21317c3e70d82ac08b40ab2ea6069ff65b510",
+    "parity": {
+      "assets/silero-vad-8k.onnx": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+      "lib/arm64-v8a/libandroidx.graphics.path.so": "41e9a793c43a0f4fddb19e33f346bace464f30f888ba7b9eaf96294ea115bfb6",
+      "lib/arm64-v8a/libdatastore_shared_counter.so": "d3e48717c9aa147e0ab21063ba0e8e0211cabf8bf40b222640829519edbf58e1",
+      "lib/arm64-v8a/libonnxruntime.so": "df5d25c72a868dca773597c71e2000756d43fe4d70ade516d3693c54e12e0ada",
+      "lib/arm64-v8a/libonnxruntime4j_jni.so": "0695257178815f8c58c1719ba07d6d5d91a2b339634328cca2a0a98aa7ff2952",
+      "lib/arm64-v8a/libvad_jni.so": "4aed666f40c46824c4a165362b2374823fc9456cada04421ea0b916bd613a58a"
+    },
+    "compatibilityBridge": {
+      "versionCode": 263,
+      "abis": [
+        "arm64-v8a",
+        "armeabi-v7a",
+        "x86",
+        "x86_64"
+      ],
+      "nativeAndModelParity": true,
+      "sizeBytes": 66617839,
+      "sha256": "ffa3205780cbd82d3d6adf967445cbf1fd9d43afd6df6bd97c091cfe58f1712f"
+    },
+    "abiPackagingReductionBytes": 40379486,
+    "abiPackagingReductionPercent": 60.613623326928995
+  },
+  "growthFromV172Bytes": 144962
+}

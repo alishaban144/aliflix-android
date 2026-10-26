@@ -43,7 +43,14 @@ sealed interface PlaybackProgressMutation {
         val progress: PlaybackProgress,
         val urgentCloudSync: Boolean,
     ) : PlaybackProgressMutation
+
+    data class Removed(
+        val mediaKey: String,
+        val progressKeys: Set<String>,
+    ) : PlaybackProgressMutation
 }
+
+internal const val PLAYBACK_WATCHED_FRACTION = 0.8
 
 class PlaybackProgressStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(
@@ -85,8 +92,14 @@ class PlaybackProgressStore(context: Context) {
         val previous = progressFor(selection)
         if (previous != null && nowMillis < previous.updatedAtMillis) return null
         val safePosition = positionSeconds.coerceAtMost(durationSeconds)
+        val completed = playbackProgressCompleted(
+            previousCompleted = previous?.completed == true,
+            positionSeconds = safePosition,
+            durationSeconds = durationSeconds,
+            ended = ended,
+        )
         if (previous != null && previous.positionSeconds == safePosition &&
-            previous.durationSeconds == durationSeconds && previous.completed == ended) return previous
+            previous.durationSeconds == durationSeconds && previous.completed == completed) return previous
         val progress = PlaybackProgress(
             key = playbackProgressKey(selection),
             media = selection.media,
@@ -96,7 +109,7 @@ class PlaybackProgressStore(context: Context) {
             positionSeconds = safePosition,
             durationSeconds = durationSeconds,
             updatedAtMillis = nowMillis.coerceAtLeast(0L),
-            completed = ended && safePosition > 0.0,
+            completed = completed,
         )
         put(progress, emitMutation = true, urgentCloudSync = urgentCloudSync)
         return progress
@@ -118,6 +131,18 @@ class PlaybackProgressStore(context: Context) {
             emitMutation = true,
             urgentCloudSync = true,
         )
+    }
+
+    @Synchronized
+    fun removeMedia(media: Media) {
+        val keys = _entries.value.values
+            .filter { it.media.key == media.key }
+            .map(PlaybackProgress::key)
+            .toSet()
+        if (keys.isEmpty()) return
+        _entries.value = _entries.value.filterKeys { it !in keys }
+        writeEntries(_entries.value.values, synchronous = true)
+        _mutations.tryEmit(PlaybackProgressMutation.Removed(media.key, keys))
     }
 
     fun snapshot(): List<PlaybackProgress> = _entries.value.values
@@ -223,6 +248,14 @@ internal fun isValidPlaybackProgress(progress: PlaybackProgress): Boolean =
         progress.durationSeconds.isFinite() && progress.durationSeconds > 0.0 &&
         progress.positionSeconds <= progress.durationSeconds &&
         progress.updatedAtMillis >= 0L
+
+internal fun playbackProgressCompleted(
+    previousCompleted: Boolean,
+    positionSeconds: Double,
+    durationSeconds: Double,
+    ended: Boolean,
+): Boolean = positionSeconds.isFinite() && durationSeconds.isFinite() && positionSeconds > 0.0 &&
+    durationSeconds > 0.0 && (previousCompleted || ended || positionSeconds / durationSeconds >= PLAYBACK_WATCHED_FRACTION)
 
 internal fun playbackCompleted(positionSeconds: Double, durationSeconds: Double): Boolean =
     positionSeconds.isFinite() && durationSeconds.isFinite() && durationSeconds > 0.0 &&

@@ -1,0 +1,16 @@
+# Ask/Talk native design provenance
+
+All components are native Jetpack Compose; no WebView, React runtime or new animation dependency is bundled. Existing Aliflix surfaces, fonts, timing conventions, reduced-motion preferences and48dp targets are retained.
+
+- [Agent Elements InputBar](https://agent-elements.21st.dev/docs/input-bar): inspected actual source for bounded expanding composer, attachment-chip hierarchy and compact toolbar interactions. Adapted interaction principles to native text entry and film anchors; no web runtime/source bundle copied.
+- [Motion Primitives Animated Background](https://github.com/ibelick/motion-primitives/blob/main/components/core/animated-background.tsx), [Transition Panel](https://github.com/ibelick/motion-primitives/blob/main/components/core/transition-panel.tsx), [Morphing Dialog](https://github.com/ibelick/motion-primitives/blob/main/components/core/morphing-dialog.tsx): inspected source; adapted shared selection geometry, spring transitions and contextual-sheet hierarchy using Compose.
+- [Kedhareswer Naidu Halftone Wordmark Footer](https://21st.dev/@kedhareswer/components/halftone-wordmark-footer), MIT: inspected the actual component source. Native adaptation uses area-correct dot coverage, damped .05/.84 spring behavior, a travelling semantic impulse and settled cached paths. Existing Nunito is retained with its bundled SIL OFL notice.
+- [Lucide bot-message-square](https://lucide.dev/icons/bot-message-square), ISC, copyright2026Lucide Icons and Contributors: optical native adaptation removes mechanical attachments, retaining a rounded speech silhouette and two eyes.
+- Existing [Unlumen Glow](https://ui.unlumen.com/docs/ui/buttons/glow), Pixel Flow Field and Radium Live Orb adaptations are preserved; voice energy modulates continuous light without restarting rotation.
+- [Android shared-element navigation](https://developer.android.com/develop/ui/compose/animation/shared-elements/navigation) and [Gemini Live capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities) informed native selection motion and explicit supported voice configuration.
+
+No paid design package or locked unlicensed component is redistributed. The21sthalftone source was available under its displayed MIT license.
+
+- [Radix segmented control](https://www.radix-ui.com/themes/docs/components/segmented-control) and [coss Toggle Group](https://coss.com/ui/docs/components/toggle-group): inspected public component APIs/source examples for a single shared selection surface. Adapted All/Running/Ended to native radio semantics, a feathered spring selection and 48dp targets.
+- [Lucide layers-2](https://github.com/lucide-icons/lucide/blob/main/icons/layers-2.svg), [sliders-horizontal](https://github.com/lucide-icons/lucide/blob/main/icons/sliders-horizontal.svg) and [shuffle](https://github.com/lucide-icons/lucide/blob/main/icons/shuffle.svg): actual ISC SVG paths adapted to cached native Compose paths for white-toned, fine-edged actions.
+- The latest orb light uses two continuously rotating feathered fields with a 45ms attack/270ms release envelope. Speech energy changes light and breathing without resetting the phase. Brief restrained glances return to forward gaze; blinks prefer speech pauses. These are procedural motion design choices, not a claim of human gaze equivalence.

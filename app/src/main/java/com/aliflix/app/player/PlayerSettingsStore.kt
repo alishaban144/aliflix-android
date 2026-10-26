@@ -16,12 +16,14 @@ data class PlayerSettings(
     val playbackSpeed: Float = 1.0f,
     val resizeModeZoom: Boolean = false,
     val preferredVideoQuality: PreferredVideoQuality = PreferredVideoQuality.AUTO,
+    val playNextEpisode: Boolean = true,
+    val boostAudio: Boolean = false,
 ) {
     val subtitleDelaySeconds: Double get() = subtitleDelayTenths / 10.0
 
     companion object {
         const val DEFAULT_SUBTITLE_FONT_SIZE_SP = 16f
-        const val DEFAULT_SUBTITLE_BACKGROUND_OPACITY = 0.5f
+        const val DEFAULT_SUBTITLE_BACKGROUND_OPACITY = 0f
     }
 }
 
@@ -33,6 +35,11 @@ class PlayerSettingsStore(context: Context) {
 
     private val _settings = MutableStateFlow(readSettings())
     val settings: StateFlow<PlayerSettings> = _settings.asStateFlow()
+
+    private val preferenceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        _settings.value = readSettings()
+    }
+    init { preferences.registerOnSharedPreferenceChangeListener(preferenceListener) }
 
     fun updateSubtitleFontSize(sizeSp: Float) {
         val clamped = sizeSp.coerceIn(11f, 30f)
@@ -74,11 +81,23 @@ class PlayerSettingsStore(context: Context) {
         preferences.edit { putString(KEY_VIDEO_QUALITY, quality.name) }
     }
 
+    fun updatePlayNextEpisode(enabled: Boolean) {
+        update { it.copy(playNextEpisode = enabled) }
+        preferences.edit { putBoolean("play_next_episode", enabled) }
+    }
+
+    fun updateBoostAudio(enabled: Boolean) {
+        update { it.copy(boostAudio = enabled) }
+        preferences.edit { putBoolean("boost_audio", enabled) }
+    }
+
     private inline fun update(transform: (PlayerSettings) -> PlayerSettings) {
         _settings.value = transform(_settings.value)
     }
 
     private fun readSettings(): PlayerSettings = PlayerSettings(
+        boostAudio = preferences.getBoolean("boost_audio", false),
+        playNextEpisode = preferences.getBoolean("play_next_episode", true),
         subtitleFontSizeSp = preferences.getFloat(KEY_SUBTITLE_FONT_SIZE, PlayerSettings.DEFAULT_SUBTITLE_FONT_SIZE_SP)
             .coerceIn(11f, 30f),
         subtitleBackgroundOpacity = preferences.getFloat(KEY_SUBTITLE_BG_OPACITY, PlayerSettings.DEFAULT_SUBTITLE_BACKGROUND_OPACITY)

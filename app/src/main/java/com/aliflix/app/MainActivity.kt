@@ -13,12 +13,14 @@ import com.aliflix.app.ui.AliflixTvApp
 import com.aliflix.app.ui.theme.AliflixMobileTheme
 import com.aliflix.app.ui.theme.AliflixTheme
 
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
+    protected open val conversationTitle: com.aliflix.app.model.Media? get() = null
+    protected open val conversationAction: org.json.JSONObject? get() = null
     private val viewModel: AliflixViewModel by viewModels()
     private lateinit var playerController: WebPlayerController
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        super.onCreate(if (BuildConfig.IS_TV || lastNonConfigurationInstance != null) savedInstanceState else null)
         if (BuildConfig.IS_TV) {
             enableEdgeToEdge()
         } else {
@@ -41,9 +43,21 @@ class MainActivity : ComponentActivity() {
                     AliflixApp(
                         viewModel = viewModel,
                         playerController = playerController,
+                        initialMedia = conversationTitle,
+                        assistantAction = conversationAction,
+                        onInitialDetailClosed = { finish() },
                     )
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!BuildConfig.IS_TV) {
+            androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+                .show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            androidx.core.view.ViewCompat.requestApplyInsets(window.decorView)
         }
     }
 

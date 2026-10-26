@@ -13,13 +13,13 @@ import org.junit.Test
 
 class AskAliflixWiringIntegrationTest {
     @Test
-    fun groqIsTheDefaultForFreshSettingsAndUnspecifiedRequests() {
+    fun cloudflareGptOssIsTheDefaultForFreshSettingsAndUnspecifiedRequests() {
         assertEquals(
-            RecommendationAiModel.GROQ_QWEN_3_8_27B,
+            RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B,
             RecommendationAiModel.fromWorkerValue(null),
         )
         assertEquals(
-            RecommendationAiModel.GROQ_QWEN_3_8_27B,
+            RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B,
             RecommendationAiModel.fromWorkerValue("unknown-model"),
         )
 
@@ -33,20 +33,35 @@ class AskAliflixWiringIntegrationTest {
             mediaType = "movie",
         )
 
-        assertEquals(RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue, mapped.aiModel)
-        assertEquals(RecommendationAiModel.GROQ_QWEN_3_8_27B.workerValue, direct.aiModel)
+        assertEquals(RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B.workerValue, mapped.aiModel)
+        assertEquals(RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B.workerValue, direct.aiModel)
+        assertEquals(24, mapped.pageSize)
+        assertEquals(24, direct.pageSize)
     }
 
     @Test
     fun explicitSavedGeminiChoiceIsStillHonored() {
         assertEquals(
-            RecommendationAiModel.GEMINI_3_5_FLASH,
-            RecommendationAiModel.fromWorkerValue("gemini-3.5-flash"),
+            RecommendationAiModel.GEMINI_3_8_FLASH,
+            RecommendationAiModel.fromWorkerValue("gemini-3.8-flash"),
         )
         assertEquals(
-            RecommendationAiModel.GEMINI_3_7_FLASH,
-            RecommendationAiModel.fromWorkerValue("gemini-3.7-flash"),
+            RecommendationAiModel.GEMINI_3_8_FLASH,
+            RecommendationAiModel.fromWorkerValue("gemini-3.8-flash"),
         )
+    }
+
+    @Test
+    fun cloudflareSelectionIsSerializedExplicitly() {
+        val json = AskAliflixRequestMapper.map(
+            request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
+            requestId = "00000000-0000-4000-8000-000000000019",
+            aiModel = RecommendationAiModel.CLOUDFLARE_GPT_OSS_120B,
+        ).workerRequest.toJson()
+
+        assertEquals("cloudflare-gpt-oss-120b", json.getString("aiModel"))
+        assertEquals("cloudflare-gpt-oss-120b", json.getString("geminiModel"))
+        assertEquals(24, json.getInt("pageSize"))
     }
 
     @Test
@@ -54,11 +69,11 @@ class AskAliflixWiringIntegrationTest {
         val json = AskAliflixRequestMapper.map(
             request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
             requestId = "00000000-0000-4000-8000-000000000010",
-            aiModel = RecommendationAiModel.GEMINI_3_7_FLASH,
+            aiModel = RecommendationAiModel.GEMINI_3_8_FLASH,
         ).workerRequest.toJson()
 
-        assertEquals("gemini-3.7-flash", json.getString("aiModel"))
-        assertEquals("gemini-3.7-flash", json.getString("geminiModel"))
+        assertEquals("gemini-3.8-flash", json.getString("aiModel"))
+        assertEquals("gemini-3.8-flash", json.getString("geminiModel"))
     }
 
     @Test
@@ -66,12 +81,24 @@ class AskAliflixWiringIntegrationTest {
         val json = AskAliflixRequestMapper.map(
             request = AskAliflixRequest.Describe(MediaType.MOVIE, "space adventure"),
             requestId = "00000000-0000-4000-8000-000000000012",
-            aiModel = RecommendationAiModel.GROQ_QWEN_3_8_27B,
+            aiModel = RecommendationAiModel.GROQ_GPT_OSS_120B,
         ).workerRequest.toJson()
 
-        assertEquals("groq-qwen-3.8-27b", json.getString("aiModel"))
-        assertEquals("groq-qwen-3.8-27b", json.getString("geminiModel"))
-        assertEquals(20, json.getInt("pageSize"))
+        assertEquals("groq-gpt-oss-120b", json.getString("aiModel"))
+        assertEquals("groq-gpt-oss-120b", json.getString("geminiModel"))
+        assertEquals(24, json.getInt("pageSize"))
+    }
+
+    @Test
+    fun legacySavedGroqChoiceMigratesToGptOssInsteadOfSilentlySwitchingProviders() {
+        assertEquals(
+            RecommendationAiModel.GROQ_GPT_OSS_120B,
+            RecommendationAiModel.fromWorkerValue("groq-qwen-3.8-27b"),
+        )
+        assertEquals(
+            RecommendationAiModel.GROQ_GPT_OSS_120B,
+            RecommendationAiModel.fromWorkerValue("groq-gpt-oss-120b"),
+        )
     }
 
     @Test

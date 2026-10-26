@@ -13,6 +13,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImdbRatingRepositoryTest {
+    @Test fun localizedEpisodesAndPartialHostsMergeWithoutLosingVerifiedRatings() = runTest {
+        var calls=0
+        val repo=DefaultImdbRatingRepository(null,{ """{"d":[{"id":"tt5753856","l":"Dark","qid":"tvSeries","y":2017}]}""" },
+            ImdbGraphQlTransport { _,_,_ ->
+                calls++
+                val number=if(calls==1)1 else 2
+                val title=if(number==1)"Anfänge und Enden" else "Dunkle Materie"
+                """{"data":{"title":{"id":"tt5753856","titleText":{"text":"Dark"},"releaseYear":{"year":2017},"titleType":{"id":"tvSeries"},
+                    "episodes":{"episodes":{"edges":[{"node":{"id":"tt100000$number","titleText":{"text":"$title"},"series":{"episodeNumber":{"seasonNumber":2,"episodeNumber":$number}},"ratingsSummary":{"aggregateRating":8.8,"voteCount":123}}}]}}}}}"""
+            })
+        val result=repo.ratingsForEpisodes(Media(70523,MediaType.TV,"Dark",year="2017",imdbId="tt5753856"),2,
+            listOf(Episode(2,1,"Beginnings and Endings"),Episode(2,2,"Dark Matter")))
+        assertTrue(calls>=2)
+        assertEquals(RatingSourceState.VERIFIED,result[1]?.state)
+        assertEquals(RatingSourceState.VERIFIED,result[2]?.state)
+    }
     @Test
     fun episodeSeasonRatingsAreResolvedFromTheVerifiedParentSeries() = runTest {
         val repository = DefaultImdbRatingRepository(
@@ -151,7 +167,7 @@ class ImdbRatingRepositoryTest {
                 if (url.contains("suggestion")) {
                     """
                     {"d":[
-                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"y":2025},
+                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"y":2026},
                       {"id":"tt39365308","l":"Obsession","q":"short","qid":"short","rank":35788,"y":2026}
                     ]}
                     """.trimIndent()
@@ -160,8 +176,8 @@ class ImdbRatingRepositoryTest {
                 }
             },
             graphQlTransport = ImdbGraphQlTransport { _, body, _ ->
-                assertTrue(body.contains("tt37287335"))
-                ratedPayload("tt37287335", "Obsession", 2025, "movie", 7.8, 325_953)
+                if (body.contains("tt37287335")) ratedPayload("tt37287335", "Obsession", 2026, "movie", 7.8, 325_953)
+                else ratedPayload("tt1234567", "Unrelated Title", 1990, "movie", 6.2, 100)
             },
         )
 
@@ -225,11 +241,11 @@ class ImdbRatingRepositoryTest {
                 else "{malformed"
             },
             pageLoader = { url ->
-                assertTrue(url.endsWith("/title/tt0468569/reference/"))
+                assertTrue(url.endsWith("/title/tt0468569/"))
                 """
                     <link rel="canonical" href="https://www.imdb.com/title/tt0468569/">
                     <script type="application/ld+json">
-                    {"url":"https://www.imdb.com/title/tt0468569/","name":"The Dark Knight",
+                    {"@type":"Movie","datePublished":"2008-07-18","url":"https://www.imdb.com/title/tt0468569/","name":"The Dark Knight",
                      "aggregateRating":{"ratingValue":9.0,"ratingCount":3000000}}
                     </script>
                 """.trimIndent()
@@ -330,7 +346,7 @@ class ImdbRatingRepositoryTest {
                 if (url.contains("suggestion")) {
                     """
                     {"d":[
-                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"tl":"2025","y":2025},
+                      {"id":"tt37287335","l":"Obsession","q":"feature","qid":"movie","rank":11,"tl":"2026","y":2026},
                       {"id":"tt39365308","l":"Obsession","q":"short","qid":"short","rank":35788,"tl":"2026 Short","y":2026}
                     ]}
                     """.trimIndent()
@@ -358,7 +374,7 @@ class ImdbRatingRepositoryTest {
     }
 
     @Test
-    fun releaseYearDriftWithinTwoYearsIsAcceptedInGraphQL() = runTest {
+    fun knownExternalIdAllowsOneYearFestivalReleaseDriftInGraphQL() = runTest {
         val repository = DefaultImdbRatingRepository(
             cacheStore = null,
             pageLoader = { error("HTML fallback must not run") },

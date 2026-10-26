@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.aliflix.validation" android:versionCode="1" android:versionName="1">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="Aliflix validation" android:usesCleartextTraffic="true" />
+    <instrumentation android:name="com.aliflix.validation.MinifiedDriver" android:targetPackage="com.aliflix.app" />
+</manifest>

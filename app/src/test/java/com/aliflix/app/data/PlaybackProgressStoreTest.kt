@@ -22,6 +22,13 @@ class PlaybackProgressStoreTest {
     }
 
     @Test
+    fun watchedThresholdLatchesCompletionAcrossRewinds() {
+        assertTrue(playbackProgressCompleted(false, 800.0, 1_000.0, false))
+        assertTrue(playbackProgressCompleted(true, 400.0, 1_000.0, false))
+        assertFalse(playbackProgressCompleted(false, 799.0, 1_000.0, false))
+    }
+
+    @Test
     fun progressKeyDoesNotDependOnProviderOrStreamingServer() {
         val normal = PlaybackSelection(
             series,

@@ -1,9 +1,11 @@
+import { editorialRecommendations } from './editorial';
 import {
   assessRecommendationPremise,
   assessRecommendationSimilarity,
   aiProviderName,
   embedForSearch,
   fallbackIntentFromQuery,
+  isCloudflareAiModel,
   isGroqAiModel,
   isRetryableAiProviderError,
   interpretQuery,
@@ -38,7 +40,7 @@ const MAX_DETAIL_CANDIDATES = 64;
 const MAX_GENERATED_CANDIDATES = 48;
 const MAX_AI_GENERATED_CANDIDATES = 12;
 const MAX_GENERATED_RESULTS = 24;
-const MAX_AI_VERIFICATION_CANDIDATES = 20;
+const MAX_AI_VERIFICATION_CANDIDATES = 24;
 const GENERATED_DETAIL_RESERVE = 6;
 const GENERATED_VERIFICATION_RESERVE = 6;
 const MAX_NEW_GENERATED_CANDIDATES_PER_KEYWORD = 8;
@@ -123,7 +125,7 @@ async function optionalTmdbCall<T>(operation: string, call: () => Promise<T>): P
   }
 }
 
-function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<number, string>): Candidate | undefined {
+export function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<number, string>): Candidate | undefined {
   const title = (mediaType === 'movie' ? item.title : item.name)?.trim();
   if (!item.id || !title) return undefined;
   return {
@@ -141,7 +143,7 @@ function toCandidate(item: TmdbListItem, mediaType: MediaType, genreNames: Map<n
   };
 }
 
-function mergeDetails(candidate: Candidate, details: TmdbDetails): void {
+export function mergeDetails(candidate: Candidate, details: TmdbDetails): void {
   candidate.title = (candidate.mediaType === 'movie' ? details.title : details.name) || candidate.title;
   candidate.originalTitle = (candidate.mediaType === 'movie' ? details.original_title : details.original_name) || candidate.originalTitle;
   candidate.overview = details.overview || candidate.overview;
@@ -759,6 +761,7 @@ async function processGeneratedRecommendations(
     console.warn(JSON.stringify({
       event: 'generated_candidate_fallback',
       mode: request.mode,
+      provider: aiProviderName(selectedAiModel(env)),
       model: selectedAiModel(env),
       reason: error.message,
     }));
@@ -802,6 +805,7 @@ async function processGeneratedRecommendations(
     console.log(JSON.stringify({
       event: 'generated_recommendation_pipeline',
       mode: request.mode,
+      provider: aiProviderName(selectedAiModel(env)),
       model: selectedAiModel(env),
       generated: recommendations.length,
       resolved: 0,
@@ -835,6 +839,7 @@ async function processGeneratedRecommendations(
     console.log(JSON.stringify({
       event: 'generated_recommendation_pipeline',
       mode: request.mode,
+      provider: aiProviderName(selectedAiModel(env)),
       model: selectedAiModel(env),
       generated: recommendations.length,
       resolved: resolved.length,
@@ -856,6 +861,7 @@ async function processGeneratedRecommendations(
       console.warn(JSON.stringify({
         event: 'generated_verification_fallback',
         mode: request.mode,
+        provider: aiProviderName(selectedAiModel(env)),
         model: selectedAiModel(env),
         reason: error.message,
         candidates: candidateDocuments.length,
@@ -914,6 +920,7 @@ async function processGeneratedRecommendations(
   console.log(JSON.stringify({
     event: 'generated_recommendation_pipeline',
     mode: request.mode,
+    provider: aiProviderName(selectedAiModel(env)),
     model: selectedAiModel(env),
     generated: recommendations.length,
     resolved: resolved.length,
@@ -1744,9 +1751,9 @@ export async function processRecommendation(
   dependencies: EngineDependencies = {},
   options: RecommendationExecutionOptions = {},
 ): Promise<RecommendationResult[]> {
-  // Generated modes make one candidate call and one evidence-grounded
-  // verification call. Forty TMDB attempts keep the worst case below the
-  // Cloudflare Free plan's 50 external-subrequest limit.
+  // Generated modes use compact model output plus authoritative TMDB identity
+  // resolution. Forty TMDB attempts cover a 24-title page and a bounded
+  // identity-recovery batch while staying within the Worker subrequest budget.
   const tmdb = dependencies.tmdb || new TmdbClient(env, request.mode === 'filters' ? 38 : 40);
   // The request can select one allow-listed model. Both AI stages use that same
   // provider and never fall back to another model behind the user's back.
@@ -1754,27 +1761,16 @@ export async function processRecommendation(
   const recommendationEnv = requestedAiModel
     ? { ...env, AI_GENERATION_MODEL: requestedAiModel }
     : env;
-  let providerFallbackIntent: InterpretedIntent | undefined;
-  let disableGeminiEmbeddings = isGroqAiModel(selectedAiModel(recommendationEnv));
-  const continuationPass = Math.max(0, Math.min(MAX_GENERATED_CONTINUATION_PASSES, options.continuationPass || 0));
-  if (request.mode === 'describe') {
-    try {
-      return await processDescribeRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass);
-    } catch (error) {
-      if (!isRetryableAiProviderError(error)) throw error;
-      const fallbackQuery = request.query || request.refinementQuery || '';
-      providerFallbackIntent = fallbackIntentFromQuery(fallbackQuery);
-      disableGeminiEmbeddings = true;
-      console.warn(JSON.stringify({
-        event: 'describe_tmdb_fallback',
-        model: selectedAiModel(recommendationEnv),
-        reason: error.message,
-      }));
-    }
+  if (request.mode !== 'filters') {
+    // Describe and Similar are taste-recommendation tasks, not literal keyword
+    // intersections. Generate a broad editorial slate, then let TMDB verify
+    // every identity. The provider is asked for 24 compact picks so a normal
+    // page needs one model call; a second call is only used when identity
+    // resolution leaves fewer than 20 genuine titles.
+    return editorialRecommendations(recommendationEnv, request, tmdb, dependencies);
   }
-  if (request.mode === 'similar') {
-    return processSimilarRecommendation(recommendationEnv, request, tmdb, dependencies, continuationPass);
-  }
+  const providerFallbackIntent: InterpretedIntent | undefined = undefined;
+  let disableGeminiEmbeddings = isGroqAiModel(selectedAiModel(recommendationEnv)) || isCloudflareAiModel(selectedAiModel(recommendationEnv));
   const interpret = dependencies.interpret || interpretQuery;
   const queryToInterpret = request.previousQuery && request.refinementQuery
     ? `${request.previousQuery} [Refinement adjustment: ${request.refinementQuery}]`
@@ -2038,5 +2034,5 @@ export async function processRecommendation(
     embeddingsAvailable,
     false,
   );
-  return ranked.slice(0, request.mode === 'describe' ? request.pageSize : MAX_CANDIDATES);
+  return ranked.slice(0, MAX_CANDIDATES);
 }

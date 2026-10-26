@@ -36,6 +36,13 @@ it('sends only bounded audio to the fixed transcription endpoint', async () => {
   const response = await subtitleAudioTiming(new Request('https://test/audio', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav() }), { GROQ_API_KEY: 'test' } as any);
   expect(response.status).toBe(200); expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+it('retains real boundary words that overlap a confident segment without accepting silence-only words', () => {
+  const words = [{ word: 'first', start: .8, end: 1.2 }, { word: 'last', start: 2.7, end: 3.2 },
+    { word: 'silence', start: 3.4, end: 3.8 }];
+  const segments = [{ start: 1.0, end: 3.0, no_speech_prob: .1, avg_logprob: -.2 }];
+  expect(speechTimingWords({ words, segments }, 4).words).toEqual([
+    { text: 'first', start: .8, end: 1.2 }, { text: 'last', start: 2.7, end: 3.2 }]);
+});
 it('rate limits before processing audio', async () => {
   const fetchMock = vi.spyOn(globalThis, 'fetch');
   const response = await worker.fetch(new Request('https://test/v3/subtitles/audio-timing', { method: 'POST' }), { RECOMMENDATION_RATE_LIMITER: { limit: async () => ({ success: false }) } } as any);

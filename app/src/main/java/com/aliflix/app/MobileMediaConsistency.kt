@@ -43,6 +43,8 @@ internal fun V3TitleDetails.toStableMobileMedia(fallback: Media): Media {
     val mapped = media.toMobileMedia(fallback = fallback, preserveArtwork = true)
     return mapped.copy(
         rating = mapped.rating,
+        trailerKey = trailerKey,
+        keywords = keywords.ifEmpty { fallback.keywords },
         imdbId = imdbId ?: fallback.imdbId,
         imdbRating = fallback.imdbRating,
         imdbRatingState = fallback.imdbRatingState,
@@ -55,9 +57,11 @@ internal fun V3TitleDetails.toStableMobileMedia(fallback: Media): Media {
                 tmdbId = creator.tmdbId,
                 name = creator.name,
                 profilePath = creator.profilePath,
+                role = creator.role,
             )
         }.ifEmpty { fallback.creators },
         cast = cast.map { it.name }.ifEmpty { fallback.cast },
+        castPeople = cast.map { MediaCreator(it.tmdbId, it.name, it.profilePath, it.role) }.ifEmpty { fallback.castPeople },
         reviews = reviews.map { review ->
             MediaReview(
                 id = review.id,
@@ -86,18 +90,21 @@ internal fun Media.mergeStableMobileDetailUpdate(update: Media): Media {
         year = year.ifBlank { update.year },
         rating = update.rating.takeIf { it > 0.0 } ?: rating.takeIf { it > 0.0 } ?: 0.0,
         imdbId = update.imdbId ?: imdbId,
-        imdbRating = update.imdbRating ?: imdbRating,
+        imdbRating = if (update.imdbRatingState != null) update.imdbRating else update.imdbRating ?: imdbRating,
         imdbRatingState = update.imdbRatingState ?: imdbRatingState,
-        imdbVoteCount = update.imdbVoteCount ?: imdbVoteCount,
-        rottenTomatoesRating = update.rottenTomatoesRating ?: rottenTomatoesRating,
+        imdbVoteCount = if (update.imdbRatingState != null) update.imdbVoteCount else update.imdbVoteCount ?: imdbVoteCount,
+        rottenTomatoesRating = if (update.rottenTomatoesState != null) update.rottenTomatoesRating else update.rottenTomatoesRating ?: rottenTomatoesRating,
         rottenTomatoesState = update.rottenTomatoesState ?: rottenTomatoesState,
         tmdbVoteCount = tmdbVoteCount ?: update.tmdbVoteCount,
         genres = genres.ifEmpty { update.genres },
         cast = cast.ifEmpty { update.cast },
+        castPeople = update.castPeople.ifEmpty { castPeople },
         status = status.ifBlank { update.status },
         originalLanguage = originalLanguage.ifBlank { update.originalLanguage },
         creators = creators.ifEmpty { update.creators },
         runtime = runtime.ifBlank { update.runtime },
+        trailerKey = trailerKey ?: update.trailerKey,
+        keywords = update.keywords.ifEmpty { keywords },
         reviews = update.reviews.ifEmpty { reviews },
     )
 }

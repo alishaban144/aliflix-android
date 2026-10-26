@@ -1,5 +1,6 @@
 package com.aliflix.app
 
+import com.aliflix.app.data.hasInternetConnection
 import android.app.Application
 import android.app.Activity
 import androidx.lifecycle.AndroidViewModel
@@ -21,7 +22,7 @@ import com.aliflix.app.model.Media
 import com.aliflix.app.model.MediaCreator
 import com.aliflix.app.model.MediaType
 import com.aliflix.app.model.PlaybackPreferences
-import com.aliflix.app.model.PlaybackProviderId
+import com.aliflix.app.model.PlaybackProvider
 import com.aliflix.app.model.SubtitleLanguage
 import com.aliflix.app.model.Season
 import com.aliflix.app.recommendation.RecommendationMediaKind
@@ -39,6 +40,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,6 +86,8 @@ private fun V3CatalogMedia.toMedia(fallback: Media? = null): Media {
 }
 
 private fun V3TitleDetails.toMedia(fallback: Media): Media = media.toMedia(fallback).copy(
+    keywords = keywords,
+    trailerKey = trailerKey,
     imdbId = imdbId ?: fallback.imdbId,
     status = status.orEmpty(),
     creators = creators.map { creator ->
@@ -172,13 +178,13 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         ioDispatcher = recommendationDispatchers.io,
         computationDispatcher = recommendationDispatchers.computation,
     )
-    private val library = LibraryStore(application)
-    private val playbackProviderRepository = PlaybackProviderRepository(application)
+    private val library = (application as AliflixApplication).libraryStore
+    private val playbackProviderRepository = if (BuildConfig.IS_TV) PlaybackProviderRepository(application)
+        else (application as AliflixApplication).playbackProviderRepository
     val playbackProgressStore = (application as AliflixApplication).playbackProgressStore
-    private val recommendationStore = RecommendationStore(
-        context = application,
-    )
-    private val accountServices = createAccountServices(
+    private val recommendationStore = if (BuildConfig.IS_TV) RecommendationStore(application)
+        else (application as AliflixApplication).recommendationStore
+    private val accountServices = if (!BuildConfig.IS_TV) (application as AliflixApplication).accountServices else createAccountServices(
         application = application,
         libraryStore = library,
         playbackRepository = playbackProviderRepository,
@@ -188,7 +194,10 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     )
     private val aiClient = com.aliflix.app.recommendation.RecommendationAiClient(
         baseUrl = BuildConfig.RECOMMENDATION_AI_BASE_URL,
-        ioDispatcher = recommendationDispatchers.io
+        ioDispatcher = recommendationDispatchers.io,
+        metadataCacheDir = if (BuildConfig.IS_TV) null else java.io.File(application.cacheDir, "mobile-taste-metadata"),
+        research = if (BuildConfig.IS_TV) null else com.aliflix.app.recommendation.AskResearchClient(application),
+        researchLibrary = { com.aliflix.app.recommendation.AskTaste(application).library(library) },
     )
     private val homeSnapshotStore: HomeSnapshotStore = AndroidHomeSnapshotStore(
         context = application,
@@ -227,6 +236,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     val likes = library.likes
     val accountState = accountServices.accountRepository.state
     val accountSyncState = accountServices.syncRepository.state
+    private val _pickedForYou = MutableStateFlow<List<Media>>(emptyList())
+    val pickedForYou: StateFlow<List<Media>> = _pickedForYou.asStateFlow()
+    val personalizationMetadata = com.aliflix.app.recommendation.MobileTasteModel.metadata
 
     private val _askUiState = MutableStateFlow<com.aliflix.app.ui.discover.AskAliflixUiState>(com.aliflix.app.ui.discover.AskAliflixUiState.Editing)
     val askUiState: StateFlow<com.aliflix.app.ui.discover.AskAliflixUiState> = _askUiState.asStateFlow()
@@ -240,6 +252,23 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     private var activeAskUiRequest: com.aliflix.app.ui.discover.AskAliflixRequest? = null
     private var activeAskSummary: String? = null
     private var activeAskSpec: com.aliflix.app.recommendation.CatalogDiscoverySpec? = null
+
+    private suspend fun publishAskProgress(
+        token: Long,
+        response: com.aliflix.app.recommendation.V3RecommendationResponse,
+        summary: String,
+        spec: com.aliflix.app.recommendation.CatalogDiscoverySpec,
+        request: com.aliflix.app.ui.discover.AskAliflixRequest,
+        refinements: List<String> = emptyList(),
+    ) = withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+        if(token==askSessionToken && response.results.isNotEmpty()) {
+            _askUiState.value=com.aliflix.app.ui.discover.AskAliflixUiState.Results(
+                requestSummary=summary,spec=spec,items=response.results.map(::mapAskResult),
+                totalAvailable=response.totalResults,hasMore=response.hasMore,nextCursor=response.nextCursor,
+                activeRequest=request,appliedRefinements=refinements,researching=response.inProgress,
+            )
+        }
+    }
 
     fun submitAskAliflix(request: com.aliflix.app.ui.discover.AskAliflixRequest) {
         activeAskJob?.cancel()
@@ -261,7 +290,9 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         activeAskJob = viewModelScope.launch {
             try {
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    aiClient.getRecommendations(workerRequest)
+                    aiClient.getRecommendations(workerRequest) { partial ->
+                        publishAskProgress(token,partial,summary,mapped.spec,request)
+                    }
                 }
                 
                 if (token != askSessionToken) return@launch
@@ -330,13 +361,20 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             request = refinedRequest,
             aiModel = recommendationStore.aiModel.value,
         )
+        val refinedWorkerRequest = if (!BuildConfig.IS_TV && Regex("(?i)different|another|more suggestions|other (?:movies|series)|andere|weitere|أخرى|غيرها").containsMatchIn(normalized)) {
+            mapped.workerRequest.copy(filters = mapped.workerRequest.filters.copy(
+                excludedTmdbIds = (mapped.workerRequest.filters.excludedTmdbIds + currentResults.items.map { it.media.id }).distinct().take(1000),
+            ))
+        } else mapped.workerRequest
         activeAskJob?.cancel()
         val token = ++askSessionToken
         _askUiState.value = currentResults.copy(refining = true, refineError = null)
         activeAskJob = viewModelScope.launch {
             try {
                 val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    aiClient.getRecommendations(mapped.workerRequest)
+                    aiClient.getRecommendations(refinedWorkerRequest) { partial ->
+                        publishAskProgress(token,partial,mapped.summary,mapped.spec,refinedRequest,currentResults.appliedRefinements+normalized)
+                    }
                 }
                 if (token != askSessionToken) return@launch
                 val candidates = response.results.map(::mapAskResult)
@@ -418,11 +456,117 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _askEditorState.value = state
     }
 
+    fun setRecommendationAiModel(model: RecommendationAiModel) {
+        val changed = recommendationStore.aiModel.value != model
+        recommendationStore.setAiModel(model)
+        if (changed) regenerateAskAliflix(model)
+    }
+
+    /**
+     * Re-runs the active Ask Aliflix request with [model] under a brand-new
+     * request id, which resets the signed session and pagination cursors so an
+     * incompatible session can never leak into the regenerated results.
+     */
+    private fun regenerateAskAliflix(model: RecommendationAiModel) {
+        val uiRequest = activeAskUiRequest ?: return
+        val state = _askUiState.value
+        if (state is com.aliflix.app.ui.discover.AskAliflixUiState.Editing ||
+            state is com.aliflix.app.ui.discover.AskAliflixUiState.Interpreting
+        ) return
+
+        activeAskJob?.cancel()
+        val token = ++askSessionToken
+        val mapped = com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(
+            request = uiRequest,
+            aiModel = model,
+        )
+        activeAskRequest = mapped.workerRequest
+        activeAskSummary = mapped.summary
+        activeAskSpec = mapped.spec
+
+        val previous = state as? com.aliflix.app.ui.discover.AskAliflixUiState.Results
+        val keepVisible = previous != null
+        val keepLoadingMore = previous?.loadingMore == true
+        _askUiState.value = when {
+            previous == null -> com.aliflix.app.ui.discover.AskAliflixUiState.Searching(mapped.summary)
+            keepLoadingMore -> previous.copy(loadingMore = true, loadMoreError = null, refining = false, refineError = null)
+            else -> previous.copy(refining = true, refineError = null, loadingMore = false, loadMoreError = null)
+        }
+
+        activeAskJob = viewModelScope.launch {
+            try {
+                val response = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    aiClient.getRecommendations(mapped.workerRequest) { partial ->
+                        publishAskProgress(token,partial,mapped.summary,mapped.spec,uiRequest,previous?.appliedRefinements.orEmpty())
+                    }
+                }
+                if (token != askSessionToken) return@launch
+                val candidates = response.results.map(::mapAskResult)
+                if (candidates.isEmpty()) {
+                    _askUiState.value = if (previous != null) {
+                        previous.copy(
+                            refining = false,
+                            loadingMore = false,
+                            refineError = "No titles found with the selected model yet.",
+                            loadMoreError = null,
+                        )
+                    } else {
+                        com.aliflix.app.ui.discover.AskAliflixUiState.Empty(mapped.summary, "No titles found.")
+                    }
+                } else {
+                    _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Results(
+                        requestSummary = mapped.summary,
+                        spec = mapped.spec,
+                        items = candidates,
+                        totalAvailable = response.totalResults,
+                        hasMore = response.hasMore,
+                        nextCursor = response.nextCursor,
+                        appliedRefinements = previous?.appliedRefinements.orEmpty(),
+                        activeRequest = uiRequest,
+                    )
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (token != askSessionToken) return@launch
+                _askUiState.value = when {
+                    previous != null && keepVisible -> previous.copy(
+                        refining = false,
+                        loadingMore = false,
+                        refineError = askAliflixErrorMessage(
+                            error,
+                            "The selected model could not refresh these results. Your previous results are shown.",
+                        ),
+                        loadMoreError = null,
+                    )
+                    error is com.aliflix.app.recommendation.RecommendationAiClientException &&
+                        error.code in setOf("TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED") -> {
+                        com.aliflix.app.ui.discover.AskAliflixUiState.SourceUnavailable(
+                            mapped.summary,
+                            askAliflixErrorMessage(error, "Movie and series details are temporarily unavailable. Please try again."),
+                        )
+                    }
+                    else -> com.aliflix.app.ui.discover.AskAliflixUiState.Error(
+                        mapped.summary,
+                        askAliflixErrorMessage(error, "Ask Aliflix could not complete this search."),
+                    )
+                }
+            }
+        }
+    }
+
     fun loadMoreAskAliflix() {
         val currentResults = _askUiState.value as? com.aliflix.app.ui.discover.AskAliflixUiState.Results ?: return
         val original = activeAskRequest ?: return
         if (currentResults.loadingMore || !currentResults.hasMore) return
         val cursor = currentResults.nextCursor ?: return
+        val selectedModel = recommendationStore.aiModel.value
+        // Find More must always run on the selected provider. If the saved model
+        // changed underneath the active session, rebuild the session first.
+        if (original.aiModel != selectedModel.workerValue) {
+            regenerateAskAliflix(selectedModel)
+            return
+        }
         val nextRequest = buildAskAliflixShowMoreRequest(original, cursor)
 
         val token = askSessionToken
@@ -451,6 +595,14 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 throw cancelled
             } catch (error: Exception) {
                 if (token != askSessionToken) return@launch
+                val code = (error as? com.aliflix.app.recommendation.RecommendationAiClientException)?.code
+                if (code == "SESSION_EXPIRED" || code == "INVALID_CURSOR" || code == "REQUEST_ID_CONFLICT") {
+                    // The signed session or cursor is unusable. Rebuild it from
+                    // the active request instead of letting the user retry a
+                    // cursor that can never succeed again.
+                    regenerateAskAliflix(selectedModel)
+                    return@launch
+                }
                 _askUiState.value = currentResults.copy(
                     loadingMore = false,
                     loadMoreError = askAliflixErrorMessage(error, "Could not find another batch right now."),
@@ -460,21 +612,29 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun retryAskAliflix() {
-        val original = activeAskRequest ?: return
         val uiRequest = activeAskUiRequest
+        val original = activeAskRequest ?: return
         val summary = activeAskSummary ?: return
         val spec = activeAskSpec ?: return
+        // Retries mint a fresh request id so a previously stored session with a
+        // different model fingerprint can never reject the retried request.
+        val selectedModel = recommendationStore.aiModel.value
+        val nextRequest = uiRequest?.let {
+            com.aliflix.app.ui.discover.AskAliflixRequestMapper.map(
+                request = it,
+                aiModel = selectedModel,
+            ).workerRequest
+        } ?: original.copy(
+            cursor = null,
+            aiModel = selectedModel.workerValue,
+        )
+        activeAskRequest = nextRequest
         activeAskJob?.cancel()
         val token = ++askSessionToken
         _askUiState.value = com.aliflix.app.ui.discover.AskAliflixUiState.Searching(summary)
         activeAskJob = viewModelScope.launch {
             try {
-                val response = aiClient.getRecommendations(
-                    original.copy(
-                        cursor = null,
-                        aiModel = recommendationStore.aiModel.value.workerValue,
-                    ),
-                )
+                val response = aiClient.getRecommendations(nextRequest)
                 if (token != askSessionToken) return@launch
                 val candidates = response.results.map(::mapAskResult)
                 _askUiState.value = if (candidates.isEmpty()) {
@@ -528,11 +688,26 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     private fun askAliflixErrorMessage(error: Exception, fallback: String): String {
         val clientError = error as? com.aliflix.app.recommendation.RecommendationAiClientException
-        return when (clientError?.code) {
+            ?: return fallback
+        return when (clientError.code) {
             "NETWORK_ERROR" -> "Check your connection and try again."
+            "AI_QUOTA", "RESEARCH_QUOTA" -> "Daily limit"
             "TMDB_UNAVAILABLE", "TMDB_AUTH_FAILED" -> "Movie and series details are temporarily unavailable. Please try again."
             "RATE_LIMITED", "RESOURCE_EXHAUSTED", "GROQ_RATE_LIMITED" -> "Ask Aliflix is busy right now. Please wait a moment and try again."
-            "GROQ_UNAVAILABLE", "GEMINI_UNAVAILABLE", "AI_UNAVAILABLE" -> "The selected recommendation model is temporarily unavailable. Please try again."
+            // Configuration and authentication failures are permanent for this
+            // deploy; never present them as a temporary outage to retry.
+            "CLOUDFLARE_AI_NOT_CONFIGURED", "GROQ_NOT_CONFIGURED", "GEMINI_NOT_CONFIGURED" ->
+                "This recommendation model is not configured on the service yet. Choose another model in Settings."
+            "GROQ_AUTH_FAILED", "GEMINI_AUTH_FAILED" ->
+                "The recommendation service credentials were rejected. This is not a temporary outage."
+            "GROQ_QUOTA_EXCEEDED" ->
+                "The recommendation model has reached its capacity limit. Try the other model or try again later."
+            "CLOUDFLARE_AI_UNAVAILABLE", "GROQ_UNAVAILABLE", "GEMINI_UNAVAILABLE", "AI_UNAVAILABLE" ->
+                if (clientError.retryable) {
+                    "The selected recommendation model is temporarily unavailable. Please try again."
+                } else {
+                    "The selected recommendation model rejected this request. Choose another model in Settings."
+                }
             else -> fallback
         }
     }
@@ -544,7 +719,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     val recommendationAiModel: StateFlow<RecommendationAiModel> =
         recommendationStore.aiModel
 
-    fun selectGeneralPlaybackProvider(provider: PlaybackProviderId) =
+    fun selectGeneralPlaybackProvider(provider: PlaybackProvider) =
         playbackProviderRepository.selectGeneralProvider(provider)
 
     fun updateRamoflixUrl(newUrl: String) =
@@ -569,6 +744,69 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     fun resetDorabyUrl() = playbackProviderRepository.resetDorabyUrl()
 
     init {
+        if (!BuildConfig.IS_TV) {
+            // Starts before the launch overlay finishes; Firebase already owns startup retry.
+            accountServices.syncRepository.retry()
+            viewModelScope.launch(Dispatchers.Default) {
+                var picksOwner: String? = null
+                combine(likes, recent, playbackProgressStore.entries, accountState) { liked, history, progress, account ->
+                    val watched = (progress.values.sortedByDescending { it.updatedAtMillis }.map { it.media } + history)
+                        .distinctBy(Media::key).take(20)
+                    // Opening a detail can enrich Media or reorder history. Neither is a new taste.
+                    Triple(account.uid, liked.distinctBy(Media::key).sortedBy(Media::key), watched.sortedBy(Media::key))
+                }.distinctUntilChanged { before, after ->
+                    before.first == after.first && before.second.map(Media::key) == after.second.map(Media::key) &&
+                        before.third.map(Media::key) == after.third.map(Media::key)
+                }.collectLatest { (owner, explicit, history) ->
+                    if (owner != picksOwner) { _pickedForYou.value = emptyList(); picksOwner = owner }
+                    com.aliflix.app.recommendation.MobileTasteModel.setHistory(history)
+                    if (explicit.isEmpty() && history.isEmpty()) { _pickedForYou.value = emptyList(); return@collectLatest }
+                    val seeds = (com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(explicit, 4) +
+                        com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(history, if (explicit.size < 3) 2 else 1)).distinctBy(Media::key)
+                    val candidates = linkedMapOf<String, Media>()
+                    val excluded = (explicit + history).map(Media::key).toSet()
+                    val previous = _pickedForYou.value.filter { it.key !in excluded }
+                    _pickedForYou.value = previous
+                    val creatorsFetched = hashSetOf<Int>()
+                    for (seed in seeds) {
+                        ensureActive()
+                        val details = try { aiClient.getTitleDetails(seed.type.routeName, seed.id) }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { null }
+                        val enriched = details?.toStableMobileMedia(seed) ?: seed
+                        com.aliflix.app.recommendation.MobileTasteModel.remember(listOf(enriched))
+                        details?.recommendations?.map { it.toMedia() }?.forEach { candidates[it.key] = it }
+                        // Director/creator filmographies add distinct interests outside Home rails.
+                        val creator = enriched.creators.firstOrNull { it.tmdbId > 0 }
+                        if (creator != null && creatorsFetched.size < 2 && creatorsFetched.add(creator.tmdbId)) {
+                            try {
+                                aiClient.getPersonCredits(creator.tmdbId).results.map { it.toMedia() }
+                                    .take(20).forEach { candidates[it.key] = it }
+                            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+                        }
+                    }
+                    // Hydrate bounded candidates before assessing rich anchors against sparse cards.
+                    val hydrated = mutableListOf<Media>()
+                    val pool = com.aliflix.app.recommendation.MobileTasteModel.diverseSeeds(
+                        candidates.values.filter { it.key !in excluded && it.posterPath != null }, 24)
+                    // Keep this entire optional refresh below 20 API calls so details/episodes have headroom.
+                    for (candidate in pool.take(12)) {
+                        ensureActive()
+                        val item = try { aiClient.getTitleDetails(candidate.type.routeName, candidate.id).toStableMobileMedia(candidate) }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { candidate }
+                        hydrated += item
+                        com.aliflix.app.recommendation.MobileTasteModel.remember(listOf(item))
+                        delay(30)
+                    }
+                    hydrated += pool.drop(12)
+                    val ranked = com.aliflix.app.recommendation.TastePicks.rankMobile(hydrated, explicit, excluded, history)
+                    // Keep the current rail's identity/order while refreshing its metadata and tail.
+                    val fresh = ranked.associateBy(Media::key)
+                    _pickedForYou.value = (previous.map { fresh[it.key] ?: it } + ranked).distinctBy(Media::key).take(24)
+                }
+            }
+        }
         viewModelScope.launch {
             val cached = homeSnapshotStore.loadSnapshot()
             if (cached != null && _home.value.content == null) {
@@ -650,10 +888,13 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
             )
             if (!BuildConfig.IS_TV) {
                 _home.value = runCatching {
-                    aiClient.getHomeFeed().toStableMobileHome(
-                        previousContent = previous.content,
-                        previousEditorialPicks = previous.editorialPicks,
-                    )
+                    val feed = aiClient.getHomeFeed()
+                    withContext(Dispatchers.Default) {
+                        feed.toStableMobileHome(
+                            previousContent = previous.content,
+                            previousEditorialPicks = previous.editorialPicks,
+                        )
+                    }
                 }.fold(
                     onSuccess = { snapshot ->
                         lastHomeRefreshAt = System.currentTimeMillis()
@@ -860,9 +1101,17 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    suspend fun searchTitles(query: String): List<Media> = aiClient.searchTitles(query.trim())
-        .map { it.toMedia() }
-        .distinctBy(Media::key)
+    private val titleSearch = com.aliflix.app.data.TypoTolerantTitleSearch(knownTitles = {
+        _home.value.content?.let { listOf(it.hero) + it.rails.flatMap { rail -> rail.items } }.orEmpty() +
+            myList.value + likes.value + recent.value + personalizationMetadata.value.values
+    }) { query ->
+        aiClient.searchTitles(query).map { it.toMedia() }
+    }
+    internal val discoverCatalogue = com.aliflix.app.ui.discover.DiscoverCatalogueStore(aiClient, titleSearch)
+
+    suspend fun searchTitles(query: String): List<Media> =
+        if (BuildConfig.IS_TV) aiClient.searchTitles(query.trim()).map { it.toMedia() }.distinctBy(Media::key)
+        else titleSearch.search(query).items
 
     suspend fun searchCompanies(query: String): List<com.aliflix.app.recommendation.ProductionCompanyFilter> =
         aiClient.searchCompanies(query.trim())
@@ -930,6 +1179,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private val mobileEpisodes by lazy { com.aliflix.app.data.MobileEpisodeRepository(getApplication(), aiClient) }
+    private val offlineDetails = com.aliflix.app.data.OfflineDetailStore(getApplication())
     private val mobileDetailCache = object : LinkedHashMap<String, Media>(32, .75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Media>?) = size > 60
     }
@@ -956,30 +1206,41 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
         _detail.value = DetailUiState(item = initial, selectedSeason = season, episodesLoading = item.type == MediaType.TV)
         if (item.type == MediaType.TV) loadMobileSeason(initial, season)
         detailJob = viewModelScope.launch(com.aliflix.app.data.ForegroundRequestPriorityElement) {
+            offlineDetails.load(item)?.let { cached ->
+                if (_detail.value.item?.key == item.key) {
+                    _detail.value = _detail.value.copy(item = cached); mobileDetailCache[item.key] = cached
+                }
+            }
             if (item.type == MediaType.TV) launch {
                 try {
                     val seasons = mobileEpisodes.seasons(item.id)
                     if (_detail.value.item?.key == item.key) _detail.value = _detail.value.copy(seasons = seasons)
                 } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
             }
-            launch {
+            val identityReady = async {
                 try {
                     val details = aiClient.getTitleDetails(item.type.routeName, item.id)
                     if (_detail.value.item?.key == item.key) {
                         val stable = details.toStableMobileMedia(_detail.value.item ?: initial)
                         _detail.value = _detail.value.copy(item = stable, recommendations = details.recommendations.map { it.toMedia() })
                         mobileDetailCache[item.key] = stable
+                        launch { runCatching { offlineDetails.save(stable) } }
                     }
-                } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
+                    details.toStableMobileMedia(initial)
+                } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { initial }
             }
             launch {
                 try {
-                    client.details(initial, nativeMetadata = true) { update, _ ->
+                    // Ratings use the same exact TMDB external identity, including short films.
+                    // This deadline gates ratings only; episodes, Play and details stay independent.
+                    val identified = kotlinx.coroutines.withTimeoutOrNull(4_000) { identityReady.await() } ?: initial
+                    client.details(identified, nativeMetadata = true) { update, _ ->
                         val current = _detail.value
                         if (current.item?.key == item.key) {
                             val merged = current.item.mergeStableMobileDetailUpdate(update)
                             _detail.value = current.copy(item = merged)
                             mobileDetailCache[item.key] = merged; library.refreshMetadata(merged)
+                            launch { runCatching { offlineDetails.save(merged) } }
                         }
                     }
                 } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
@@ -996,7 +1257,13 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 if (latest.item?.key == item.key && latest.selectedSeason == season) _detail.value = latest.copy(episodes = episodes, episodesLoading = false)
             }
             try {
-                val episodes = mobileEpisodes.episodes(item.id, season) { publish(it) }
+                val episodes = try {
+                    kotlinx.coroutines.withTimeout(6_000) { mobileEpisodes.episodes(item.id, season) { publish(it) } }
+                } catch(error:Exception) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    // Independent public catalogue fallback; a quota failure cannot hide the episode list.
+                    kotlinx.coroutines.withTimeout(20_000) { client.episodes(item,season) { publish(it) } }
+                }
                 publish(episodes)
                 // Ratings enrich visible rows; they never gate the list or the Play action.
                 val enriched = client.mobileEpisodeRatings(_detail.value.item ?: item, season, episodes)
@@ -1199,9 +1466,32 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     fun isLiked(item: Media): Boolean = library.isLiked(item)
 
+    private val libraryMetadataRequested = mutableSetOf<String>()
+    fun refreshLibraryMetadata() {
+        val context = getApplication<android.app.Application>()
+        if (!context.hasInternetConnection()) return
+        val missing = (myList.value + recent.value + likes.value).distinctBy { it.key }
+            .filter { ((!BuildConfig.IS_TV && it.genres.isEmpty()) || it.runtime.isBlank() || it.rating <= 0 ||
+                    (it.key in likes.value.map { liked -> liked.key } &&
+                        (it.keywords.isEmpty() || (!BuildConfig.IS_TV && it.creators.isEmpty())))) && libraryMetadataRequested.add(it.key) }
+        viewModelScope.launch {
+            for (item in missing) {
+                try {
+                    val details = aiClient.getTitleDetails(item.type.routeName, item.id)
+                    val enriched = details.toStableMobileMedia(item)
+                    if (!BuildConfig.IS_TV) com.aliflix.app.recommendation.MobileTasteModel.remember(listOf(enriched))
+                    library.refreshMetadata(enriched)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { libraryMetadataRequested.remove(item.key) }
+            }
+        }
+    }
+
     fun markPlayed(item: Media) = library.markPlayed(item)
 
     fun removeRecent(item: Media) = library.removeRecent(item)
+
+    fun removeWatched(item: Media) = playbackProgressStore.removeMedia(item)
 
     fun clearRecent() = library.clearRecent()
 
@@ -1212,10 +1502,6 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                 selectSearchMode(SearchMode.TITLE)
             }
         }
-    }
-
-    fun setRecommendationAiModel(model: RecommendationAiModel) {
-        recommendationStore.setAiModel(model)
     }
 
     suspend fun signInWithGoogle(activity: Activity): AccountActionResult =
@@ -1236,6 +1522,12 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     suspend fun sendPasswordResetEmail(email: String): AccountActionResult =
         accountServices.accountRepository.sendPasswordResetEmail(email)
+
+    suspend fun updateAccountDisplayName(name: String): AccountActionResult {
+        val result = accountServices.accountRepository.updateDisplayName(name)
+        if (result.succeeded) accountServices.syncRepository.retry()
+        return result
+    }
 
     suspend fun signOutAccount(): AccountActionResult =
         accountServices.accountRepository.signOut()
@@ -1259,7 +1551,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
     }
 
     override fun onCleared() {
-        accountServices.close()
+        if (BuildConfig.IS_TV) accountServices.close()
         super.onCleared()
     }
 

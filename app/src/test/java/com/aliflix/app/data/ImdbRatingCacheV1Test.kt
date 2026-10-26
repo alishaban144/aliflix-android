@@ -49,7 +49,7 @@ class ImdbRatingCacheV2Test {
         )
         assertNull(store.loadImdbRating("movie:1", Long.MAX_VALUE))
         assertNull(store.loadImdbRating("movie:2", Long.MAX_VALUE))
-        assertFalse(File(directory, "imdb-ratings-v2.json").exists())
+        assertFalse(File(directory, "imdb-ratings-v3.json").exists())
     }
 
     @Test fun `verified imdb rating with valid score is persisted and restored`() = runBlocking {
@@ -82,7 +82,7 @@ class ImdbRatingCacheV2Test {
         val unrated = store.loadImdbRating("movie:222222", Long.MAX_VALUE)
         assertEquals(RatingSourceState.NOT_RATED, unrated?.state)
         assertNull(unrated?.rating)
-        assertTrue(File(directory, "imdb-ratings-v2.json").exists())
+        assertTrue(File(directory, "imdb-ratings-v3.json").exists())
     }
 
     private fun store(directory: File) = AndroidCatalogCacheStore(

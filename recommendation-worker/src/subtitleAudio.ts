@@ -54,7 +54,11 @@ export function speechTimingWords(raw: unknown, duration: number): { language: s
     const w = item as Record<string, unknown>;
     if (typeof w.word !== 'string' || w.word.length > 80 || typeof w.start !== 'number' || typeof w.end !== 'number' ||
         !Number.isFinite(w.start) || !Number.isFinite(w.end) || w.start < 0 || w.end <= w.start || w.end > duration + 0.5 ||
-        !speech.some(s => (w.start as number) >= s.start - 0.1 && (w.end as number) <= s.end + 0.1)) return [];
+        // Word and segment timestamps are independently estimated. A boundary
+        // word may straddle adjacent segments; requiring complete containment
+        // silently deletes real phrase onsets/endings needed by mobile sync.
+        !speech.some(s => Math.min(w.end as number, s.end) - Math.max(w.start as number, s.start) >=
+          Math.min(0.05, ((w.end as number) - (w.start as number)) * 0.2))) return [];
     return [{ text: w.word.trim(), start: w.start, end: w.end }];
   });
   return { language: typeof value.language === 'string' ? value.language.slice(0, 30) : '', words };
@@ -67,7 +71,7 @@ export async function subtitleAudioTiming(request: Request, env: RecommendationE
   const bytes = await boundedBytes(request.body, MAX_WAV_BYTES);
   const duration = validateSubtitleWav(bytes);
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))).map(b => b.toString(16).padStart(2, '0')).join('');
-  const cacheKey = new Request(`https://subtitle-timing.aliflix.invalid/v1/${hash}`);
+  const cacheKey = new Request(`https://subtitle-timing.aliflix.invalid/v2/${hash}`);
   const cached = await caches.default.match(cacheKey);
   if (cached) return cached;
   const form = new FormData();
