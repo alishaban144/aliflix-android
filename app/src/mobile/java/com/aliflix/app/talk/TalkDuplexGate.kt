@@ -27,7 +27,7 @@ internal class TalkDuplexGate {
   if(!assistantActive&&now>=echoTailUntil){resetInput();return listOf(pcm)}
   if(opened)return listOf(pcm)
   preRoll.addLast(pcm.copyOf());preRollBytes+=pcm.size
-  while(preRollBytes>16000&&preRoll.isNotEmpty())preRollBytes-=preRoll.removeFirst().size
+  while(preRollBytes>38400&&preRoll.isNotEmpty())preRollBytes-=preRoll.removeFirst().size
   val samples=DoubleArray(pcm.size/16){n->
    var sum=0.0;for(i in n*16 until n*16+16 step 2)sum+=((pcm[i].toInt() and 255) or (pcm[i+1].toInt() shl 8)).toShort()/32768.0
    sum/8
@@ -35,7 +35,7 @@ internal class TalkDuplexGate {
   val energy=sqrt(samples.sumOf{it*it}/samples.size.coerceAtLeast(1))
   val echo=correlation(samples)>.48
   if(echo||probability<.65f)echoFloor=echoFloor*.94+energy.coerceAtMost(.05)*.06
-  val near=probability>=.90f&&!echo&&energy>maxOf(.003,echoFloor*2.2)
+  val near=probability>=.90f&&!echo&&energy>maxOf(.003,minOf(.008,echoFloor*1.6))
   candidateMs=if(near)candidateMs+pcm.size/32 else 0
   if(candidateMs>=180){opened=true;return preRoll.toList().also{preRoll.clear();preRollBytes=0}}
   return listOf(ByteArray(pcm.size))

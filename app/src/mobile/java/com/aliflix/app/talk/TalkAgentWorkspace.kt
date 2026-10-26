@@ -33,12 +33,12 @@ internal class TalkAgentWorkspace(private val context:Context) {
  val missions=_missions.asStateFlow()
  suspend fun command(args:JSONObject):JSONObject {
   val captured=owner
-  val request=JSONObject(args.toString()).put("library",AskTaste(context).library(app.libraryStore))
+  val request=JSONObject(args.toString()).put("library",AskTaste(context).library(app.libraryStore)).put("timeZone",java.util.TimeZone.getDefault().id)
    .put("completed",JSONArray(app.playbackProgressStore.entries.value.values.filter{it.completed}.map{it.key}.take(1000)))
   val result=client.request("agent",request)
   if(captured!=owner)throw CancellationException("Account changed")
   result.optJSONArray("memories")?.let{preferences(captured).edit().putString("memories",it.toString()).apply()}
-  if(args.optString("operation") in setOf("create","update","resume"))schedule(context)
+  if(args.optString("operation") in setOf("create","update","resume","refresh"))schedule(context)
   if(args.optString("operation")=="list")accept(result,captured)
   else if(result.has("id")) {
    if(args.optString("operation")=="read")details[result.getString("id")]=result

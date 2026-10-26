@@ -97,7 +97,7 @@ export function liveSetup(context: TalkContext) {
    parameters:{type:'OBJECT',properties:{picks:{type:'ARRAY',minItems:1,maxItems:3,items:{type:'OBJECT',properties:{key:{type:'STRING'},reason:{type:'STRING'}},required:['key','reason']}}},required:['picks']}
   }]:[])]}], inputAudioTranscription: {}, outputAudioTranscription: {},
   realtimeInputConfig: { automaticActivityDetection: { disabled: false, startOfSpeechSensitivity: (context.companionVersion||0)>=8?'START_SENSITIVITY_LOW':'START_SENSITIVITY_HIGH',
-    endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', prefixPaddingMs: 180, silenceDurationMs: 650 },
+    endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', prefixPaddingMs: (context.companionVersion||0)>=8?500:180, silenceDurationMs: (context.companionVersion||0)>=8?1500:650 },
     activityHandling: 'START_OF_ACTIVITY_INTERRUPTS', turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY' },
   contextWindowCompression: { triggerTokens: (context.companionVersion||0)>=5?'16384':'8192', slidingWindow: { targetTokens: (context.companionVersion||0)>=5?'8192':'4096' } },
   sessionResumption: {} };

@@ -35,14 +35,23 @@ internal fun TalkAgentSheet(session:TalkVoiceSession,onDismiss:()->Unit,onOpen:(
    IconButton(onClick={refresh()},enabled=!busy){Icon(if(failed)Icons.Rounded.Refresh else Icons.Rounded.Sync,"Refresh tasks")}
   }
   LazyColumn(Modifier.fillMaxWidth().heightIn(min=220.dp,max=620.dp).navigationBarsPadding(),contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
+   if(missions.none{it.optString("status")!="cancelled"})item("task-starts"){
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){talkTaskStarts.forEach{(label,prompt)->
+     SuggestionChip(onClick={onDismiss();session.sendText(prompt)},label={Text(label)})
+    }}
+   }
    items(missions.filterNot{it.optString("status")=="cancelled"},key={it.getString("id")}){mission->
     val plan=mission.getJSONObject("plan");val status=mission.optString("status")
+    var episodeLimit by remember(mission.optInt("revision")){mutableIntStateOf(24)}
     Column(Modifier.fillMaxWidth().testTag("agent-task-${mission.getString("id")}")){
      Row(verticalAlignment=Alignment.CenterVertically){
       Column(Modifier.weight(1f)){Text(plan.getString("name"),style=MaterialTheme.typography.titleMedium);Text(status.replace('_',' '),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
       if(status!="cancelled"){
-       val pause=status in setOf("running","queued","waiting")
-       IconButton(onClick={scope.launch{failed=runCatching{session.agent.command(JSONObject().put("operation",if(pause)"pause" else "resume").put("id",mission.getString("id")).put("expectedRevision",mission.getInt("revision")))}.isFailure}}){Icon(if(pause)Icons.Rounded.Pause else Icons.Rounded.PlayArrow,if(pause)"Pause task" else "Resume task")}
+       if(status=="needs_input")TextButton(onClick={onDismiss();session.sendText("Read my task "+mission.getString("id")+" and help me adjust the specific constraint that prevents it from finishing. Preserve its goal and ask me before relaxing a requirement.")}){Text("Adjust")}
+       else {
+        val op=when(status){"paused","failed"->"resume";"ready"->"refresh";else->"pause"}
+        IconButton(onClick={scope.launch{failed=runCatching{session.agent.command(JSONObject().put("operation",op).put("id",mission.getString("id")).put("expectedRevision",mission.getInt("revision")))}.isFailure}}){Icon(when(op){"refresh"->Icons.Rounded.Refresh;"resume"->Icons.Rounded.PlayArrow;else->Icons.Rounded.Pause},when(op){"refresh"->"Refresh task";"resume"->"Resume task";else->"Pause task"})}
+       }
        IconButton(onClick={scope.launch{failed=runCatching{session.agent.command(JSONObject().put("operation","cancel").put("id",mission.getString("id")).put("expectedRevision",mission.getInt("revision")))}.isFailure}}){Icon(Icons.Rounded.Close,"Cancel task")}
       }
      }
@@ -59,7 +68,7 @@ internal fun TalkAgentSheet(session:TalkVoiceSession,onDismiss:()->Unit,onOpen:(
       }
      }
      output?.optJSONArray("episodes")?.let{episodes->
-      for(index in 0 until minOf(episodes.length(),24)){val episode=episodes.getJSONObject(index)
+      for(index in 0 until minOf(episodes.length(),episodeLimit)){val episode=episodes.getJSONObject(index)
        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
         Text("S${episode.getInt("season")} · E${episode.getInt("episode")}    ${episode.getString("airDate")}",Modifier.weight(1f).padding(vertical=6.dp),fontSize=14.sp)
         IconButton(onClick={session.openAgentEpisode(episode)}){Icon(Icons.Rounded.PlayArrow,"Play S${episode.getInt("season")} E${episode.getInt("episode")}")}
@@ -83,7 +92,7 @@ internal fun TalkAgentSheet(session:TalkVoiceSession,onDismiss:()->Unit,onOpen:(
      output?.optJSONArray("evidence")?.let{sources->for(index in 0 until minOf(sources.length(),8)){val source=sources.getJSONObject(index)
       Text(source.getString("title"),Modifier.fillMaxWidth().clickable{runCatching{uri.openUri(source.getString("url"))}}.padding(vertical=8.dp),color=MaterialTheme.colorScheme.primary,fontSize=13.sp)
      }}
-     if(output?.optBoolean("moreResults")==true)TextButton(onClick={scope.launch{session.agent.command(JSONObject().put("operation","read").put("id",mission.getString("id")))}}){Text("More")}
+     if(output?.optBoolean("moreResults")==true||(output?.optJSONArray("episodes")?.length()?:0)>episodeLimit)TextButton(onClick={scope.launch{session.agent.command(JSONObject().put("operation","read").put("id",mission.getString("id")));episodeLimit+=24}}){Text("More")}
     }
    }
   }

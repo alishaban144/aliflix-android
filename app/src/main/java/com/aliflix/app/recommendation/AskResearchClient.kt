@@ -23,21 +23,28 @@ import kotlin.coroutines.resumeWithException
 
 /** Mobile research uses the existing authenticated guest/account identity.
  * No provider credentials or movie prose are shipped to the device. */
-class AskResearchClient(context:Context) {
+class AskResearchClient(private val context:Context) {
     private val prefs=context.applicationContext.getSharedPreferences("aliflix-ask-identity",Context.MODE_PRIVATE)
     private val http=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(40,TimeUnit.SECONDS).callTimeout(45,TimeUnit.SECONDS).build()
     private val base=BuildConfig.RECOMMENDATION_AI_BASE_URL.trimEnd('/')
-    private val identityLock=kotlinx.coroutines.sync.Mutex()
     private suspend fun identity():String {
         identityLock.lock()
         try {
             val user=FirebaseAuth.getInstance().currentUser
             val owner=user?.uid?:"guest"
-            if(prefs.getString("owner",null)==owner&&prefs.getLong("expires",0)>System.currentTimeMillis()+60000)
+            if(prefs.getString("owner",null)==owner&&(owner!="guest"||prefs.getBoolean("persistentGuest",false))&&prefs.getLong("expires",0)>System.currentTimeMillis()+60000)
                 return prefs.getString("token","").orEmpty()
-            val body=JSONObject();user?.getIdToken(false)?.await()?.token?.let{body.put("idToken",it)}
+            val body=JSONObject()
+            if(user!=null)body.put("idToken",requireNotNull(user.getIdToken(false).await().token))
+            else {
+                // Keep this credential outside the expiring token preferences:
+                // a 401 clears tokens, not ownership of persistent guest work.
+                val installation=context.applicationContext.getSharedPreferences("aliflix-ask-installation",Context.MODE_PRIVATE)
+                val guestKey=installation.getString("guestKey",null)?:android.util.Base64.encodeToString(ByteArray(32).also{java.security.SecureRandom().nextBytes(it)},android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP).also{installation.edit().putString("guestKey",it).commit()}
+                body.put("guestKey",guestKey)
+            }
             val json=execute(Request.Builder().url("$base/v1/party/identity").post(body.toString().toRequestBody(JSON)).build())
-            prefs.edit().putString("owner",owner).putString("token",json.getString("token")).putLong("expires",json.getLong("expires")).apply()
+            prefs.edit().putString("owner",owner).putString("token",json.getString("token")).putLong("expires",json.getLong("expires")).putBoolean("persistentGuest",owner=="guest").apply()
             return json.getString("token")
         } finally {identityLock.unlock()}
     }
@@ -113,5 +120,5 @@ class AskResearchClient(context:Context) {
             }}
         })
     }}
-    private companion object {val JSON="application/json; charset=utf-8".toMediaType()}
+    private companion object {val identityLock=kotlinx.coroutines.sync.Mutex();val JSON="application/json; charset=utf-8".toMediaType()}
 }

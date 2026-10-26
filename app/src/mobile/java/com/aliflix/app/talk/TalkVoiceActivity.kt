@@ -19,6 +19,7 @@ class TalkVoiceActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        volumeControlStream=talkAudioAttributes().volumeControlStream
         if(intent.getBooleanExtra("textMode",false)||intent.getBooleanExtra("agentTasks",false))voice.setTextMode(true)
         enableEdgeToEdge(statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         setContent { AliflixMobileTheme { TalkVoiceScreen(voice, onStart = ::startListening, onClose = ::finish) } }

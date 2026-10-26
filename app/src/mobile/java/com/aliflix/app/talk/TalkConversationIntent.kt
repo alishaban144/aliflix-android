@@ -70,6 +70,7 @@ internal fun talkActionRequested(action:String,question:String):Boolean {
         "agent_forget"->"forget|erase|delete|remove|store|remember"
         "agent_pause"->"pause|stop|suspend";"agent_cancel"->"cancel|stop|delete|remove"
         "agent_resume"->"resume|continue|restart|start"
+        "agent_refresh"->"refresh|recheck|check|run|retry"
         "batch_library"->"save|unsave|add|remove|favorite|favourite|unfavorite|dislike|hide|reject|put|mark"
         else->action.replace('_',' ')
     }

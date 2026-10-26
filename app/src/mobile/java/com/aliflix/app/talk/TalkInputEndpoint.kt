@@ -11,7 +11,7 @@ internal class TalkInputEndpoint {
         val voiced=level>maxOf(.009,floor*3)
         if(voiced){voicedMs+=frameMs;lastVoice=now}
         else if(voicedMs==0)floor=floor*.98+level.coerceAtMost(.02)*.02
-        if(lastVoice>0&&now-lastVoice>=1000){
+        if(lastVoice>0&&now-lastVoice>=1800){
             val ended=voicedMs>=80;reset();return ended
         }
         return false

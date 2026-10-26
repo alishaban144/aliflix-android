@@ -346,6 +346,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     @Volatile internal var debugTurnCompleteAt = 0L
     @Volatile private var debugRenderedBaseline = 0L
     internal val debugRenderedSamples get() = synchronized(outputLock) { runCatching { (output?.playbackHeadPosition?.toLong()?.and(0xffffffffL) ?: 0L)-debugRenderedBaseline }.getOrDefault(0L) }
+    internal val debugAudioTimeline=java.util.concurrent.ConcurrentLinkedDeque<JSONObject>()
+    internal fun debugAudioSnapshot():JSONObject=JSONObject().put("at",SystemClock.elapsedRealtime()).put("phase",state.value.phase).put("written",writtenSamples).put("rendered",output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0).put("queued",audio?.bytes?.get()?:0).put("writing",audio?.writing?:false).put("playing",debugOutputPlaying).put("speaking",speaking).put("end",endOfAudio).put("primingFrom",primingFrom).put("awaitingInterrupt",awaitingInterrupt).put("remoteSpeechActive",remoteSpeechActive).put("recommendationLookup",recommendationLookup).put("pendingAnswerNeedsTitle",pendingAnswerNeedsTitle).put("presentationDelivered",presentationDelivered).put("pendingTools",tools.size).put("awaitingToolAnswer",awaitingToolAnswer).put("route",output?.routedDevice?.type?:-1).put("communicationDevice",if(android.os.Build.VERSION.SDK_INT>=31)manager.communicationDevice?.type?:-1 else -1).put("outputUsage",talkAudioAttributes().usage).put("outputVolume",manager.getStreamVolume(talkAudioAttributes().volumeControlStream)).put("outputEnergy",outputEnergy).put("audioMode",manager.mode).put("underruns",debugUnderruns)
     internal val debugOutputPlaying get()=runCatching{output?.playState==AudioTrack.PLAYSTATE_PLAYING}.getOrDefault(false)
     internal val debugResumeAvailable get() = !resumeHandle.isNullOrBlank()
     internal var debugConnectionIssue=""
@@ -360,7 +362,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal val debugModel get() = ephemeral?.optString("model").orEmpty()
     private val manager = context.getSystemService(AudioManager::class.java)
     private val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-        .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+        .setAudioAttributes(talkAudioAttributes())
         .setOnAudioFocusChangeListener { value ->
             when(value) {
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> runCatching {output?.setVolume(.25f)}
@@ -371,7 +373,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var oldMode: Int? = null
     private var oldCommunicationDevice: AudioDeviceInfo? = null
     private var routedSpeaker = false
+    private var requestedOutput:AudioDeviceInfo?=null
+    private var communicationListener:AudioManager.OnCommunicationDeviceChangedListener?=null
     @Volatile private var outputEnergy = 0.0
+    private val outputEnvelope=TalkOutputEnvelope()
+    private var acousticProbe=false
+    internal val debugAcousticLevels=java.util.concurrent.ConcurrentLinkedDeque<Double>()
+    internal fun debugStartAcousticProbe(){check(BuildConfig.DEBUG);acousticProbe=true;debugAcousticLevels.clear();debugStartLocalAudio()}
+
     @Volatile private var endOfAudio = false
     @Volatile private var writtenSamples = 0L
     @Volatile private var primingFrom = 0L
@@ -421,7 +430,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("companionVersion",8).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("companionVersion",8).put("clientDate",java.time.LocalDate.now().toString()).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
@@ -436,12 +445,16 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if (manager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             permitted = false; update { it.copy(phase = "Audio unavailable") }; return
         }
-        oldMode = manager.mode
-        if (android.os.Build.VERSION.SDK_INT >= 31) oldCommunicationDevice = manager.communicationDevice
-        manager.mode = AudioManager.MODE_IN_COMMUNICATION
-        if (android.os.Build.VERSION.SDK_INT >= 31 && manager.communicationDevice?.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
-            manager.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let {
-                routedSpeaker = manager.setCommunicationDevice(it)
+        // Assistant speech uses Android's response stream, not the phone-call
+        // stream. Only an explicitly selected SCO/LE headset needs call mode.
+        oldMode=manager.mode
+        if(android.os.Build.VERSION.SDK_INT>=31){
+            val selected=manager.communicationDevice
+            if(talkNeedsCommunicationMode(selected?.type)){
+                oldCommunicationDevice=selected;requestedOutput=selected
+                manager.mode=AudioManager.MODE_IN_COMMUNICATION
+                communicationListener=AudioManager.OnCommunicationDeviceChangedListener{device->if(permitted)runCatching{output?.setPreferredDevice(device)}}
+                manager.addOnCommunicationDeviceChangedListener(context.mainExecutor,requireNotNull(communicationListener))
             }
         }
         }
@@ -830,7 +843,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,call.optString("name"),JSONObject().put("unavailable",true).put("retryable",true),"WHEN_IDLE")))))
                     continue
                 }
-                update{it.copy(phase=if(speaking)it.phase else "Thinking")}
+                update{it.copy(sending=true,answerComplete=false,phase=if(speaking)it.phase else "Thinking")}
                 val toolRequestId=java.util.UUID.randomUUID().toString()
                 val toolTurn=userTurn.get()
                 val toolQuestion=currentQuestion(call.optJSONObject("args")?.optString("query").orEmpty())
@@ -1234,13 +1247,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         if (captureJob?.isActive == true) return
         inputEndpoint.reset()
         duplex.reset();speechProbability=0f;speechProbabilityAt=0L
-        val record = AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+        val record = AudioRecord.Builder().setAudioSource(if(BuildConfig.DEBUG&&acousticProbe)MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.VOICE_COMMUNICATION)
             .setAudioFormat(AudioFormat.Builder().setSampleRate(16000).setChannelMask(AudioFormat.CHANNEL_IN_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
             .setBufferSizeInBytes(maxOf(12_800, AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2)).build()
         require(record.state == AudioRecord.STATE_INITIALIZED)
         capture = record
-        echo = if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(record.audioSessionId)?.apply { enabled = true } else null
-        noise = if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(record.audioSessionId)?.apply { enabled = true } else null
+        echo = if (!acousticProbe&&AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(record.audioSessionId)?.apply { enabled = true } else null
+        noise = if (!acousticProbe&&NoiseSuppressor.isAvailable()) NoiseSuppressor.create(record.audioSessionId)?.apply { enabled = true } else null
         bargeInGate.reset()
         val echoControlled=runCatching{echo?.enabled==true}.getOrDefault(false)
         speechMonitor=TalkSpeechMonitor(context){at,probability->
@@ -1249,13 +1262,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(probability>=.85f&&(!speaking||duplex.interrupted))localSpeechAt=SystemClock.elapsedRealtime()
             }
         }
-        val track = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+        val track = AudioTrack.Builder().setAudioAttributes(talkAudioAttributes())
             .setAudioFormat(AudioFormat.Builder().setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
             .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(maxOf(24_000, AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT) * 3)).build()
         // play() alone does not lower Android's default full-capacity threshold.
         if(android.os.Build.VERSION.SDK_INT>=31)track.setStartThresholdInFrames(1)
         else track.setBufferSizeInFrames(2880)
-        output = track; writtenSamples=0;primingFrom=0;primingBegan=0;debugRenderedBaseline=0;endOfAudio=false;outputEnergy=0.0
+        requestedOutput?.let{device->runCatching{track.setPreferredDevice(device)}}
+        outputEnvelope.clear();output = track; writtenSamples=0;primingFrom=0;primingBegan=0;debugRenderedBaseline=0;endOfAudio=false;outputEnergy=0.0
         val buffer=AudioBuffer();val queue=buffer.chunks;audio=buffer
         outputJob = scope.launch(Dispatchers.IO) {
             try {for ((seq, bytes) in queue) {
@@ -1263,19 +1277,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if (seq != sequence || ticket != epoch) continue
                 buffer.writing=true
                 try {
-                speaking = true; update { it.copy(phase = "Speaking") }
-                var squared = 0.0
-                for (i in 0 until bytes.size - 1 step 2) {
-                    val sample = ((bytes[i].toInt() and 255) or (bytes[i+1].toInt() shl 8)).toShort().toDouble() / 32768.0
-                    squared += sample * sample
-                }
-                outputEnergy = sqrt(squared / (bytes.size / 2).coerceAtLeast(1))
+                speaking = true
                 var at = 0
                 while (at < bytes.size && seq == sequence && isActive && ticket == epoch) {
                     val wrote = synchronized(outputLock) {
                         if (!isActive || ticket != epoch || seq != sequence) -1
                         else if(awaitingInterrupt)0
-                        else runCatching { track.write(bytes, at, minOf(4800, bytes.size - at), AudioTrack.WRITE_NON_BLOCKING) }.getOrDefault(-1).also { count->if(count>0)writtenSamples+=count/2 }
+                        else runCatching { track.write(bytes, at, minOf(4800, bytes.size - at), AudioTrack.WRITE_NON_BLOCKING) }.getOrDefault(-1).also { count->if(count>0){outputEnvelope.offer(bytes,at,count,writtenSamples);writtenSamples+=count/2} }
                     }
                     if (wrote < 0) {if(seq==sequence&&ticket==epoch&&isActive)withContext(Dispatchers.Main){disconnected(ticket,false)};break}
                     if (wrote == 0) { delay(5); continue }
@@ -1293,12 +1301,36 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             catch(_:Exception){if(ticket==epoch&&permitted)withContext(Dispatchers.Main){disconnected(ticket,false)}}
         }
         outputPump=scope.launch(Dispatchers.IO) {
+            var diagnosticAt=0L
+            val health=TalkOutputHealth()
             try { while(isActive&&permitted&&ticket==epoch) {
                 delay(20)
+                if(BuildConfig.DEBUG&&SystemClock.elapsedRealtime()-diagnosticAt>=500){diagnosticAt=SystemClock.elapsedRealtime();debugAudioTimeline.add(debugAudioSnapshot());while(debugAudioTimeline.size>240)debugAudioTimeline.pollFirst()}
+
                 if(speaking&&!endOfAudio&&tools.isEmpty()&&!buffer.writing&&queue.isEmpty&&lastOutputAt>0&&SystemClock.elapsedRealtime()-lastOutputAt>5000&&(track.playbackHeadPosition.toLong() and 0xffffffffL)>=writtenSamples){
                     if(stalledRecoveries++<2){debugStallRecoveries++;continueAfterReconnect=true;withContext(Dispatchers.Main){disconnected(ticket,false)}}
                     else withContext(Dispatchers.Main){suspendSession();update{it.copy(phase="Reconnect",level=0f)}}
                     break
+                }
+                val rendered=track.playbackHeadPosition.toLong() and 0xffffffffL
+                outputEnergy=outputEnvelope.at(rendered)
+                if(speaking)update{it.copy(level=(outputEnergy*12).toFloat().coerceIn(0f,1f))}
+                if(speaking&&!awaitingInterrupt&&track.playState==AudioTrack.PLAYSTATE_PLAYING&&rendered>primingFrom&&state.value.phase!="Speaking")update{it.copy(phase="Speaking")}
+                when(health.inspect(SystemClock.elapsedRealtime(),sequence,rendered,writtenSamples,awaitingInterrupt)){
+                    1->synchronized(outputLock){
+                        if(ticket==epoch&&!awaitingInterrupt){
+                            if(android.os.Build.VERSION.SDK_INT>=31)runCatching{track.setPreferredDevice(requestedOutput)}
+                            runCatching{track.pause();track.play()}
+                        }
+                    }
+                    2->{
+                        debugStallRecoveries++
+                        withContext(Dispatchers.Main){
+                            if(stalledRecoveries++<2){continueAfterReconnect=true;disconnected(ticket,false)}
+                            else {suspendSession();update{it.copy(phase="Reconnect",level=0f)}}
+                        }
+                        break
+                    }
                 }
                 synchronized(outputLock) {
                     if(ticket!=epoch||!isActive)return@synchronized
@@ -1328,7 +1360,14 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(SystemClock.elapsedRealtime()-startedAt>1200000){withContext(Dispatchers.Main){suspendSession()};break}
                 var sum=0.0;for(i in 0 until count)sum+=samples[i].toDouble()*samples[i]
                 val energy=sqrt(sum/count)/32768.0
-                update{it.copy(level=((if(speaking)outputEnergy else if(muted)0.0 else energy)*12).toFloat().coerceIn(0f,1f))}
+                if(BuildConfig.DEBUG&&acousticProbe){
+                    var real=0.0;var imaginary=0.0
+                    for(i in 0 until count){val angle=2.0*Math.PI*997.0*i/16000.0;real+=samples[i]*kotlin.math.cos(angle);imaginary+=samples[i]*kotlin.math.sin(angle)}
+                    debugAcousticLevels.add(2.0*sqrt(real*real+imaginary*imaginary)/count/32768.0)
+                    while(debugAcousticLevels.size>160)debugAcousticLevels.pollFirst()
+                }
+
+                if(!speaking)update{it.copy(level=((if(muted)0.0 else energy)*12).toFloat().coerceIn(0f,1f))}
                 if(muted)continue
                 if((ws?.queueSize()?:0)>128000)throw IllegalStateException("Backpressure")
                 val bytes=ByteArray(count*2);for(i in 0 until count){bytes[i*2]=samples[i].toByte();bytes[i*2+1]=(samples[i].toInt() shr 8).toByte()}
@@ -1342,10 +1381,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun interruptOutput() {
         speaking = false; localVoice = false; outputEnergy = 0.0; endOfAudio = false
         audio?.let{buffer->while(true){val chunk=buffer.chunks.tryReceive().getOrNull()?:break;buffer.bytes.addAndGet(-chunk.second.size)}}
-        synchronized(outputLock) { runCatching { output?.pause(); output?.flush(); writtenSamples = 0;primingFrom=0;primingBegan=0; debugRenderedBaseline = 0 } }
+        synchronized(outputLock) { runCatching { output?.pause(); output?.flush(); outputEnvelope.clear(); writtenSamples = 0;primingFrom=0;primingBegan=0; debugRenderedBaseline = 0 } }
     }
     internal val debugPlayedSamples get() = writtenSamples
-    internal fun debugStartLocalAudio(){check(BuildConfig.DEBUG);localAudioValidation=true;permitted=true;epoch++;startedAt=SystemClock.elapsedRealtime();oldMode=manager.mode;manager.mode=AudioManager.MODE_IN_COMMUNICATION;startAudio(epoch)}
+    internal fun debugStartLocalAudio(){check(BuildConfig.DEBUG);localAudioValidation=true;permitted=true;epoch++;startedAt=SystemClock.elapsedRealtime();oldMode=manager.mode;startAudio(epoch)}
     internal fun debugStallMicrophone(){check(BuildConfig.DEBUG);captureJob?.cancel();captureJob=null;runCatching{capture?.stop()}}
     internal fun debugQueueSpeech(pcm:ByteArray){check(BuildConfig.DEBUG);enqueueAudio(pcm,epoch);endOfAudio=true}
     fun selectVoice(voice:String) {
@@ -1361,11 +1400,21 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     }
     internal fun debugPreviewUserQuestion(question:String){check(BuildConfig.DEBUG);beginUserTurn();inputText=question;commitQuestion()}
     internal fun debugReplayServerMessage(message:JSONObject){check(BuildConfig.DEBUG);receiveLive(message,epoch,false)}
+    internal fun debugPreviewOrbContext(phase:String,narration:String){check(BuildConfig.DEBUG);update{it.copy(phase=phase,lines=it.lines.filter{line->line.role!="assistant"}+TalkLine("assistant",narration))}}
     internal fun debugPreviewTitles(titles:List<TalkTitleCard>,textMode:Boolean){check(BuildConfig.DEBUG);update{it.copy(textMode=textMode,words="CINEMA",cards=TalkCardContext().show(titles),lines=listOf(TalkLine("user","A cinema discovery"),TalkLine("assistant","A few thoughtful choices for tonight.",titles=titles)))}}
     internal fun debugInterrupt(){check(BuildConfig.DEBUG);sequence++;interruptOutput();emit(JSONObject().put("realtimeInput",JSONObject().put("text","Stop speaking.")))}
     internal fun debugReconnect(){check(BuildConfig.DEBUG);update{it.copy(phase="Reconnecting")};cancelSocket(ws)}
     internal suspend fun debugInjectText(text:String,forceNativeRecommendation:Boolean=false){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};beginUserTurn();inputText=text;commitQuestion();answerDeadline.awaiting();debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)));if(forceNativeRecommendation)check(startNativeRecommendations())}
     internal suspend fun debugInjectUtterance(pcm:ByteArray,finishStream:Boolean=true){check(BuildConfig.DEBUG&&pcm.size in 6400..960000&&pcm.size%2==0);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;for(at in pcm.indices step 3200){sendPcm(pcm.copyOfRange(at,minOf(at+3200,pcm.size)));delay(100)};repeat(15){sendPcm(ByteArray(3200));delay(100)};if(finishStream)emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)))}
+    internal suspend fun debugInjectMicrophonePcm(pcm:ByteArray){
+        check(BuildConfig.DEBUG&&pcm.size in 6400..960000&&pcm.size%2==0)
+        muted=true;update{it.copy(muted=true)};if(!permitted)connect()
+        withTimeout(20000){while(captureJob?.isActive!=true)delay(20)}
+        debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L
+        for(at in pcm.indices step 1600){sendPcm(pcm.copyOfRange(at,minOf(at+1600,pcm.size)),liveMicrophone=true);delay(50)}
+        repeat(60){sendPcm(ByteArray(1600),liveMicrophone=true);delay(50)}
+        muted=false;update{it.copy(muted=false)}
+    }
     internal suspend fun debugInjectDuplexUtterance(pcm:ByteArray){check(BuildConfig.DEBUG&&pcm.size in 6400..960000&&pcm.size%2==0);muted=true;update{it.copy(muted=true)};for(at in pcm.indices step 1600){sendPcm(pcm.copyOfRange(at,minOf(at+1600,pcm.size)),liveMicrophone=true);delay(50)};repeat(24){sendPcm(ByteArray(1600),liveMicrophone=true);delay(50)}}
     fun toggleMute(){muted=!muted;if(muted&&captureJob?.isActive==true)emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)));update{it.copy(muted=muted,phase=if(it.phase in listOf("Connecting","Reconnecting"))it.phase else if(muted) "Muted" else if(speaking) "Speaking" else "Listening")}}
     fun setHistory(keep:Boolean){prefs.edit().putBoolean("keep-history",keep).apply();update{it.copy(keepHistory=keep)};if(keep)persistHistory()else prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()}
@@ -1408,19 +1457,25 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         persistHistory();socketReady=false;permitted=false;awaitingInterrupt=false;epoch++
         readyWatchdog?.cancel();readyWatchdog=null;reconnectJob?.cancel();reconnectJob=null
         val socket=ws;ws=null;runCatching {socket?.close(1000,"Paused")}
+        if(BuildConfig.DEBUG&&debugAudioTimeline.isNotEmpty())runCatching{
+            java.io.File(context.getExternalFilesDir(null),"talk-last-audio-diagnostic.json").writeText(JSONObject().put("audio",JSONArray(debugAudioTimeline.toList())).put("events",JSONArray(debugWireEvents.toList())).toString())
+        }
+        if(android.os.Build.VERSION.SDK_INT>=31)communicationListener?.let{runCatching{manager.removeOnCommunicationDeviceChangedListener(it)}}
+        communicationListener=null
         stopAudio()
         val restoreMode=oldMode;oldMode=null
         val restoreDevice=oldCommunicationDevice;oldCommunicationDevice=null
         val restoreSpeaker=routedSpeaker;routedSpeaker=false
+        val leasedOutput=requestedOutput;requestedOutput=null
         if(restoreMode!=null) {
             runCatching {manager.abandonAudioFocusRequest(focus)}
             runCatching {
                 if(android.os.Build.VERSION.SDK_INT>=31&&restoreSpeaker&&manager.mode==AudioManager.MODE_IN_COMMUNICATION&&
-                    manager.communicationDevice?.type==AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
-                    if(restoreDevice!=null)manager.setCommunicationDevice(restoreDevice) else manager.clearCommunicationDevice()
+                    manager.communicationDevice?.id==leasedOutput?.id) {
+                    if(restoreDevice==null||!manager.setCommunicationDevice(restoreDevice))manager.clearCommunicationDevice()
                 }
             }
-            runCatching {if(manager.mode==AudioManager.MODE_IN_COMMUNICATION)manager.mode=restoreMode}
+            runCatching {if(leasedOutput!=null&&manager.mode==AudioManager.MODE_IN_COMMUNICATION)manager.mode=restoreMode}
         }
         update {it.copy(phase="Resume",level=0f,sending=false)}
     }

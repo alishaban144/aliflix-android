@@ -48,22 +48,39 @@ export const MissionPlan=z.object({
   seen.add(step.id);
  }
 });
+export function agentToday(timeZone?:string,now=Date.now()){
+ try{
+  if(timeZone){const parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(now));const value=(kind:string)=>parts.find(v=>v.type===kind)!.value;return value('year')+'-'+value('month')+'-'+value('day');}
+ }catch{}
+ return new Date(now).toISOString().slice(0,10);
+}
 type Plan=z.infer<typeof MissionPlan>;
-type Snapshot={library:z.infer<typeof AskRequestSchema>['library'];completed:string[]};
+type Snapshot={library:z.infer<typeof AskRequestSchema>['library'];completed:string[];timeZone?:string};
 type Output={results?:RecommendationResult[];evidence?:Array<{title:string;url:string;text:string;published?:string}>;episodes?:Episode[];minutes?:number;unknownRuntime?:number[];calendar?:Array<{date:string;episodes:Episode[];minutes:number}>;festival?:Array<{date:string;results:RecommendationResult[];minutes:number}>;unscheduled?:number;totalAvailable?:number;nextOffset?:number;truncated?:boolean};
 type Episode={id:number;type:'tv';season:number;episode:number;airDate:string;runtimeMinutes?:number};
 type Mission={id:string;revision:number;plan:Plan;status:'queued'|'running'|'ready'|'waiting'|'paused'|'failed'|'cancelled'|'needs_input';collection?:RecommendationResult[];
  outputs:Record<string,Output>;snapshot:Snapshot;updatedAt:number;nextRunAt?:number;error?:string;change:number;signature?:string};
-const Request=z.object({operation:z.enum(['create','update','list','read','pause','resume','cancel','remember','forget','memories']),
+const Request=z.object({operation:z.enum(['create','update','list','read','pause','resume','refresh','cancel','remember','forget','memories']),
  id:z.string().uuid().optional(),expectedRevision:z.number().int().positive().optional(),plan:MissionPlan.optional(),
  memory:z.object({key:z.string().trim().min(1).max(60).refine(v=>!v.startsWith('__')),value:z.string().trim().min(1).max(500)}).optional(),
  library:z.array(z.object({id:z.number().int().positive(),type:z.enum(['movie','tv']),kind:z.enum(['favorite','saved','watched','dislike'])})).max(80).default([]),
- completed:z.array(z.string().max(80)).max(1000).default([]),
+ completed:z.array(z.string().max(80)).max(1000).default([]),timeZone:z.string().min(1).max(80).optional(),
 }).strict();
+
+/** Bounded transport views: keep the final work usable without sending every
+ * intermediate candidate's ranking prose or repeating thousands of episodes. */
+export function agentOutput(output:Output,full=false){
+ const card=(v:RecommendationResult)=>({tmdbId:v.tmdbId,mediaType:v.mediaType,title:v.title,releaseDate:v.releaseDate,posterPath:v.posterPath,runtimeMinutes:v.runtimeMinutes,genres:v.genres,originalLanguage:v.originalLanguage,originCountries:v.originCountries});
+ return {...output,results:output.results?.slice(0,full?72:12).map(card),episodes:output.episodes?.slice(0,full?300:24),
+  calendar:output.calendar?.slice(0,full?90:7).map(d=>({...d,episodes:d.episodes.slice(0,full?300:8)})),
+  festival:output.festival?.slice(0,full?14:4).map(d=>({...d,results:d.results.slice(0,full?24:4).map(card)})),
+  evidence:output.evidence?.slice(0,full?8:4).map(e=>({title:e.title,url:e.url,published:e.published,text:full?e.text?.slice(0,1200):undefined})),
+  moreResults:!full&&((output.results?.length||0)>12||(output.episodes?.length||0)>24||(output.calendar?.length||0)>7||!!output.calendar?.some(d=>d.episodes.length>8)||(output.festival?.length||0)>4||!!output.festival?.some(d=>d.results.length>4)||(output.evidence?.length||0)>4)};
+}
 
 /** Exact runtime packing; unknown metadata never becomes a guessed duration. */
 export function agentProgramme(items:RecommendationResult[],budget:number,count:number,gap=0){
- const known=items.filter(v=>v.runtimeMinutes&&v.runtimeMinutes>0);
+ const known=items.filter(v=>v.mediaType==='movie'&&v.runtimeMinutes&&v.runtimeMinutes>0);
  let states=new Map<string,{items:RecommendationResult[];minutes:number;score:number}>();states.set('0:0',{items:[],minutes:0,score:0});
  for(const [rank,item] of known.entries())for(const state of [...states.values()]){
   const minutes=state.minutes+item.runtimeMinutes!+(state.items.length?gap:0),size=state.items.length+1;
@@ -108,7 +125,28 @@ export class TalkAgent extends DurableObject<RecommendationEnv> {
  private put(m:Mission){this.ctx.storage.sql.exec('INSERT OR REPLACE INTO missions VALUES (?,?)',m.id,JSON.stringify(m));}
  async command(raw:unknown){
   const r=Request.parse(raw);
-  if(typeof raw==='object'&&raw!==null&&'library' in raw)this.ctx.storage.sql.exec('INSERT OR REPLACE INTO preferences VALUES (?,?)','__snapshot',JSON.stringify({library:r.library,completed:r.completed}));
+  if(typeof raw==='object'&&raw!==null&&'library' in raw)this.ctx.storage.sql.exec('INSERT OR REPLACE INTO preferences VALUES (?,?)','__snapshot',JSON.stringify({library:r.library,completed:r.completed,timeZone:r.timeZone}));
+  if((r.operation==='list'||r.operation==='read')&&typeof raw==='object'&&raw!==null&&'completed' in raw){
+   // Episode plans remain tied to actual viewing, rather than a frozen chat
+   // snapshot. Invalidate only the affected episode stages and descendants.
+   let changed=false;
+   for(const mission of this.all()){
+    if(['cancelled','paused','failed'].includes(mission.status))continue;
+    const affected=mission.plan.steps.filter(s=>s.kind==='episodes'||s.kind==='calendar').flatMap(s=>s.titles.filter(t=>t.type==='tv').map(t=>t.id));
+    for(const step of mission.plan.steps)if(step.kind==='catalogue')affected.push(...step.titles.filter(t=>t.type==='tv').map(t=>t.id));
+    if(!affected.length||!mission.plan.steps.some(s=>s.kind==='episodes'||s.kind==='calendar'))continue;
+    const relevant=(rows:string[])=>rows.filter(v=>affected.some(id=>v.startsWith('tv:'+id+':'))).sort().join('|');
+    const today=agentToday(r.timeZone||mission.snapshot.timeZone);
+    const missed=mission.plan.steps.some(s=>s.kind==='calendar'&&mission.outputs[s.id]?.calendar?.some(day=>day.date<today&&day.episodes.length));
+    if(!missed&&relevant(mission.snapshot.completed)===relevant(r.completed))continue;
+    const invalid=new Set<string>();
+    for(const step of mission.plan.steps)if(step.kind==='episodes'||step.kind==='calendar'||step.dependsOn.some(id=>invalid.has(id)))invalid.add(step.id);
+    mission.outputs=Object.fromEntries(Object.entries(mission.outputs).filter(([id])=>!invalid.has(id)));
+    this.controllers.get(mission.id)?.abort();this.controllers.delete(mission.id);
+    mission.revision++;mission.status='queued';mission.error=undefined;mission.nextRunAt=undefined;mission.updatedAt=Date.now();mission.snapshot={library:r.library,completed:r.completed,timeZone:r.timeZone};this.put(mission);changed=true;
+   }
+   if(changed)await this.schedule();
+  }
   if(r.operation==='memories')return {memories:this.memories()};
   if(r.operation==='remember'){
    if(!r.memory)throw Error('INVALID_REQUEST');
@@ -122,13 +160,12 @@ export class TalkAgent extends DurableObject<RecommendationEnv> {
    const last=m.plan.steps.at(-1)!.id,output=m.outputs[last];
    return {id:m.id,revision:m.revision,status:m.status,updatedAt:m.updatedAt,change:m.change,error:m.error,
     plan:{name:m.plan.name,goal:m.plan.goal.slice(0,200),steps:[{id:last,kind:m.plan.steps.at(-1)!.kind}]},
-    outputs:{[last]:output?{...output,moreResults:(output.results?.length||0)>12||(output.episodes?.length||0)>24,evidence:output.evidence?.map(e=>({title:e.title,url:e.url,published:e.published})),
-     results:output.results?.slice(0,12).map(v=>({tmdbId:v.tmdbId,mediaType:v.mediaType,title:v.title,releaseDate:v.releaseDate,posterPath:v.posterPath,runtimeMinutes:v.runtimeMinutes})),episodes:output.episodes?.slice(0,24)}:{}}};
+    outputs:{[last]:output?agentOutput(output):{}}};
   })};
   if(r.operation==='create'){
    if(!r.plan)throw Error('INVALID_REQUEST');
    if(this.all().filter(m=>m.status!=='cancelled').length>=16)throw Error('TASK_LIMIT');
-   const m:Mission={id:crypto.randomUUID(),revision:1,plan:r.plan,status:'queued',outputs:{},snapshot:{library:r.library,completed:r.completed},updatedAt:Date.now(),change:0};
+   const m:Mission={id:crypto.randomUUID(),revision:1,plan:r.plan,status:'queued',outputs:{},snapshot:{library:r.library,completed:r.completed,timeZone:r.timeZone},updatedAt:Date.now(),change:0};
    this.put(m);await this.ctx.storage.setAlarm(Date.now()+100);return this.public(m);
   }
   const m=r.id?this.get(r.id):undefined;if(!m)throw Error('TASK_NOT_FOUND');
@@ -148,12 +185,13 @@ export class TalkAgent extends DurableObject<RecommendationEnv> {
     }
     m.plan=r.plan;m.outputs=retained;m.collection=undefined;
    }
-   m.snapshot={library:r.library,completed:r.completed};m.status='queued';m.error=undefined;m.nextRunAt=undefined;
+   if(r.operation==='refresh')m.outputs={};
+   m.snapshot={library:r.library,completed:r.completed,timeZone:r.timeZone};m.status='queued';m.error=undefined;m.nextRunAt=undefined;
   }
   this.put(m);await this.schedule();return this.public(m);
  }
  private memories(){return this.ctx.storage.sql.exec<{key:string;value:string}>("SELECT key,value FROM preferences WHERE key <> '__snapshot' ORDER BY key").toArray();}
- private public(m:Mission){return {...m,snapshot:undefined,instruction:'This is durable app work, not a completed action until ready. Use exact task id/revision to steer it. Do not describe match explanations. Results are catalogue identities; never claim playback or downloads started.'};}
+ private public(m:Mission){return {...m,snapshot:undefined,outputs:Object.fromEntries(Object.entries(m.outputs).map(([id,output])=>[id,agentOutput(output,id===m.plan.steps.at(-1)!.id)])),instruction:'This is durable app work, not a completed action until ready. Use exact task id/revision to steer it. Do not describe match explanations. Results are catalogue identities; never claim playback or downloads started.'};}
  private async schedule(){
   const due=this.all().flatMap(m=>m.status==='queued'?[Date.now()+100]:m.status==='running'?[m.updatedAt+120000]:m.status==='waiting'&&m.nextRunAt?[m.nextRunAt]:[]);
   if(due.length)await this.ctx.storage.setAlarm(Math.min(...due));else await this.ctx.storage.deleteAlarm();
@@ -183,7 +221,7 @@ export class TalkAgent extends DurableObject<RecommendationEnv> {
    if(final.unscheduled){m.status='needs_input';m.error='INSUFFICIENT_TIME_OR_RUNTIME_DATA';return;}
    if(m.plan.steps.at(-1)!.kind==='collection'&&m.plan.steps.at(-1)!.mergeMode==='all'&&!final.results?.length){m.status='needs_input';m.error='NO_COMMON_MATCH';return;}
    if(m.plan.delivery==='collection'&&m.plan.repeatHours&&final.results){m.collection=[...(m.collection||[]),...final.results].filter((v,i,a)=>a.findIndex(p=>p.mediaType===v.mediaType&&p.tmdbId===v.tmdbId)===i).slice(0,72);final.results=m.collection;}
-   const signature=JSON.stringify({ids:final.results?.map(v=>v.mediaType+':'+v.tmdbId).sort(),episodes:final.episodes?.map(v=>[v.id,v.season,v.episode,v.airDate]),sources:final.evidence?.map(v=>[v.url,v.published]).sort()});
+   const signature=JSON.stringify({ids:final.results?.map(v=>v.mediaType+':'+v.tmdbId).sort(),episodes:final.episodes?.map(v=>[v.id,v.season,v.episode,v.airDate]),sources:final.evidence?.map(v=>[v.url,v.published]).sort(),minutes:final.minutes,calendar:final.calendar?.map(d=>[d.date,d.minutes,d.episodes.map(e=>[e.id,e.season,e.episode])]),festival:final.festival?.map(d=>[d.date,d.minutes,d.results.map(v=>v.mediaType+':'+v.tmdbId)])});
    if(signature!==m.signature){if(final.results?.length||final.episodes?.length||final.evidence?.length||final.calendar?.length||final.festival?.length)m.change++;m.signature=signature;}
    m.status=m.plan.repeatHours?'waiting':'ready';m.nextRunAt=m.plan.repeatHours?Date.now()+m.plan.repeatHours*HOUR:undefined;m.error=undefined;
   }catch(error){if(!current())return;m.status=m.plan.repeatHours?'waiting':'failed';m.nextRunAt=m.plan.repeatHours?Date.now()+Math.max(HOUR,m.plan.repeatHours*HOUR):undefined;m.error=error instanceof Error?error.message.slice(0,100):'TASK_FAILED';}
@@ -231,7 +269,9 @@ export class TalkAgent extends DurableObject<RecommendationEnv> {
   }
   if(step.kind==='episodes'){
    const client=new TmdbClient(this.env,30,AbortSignal.any([signal,AbortSignal.timeout(15000)])),episodes:Episode[]=[];let truncated=false;
-   for(const title of step.titles){
+   const series=[...step.titles,...dependencies.flatMap(v=>v.results||[]).filter(v=>v.mediaType==='tv').map(v=>({id:v.tmdbId,type:'tv' as const,title:v.title}))].filter((v,i,a)=>v.type==='tv'&&a.findIndex(p=>p.type===v.type&&p.id===v.id)===i);
+   if(!series.length)throw Error('NO_SERIES_IDENTITIES');
+   for(const title of series){
     const available=step.season?[step.season]:(await client.seasons(title.id)).seasons.filter(v=>v.number>0).map(v=>v.number);
     if(available.length>12)truncated=true;const seasons=available.slice(0,12);
     for(const season of seasons)for(const e of (await client.episodes(title.id,season)).episodes){
@@ -248,11 +288,21 @@ export class TalkAgent extends DurableObject<RecommendationEnv> {
   }
   const results=dependencies.flatMap(v=>v.results||[]).filter((v,i,a)=>a.findIndex(p=>p.tmdbId===v.tmdbId&&p.mediaType===v.mediaType)===i)
     .filter(v=>step.mergeMode!=='all'||dependencies.every(d=>d.results?.some(p=>p.tmdbId===v.tmdbId&&p.mediaType===v.mediaType)));
-  if(step.kind==='calendar')return {...agentCalendar(dependencies.flatMap(v=>v.episodes||[]),step.startDate!,step.deadline!,step.budgetMinutes!,step.breakMinutes),truncated:dependencies.some(v=>v.truncated)};
+  if(step.kind==='calendar'){const all=dependencies.flatMap(v=>v.episodes||[]).filter((v,i,a)=>a.findIndex(e=>e.id===v.id&&e.season===v.season&&e.episode===v.episode)===i);return {...agentCalendar(all.slice(0,300),[step.startDate!,agentToday(m.snapshot.timeZone)].sort().at(-1)!,step.deadline!,step.budgetMinutes!,step.breakMinutes),truncated:all.length>300||dependencies.some(v=>v.truncated)};}
   if(step.kind==='festival')return agentFestival(results,step.startDate!,step.deadline!,step.budgetMinutes!,step.count,step.breakMinutes);
   if(step.kind==='schedule')return agentProgramme(results,step.budgetMinutes!,step.count,step.breakMinutes);
   return {results:results.slice(0,step.count),episodes:dependencies.flatMap(v=>v.episodes||[])};
  }
+}
+
+/** Account party sessions intentionally carry a per-session nonce. Durable app
+ * work uses only the authenticated account digest; other party APIs retain their
+ * session privacy boundary. Guests use a device-held random credential. */
+export function durableAgentOwner(identity:{sub:string;kind:'guest'|'account'}){
+ if(identity.kind==='guest')return identity.sub;
+ const match=/^account:([A-Za-z0-9_-]{43}):[a-f0-9-]{36}$/.exec(identity.sub);
+ if(!match)throw Error('UNAUTHORIZED');
+ return 'account:'+match[1];
 }
 
 export async function agentRoute(request:Request,env:RecommendationEnv):Promise<Response|null>{
@@ -262,6 +312,6 @@ export async function agentRoute(request:Request,env:RecommendationEnv):Promise<
   const owner=await verifyIdentity(request.headers.get('Authorization')?.replace(/^Bearer /,'')||'',env.CURSOR_SIGNING_SECRET);
   if(!(await env.RECOMMENDATION_RATE_LIMITER.limit({key:'agent:'+owner.sub})).success)return Response.json({error:{code:'TRY_LATER'}},{status:429});
   const raw=await boundedJson(new Response(request.body),48000);
-  return Response.json(await env.TALK_AGENTS.getByName(owner.sub).command(raw),{headers:{'cache-control':'no-store'}});
+  return Response.json(await env.TALK_AGENTS.getByName(durableAgentOwner(owner)).command(raw),{headers:{'cache-control':'no-store'}});
  }catch(error){const code=error instanceof z.ZodError?'INVALID_REQUEST':error instanceof Error?error.message:'TASK_FAILED';return Response.json({error:{code}},{status:code==='TASK_CHANGED'?409:400});}
 }

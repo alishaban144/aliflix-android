@@ -3,6 +3,12 @@ import {TalkContextSchema} from '../src/talkEvidence';
 import {liveSetup} from '../src/talkProviders';
 
 describe('contextual conversation protocol',()=>{
+ it('preserves soft leading words and natural clause pauses without changing legacy endpoints',()=>{
+  const legacy=liveSetup(TalkContextSchema.parse({companionVersion:7})).realtimeInputConfig.automaticActivityDetection;
+  const current=liveSetup(TalkContextSchema.parse({companionVersion:8})).realtimeInputConfig.automaticActivityDetection;
+  expect(legacy).toMatchObject({prefixPaddingMs:180,silenceDurationMs:650});
+  expect(current).toMatchObject({prefixPaddingMs:500,silenceDurationMs:1500,startOfSpeechSensitivity:'START_SENSITIVITY_LOW'});
+ });
  it('exposes factual decisions and quiet yielding only to capable clients',()=>{
   const previous=liveSetup(TalkContextSchema.parse({companionVersion:6,recentProgress:[]}));
   const current=liveSetup(TalkContextSchema.parse({companionVersion:7,recentProgress:[],stickyLanguage:true}));

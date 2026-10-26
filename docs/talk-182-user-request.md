@@ -34,3 +34,30 @@ Question: May I add a Gemini verification call that sends a task’s request, ca
 Answer: Keep the current AI paths
 
 No additional Gemini verification endpoint/call is authorized. Continue with existing AI paths and catalogue/research checks.
+
+## Additional user steering - 2026-10-26 (exact request)
+
+Continue, but I still need some more adjustments:
+
+- the face orb in aliflix talk should be able to change size elegantly smoothly, move freely elegantly across screen depending on the context and screen contents but full elegantly and smoothly like it's a higher upgraded intelligent creature. search for this kind of motion that looks continuous and elegant and intricate online. browse and look extensively until you find one, but dont try to create one from zero. you should act as a senior uiux expert. any basic or rudimentary animation is strictly prohibited.
+- reevaluate all the changes you have done and perfect the new features you worked on.
+- I also tested the current 3.1.182 testing version that is currently on the pixel device, i dont know if that's same app you were trying to release but it looks as nothing new in it at all. speech didn't come out. I needed to say "Hi?" then the speech came out as if it was already running in the background with no sound and didn't sound until I say something. This particular issue needs to be fully fixed.&#x20;
+- once you are done, i need a detailed list of everything you've done in the 3.1.182 release.
+- i dont quite understand what the new aliflix talk feature that is similar to dots and muse does. i want it to be actually useful and solves current real problems that the current llms cant solve literally, not only convenience controls, but still relevant and mind-blowing. you should perform deep research for that
+
+## Diagnostic replies - 2026-10-26
+
+Question: During the silent reply on the Pixel, did the orb look like it was speaking and show reply text/cards, or did it stay in a thinking/loading state?
+Answer: Speaking animation with text/cards
+
+Question: The Pixel now has the new candidate with explicit audio routing and automatic playback recovery. Please try one spoken recommendation request in Talk, then wait without saying “Hi?”—does speech start by itself? I’ll leave the phone alone while you try.
+Answer: I can’t test now
+
+## Further user steering - 2026-10-26 (exact messages)
+
+"I asked aliflix talk for comedy movies and and in other call for scifi movies. It retrieved good options, but the speech didn't come out. I needed to say "Hi?" then the speech came out as if it was already running in the background with no sound and didn't sound until I say something. This particular issue needs to be fully fixed."
+the problem persists!!! fix it completely foolproof solution!!!!!!
+
+also i like the orb motion, but i want it more smart and intricate and more reactive !
+
+I want the orb to move though screen far more smartly depending on the context and talk. smart and elegant, not random movements, but really visually appealing and smart

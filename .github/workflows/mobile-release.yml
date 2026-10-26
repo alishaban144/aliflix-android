@@ -404,13 +404,17 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Talk starts short replies independently of microphone capture and uses echo-aware interruption. Film discussion retains context for follow-ups such as "And?". Recommendation tool delivery waits for current speech to drain.
+            Talk starts short replies independently of microphone capture, uses Android assistant-response audio, recovers stalled hardware playback and uses echo-aware interruption. Film discussion retains context for follow-ups such as "And?". Recommendation tool delivery waits for current speech to drain.
 
-            Persistent tasks combine research, verified catalogue discovery, exact-runtime double bills, multi-evening programmes, episode catch-up calendars, franchise and filmmaker traversal, group intersections, living collections and explicit release/news watches. Goals keep running after Talk closes and can be revised, paused or cancelled. Explicit preference memory and reversible batch library edits integrate with Aliflix.
+            A single retained face moves and resizes continuously across voice, results and chat, adapting the MIT-licensed Lumaform Regard motion engine. Tasks are directly accessible.
+
+            Persistent tasks combine research, verified catalogue discovery, exact-runtime double bills, multi-evening programmes, adaptive episode catch-up calendars, franchise and filmmaker traversal, group intersections, living collections and explicit release/news watches. Goals keep running after Talk closes and can be revised, paused or cancelled. Explicit preference memory and reversible batch library edits integrate with Aliflix.
 
             For you uses the actual taste model. Describe preserves published cards across streaming and pagination, honors verified date/runtime constraints and retains the original request during refinements. One large centered path loader replaces duplicate progress; For you disappears once a search begins. No personal-match explanations are added.
 
             ARM64 mobile APK and universal compatibility bridge retain the production signer and native/model assets. TV is unchanged. Physical-phone evidence, live-service results and limitations are recorded separately from signed-artifact verification.
+
+            [Full 3.1.182 changelist](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-182-changelog.md).
 
             [Research and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-182-validation.md).
           files: |

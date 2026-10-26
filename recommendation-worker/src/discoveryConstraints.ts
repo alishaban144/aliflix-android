@@ -8,7 +8,7 @@ export function discoveryConstraints(input:RecommendationFilters,query:string,ye
  const clauses=query.split(/[\n,;]+/).map(v=>v.trim()).filter(Boolean);
  for(const clause of clauses){
   if(/\b(?:recent|newer|latest|modern|more recent|neuere?|aktuell|neuste|letzten jahre)\b|أحدث|حديثة|حديثه|الأخيرة|الاخيرة/i.test(clause)){
-   filters.minimumYear=year-3;filters.maximumYear=year;
+   filters.minimumYear=Math.max(filters.minimumYear||0,year-3);filters.maximumYear=year;
   }
   const last=/(?:last|past|letzten)\s+(\d{1,2})\s*(?:years?|jahre)|آخر\s*(\d{1,2})\s*سنوات/i.exec(clause);
   if(last){filters.minimumYear=year-Number(last[1]||last[2])+1;filters.maximumYear=year;}

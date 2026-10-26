@@ -17,7 +17,7 @@ internal fun talkLibraryIdentity(item:Media,kind:String)=JSONObject().put("id",i
 internal fun talkAppContext(context:Context):JSONObject {
     val app=context.applicationContext as AliflixApplication
     val settings=app.playerSettingsStore.settings.value
-    return JSONObject().put("version",BuildConfig.VERSION_NAME).put("platform","Android mobile")
+    return JSONObject().put("version",BuildConfig.VERSION_NAME).put("platform","Android mobile").put("currentDate",java.time.LocalDate.now().toString())
         .put("technicalLimitations",JSONArray(listOf(
             "Live voice and fresh research require an internet connection; service capacity, provider outages and quota can delay or prevent a lookup.",
             "Microphone input is captured only in an active permitted Talk session. Leaving/backgrounding releases capture; muted and text mode do not stream microphone audio. No camera, arbitrary screen, other apps or OS control is exposed to Talk.",
@@ -46,11 +46,11 @@ internal fun talkAppContext(context:Context):JSONObject {
         .put("moreActions",JSONArray(listOf("app_control: downloads_state, pause_download, resume_download, remove_download for an exact title/episode",
             "app_control: library_state (stringValue saved/favorite/watched/all, offset); batch_library validates up to24 exact title library changes, with whole-batch undo; open_screen agent_tasks",
             "agent_workspace: create/update/pause/resume/cancel persistent mission graphs; read/list progress and exact outputs; requested background watches continue after Talk closes; remember/forget only explicitly requested preferences",
-            "Mission stages: research, discover, catalogue, episodes, schedule (exact runtime budget and breaks), calendar (daily episode catch-up), franchise, filmography, collection. No playback or downloads are claimed from a completed research mission.",
+            "Mission stages: research, discover, catalogue, episodes, schedule (exact runtime budget and breaks), calendar (episode catch-up that refreshes from recorded progress and missed dates), festival (dated film programmes), franchise, filmography, collection. No playback or downloads are claimed from a completed research mission.",
             "app_control: set_voice (Aoede/Kore/Puck/Charon), set_history (enabled), new_chat; open_screen talk_voices/talk_privacy/recent_chats")))
         .put("features",JSONArray(listOf(
             "Home: For You, Movies, TV Shows, Categories; title details, search, seasons and episode ratings.",
-            "Discover > Ask Aliflix: one Movies/Series composer includes All/Running/Ended series status and supports up to four Similar title anchors, contextual Filters, researched daily discovery and Surprise Me. The companion speech icon or Talk opens Talk; Talk starts listening after microphone permission. Transcript and Privacy controls are inside Talk. End or Back returns to the app.",
+            "Discover > Ask Aliflix: one Movies/Series composer includes All/Running/Ended series status and supports up to four Similar title anchors, contextual Filters, taste-ranked For you and Surprise Me. The companion speech icon or Talk opens Talk; Talk starts listening after microphone permission. Transcript and Privacy controls are inside Talk. End or Back returns to the app.",
             "My Space: Favorites are explicit likes; My List is saved intent, not proof of watching. Recent history and playback progress are separate. Settings and app updates are accessed here.",
             "Player > More > Streaming source chooses a provider; individual hosts are tried automatically. Filmo is preferred for movies, Serienstream for TV, AniWorld for Japanese anime; unavailable sources can fall back. Website availability does not guarantee every host works.",
             "Player > More > Audio & subtitles: available audio languages depend on the current source; subtitles, manual subtitle delay and Sync with audio are separate controls. Sync with audio analyses local dialogue timing; it does not translate or generate subtitles.",

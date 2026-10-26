@@ -9,8 +9,9 @@ class TalkInputEndpointTest {
   assertFalse(endpoint.accept(.05,50,1000,false))
   assertFalse(endpoint.accept(.04,50,1050,false))
   assertFalse(endpoint.accept(0.0,50,1800,false))
-  assertTrue(endpoint.accept(0.0,50,2050,false))
-  assertFalse(endpoint.accept(0.0,50,2100,false))
+  assertFalse(endpoint.accept(0.0,50,2050,false))
+  assertTrue(endpoint.accept(0.0,50,2850,false))
+  assertFalse(endpoint.accept(0.0,50,2900,false))
  }
  @Test fun farEndAudioAndClicksCannotFinishAUserTurn() {
   val endpoint=TalkInputEndpoint()

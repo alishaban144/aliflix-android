@@ -53,6 +53,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -90,12 +93,18 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     val tracker=touchTracker ?: localTracker
     val motion=rememberMobileMotionEnabled() && rememberMobileResumed()
     val keyboardOpen=WindowInsets.ime.getBottom(LocalDensity.current)>0
+    val density=LocalDensity.current
+    var orbAnchor by remember{mutableStateOf(Rect.Zero)}
+    var screenOrigin by remember{mutableStateOf(Offset.Zero)}
+    var screenSize by remember{mutableStateOf(IntSize.Zero)}
+    fun anchor(modifier:Modifier)=modifier.onGloballyPositioned{orbAnchor=it.boundsInRoot()}
+
     if(agentTasks)TalkAgentSheet(session,{agentTasks=false},::openTitle)
     BackHandler { if(agentTasks)agentTasks=false else if(recent)recent=false else if(voices)voices=false else if(privacy)privacy=false else onClose() }
     LaunchedEffect(Unit) { onStart() }
     val idle=state.phase in listOf("Ready","Resume","Reconnect","Microphone permission","Audio unavailable","Try again later","Opened elsewhere")
     fun send(){if(draft.isNotBlank()){session.sendText(draft);draft=""}}
-    Box(Modifier.fillMaxSize().background(AliflixBackgroundBase).observeDiscoverTouches(tracker).testTag("talk-screen")) {
+    Box(Modifier.fillMaxSize().background(AliflixBackgroundBase).observeDiscoverTouches(tracker).onGloballyPositioned{screenOrigin=it.boundsInRoot().topLeft;screenSize=it.size}.testTag("talk-screen")) {
         TalkPixelField("",state.phase,{state.level},motion&&!state.textMode,Modifier.fillMaxSize().graphicsLayer { alpha=if(state.textMode).15f else .52f })
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)).imePadding().padding(horizontal=20.dp)) {
             Row(Modifier.fillMaxWidth().padding(top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
@@ -106,11 +115,11 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 AliflixIconButton(onClick={session.setTextMode(!state.textMode);onStart()},modifier=Modifier.testTag("talk-chat-mode").semantics { stateDescription=if(state.textMode)"Text chat selected" else "Voice selected" }) {
                     Icon(if(state.textMode)Icons.Rounded.GraphicEq else Icons.Rounded.EditNote,if(state.textMode)"Voice conversation" else "Chat",tint=AliflixAccentSecondary)
                 }
-                AliflixIconButton(onClick={recent=true;session.history.refresh()},modifier=Modifier.testTag("talk-recent-chats")) { Icon(Icons.Rounded.History,"Recent chats",tint=AliflixContentSecondary) }
+                AliflixIconButton(onClick={agentTasks=true},modifier=Modifier.testTag("talk-agent-tasks")) { Icon(Icons.Rounded.AutoAwesome,"Tasks",tint=AliflixAccentSecondary) }
                 Box {
                     AliflixIconButton(onClick={settings=true}) { Icon(Icons.Rounded.MoreHoriz,"Conversation settings",tint=AliflixContentSecondary) }
                     DropdownMenu(expanded=settings,onDismissRequest={settings=false}) {
-                        DropdownMenuItem(text={Text("Tasks")},onClick={agentTasks=true;settings=false},leadingIcon={Icon(Icons.Rounded.AutoAwesome,null)})
+                        DropdownMenuItem(text={Text("Recent chats")},onClick={recent=true;session.history.refresh();settings=false},leadingIcon={Icon(Icons.Rounded.History,null)},modifier=Modifier.testTag("talk-recent-chats"))
                         DropdownMenuItem(text={Text("New chat")},onClick={session.newChat();draft="";settings=false},leadingIcon={Icon(Icons.Rounded.AddComment,null)})
                         DropdownMenuItem(text={Text("Choose voice")},onClick={voices=true;settings=false},leadingIcon={Icon(Icons.Rounded.GraphicEq,null)},modifier=Modifier.testTag("talk-voice-picker"))
                         DropdownMenuItem(text={Text("Privacy")},onClick={privacy=true;settings=false},leadingIcon={Icon(Icons.Rounded.PrivacyTip,null)})
@@ -120,7 +129,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             }
             if(state.textMode) {
                 Row(Modifier.fillMaxWidth().padding(bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
-                    if(state.lines.isNotEmpty()){TalkLiveOrb(state.phase,{state.level},motion,Modifier.size(42.dp).testTag("talk-chat-orb"),tracker);Spacer(Modifier.width(12.dp))}
+                    if(state.lines.isNotEmpty()||keyboardOpen){Box(anchor(Modifier.size(42.dp)));Spacer(Modifier.width(12.dp))}
                     Column(Modifier.weight(1f)) {
                         AnimatedContent(if(state.lines.isEmpty())"Your cinema companion" else state.words,transitionSpec={fadeIn(tween(if(motion)220 else 0)) togetherWith fadeOut(tween(if(motion)120 else 0))},label="talk-chat-topic") { topic ->
                             Text(topic,color=AliflixContentPrimary,fontSize=13.sp,fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis)
@@ -138,11 +147,10 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 }
                 if(state.lines.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center) {
                     Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                        if(!keyboardOpen)TalkLiveOrb(state.phase,{state.level},motion,Modifier.size(116.dp),tracker)
+                        if(!keyboardOpen)Box(anchor(Modifier.size(116.dp)))
                         Text("What are you in the mood for?",color=AliflixContentPrimary,fontSize=19.sp,fontWeight=FontWeight.Medium)
-                        if(!keyboardOpen)Text("Discover a new release, follow a mood, or talk through a story.",color=AliflixContentTertiary,fontSize=13.sp,lineHeight=20.sp,modifier=Modifier.padding(horizontal=20.dp),textAlign=androidx.compose.ui.text.style.TextAlign.Center)
-                        if(!keyboardOpen)listOf("Recent sci-fi","Find a series","Something unexpected").forEach { prompt ->
-                            SuggestionChip(onClick={session.sendText(prompt)},label={Text(prompt)},shape=RoundedCornerShape(16.dp))
+                        if(!keyboardOpen)talkTaskStarts.forEach { (label,prompt) ->
+                            SuggestionChip(onClick={session.sendText(prompt)},label={Text(label)},shape=RoundedCornerShape(16.dp))
                         }
                     }
                 } else Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -190,7 +198,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     }
                 }
             } else {
-                Box(Modifier.fillMaxWidth().weight(.56f),contentAlignment=Alignment.Center) { TalkLiveOrb(state.phase,{state.level},motion,Modifier.fillMaxWidth(.86f).widthIn(max=320.dp).aspectRatio(1f).testTag("talk-orb"),tracker) }
+                Box(anchor(Modifier.fillMaxWidth().weight(.56f)),contentAlignment=Alignment.Center) {}
                 Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,motion) }
                 TalkTitleCards(state.cards.visible,::openTitle,Modifier.padding(bottom=8.dp),motion=motion)
                 if(idle&&state.phase!="Ready") Text(state.phase,color=AliflixContentSecondary,fontSize=12.sp,modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=12.dp))
@@ -203,6 +211,25 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     AliflixIconButton(onClick=onClose,modifier=Modifier.size(52.dp)) { Icon(Icons.Rounded.CallEnd,"End conversation",tint=AliflixContentSecondary) }
                 }
             }
+        }
+        if(orbAnchor.width>0f&&orbAnchor.height>0f){
+            val compact=state.textMode
+            val small=compact&&(state.lines.isNotEmpty()||keyboardOpen)
+            val base=if(compact)minOf(orbAnchor.width,orbAnchor.height)else minOf(orbAnchor.width*.86f,orbAnchor.height,with(density){320.dp.toPx()})
+            val names=state.cards.visible.map{listOfNotNull(it.title,it.originalTitle)}
+            val narration=if(state.phase=="Speaking")state.lines.lastOrNull{it.role=="assistant"}?.text.orEmpty()else state.words
+            val focus=talkOrbMention(narration,names)
+            val intent=talkOrbIntent(state.phase,state.cards.visible.size,focus)
+            val diameter=base*(if(compact)1f else intent.scale)
+            val roam=if(small)0f else with(density){(if(compact)3f else 11f).dp.toPx()}
+            val margin=diameter/2f+roam
+            val desiredX=orbAnchor.left+orbAnchor.width*(if(compact).5f else intent.x)
+            val desiredY=orbAnchor.top+orbAnchor.height*(if(compact).5f else intent.y)
+            val x=desiredX.coerceIn(minOf(orbAnchor.center.x,orbAnchor.left+margin),maxOf(orbAnchor.center.x,orbAnchor.right-margin))-screenOrigin.x
+            val y=desiredY.coerceIn(minOf(orbAnchor.center.y,orbAnchor.top+margin),maxOf(orbAnchor.center.y,orbAnchor.bottom-margin))-screenOrigin.y
+            val panel=agentTasks||recent||privacy||voices
+            val goal=if(panel)TalkOrbPose(screenSize.width-with(density){52.dp.toPx()},WindowInsets.systemBars.getTop(density)+with(density){104.dp.toPx()},with(density){42.dp.toPx()})else TalkOrbPose(x,y,diameter)
+            TalkFloatingOrb(goal,if(panel)0f else roam,state.phase,{state.level},motion,tracker,if(compact)"talk-chat-orb" else "talk-orb")
         }
         if(recent||privacy||voices) ModalBottomSheet(onDismissRequest={recent=false;privacy=false;voices=false},containerColor=AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
             Column(Modifier.fillMaxWidth().padding(horizontal=22.dp).navigationBarsPadding().padding(bottom=20.dp)) {
