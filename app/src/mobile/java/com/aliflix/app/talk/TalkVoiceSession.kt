@@ -77,6 +77,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private val _state = MutableStateFlow(TalkVoiceState(keepHistory=restoreHistory&&prefs.getBoolean("keep-history",true),lines=emptyList(),voice=prefs.getString("voice","Aoede")?.takeIf{it in VOICES}?:"Aoede"))
     val state = _state.asStateFlow()
     val history=historyOverride ?: TalkAccountArchive.get(context)
+    val agent=TalkAgentWorkspace(context).also{it.restore()}
     private var chatId=state.value.conversationId
     private var persistedLines:List<TalkLine> = emptyList()
     private val userTurn=java.util.concurrent.atomic.AtomicLong(0)
@@ -219,6 +220,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var capture: AudioRecord? = null
     private var captureJob: Job? = null
     private var outputJob: Job? = null
+    private var outputPump: Job? = null
     private var output: AudioTrack? = null
     private var echo: AcousticEchoCanceler? = null
     private var noise: NoiseSuppressor? = null
@@ -281,6 +283,12 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         update{it.copy(cards=it.cards.show(shown))};pendingTitles=shown
     } }
     fun consumePanelRequest(){update{it.copy(panelRequest="")}}
+    fun openAgentEpisode(episode:JSONObject){scope.launch{
+        val card=runCatching{catalogue.find("",kind="tv",id=episode.getInt("id")).single()}.getOrNull()?:return@launch
+        suspendSession()
+        val action=JSONObject().put("action","play").put("season",episode.getInt("season")).put("episode",episode.getInt("episode"))
+        context.startActivity(android.content.Intent(context,TalkTitleActivity::class.java).putExtra("title",card.media().toJson().toString()).putExtra("assistantAction",action.toString()))
+    }}
     private suspend fun executeNativeCommand(args:JSONObject):TalkNativeResult {
         if(!talkActionRequested(args.optString("action"),currentQuestion()))return TalkNativeResult(JSONObject()
             .put("status","not_requested").put("instruction","The user's actual speech act is a question, hypothetical, quotation or negation, not permission for this action. Nothing was changed. Answer their actual question naturally; do not claim success or ask for unnecessary confirmation."))
@@ -290,7 +298,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         "set_voice"->{val voice=requireNotNull(VOICES.firstOrNull{it.equals(args.optString("stringValue"),true)});TalkNativeResult(JSONObject().put("status","ready").put("voice",voice).put("instruction","Say briefly that you are switching voice. The native voice changes immediately after this reply.")){selectVoice(voice)}}
         "set_history"->{require(args.opt("enabled") is Boolean);setHistory(args.getBoolean("enabled"));TalkNativeResult(JSONObject().put("status","completed").put("keepHistory",state.value.keepHistory))}
         "new_chat"->TalkNativeResult(JSONObject().put("status","ready").put("instruction","Say briefly that you are starting a new chat. The native chat resets after this reply.")){newChat();scope.launch{connect()}}
-        "open_screen"->if(args.optString("screen") in setOf("talk_voices","talk_privacy","recent_chats")) {
+        "open_screen"->if(args.optString("screen") in setOf("talk_voices","talk_privacy","recent_chats","agent_tasks")) {
             update{it.copy(panelRequest=args.getString("screen"))};TalkNativeResult(JSONObject().put("status","completed").put("screen",args.getString("screen")))
         }else nativeActions.execute(args)
         else->nativeActions.execute(args)
@@ -400,7 +408,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
 
     private fun update(block: (TalkVoiceState) -> TalkVoiceState) { _state.update(block) }
     fun permissionDenied() = update { it.copy(phase = "Microphone permission", words = "MICROPHONE") }
-    private fun emit(value:JSONObject){val ticket=epoch;if(ws?.send(value.toString())!=true&&permitted)scope.launch{disconnected(ticket,false)}}
+    private var localAudioValidation=false
+    private fun emit(value:JSONObject){if(BuildConfig.DEBUG&&localAudioValidation)return;val ticket=epoch;if(ws?.send(value.toString())!=true&&permitted)scope.launch{disconnected(ticket,false)}}
     private fun event(type: String) = JSONObject().put("type", type)
 
     suspend fun connect() {
@@ -412,10 +421,17 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         // Deliberately omit every TMDB text field. Only the viewer's own progress
         // and opaque identifiers are used to look up permitted, independent data.
         val progress = (context.applicationContext as AliflixApplication).playbackProgressStore.entries.value.values.maxByOrNull { it.updatedAtMillis }
-        conversationContext = JSONObject().put("companionVersion",7).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
+        conversationContext = JSONObject().put("companionVersion",8).put("agentPreferences",agent.preferences()).put("voice",state.value.voice).put("stickyLanguage",true).put("season", progress?.seasonNumber ?: 1).put("episode", progress?.episodeNumber ?: 1)
             .put("position", progress?.positionSeconds ?: 0).put("completed", progress?.let { talkPlaybackCompleted(it.positionSeconds,it.durationSeconds,it.completed) } == true)
         progress?.let { p -> conversationContext.put("id", p.media.id).put("type", p.media.type.routeName)
             p.media.imdbId?.takeIf { it.matches(Regex("tt\\d{1,12}")) }?.let { conversationContext.put("imdbId", it) } }
+        (context as? android.app.Activity)?.intent?.getStringExtra("playerContext")?.let{raw->runCatching{
+            val current=JSONObject(raw)
+            if(current.optInt("id")>0&&current.optString("type") in setOf("movie","tv")){
+                conversationContext.remove("imdbId")
+                for(key in listOf("id","type","season","episode","position","completed"))if(current.has(key))conversationContext.put(key,current.get(key))
+            }
+        }}
         if(!state.value.textMode) {
         if (manager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             permitted = false; update { it.copy(phase = "Audio unavailable") }; return
@@ -711,7 +727,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     recommendationReply=reply
                     recommendationLookup=false;pendingAnswerNeedsTitle=true;awaitingToolAnswer=true;pendingToolReply=reply;toolAnswerNudges=0
                     recommendationDelivery.clear();outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L
-                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"present_recommendations",reply,"INTERRUPT")))))
+                    emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"present_recommendations",reply,"WHEN_IDLE")))))
                     answerDeadline.awaiting(18000)
                     continue
                 }
@@ -731,7 +747,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     continue
                 }
                 if(call.optString("name") in setOf("aliflix_app","remember_recommendations")) {
-                    val result=if(call.optString("name")=="aliflix_app")talkAppContext(context).put("conversation",state.value.cards.snapshot()) else {
+                    val result=if(call.optString("name")=="aliflix_app")talkAppContext(context).put("conversation",state.value.cards.snapshot()).put("agentTasks",JSONArray(agent.missions.value.map{JSONObject().put("id",it.optString("id")).put("name",it.optJSONObject("plan")?.optString("name")).put("status",it.optString("status")).put("revision",it.optInt("revision"))})) else {
                         val a=call.optJSONObject("args")?.optJSONArray("titles")?:JSONArray()
                         val titles=(0 until minOf(a.length(),8)).flatMap{state.value.cards.resolve(a.optString(it))}.filter{card->state.value.cards.group.any{it.key==card.key}}.map{it.title}
                         if(state.value.keepHistory)prefs.edit().putString("suggestions",JSONArray((titles+readSuggestions()).distinct().take(24)).toString())
@@ -758,7 +774,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                             result.afterReply?.let{pendingNativeNavigation=turn to it}
                             awaitingToolAnswer=true;pendingAnswerNeedsTitle=false;pendingToolReply=result.value;toolAnswerNudges=0
                             assistantLine=-1;outputText="";turnHasAudio=false;responseTurn=-1L;debugTurnCompleteAt=0
-                            emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"app_control",result.value,"INTERRUPT")))))
+                            emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,"app_control",result.value,"WHEN_IDLE")))))
                             answerDeadline.awaiting(10000)
                         }
                         tools.remove(id)
@@ -810,7 +826,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     val title=call.optJSONObject("args")?.optString("title").orEmpty();rememberFilmTopic(title)
                     validatedTalkTopic(title)?.let{topic->update{it.copy(words=topic,cards=it.cards.topic(topic))}}
                 }
-                if(call.optString("name") !in setOf("film_knowledge","viewing_context","web_research","recommendations","show_title_cards","title_facts")||tools.size>=2) {
+                if(call.optString("name") !in setOf("film_knowledge","viewing_context","web_research","recommendations","show_title_cards","title_facts","agent_workspace")||tools.size>=2) {
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,call.optString("name"),JSONObject().put("unavailable",true).put("retryable",true),"WHEN_IDLE")))))
                     continue
                 }
@@ -847,7 +863,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                       }
                     }
                     val result=runCatching {
-                        if(call.optString("name")=="title_facts")catalogue.facts(call.getJSONObject("args"))
+                        if(call.optString("name")=="agent_workspace") {
+                            val args=call.getJSONObject("args")
+                            val op=args.optString("operation")
+                            if(op !in setOf("list","read","memories")&&!talkActionRequested("agent_$op",toolQuestion))JSONObject().put("status","not_requested")
+                            else agent.command(args)
+                        }
+                        else if(call.optString("name")=="title_facts")catalogue.facts(call.getJSONObject("args"))
                         else if(call.optString("name")=="viewing_context") {
                             val args=call.optJSONObject("args")?:JSONObject()
                             val library=(context.applicationContext as AliflixApplication).libraryStore
@@ -887,7 +909,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     val bridgeUntil=progressSentAt+6000
                     while(call.optString("name")=="recommendations"&&progressSentAt>0&&!bridgeDelivered&&!recommendationBridgeComplete&&ticket==epoch&&toolTurn==userTurn.get()&&SystemClock.elapsedRealtime()<bridgeUntil)delay(25)
                     if(call.optString("name")!="recommendations")withTimeoutOrNull(4000){while(responseTurn==toolTurn&&(turnHasAudio||outputText.isNotBlank())&&ticket==epoch&&toolTurn==userTurn.get())delay(25)}
-                    withTimeoutOrNull(8000){while(speaking)delay(25)}
+                    withTimeoutOrNull(8000){while(speaking||(audio?.bytes?.get()?:0)>0||audio?.writing==true)delay(25)}
                     bridge.cancel()
                     if(ticket==epoch&&permitted&&toolTurn==userTurn.get()&&id !in cancelledTools) {
                         if(call.optString("name")=="recommendations"){recommendationLookup=false;recommendationReply=result}
@@ -921,7 +943,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         // lookup back into generation and fence its earlier completion.
                         awaitingToolAnswer=true;pendingAnswerNeedsTitle=!needsPresentation&&call.optString("name")=="recommendations"&&returnedTitles.isNotEmpty();pendingToolReply=result;toolAnswerNudges=0;recommendationDelivery.clear();deliveryCorrections=0
                         assistantLine=-1;outputText="";turnHasAudio=false;responseTurn=-1L;debugTurnCompleteAt=0
-                        val response=talkFunctionResponse(id,wireName,result,"INTERRUPT")
+                        val response=talkFunctionResponse(id,wireName,result,"WHEN_IDLE")
                         if(BuildConfig.DEBUG&&call.optString("name")=="film_knowledge")debugKnowledgeAppliedAt=SystemClock.elapsedRealtime()
                         emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(response))))
                     }
@@ -1108,7 +1130,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 while(!bridgeDelivered&&!recommendationBridgeComplete&&SystemClock.elapsedRealtime()-started<6000)delay(25)
                 // clientContent is an explicit continuation; let the approved
                 // bridge finish on AudioTrack before replacing its generation.
-                withTimeoutOrNull(8000){while(speaking)delay(25)}
+                withTimeoutOrNull(8000){while(speaking||(audio?.bytes?.get()?:0)>0||audio?.writing==true)delay(25)}
                 if(ticket!=epoch||turn!=userTurn.get()||!permitted)return@launch
                 recommendationReply=result;recommendationPool=parseTalkTitles(result.optJSONArray("results"),8)
                 recommendationCount=result.optInt("requestedCount",3).coerceIn(1,3)
@@ -1171,6 +1193,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private val inputEndpoint=TalkInputEndpoint()
     private var speechMonitor:TalkSpeechMonitor?=null
     private val bargeInGate=TalkBargeInGate()
+    private val duplex=TalkDuplexGate()
+    @Volatile private var speechProbability=0f
+    @Volatile private var speechProbabilityAt=0L
     @Volatile private var localSpeechAt=0L
     internal var debugLocalBarges=0
     private fun pauseForUser(ticket:Long) {
@@ -1191,10 +1216,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             }
         }
     }
-    private fun sendPcm(bytes:ByteArray){
+    private fun sendPcm(bytes:ByteArray,liveMicrophone:Boolean=false){
         if(BuildConfig.DEBUG)debugPcmFrames++
         speechMonitor?.offer(bytes,epoch)
-        emit(JSONObject().put("realtimeInput",JSONObject().put("audio",JSONObject().put("mimeType","audio/pcm;rate=16000").put("data",Base64.encodeToString(bytes,Base64.NO_WRAP)))))
+        val now=SystemClock.elapsedRealtime()
+        val frames=if(liveMicrophone)duplex.microphone(bytes,speaking,if(now-speechProbabilityAt<350)speechProbability else 0f,now)else listOf(bytes)
+        if(liveMicrophone&&speaking&&duplex.interrupted)scope.launch(Dispatchers.Main.immediate){pauseForUser(epoch)}
+        for(frame in frames)emit(JSONObject().put("realtimeInput",JSONObject().put("audio",JSONObject().put("mimeType","audio/pcm;rate=16000").put("data",Base64.encodeToString(frame,Base64.NO_WRAP)))))
         var energy=0.0
         for(i in bytes.indices step 2){val sample=(bytes[i].toInt() and 255) or (bytes[i+1].toInt() shl 8);energy+=sample.toDouble()*sample}
         if(bytes.isNotEmpty()&&inputEndpoint.accept(sqrt(energy/(bytes.size/2))/32768.0,bytes.size/32,SystemClock.elapsedRealtime(),speaking))
@@ -1205,6 +1233,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private fun startAudio(ticket: Long) {
         if (captureJob?.isActive == true) return
         inputEndpoint.reset()
+        duplex.reset();speechProbability=0f;speechProbabilityAt=0L
         val record = AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
             .setAudioFormat(AudioFormat.Builder().setSampleRate(16000).setChannelMask(AudioFormat.CHANNEL_IN_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
             .setBufferSizeInBytes(maxOf(12_800, AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 2)).build()
@@ -1216,13 +1245,16 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         val echoControlled=runCatching{echo?.enabled==true}.getOrDefault(false)
         speechMonitor=TalkSpeechMonitor(context){at,probability->
             if(ticket==epoch) {
-                if(probability>=.85f)localSpeechAt=SystemClock.elapsedRealtime()
-                if(bargeInGate.accept(probability,(at*1000).toLong(),speaking,echoControlled))scope.launch(Dispatchers.Main.immediate){pauseForUser(ticket)}
+                speechProbability=probability;speechProbabilityAt=SystemClock.elapsedRealtime()
+                if(probability>=.85f&&(!speaking||duplex.interrupted))localSpeechAt=SystemClock.elapsedRealtime()
             }
         }
         val track = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
             .setAudioFormat(AudioFormat.Builder().setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
             .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(maxOf(24_000, AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT) * 3)).build()
+        // play() alone does not lower Android's default full-capacity threshold.
+        if(android.os.Build.VERSION.SDK_INT>=31)track.setStartThresholdInFrames(1)
+        else track.setBufferSizeInFrames(2880)
         output = track; writtenSamples=0;primingFrom=0;primingBegan=0;debugRenderedBaseline=0;endOfAudio=false;outputEnergy=0.0
         val buffer=AudioBuffer();val queue=buffer.chunks;audio=buffer
         outputJob = scope.launch(Dispatchers.IO) {
@@ -1247,6 +1279,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     }
                     if (wrote < 0) {if(seq==sequence&&ticket==epoch&&isActive)withContext(Dispatchers.Main){disconnected(ticket,false)};break}
                     if (wrote == 0) { delay(5); continue }
+                    duplex.reference(bytes,at,wrote)
                     at += wrote
                     if(primingBegan==0L)primingBegan=SystemClock.elapsedRealtime()
                     // A bounded 120ms reservoir absorbs packet jitter; short
@@ -1256,6 +1289,32 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                         synchronized(outputLock){if(seq==sequence&&ticket==epoch)runCatching{track.play()}}
                 }
                 } finally {buffer.writing=false}
+            }}catch(cancelled:CancellationException){throw cancelled}
+            catch(_:Exception){if(ticket==epoch&&permitted)withContext(Dispatchers.Main){disconnected(ticket,false)}}
+        }
+        outputPump=scope.launch(Dispatchers.IO) {
+            try { while(isActive&&permitted&&ticket==epoch) {
+                delay(20)
+                if(speaking&&!endOfAudio&&tools.isEmpty()&&!buffer.writing&&queue.isEmpty&&lastOutputAt>0&&SystemClock.elapsedRealtime()-lastOutputAt>5000&&(track.playbackHeadPosition.toLong() and 0xffffffffL)>=writtenSamples){
+                    if(stalledRecoveries++<2){debugStallRecoveries++;continueAfterReconnect=true;withContext(Dispatchers.Main){disconnected(ticket,false)}}
+                    else withContext(Dispatchers.Main){suspendSession();update{it.copy(phase="Reconnect",level=0f)}}
+                    break
+                }
+                synchronized(outputLock) {
+                    if(ticket!=epoch||!isActive)return@synchronized
+                    if(android.os.Build.VERSION.SDK_INT<31&&endOfAudio&&!buffer.writing&&queue.isEmpty&&writtenSamples>primingFrom){
+                        val missing=(track.bufferSizeInFrames-(writtenSamples-primingFrom)).coerceAtLeast(0).toInt()
+                        if(missing>0){val padded=track.write(ByteArray(missing*2),0,missing*2,AudioTrack.WRITE_NON_BLOCKING);if(padded>0)writtenSamples+=padded/2}
+                    }
+                    if(!awaitingInterrupt&&writtenSamples>primingFrom&&track.playState!=AudioTrack.PLAYSTATE_PLAYING&&
+                        (endOfAudio||primingBegan>0&&SystemClock.elapsedRealtime()-primingBegan>=120))track.play()
+                    if(debugFirstAudioAt==0L&&writtenSamples>0&&debugRenderedSamples>0)debugFirstAudioAt=SystemClock.elapsedRealtime()
+                    if(speaking&&endOfAudio&&!buffer.writing&&queue.isEmpty&&(track.playbackHeadPosition.toLong() and 0xffffffffL)>=writtenSamples){
+                        track.pause();primingFrom=writtenSamples;primingBegan=0;speaking=false
+                        update{it.copy(phase=if(muted)"Muted" else "Listening")}
+                        if(!state.value.sending)scope.launch(Dispatchers.Main.immediate){runNativeNavigation()}
+                    }
+                }
             }}catch(cancelled:CancellationException){throw cancelled}
             catch(_:Exception){if(ticket==epoch&&permitted)withContext(Dispatchers.Main){disconnected(ticket,false)}}
         }
@@ -1269,25 +1328,13 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(SystemClock.elapsedRealtime()-startedAt>1200000){withContext(Dispatchers.Main){suspendSession()};break}
                 var sum=0.0;for(i in 0 until count)sum+=samples[i].toDouble()*samples[i]
                 val energy=sqrt(sum/count)/32768.0
-                if(debugFirstAudioAt==0L && writtenSamples>0 && debugRenderedSamples>0)debugFirstAudioAt=SystemClock.elapsedRealtime()
-                if(!awaitingInterrupt&&writtenSamples>primingFrom&&track.playState!=AudioTrack.PLAYSTATE_PLAYING&&(endOfAudio||primingBegan>0&&SystemClock.elapsedRealtime()-primingBegan>=120))synchronized(outputLock){runCatching{track.play()}}
-                if(speaking&&endOfAudio&&!buffer.writing&&queue.isEmpty&&(track.playbackHeadPosition.toLong() and 0xffffffffL)>=writtenSamples){
-                    synchronized(outputLock){runCatching{track.pause()};primingFrom=writtenSamples;primingBegan=0}
-                    speaking=false;update{it.copy(phase=if(muted) "Muted" else "Listening")}
-                    if(!state.value.sending)scope.launch(Dispatchers.Main.immediate){runNativeNavigation()}
-                }
-                if(speaking&&!endOfAudio&&tools.isEmpty()&&!buffer.writing&&queue.isEmpty&&lastOutputAt>0&&SystemClock.elapsedRealtime()-lastOutputAt>5000&&(track.playbackHeadPosition.toLong() and 0xffffffffL)>=writtenSamples){
-                    if(stalledRecoveries++<2){debugStallRecoveries++;continueAfterReconnect=true;withContext(Dispatchers.Main){disconnected(ticket,false)}}
-                    else withContext(Dispatchers.Main){suspendSession();update{it.copy(phase="Reconnect",level=0f)}}
-                    break
-                }
                 update{it.copy(level=((if(speaking)outputEnergy else if(muted)0.0 else energy)*12).toFloat().coerceIn(0f,1f))}
                 if(muted)continue
                 if((ws?.queueSize()?:0)>128000)throw IllegalStateException("Backpressure")
                 val bytes=ByteArray(count*2);for(i in 0 until count){bytes[i*2]=samples[i].toByte();bytes[i*2+1]=(samples[i].toInt() shr 8).toByte()}
                 // Gemini owns automatic VAD and turn-taking. AEC removes far-end
                 // speech before continuous native input; no local speech gate.
-                sendPcm(bytes)
+                sendPcm(bytes,liveMicrophone=true)
             } }catch(cancelled:CancellationException){throw cancelled}
             catch(_:Exception){if(ticket==epoch)withContext(Dispatchers.Main){disconnected(ticket,false)}}
         }
@@ -1298,6 +1345,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         synchronized(outputLock) { runCatching { output?.pause(); output?.flush(); writtenSamples = 0;primingFrom=0;primingBegan=0; debugRenderedBaseline = 0 } }
     }
     internal val debugPlayedSamples get() = writtenSamples
+    internal fun debugStartLocalAudio(){check(BuildConfig.DEBUG);localAudioValidation=true;permitted=true;epoch++;startedAt=SystemClock.elapsedRealtime();oldMode=manager.mode;manager.mode=AudioManager.MODE_IN_COMMUNICATION;startAudio(epoch)}
+    internal fun debugStallMicrophone(){check(BuildConfig.DEBUG);captureJob?.cancel();captureJob=null;runCatching{capture?.stop()}}
+    internal fun debugQueueSpeech(pcm:ByteArray){check(BuildConfig.DEBUG);enqueueAudio(pcm,epoch);endOfAudio=true}
     fun selectVoice(voice:String) {
         if(voice !in VOICES||voice==state.value.voice||closed)return
         val oldSession=ephemeral?.optString("session")
@@ -1316,6 +1366,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     internal fun debugReconnect(){check(BuildConfig.DEBUG);update{it.copy(phase="Reconnecting")};cancelSocket(ws)}
     internal suspend fun debugInjectText(text:String,forceNativeRecommendation:Boolean=false){check(BuildConfig.DEBUG);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};beginUserTurn();inputText=text;commitQuestion();answerDeadline.awaiting();debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;endOfAudio=false;emit(JSONObject().put("realtimeInput",JSONObject().put("text",text)));if(forceNativeRecommendation)check(startNativeRecommendations())}
     internal suspend fun debugInjectUtterance(pcm:ByteArray,finishStream:Boolean=true){check(BuildConfig.DEBUG&&pcm.size in 6400..960000&&pcm.size%2==0);muted=true;update{it.copy(muted=true)};if(!permitted)connect();withTimeout(20000){while(captureJob?.isActive!=true)delay(20)};debugFirstAudioAt=0;debugTurnCompleteAt=0;debugRenderedBaseline=output?.playbackHeadPosition?.toLong()?.and(0xffffffffL)?:0L;for(at in pcm.indices step 3200){sendPcm(pcm.copyOfRange(at,minOf(at+3200,pcm.size)));delay(100)};repeat(15){sendPcm(ByteArray(3200));delay(100)};if(finishStream)emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)))}
+    internal suspend fun debugInjectDuplexUtterance(pcm:ByteArray){check(BuildConfig.DEBUG&&pcm.size in 6400..960000&&pcm.size%2==0);muted=true;update{it.copy(muted=true)};for(at in pcm.indices step 1600){sendPcm(pcm.copyOfRange(at,minOf(at+1600,pcm.size)),liveMicrophone=true);delay(50)};repeat(24){sendPcm(ByteArray(1600),liveMicrophone=true);delay(50)}}
     fun toggleMute(){muted=!muted;if(muted&&captureJob?.isActive==true)emit(JSONObject().put("realtimeInput",JSONObject().put("audioStreamEnd",true)));update{it.copy(muted=muted,phase=if(it.phase in listOf("Connecting","Reconnecting"))it.phase else if(muted) "Muted" else if(speaking) "Speaking" else "Listening")}}
     fun setHistory(keep:Boolean){prefs.edit().putBoolean("keep-history",keep).apply();update{it.copy(keepHistory=keep)};if(keep)persistHistory()else prefs.edit().remove("history").remove("suggestions").remove("suggestions-at").apply()}
     fun clearHistory(){
@@ -1335,6 +1386,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
         remoteSpeechActive=false;remoteActivitySeen=false;remoteSpeechEndedAt=0L;speechInputTurn=-1L;speechInputText="";joinSpeechInput=false
         comparisonPreparation?.cancel();comparisonPreparation=null
         speechMonitor?.close();speechMonitor=null;bargeInGate.reset()
+        duplex.reset();outputPump?.cancel();outputPump=null
         recommendationDelivery.clear()
         answerDeadline.clear()
         captureJob?.cancel(); captureJob = null

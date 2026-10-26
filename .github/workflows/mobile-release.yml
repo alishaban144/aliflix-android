@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "271"
-  RELEASE_VERSION_NAME: "3.1.181"
+  RELEASE_VERSION_CODE: "272"
+  RELEASE_VERSION_NAME: "3.1.182"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Talk understands choosing between your options, checks exact title facts and explains concrete technical limits. Interruption yields promptly, finished chat replies stop showing Writing, and comparison cards retain their exact editions. New orbital dotted lettering settles into a pearl shine. Discover For you rotates hourly with a daily mix. My Space metadata pills are centered and compact."
+          RELEASE_NOTES="Talk starts audio independently of microphone input, rejects its own echo, and keeps follow-up context. Persistent tasks run multi-step research, programmes, collections and watches within Aliflix. For you uses actual taste ranking. Describe keeps loaded cards stable, supports continuation and enforces recent refinements. One centered loader replaces duplicate progress."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"
@@ -404,21 +404,15 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Talk distinguishes choosing between your films from asking for new recommendations. It compares your actual options, checks native catalogue facts such as runtime when needed, preserves exact editions and both comparison cards, and recalls earlier pairs within the session.
+            Talk starts short replies independently of microphone capture and uses echo-aware interruption. Film discussion retains context for follow-ups such as "And?". Recommendation tool delivery waits for current speech to drain.
 
-            Technical-limit questions receive concrete app, network and capability answers. Quoted, hypothetical and negated commands do not mutate the library. Native changes report whether anything actually changed, and undo cannot accidentally target an older no-op request.
+            Persistent tasks combine research, verified catalogue discovery, exact-runtime double bills, multi-evening programmes, episode catch-up calendars, franchise and filmmaker traversal, group intersections, living collections and explicit release/news watches. Goals keep running after Talk closes and can be revised, paused or cancelled. Explicit preference memory and reversible batch library edits integrate with Aliflix.
 
-            Spoken interruption flushes pending playback even after a recommendation has been committed. Stop yields locally, late acknowledgements cannot swallow the next question, and a completed chat response stops displaying Writing while delayed playback bookkeeping finishes.
+            For you uses the actual taste model. Describe preserves published cards across streaming and pagination, honors verified date/runtime constraints and retains the original request during refinements. One large centered path loader replaces duplicate progress; For you disappears once a search begins. No personal-match explanations are added.
 
-            Speech input now retains the whole utterance when transcription arrives late. Old turn completion cannot resume old narration while you speak, and native actions wait for the complete request. A shared session-start cap that could disable Talk after modest use is corrected, with a clear message if daily capacity is reached.
+            ARM64 mobile APK and universal compatibility bridge retain the production signer and native/model assets. TV is unchanged. Physical-phone evidence, live-service results and limitations are recorded separately from signed-artifact verification.
 
-            Dotted topic letters enter on brief individual orbits, settle on a fixed baseline and carry a reversing lavender-pearl shine. The old wave is removed; the orb and changing topics remain. Cached glyph images keep animation drawing light.
-
-            Discover For you rotates its existing pool hourly and remixes daily without extra AI research. My Space metadata uses centered single-line rating/runtime pills and a separate type badge. Ask and Similar retain the Tavily/Gemini/TMDB pipeline and immediate in-card dislike.
-
-            ARM64 mobile APK and universal compatibility bridge preserve the production signer and native/model assets. TV is unchanged. See the validation record for physical-device checks and signer boundaries.
-
-            [Research and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-181-validation.md).
+            [Research and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-182-validation.md).
           files: |
             aliflix-mobile.apk
             update-mobile.json

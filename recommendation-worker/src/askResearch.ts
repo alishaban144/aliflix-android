@@ -17,6 +17,8 @@ import type {
   MediaType,
 } from "./types";
 import { ServiceError } from "./types";
+import { createCursor, parseCursor } from './session';
+import { discoveryConstraints } from './discoveryConstraints';
 
 const DAY = 86_400_000;
 const Taste = z
@@ -101,7 +103,7 @@ type Usage = {
     };
   }>;
 };
-type ResearchResult={results:RecommendationResult[];metrics:Usage;cached?:boolean;inProgress?:boolean;incomplete?:boolean;researchBrief?:{answer?:string;excerpts:Array<{title:string;url:string;text:string}>}};
+type ResearchResult={results:RecommendationResult[];metrics:Usage;cached?:boolean;inProgress?:boolean;incomplete?:boolean;nextCursor?:string|null;hasMore?:boolean;totalResults?:number;researchBrief?:{answer?:string;excerpts:Array<{title:string;url:string;text:string}>}};
 const clean = (v: unknown, max = 1200) =>
   typeof v === "string"
     ? v
@@ -185,7 +187,7 @@ export function researchFilters(
   planned: z.infer<typeof RecommendationFiltersSchema>,
   query: string,
 ) {
-  const filters = mergeFilters(request, planned);
+  const filters = discoveryConstraints(mergeFilters(request, planned), query);
   const scienceFiction=/\b(?:science[- ]fiction|sci[- ]?fi)\b|خيال\s+علمي/i.exec(query);
   const excludesScienceFiction=scienceFiction&&/\b(?:no|not|without|avoid|exclude|excluding)\s+(?:any\s+)?$/i.test(query.slice(0,scienceFiction.index));
   const declared=scienceFiction&&!excludesScienceFiction?"Science Fiction":undefined;
@@ -807,7 +809,37 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     );
     return values;
   }
-  async recommend(owner:string,raw:unknown):Promise<ResearchResult>{return this.recommendInternal(owner,raw);}
+  private async recommendationPage(owner:string,raw:unknown,onProgress?:(value:ResearchResult)=>void,signal?:AbortSignal):Promise<ResearchResult> {
+    const request=AskRequestSchema.parse(raw);
+    const fingerprint=await digest({...researchCacheIdentity(request),library:undefined});
+    const sessionId=await digest(['ask-page-v1',owner,request.requestId]);
+    let seen:number[]=[],offset=0;
+    if(request.cursor){
+      const cursor=await parseCursor(this.env.CURSOR_SIGNING_SECRET,request.cursor);
+      if(cursor.sessionId!==sessionId||cursor.requestId!==request.requestId||cursor.fingerprint!==fingerprint)
+        throw new ServiceError('INVALID_CURSOR','Cursor does not match search',400,false);
+      offset=cursor.offset;
+      const state=this.read<{seen:number[]}>('page:'+sessionId+':'+offset);
+      if(!state)throw new ServiceError('SESSION_EXPIRED','Search expired',410,false);
+      seen=state.seen;
+    }
+    const pageKey='page-result:'+sessionId+':'+offset;
+    const cached=this.read<ResearchResult>(pageKey);if(cached)return cached;
+    // A retried cursor is the same immutable page, including its order.
+    return this.single(pageKey,async()=>{
+      const result=await this.recommendInternal(owner,{...request,cursor:undefined,
+        filters:{...request.filters,excludedTmdbIds:[...new Set([...request.filters.excludedTmdbIds,...seen])] }},onProgress,signal);
+      const results=result.results.filter(v=>!seen.includes(v.tmdbId));
+      const all=[...new Set([...seen,...results.map(v=>v.tmdbId)])];
+      const hasMore=results.length>0&&all.length<144;
+      const nextOffset=offset+results.length;
+      if(hasMore)this.put('page:'+sessionId+':'+nextOffset,{seen:all},30*60000);
+      const nextCursor=hasMore?await createCursor(this.env.CURSOR_SIGNING_SECRET,{v:1,sessionId,requestId:request.requestId,fingerprint,offset:nextOffset}):null;
+      const page={...result,results,totalResults:all.length,hasMore,nextCursor};
+      this.put(pageKey,page,30*60000);return page;
+    });
+  }
+  async recommend(owner:string,raw:unknown):Promise<ResearchResult>{return this.recommendationPage(owner,raw);}
   async recommendStream(owner:string,raw:unknown):Promise<ReadableStream<Uint8Array>> {
     const request=AskRequestSchema.parse(raw),abort=new AbortController(),encoder=new TextEncoder();
     let controller:ReadableByteStreamController,pending:Uint8Array|undefined,done=false,closed=false,revision=0;
@@ -818,7 +850,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       start:c=>{
         controller=c;
         send({type:'progress',inProgress:true});
-        this.ctx.waitUntil(this.recommendInternal(owner,request,value=>send({type:'results',...value,inProgress:true}),abort.signal)
+        this.ctx.waitUntil(this.recommendationPage(owner,request,value=>send({type:'results',...value,inProgress:true}),abort.signal)
           .then(value=>send({type:'results',...value,inProgress:false}))
           .catch(error=>send({type:'error',inProgress:false,error:{code:researchFailure(error)?.code||'RESEARCH_UNAVAILABLE',message:'Research unavailable'}}))
           .finally(()=>{done=true;flush();}));
@@ -847,7 +879,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       (this.recommendationWaiters.get(key) || 0) + 1,
     );
     this.controllers.set(job, controller);
-    const progressKey=(request.mode==='similar'?'fast-results-v10:':'fast-results-v7:')+key;
+    const progressKey='stable-results-v14:'+key;
     if(onProgress){const listeners=this.progressListeners.get(progressKey)||new Set();listeners.add(onProgress);this.progressListeners.set(progressKey,listeners);const latest=this.latestProgress.get(progressKey);if(latest)onProgress(latest);}
     try {
       if(externalSignal)remaining(externalSignal);
@@ -887,7 +919,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
     }
   }
   private async build(request: AskRequest, signal: AbortSignal, _editorial=false):Promise<ResearchResult> {
-    const started=Date.now(), key=(request.mode==='similar'?'fast-results-v10:':'fast-results-v7:')+await digest(researchCacheIdentity(request));
+    const started=Date.now(), key='stable-results-v14:'+await digest(researchCacheIdentity(request));
     const cached=this.read<ResearchResult>(key);
     if(cached?.results.length)return {...cached,cached:true};
     return this.single(key,async()=>{
@@ -895,6 +927,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       const anchors=request.anchors||(request.anchor?[request.anchor]:[]);
       const anchorPromise=Promise.all(anchors.map(a=>this.env.ASK_RESEARCH.getByName(`anchor:${a.mediaType}:${a.tmdbId}`).anchorContext(a.mediaType,a.tmdbId).catch(()=>({...a,year:'',creators:[] as string[],originalTitle:a.title}))));
       const query=[request.previousQuery,request.query,request.refinementQuery].filter(Boolean).join('\n');
+      const effectiveFilters=researchFilters(request.mediaType,request.filters,RecommendationFiltersSchema.parse({}),query);
       const canonicalAnchors=await anchorPromise;
       const relatedPromise=request.mode==='similar'?Promise.all(anchors.map(async a=>{
         try{return await this.env.ASK_RESEARCH.getByName(`anchor:${a.mediaType}:${a.tmdbId}`).relatedPicks(a.mediaType,a.tmdbId);}catch{return [] as RelatedPick[];}
@@ -911,14 +944,15 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       usage.tavilyCredits=research.credits;usage.researchCached=research.cached;
       const favorites=(await tastePromise).filter(v=>!!v).map(v=>({title:v.title,year:v.releaseDate?.slice(0,4)}));
       usage.geminiCalls=1;
-      const filters=researchFilters(request.mediaType,request.filters,RecommendationFiltersSchema.parse({}),query);
+      const filters=effectiveFilters;
       // Similar is a comparison catalogue: watching/liking a strong match does
       // not make it dissimilar. Explicit dislikes and filters still exclude it.
       const excluded=new Set([...request.library.filter(v=>v.type===request.mediaType&&(v.kind==='dislike'||request.mode!=='similar'&&v.kind!=='saved')).map(v=>v.id),...anchors.filter(a=>a.mediaType===request.mediaType).map(a=>a.tmdbId)]);
       const matched=new Map<number,RecommendationResult>();
+      const published:RecommendationResult[]=[];
       const reasons=new Map<number,string>();
       const catalogueSources=new Map<number,string>();
-      const snapshot=()=>[...matched.entries()].sort((a,b)=>a[0]-b[0]).map(v=>v[1]).filter((v,i,a)=>a.findIndex(m=>m.tmdbId===v.tmdbId)===i).slice(0,Math.min(24,request.pageSize));
+      const snapshot=()=>published.slice(0,Math.min(24,request.pageSize));
       const lanes=Array.from({length:3},()=>Promise.resolve());
       const pending:Array<{pick:{title:string;year:number;id?:number;why?:string};index:number}>=[];
       let scheduled=false,batchNumber=0;
@@ -928,7 +962,9 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
         if(!c)return;Object.assign(c,m,{productionCompanyIds:m.productionCompanyIds||[]});
         if(!passesHardFilters(c,filters))return;
         remaining(signal);
-        matched.set(index,{...m,finalScore:0,matchReasons:reasons.has(index)?[reasons.get(index)!]:[],retrievalSources:[...(catalogueSources.has(index)?[catalogueSources.get(index)!]:[]),...research.evidence.map(e=>e.url)]});
+        if(published.some(v=>v.tmdbId===m.tmdbId))return;
+        const accepted={...m,finalScore:0,matchReasons:reasons.has(index)?[reasons.get(index)!]:[],retrievalSources:[...(catalogueSources.has(index)?[catalogueSources.get(index)!]:[]),...research.evidence.map(e=>e.url)]};
+        matched.set(index,accepted);published.push(accepted);
         usage.firstResultsMs??=Date.now()-started;
         const progress={results:snapshot(),metrics:{...usage,elapsedMs:Date.now()-started},inProgress:true};
         this.latestProgress.set(key,progress);this.progressListeners.get(key)?.forEach(listener=>listener(progress));
@@ -940,7 +976,7 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
           lanes[lane]=lanes[lane].then(async()=>{
             remaining(signal);
             const shard=await digest(batch.map(v=>v.pick));
-            const rows=await this.env.ASK_RESEARCH.getByName('fast-resolver:'+shard).resolveBatch(request.mediaType,batch.map(v=>v.pick),Math.min(started+25000,Date.now()+5000));
+            const rows=await this.env.ASK_RESEARCH.getByName('fast-resolver:'+shard).resolveBatch(request.mediaType,batch.map(v=>v.pick),Math.min(started+38000,Date.now()+5000));
             rows.forEach((m,i)=>apply(m,batch[i].index));
           });
           void lanes[lane].catch(()=>{});
@@ -956,16 +992,17 @@ export class AskResearch extends DurableObject<RecommendationEnv> {
       related.forEach((pick,index)=>enqueue(pick,pick.sharedCreator&&!query.trim()?-1000+index:100+index));
       // Tavily's actual titles remain eligible when proposed candidates are
       // unavailable, excluded or unmatched; reuse this same search, no extra AI.
-      sourcePicks.slice(0,12).forEach((pick,index)=>enqueue(pick,(request.mode==='similar'?300:100)+index));
       let picks:Array<{title:string;year:number;why?:string}>;
-      try {if(request.candidateHints?.length){picks=request.candidateHints;picks.forEach(enqueue);usage.geminiCalls=0;usage.pipeline='tavily-gemini-live-tmdb';}else picks=await liveRecommendationPicks(this.env,{query,mode:request.mode,mediaType:request.mediaType,anchors:await anchorPromise,filters:request.filters,favorites,count:Math.min(24,request.pageSize),searchAnswer:research.answer,sources:research.evidence.map(e=>({...e,text:e.text.slice(0,1200)}))},signal,enqueue);}
+      try {if(request.candidateHints?.length){picks=request.candidateHints;picks.forEach(enqueue);usage.geminiCalls=0;usage.pipeline='tavily-gemini-live-tmdb';}else picks=await liveRecommendationPicks(this.env,{query,mode:request.mode,mediaType:request.mediaType,anchors:await anchorPromise,filters:effectiveFilters,favorites,count:Math.min(24,request.pageSize),searchAnswer:research.answer,sources:research.evidence.map(e=>({...e,text:e.text.slice(0,1200)}))},signal,enqueue);}
       catch(error){
         remaining(signal);
-        picks=sourcePicks;
-        if(!picks.length&&!related.length)throw error;
+        // A search-page mention is not a curated match. Only the actual
+        // catalogue's creative relationships survive a curator outage.
+        if(!related.length)throw error;
+        picks=[];
         usage.pipeline='tavily-tmdb';
         picks.forEach(enqueue);
-        console.warn(JSON.stringify({event:'ask_tavily_capacity_recovery',count:picks.length}));
+        console.warn(JSON.stringify({event:'ask_catalogue_relationship_recovery',count:related.length}));
       }
       usage.generated=picks.length;
       flush();await Promise.all(lanes);
@@ -1146,9 +1183,9 @@ export async function askRoute(
         {
           requestId: b.requestId,
           ...result,
-          totalResults: result.results.length,
-          nextCursor: null,
-          hasMore: false,
+          totalResults: result.totalResults??result.results.length,
+          nextCursor: result.nextCursor??null,
+          hasMore: result.hasMore??false,
         },
         { headers: { "cache-control": "no-store" } },
       );

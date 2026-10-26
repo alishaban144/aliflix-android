@@ -41,6 +41,10 @@
       {
         "name": "ASK_RESEARCH",
         "class_name": "AskResearch"
+      },
+      {
+        "name": "TALK_AGENTS",
+        "class_name": "TalkAgent"
       }
     ]
   },
@@ -68,6 +72,10 @@
       "new_sqlite_classes": [
         "AskResearch"
       ]
+    },
+    {
+      "tag": "v5-talk-agent",
+      "new_sqlite_classes": ["TalkAgent"]
     }
   ],
   "ratelimits": [

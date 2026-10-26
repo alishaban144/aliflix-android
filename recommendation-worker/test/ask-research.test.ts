@@ -384,7 +384,7 @@ describe("unified authenticated research", () => {
         sourceText='Film 40 (2025). A thoughtful science fiction movie about identity.';
         const beforeFallback=calls.length;
         const fallback=await service.recommend('talk-owner',request({mediaType,query:'Other thoughtful science fiction choices',candidateHints:titles.slice(0,2),filters:{excludedTitles:titles.slice(0,2).map(v=>v.title)},pageSize:8}));
-        expect(fallback.results.map(v=>v.tmdbId)).toEqual([41]);
+        expect(fallback.results).toEqual([]); // Uncurated search titles must not bypass the rejected shortlist.
         expect(fallback.metrics.geminiCalls).toBe(0);
         expect(calls.length-beforeFallback).toBe(1);
       } finally {Object.assign(e,old);}
@@ -515,7 +515,7 @@ describe('progressive research transport',()=>{
   const stub=env.ASK_RESEARCH.getByName('stream-rpc');
   const input=AskRequestSchema.parse(request());
   const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(researchCacheIdentity(input))));
-  const key='fast-results-v7:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const key='stable-results-v14:'+Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');
   await runInDurableObject(stub,async(_instance,state)=>{
    state.storage.sql.exec('INSERT INTO ask_cache VALUES(?,?,?)',key,JSON.stringify({...value(24),cachedAt:Date.now()}),Date.now()+86400000);
   });
@@ -533,6 +533,7 @@ describe('progressive research transport',()=>{
    });
    const id=crypto.randomUUID(),reader=(await service.recommendStream('owner',request({requestId:id}))).getReader();
    expect(decode((await reader.read()).value!)).toMatchObject({requestId:id,type:'progress',revision:1});
+   await vi.waitFor(()=>expect(advance).toBeTypeOf("function"));
    advance(5);
    expect(decode((await reader.read()).value!)).toMatchObject({inProgress:true,results:value(5).results});
    advance(8);advance(12);advance(18);finish();
@@ -548,7 +549,7 @@ describe('progressive research transport',()=>{
    const work=vi.spyOn(service as any,'recommendInternal').mockImplementation(async(_o:any,_r:any,_p:any,signal:any)=>{
     await new Promise<void>(r=>signal.addEventListener('abort',()=>{cancelled=true;r();}));return value(0);
    });
-   const reader=(await service.recommendStream('owner',request())).getReader();await reader.read();await reader.cancel();expect(cancelled).toBe(true);
+   const reader=(await service.recommendStream('owner',request())).getReader();await reader.read();await vi.waitFor(()=>expect(work).toHaveBeenCalled());await reader.cancel();expect(cancelled).toBe(true);
    work.mockRejectedValue(Error('ASK_SERVICE:AI_QUOTA:429'));
    const failed=(await service.recommendStream('owner',request())).getReader();await failed.read();
    expect(decode((await failed.read()).value!)).toMatchObject({type:'error',error:{code:'AI_QUOTA'}});
@@ -565,7 +566,7 @@ describe('progressive research transport',()=>{
    const reader=(await service.recommendStream('owner',request())).getReader();await reader.read();
    const result=decode((await reader.read()).value!);expect(result).toMatchObject({inProgress:false,incomplete:true,results:value(5).results});
    expect((await reader.read()).done).toBe(true);
-   const row=state.storage.sql.exec<{value:string;expires:number}>("SELECT value,expires FROM ask_cache WHERE key LIKE 'fast-results-v7:%'").one();
+   const row=state.storage.sql.exec<{value:string;expires:number}>("SELECT value,expires FROM ask_cache WHERE key LIKE 'stable-results-v14:%'").one();
    expect(JSON.parse(row.value).cachedAt).toBeGreaterThan(Date.now()-1000);expect(row.expires).toBeGreaterThan(Date.now()+86000000);
   });
  });

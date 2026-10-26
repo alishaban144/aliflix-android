@@ -43,6 +43,8 @@ import com.aliflix.app.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import org.json.JSONObject
 
 /** Native adaptation of Agent Elements' expanding input/attachment chips and
@@ -56,14 +58,14 @@ internal fun UnifiedAskAliflix(
     myListKeys:Set<String>,onToggleMyList:(Media)->Unit,modifier:Modifier=Modifier,
     dailyProvider:(suspend(MediaType)->List<Media>)?=null,
     onRefine:(String)->Unit={},
+    personalizedPicks:List<Media> = emptyList(),
+    onLoadMore:()->Unit={},
 ) {
     val context=LocalContext.current
     val app=context.applicationContext as AliflixApplication
-    val research=remember{AskResearchClient(context)}
     val taste=remember{AskTaste(context)}
     val recent by app.libraryStore.recent.collectAsState()
     val favorites by app.libraryStore.likes.collectAsState()
-    val saved by app.libraryStore.myList.collectAsState()
     var rejected by remember{mutableStateOf(taste.rejected())}
     var sheet by rememberSaveable{mutableStateOf(false)}
     var similar by rememberSaveable{mutableStateOf(editor.mode==1)}
@@ -74,27 +76,20 @@ internal fun UnifiedAskAliflix(
     var dailyRetry by remember{mutableIntStateOf(0)}
     var dailyLoading by remember{mutableStateOf(false)}
     var dailyError by remember{mutableStateOf(false)}
-    var dailyState by remember{mutableStateOf("loading")}
-    var dailyRetryAt by remember{mutableLongStateOf(0L)}
     val type=editor.mediaType
     var rememberedSeriesStatus by rememberSaveable{mutableStateOf(editor.spec.requiredStatus)}
     LaunchedEffect(type,editor.spec.requiredStatus){if(type==MediaType.TV)rememberedSeriesStatus=editor.spec.requiredStatus}
     var daily by remember(type){mutableStateOf<List<Media>>(emptyList())}
-    var discoveryTime by remember{mutableLongStateOf(System.currentTimeMillis())}
-    val discoverySeed=remember(context){
-        val preferences=context.getSharedPreferences("ask-discovery",android.content.Context.MODE_PRIVATE)
-        if(preferences.contains("rotation-seed"))preferences.getInt("rotation-seed",0)
-        else java.util.UUID.randomUUID().hashCode().also{preferences.edit().putInt("rotation-seed",it).apply()}
-    }
     val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle){
-        val observer=androidx.lifecycle.LifecycleEventObserver{_,event->if(event==androidx.lifecycle.Lifecycle.Event.ON_RESUME)discoveryTime=System.currentTimeMillis()}
+        val observer=androidx.lifecycle.LifecycleEventObserver{_,event->if(event==androidx.lifecycle.Lifecycle.Event.ON_RESUME)rejected=taste.rejected()}
         lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}
     }
-    LaunchedEffect(lifecycle){while(true){delay(60_000);if(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))discoveryTime=System.currentTimeMillis()}}
-    val dailyHour=discoveryTime/3_600_000L
-    val displayedDaily=remember(daily,dailyHour,discoverySeed,rejected){rotatingAskDailySuggestions(daily.filterNot{it.key in rejected},discoveryTime,discoverySeed)}
-    var dailyResearchBacked by remember(type){mutableStateOf(false)}
+    val metadata by MobileTasteModel.metadata.collectAsState()
+    val displayedDaily=remember(daily,favorites,recent,rejected,metadata){
+        if(dailyProvider!=null)daily.filterNot{it.key in rejected}.take(8)
+        else TastePicks.rankMobile(daily,favorites,(favorites+recent).map{it.key}.toSet()+rejected,MobileTasteModel.history()).take(8)
+    }
     val keyboard=LocalSoftwareKeyboardController.current
     val motion=rememberMobileMotionEnabled()
     val anchors=editor.selectedAnchors.ifEmpty{listOfNotNull(editor.selectedAnchor)}
@@ -116,6 +111,13 @@ internal fun UnifiedAskAliflix(
     LaunchedEffect(results.map{it.media.key}) {
         if(pinResultsToTop&&results.isNotEmpty())listState.requestScrollToItem(0)
     }
+    LaunchedEffect(resultState?.nextCursor,resultState?.loadingMore,resultState?.researching,resultState?.loadMoreError,busy) {
+        if(resultState?.hasMore!=true||resultState.loadingMore||resultState.researching||resultState.loadMoreError!=null||busy)return@LaunchedEffect
+        snapshotFlow {
+            val layout=listState.layoutInfo
+            listState.canScrollBackward&&layout.totalItemsCount>0&&(layout.visibleItemsInfo.lastOrNull()?.index?:0)>=layout.totalItemsCount-3
+        }.distinctUntilChanged().filter{it}.collect{onLoadMore()}
+    }
     fun submit(applyFilters:Boolean=false) {
         pinResultsToTop=true;listState.requestScrollToItem(0)
         keyboard?.hide()
@@ -134,43 +136,10 @@ internal fun UnifiedAskAliflix(
         };onSubmit(request)
     }
     LaunchedEffect(resultState?.activeRequest,resultState?.refining){if(resultState!=null&&!resultState.refining&&editor.describeText==sentDraft)onEditor(editor.copy(describeText=""))}
-    LaunchedEffect(type,dailyRetry,dailyHour) {
-        dailyLoading=true;dailyError=false
-        if(dailyProvider!=null){daily=dailyProvider(type);dailyLoading=false;return@LaunchedEffect}
-        val file=java.io.File(context.cacheDir,"ask-daily-${type.routeName}.json")
-        fun parse(json:JSONObject)=parseAskDailySuggestions(json,type)
-        daily=withContext(Dispatchers.IO){retainedAskDailySuggestions(type,
-            {android.util.AtomicFile(file).openRead().bufferedReader().use{it.readText()}},
-            {context.assets.open("ask-daily-fallback.json").bufferedReader().use{it.readText()}})}
-        dailyResearchBacked=withContext(Dispatchers.IO){runCatching{android.util.AtomicFile(file).openRead().bufferedReader().use{researchBackedAskDailySuggestions(JSONObject(it.readText()),type)}}.getOrDefault(false)}
-        try {
-            for(attempt in 0 until 18) {
-                val json=research.request("daily?type=${type.routeName}");val items=parse(json)
-                dailyState=json.optString("state",if(items.isNotEmpty())"ready" else "unavailable")
-                dailyRetryAt=json.optLong("retryAt",0L)
-                if(items.isNotEmpty()) {
-                    daily=items
-                    dailyResearchBacked=researchBackedAskDailySuggestions(json,type)
-                    withContext(Dispatchers.IO){runCatching{
-                        val atomic=android.util.AtomicFile(file);val output=atomic.startWrite()
-                        try{output.write(json.toString().toByteArray(Charsets.UTF_8));atomic.finishWrite(output)}
-                        catch(error:Throwable){atomic.failWrite(output);throw error}
-                    }}
-                    break
-                }
-                if(dailyState!="warming"||daily.isNotEmpty()||attempt==17)break
-                delay(5000)
-            }
-            dailyError=daily.isEmpty()
-        }
-        catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){dailyError=daily.isEmpty();dailyState="unavailable"}
-        finally{dailyLoading=false}
-    }
-    LaunchedEffect(dailyState,dailyRetryAt,type) {
-        if(dailyState=="limited"&&dailyRetryAt>System.currentTimeMillis()) {
-            delay((dailyRetryAt-System.currentTimeMillis()).coerceAtMost(86_400_000))
-            dailyRetry++
-        }
+    LaunchedEffect(type,personalizedPicks,dailyRetry) {
+        dailyLoading=true
+        try { daily=dailyProvider?.invoke(type) ?: personalizedPicks.filter{it.type==type};dailyError=false }
+        finally { dailyLoading=false }
     }
     LaunchedEffect(state,surprisePending) {
         if(surprisePending&&!busy&&(resultState?.activeRequest as? AskAliflixRequest.Describe)?.text==surprisePrompt&&results.size>=3&&!resultState.researching) {
@@ -209,7 +178,7 @@ internal fun UnifiedAskAliflix(
                         cursorBrush=SolidColor(AliflixAccentSecondary),maxLines=5,modifier=Modifier.weight(1f).heightIn(min=48.dp).padding(vertical=12.dp).testTag("ask-composer"),
                         decorationBox={inner->Box{if(editor.describeText.isEmpty())Text(if(resultState!=null)"Refine" else "What are you in the mood for?",color=AliflixContentSecondary,fontSize=16.sp);inner()}})
                     AliflixIconButton(onClick={if(!busy)submit()},modifier=Modifier.size(48.dp).testTag("ask-send")){
-                        if(busy)AskResearchProgress(Modifier.size(24.dp),motion)else Icon(Icons.AutoMirrored.Rounded.ArrowForward,"Find titles",tint=AliflixAccentSecondary)
+                        Icon(Icons.AutoMirrored.Rounded.ArrowForward,"Find titles",tint=if(busy)AliflixContentTertiary else AliflixAccentSecondary)
                     }
                 }
             }
@@ -220,8 +189,7 @@ internal fun UnifiedAskAliflix(
                     if(busy)return@AskAction
                     val prefs=context.getSharedPreferences("aliflix-ask-surprises-"+(com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid?:"guest"),0);val prior=prefs.getStringSet("seen",emptySet()).orEmpty()
                     val excluded=(recent+favorites).map{it.key}.toSet()+rejected+prior
-                    val genres=favorites.flatMap{it.genres}.groupingBy{it}.eachCount()
-                    val picks=daily.takeIf{dailyResearchBacked&&selectedFilterCount(editor.spec)==0&&editor.describeText.isBlank()&&!similar}.orEmpty().filterNot{it.key in excluded}.shuffled().sortedByDescending{m->m.genres.sumOf{genres[it]?:0}}.take(3)
+                    val picks=displayedDaily.takeIf{selectedFilterCount(editor.spec)==0&&editor.describeText.isBlank()&&!similar}.orEmpty().filterNot{it.key in excluded}.take(3)
                     if(picks.size==3){prefs.edit().putStringSet("seen",(prior+picks.map{it.key}).toList().takeLast(96).toSet()).apply();surpriseChoices=picks.map{RecommendationCandidate(it)}}
                     else {surprisePrompt="Choose three distinctive, excellent unwatched ${if(type==MediaType.TV)"series" else "films"}: one inspired by my Favorites, one unexpected gem, and one bold wildcard. Make the three choices genuinely different in atmosphere. ${editor.describeText}";surprisePending=true;onSubmit(AskAliflixRequest.Describe(type,surprisePrompt,filters=editor.spec,resultCount=3))}
                 }
@@ -243,8 +211,8 @@ internal fun UnifiedAskAliflix(
             }
             } }
 
-                if(state is AskAliflixUiState.Editing||results.isEmpty()) {
-                    if(daily.isNotEmpty()) {
+                if(state is AskAliflixUiState.Editing) {
+                    if(displayedDaily.isNotEmpty()) {
                         item("daily-heading"){Text("For you",Modifier.padding(horizontal=20.dp,vertical=4.dp).testTag("ask-daily"),color=AliflixContentPrimary,fontSize=18.sp,fontWeight=FontWeight.SemiBold)}
                         items(displayedDaily.chunked(2),key={row->"daily:"+row.first().key}) { row ->
                             Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
@@ -258,17 +226,19 @@ internal fun UnifiedAskAliflix(
                         }
                     }else item("daily-loading"){
                         if(dailyLoading)AskResearchProgress(Modifier.fillMaxWidth().height(80.dp),motion)
-                        else if(dailyError&&dailyState=="limited")Text("Daily limit",color=AliflixContentSecondary,fontSize=13.sp,modifier=Modifier.padding(20.dp))
                         else if(dailyError)AskAction("Retry",Icons.Rounded.Refresh,false,Modifier.fillMaxWidth().padding(horizontal=20.dp)){dailyRetry++}
                     }
                 }
-                if(busy)item("progress"){AskResearchProgress(Modifier.fillMaxWidth().height(48.dp),motion)}
+                if(busy)item("progress"){AskDiscoveryLoader(Modifier.fillMaxWidth().height(280.dp).testTag("ask-primary-loader"),motion)}
                 if(resultState?.refineError!=null)item("refine-error"){AskAction("Retry refinement",Icons.Rounded.Refresh,false,Modifier.fillMaxWidth()){onRefine(sentDraft)}}
-                items(results,key={it.media.key}){item->
+                items(if(busy)emptyList()else results,key={it.media.key}){item->
                     MobileAskResultCard(item,{onOpen(item.media)},item.media.key in myListKeys,{onToggleMyList(item.media)},editorial=false,
                         modifier=Modifier.padding(horizontal=20.dp).animateItem(),onDislike={rejected=rejected+item.media.key;taste.reject(item.media)})
                 }
-                if(resultState?.researching==true)item("research-continuing"){AskResearchProgress(Modifier.fillMaxWidth().height(32.dp).testTag("ask-research-continuing"),motion)}
+                if(!busy&&(resultState?.researching==true||resultState?.loadingMore==true))item("research-continuing"){AskDiscoveryLoader(Modifier.fillMaxWidth().height(100.dp).testTag("ask-research-continuing"),motion)}
+                if(!busy&&resultState?.hasMore==true&&!resultState.researching&&!resultState.loadingMore)item("more"){
+                    AskAction(if(resultState.loadMoreError!=null)"Retry" else "More",Icons.Rounded.ExpandMore,false,Modifier.fillMaxWidth().padding(horizontal=20.dp)){onLoadMore()}
+                }
                 if(!busy&&state !is AskAliflixUiState.Editing&&results.isEmpty())item("empty"){
                     val limited=state is AskAliflixUiState.Error&&state.message=="Daily limit"
                     Column(Modifier.fillMaxWidth().padding(vertical=32.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(if(limited)Icons.Rounded.Schedule else Icons.Rounded.SearchOff,null,tint=AliflixContentSecondary,modifier=Modifier.size(32.dp));Text(if(limited)"Daily limit" else if(state is AskAliflixUiState.Empty)"No matches" else "Unavailable",Modifier.padding(12.dp),color=AliflixContentPrimary,fontSize=17.sp);if(!limited)AskAction("Retry",Icons.Rounded.Refresh,false,Modifier){onRetry()}}

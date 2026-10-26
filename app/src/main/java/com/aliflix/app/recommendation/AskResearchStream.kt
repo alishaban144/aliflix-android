@@ -30,11 +30,19 @@ internal class AskResearchStream(private val requestId: String) {
                     require(id > 0 && type in setOf("movie", "tv")) { "Invalid research identity" }
                     require(identities.add("$type:$id")) { "Duplicate research identity" }
                 }
-                // Each revision is authoritative: parallel TMDB matches and
-                // Gemini curation can improve ordering or replace early picks.
+                // Published cards own their identity and position until a new
+                // user query. Conflation or an older server may reorder a frame;
+                // retain the visible prefix and append unseen identities only.
+                val stable=org.json.JSONArray()
+                val keys=HashSet<String>()
+                for(array in listOfNotNull(latest?.optJSONArray("results"),results))for(i in 0 until array.length()){
+                    val row=array.getJSONObject(i);val key=row.optString("mediaType","movie")+":"+row.getInt("tmdbId")
+                    if(keys.add(key))stable.put(row)
+                }
+                val accepted=JSONObject(event.toString()).put("results",stable)
                 finished = !event.optBoolean("inProgress")
-                latest = event
-                event
+                latest = accepted
+                accepted
             }
             "error" -> {
                 finished = true

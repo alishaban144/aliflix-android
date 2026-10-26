@@ -24,7 +24,7 @@ internal fun talkAppContext(context:Context):JSONObject {
             "Conversation context is bounded and compressed. Archived history is retained only when enabled; recall is not unlimited and may lose details. Read actual app state rather than assuming memory.",
             "Knowledge and catalogue metadata can be incomplete or stale. Tavily supplies current web evidence, TMDB supplies identity/facts; missing or conflicting information needs an honest qualification. Model reasoning can be mistaken.",
             "Actions are restricted to the actual supported native tools. Playback/source availability, audio tracks and subtitles vary. Opening download options is not a completed download; native account/option/confirmation flows still need the viewer.",
-            "Undo restores only the last library change made through this conversation, and checks for intervening edits. It does not undo navigation, playback or arbitrary manual changes."
+            "Undo restores the last library change or validated batch made through this conversation, and checks for intervening edits. It does not undo navigation, playback or arbitrary manual changes."
         )))
         .put("library",JSONObject().put("favorites",app.libraryStore.likes.value.size)
             .put("myList",app.libraryStore.myList.value.size).put("recent",app.libraryStore.recent.value.size))
@@ -44,6 +44,9 @@ internal fun talkAppContext(context:Context):JSONObject {
             "app_control: set_setting play_next_episode, audio_boost, zoom, auto_subtitles, playback_speed, subtitle_size, subtitle_opacity, subtitle_delay_seconds, subtitle_vertical_offset, preferred_quality, subtitle_language, provider, recommendations_enabled",
             "app_control: player_state, pause, resume, seek, audio_language, subtitle_language on the real active Media3 player")))
         .put("moreActions",JSONArray(listOf("app_control: downloads_state, pause_download, resume_download, remove_download for an exact title/episode",
+            "app_control: library_state (stringValue saved/favorite/watched/all, offset); batch_library validates up to24 exact title library changes, with whole-batch undo; open_screen agent_tasks",
+            "agent_workspace: create/update/pause/resume/cancel persistent mission graphs; read/list progress and exact outputs; requested background watches continue after Talk closes; remember/forget only explicitly requested preferences",
+            "Mission stages: research, discover, catalogue, episodes, schedule (exact runtime budget and breaks), calendar (daily episode catch-up), franchise, filmography, collection. No playback or downloads are claimed from a completed research mission.",
             "app_control: set_voice (Aoede/Kore/Puck/Charon), set_history (enabled), new_chat; open_screen talk_voices/talk_privacy/recent_chats")))
         .put("features",JSONArray(listOf(
             "Home: For You, Movies, TV Shows, Categories; title details, search, seasons and episode ratings.",

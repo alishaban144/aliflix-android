@@ -79,17 +79,19 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     var privacy by remember { mutableStateOf(false) }
     var voices by remember { mutableStateOf(false) }
     var settings by remember { mutableStateOf(false) }
+    var agentTasks by remember { mutableStateOf((titleContext as? android.app.Activity)?.intent?.getBooleanExtra("agentTasks",false)==true) }
     var draft by rememberSaveable(state.conversationId) { mutableStateOf("") }
     var deleteHistory by remember { mutableStateOf(false) }
     LaunchedEffect(state.panelRequest){
-        when(state.panelRequest){"talk_voices"->voices=true;"talk_privacy"->privacy=true;"recent_chats"->{recent=true;session.history.refresh()}}
+        when(state.panelRequest){"agent_tasks"->agentTasks=true;"talk_voices"->voices=true;"talk_privacy"->privacy=true;"recent_chats"->{recent=true;session.history.refresh()}}
         if(state.panelRequest.isNotEmpty())session.consumePanelRequest()
     }
     val localTracker=remember { DiscoverTouchTracker() }
     val tracker=touchTracker ?: localTracker
     val motion=rememberMobileMotionEnabled() && rememberMobileResumed()
     val keyboardOpen=WindowInsets.ime.getBottom(LocalDensity.current)>0
-    BackHandler { if(recent)recent=false else if(voices)voices=false else if(privacy)privacy=false else onClose() }
+    if(agentTasks)TalkAgentSheet(session,{agentTasks=false},::openTitle)
+    BackHandler { if(agentTasks)agentTasks=false else if(recent)recent=false else if(voices)voices=false else if(privacy)privacy=false else onClose() }
     LaunchedEffect(Unit) { onStart() }
     val idle=state.phase in listOf("Ready","Resume","Reconnect","Microphone permission","Audio unavailable","Try again later","Opened elsewhere")
     fun send(){if(draft.isNotBlank()){session.sendText(draft);draft=""}}
@@ -108,6 +110,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 Box {
                     AliflixIconButton(onClick={settings=true}) { Icon(Icons.Rounded.MoreHoriz,"Conversation settings",tint=AliflixContentSecondary) }
                     DropdownMenu(expanded=settings,onDismissRequest={settings=false}) {
+                        DropdownMenuItem(text={Text("Tasks")},onClick={agentTasks=true;settings=false},leadingIcon={Icon(Icons.Rounded.AutoAwesome,null)})
                         DropdownMenuItem(text={Text("New chat")},onClick={session.newChat();draft="";settings=false},leadingIcon={Icon(Icons.Rounded.AddComment,null)})
                         DropdownMenuItem(text={Text("Choose voice")},onClick={voices=true;settings=false},leadingIcon={Icon(Icons.Rounded.GraphicEq,null)},modifier=Modifier.testTag("talk-voice-picker"))
                         DropdownMenuItem(text={Text("Privacy")},onClick={privacy=true;settings=false},leadingIcon={Icon(Icons.Rounded.PrivacyTip,null)})

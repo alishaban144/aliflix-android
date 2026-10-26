@@ -15,18 +15,21 @@ internal class TalkRecommendationDelivery {
     fun clear() { chunks.clear(); bytes = 0 }
 }
 
-internal fun talkResearchBridge(question:String,language:String?):String = when(language?.substringBefore('-')) {
+internal fun talkResearchBridge(question:String,language:String?):String {
+    val subject=question.replace(Regex("(?i)\\b(?:not|no|avoid|excluding|without)\\b[^.!?;]*")," ")
+    return when(language?.substringBefore('-')) {
     "ar"->"أبحث لك عما يناسب ما تريده."
     "de"->"Ich suche etwas, das zu deiner Stimmung passt."
     "fr"->"Je cherche ce qui correspond à ton envie."
     "es"->"Estoy buscando algo que encaje con lo que quieres."
     else->when {
-        Regex("(?i)sci.?fi|science fiction").containsMatchIn(question)->"I'm looking for science fiction with ideas that stay with you."
-        Regex("(?i)gentlem|elegan|stylish").containsMatchIn(question)->"I'm looking for charm, style, and memorable characters."
-        Regex("(?i)thrill|mystery|detective").containsMatchIn(question)->"I'm looking for atmosphere, suspense, and a mystery worth following."
-        Regex("(?i)comedy|funny|laugh").containsMatchIn(question)->"I'm looking for sharp comedy with a personality of its own."
+        Regex("(?i)sci.?fi|science[- ]fiction").containsMatchIn(subject)->"I'm looking for science fiction with ideas that stay with you."
+        Regex("(?i)gentlem|elegan|stylish").containsMatchIn(subject)->"I'm looking for charm, style, and memorable characters."
+        Regex("(?i)thrill|mystery|detective").containsMatchIn(subject)->"I'm looking for atmosphere, suspense, and a mystery worth following."
+        Regex("(?i)comed(?:y|ies)|funny|laugh").containsMatchIn(subject)->"I'm looking for sharp comedy with a personality of its own."
         else->"I'm looking for a good fit for what you're in the mood for."
     }
+}
 }
 internal fun talkIsApprovedBridge(text:String,approved:String):Boolean {
     fun normalize(value:String)=java.text.Normalizer.normalize(value,java.text.Normalizer.Form.NFKD).lowercase(java.util.Locale.ROOT).filter{it.isLetterOrDigit()}

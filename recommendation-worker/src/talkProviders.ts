@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { RecommendationEnv } from './types';
 import type { TalkContext } from './talkEvidence';
 import { groundedLiveInstructions } from './talkGrounding';
+import { agentTools } from './agentTools';
 export const TALK_MODEL = 'gemini-3.8-live';
 export const TALK_VOICE = 'Aoede';
 export const LIVE_TOOLS = [{ functionDeclarations: [{
@@ -82,19 +83,20 @@ export function liveSetup(context: TalkContext) {
   if(tool.name==='recommendations')return {...tool,description:'Research an imaginative shortlist using Tavily and exact TMDB identities. Immediately supply five to eight tentative candidates with years, privately in tool arguments, and the complete user request. For recent/current releases send candidates=[] so dated Tavily findings feed the curator directly. Never speak private proposals. count is the number of final choices requested by the user (1-3; default three), independent of the longer candidate shortlist. During research speak only its approved bridge sentence. The returned pool is NOT the displayed selection: next call present_recommendations with requestedCount returned keys and brief reasons. Its approved presentation binds speech and posters to the SAME exact IDs. Do not name any recommendation before that approval.',parameters:{...tool.parameters,properties:{...tool.parameters.properties,count:{type:'INTEGER',minimum:1,maximum:3}}}};
   if(tool.name==='show_title_cards')return {...tool,description:tool.description+' Reuse established movie:id or tv:id keys when available. restore=true restores the last recommendation group. First/second/third refer to that group. Never re-resolve an established recommendation as an ambiguous new title.',parameters:{...tool.parameters,properties:{...tool.parameters.properties,restore:{type:'BOOLEAN'}}}};
   if(tool.name==='film_knowledge')return {...tool,parameters:{...tool.parameters,properties:{...tool.parameters.properties,tmdbId:{type:'INTEGER',description:'Established canonical TMDB id from returned cards/app state. Reuse it and its year; do not guess another edition.'}}}};
+  if(tool.name==='app_control'&&(context.companionVersion||0)>=8)return {...tool,parameters:{...tool.parameters,properties:{...tool.parameters.properties,action:{type:'STRING',enum:[...tool.parameters.properties.action!.enum,'title_state','undo','batch_library','library_state']},tmdbId:{type:'INTEGER'},offset:{type:'INTEGER'},screen:{type:'STRING',enum:[...tool.parameters.properties.screen!.enum,'agent_tasks']},commands:{type:'ARRAY',minItems:1,maxItems:24,items:{type:'OBJECT',properties:{action:{type:'STRING',enum:['save','unsave','favorite','unfavorite','dislike','undo_dislike']},title:{type:'STRING'},tmdbId:{type:'INTEGER'},kind:{type:'STRING',enum:['movie','tv']},year:{type:'INTEGER'}},required:['action','tmdbId','kind']}}}}};
   if(tool.name==='app_control')return {...tool,parameters:{...tool.parameters,properties:{...tool.parameters.properties,action:{type:'STRING',enum:['show_card','title_state','undo','open_title','play','download','similar','save','unsave','favorite','unfavorite','dislike','undo_dislike','open_screen','search','set_setting','player_state','pause','resume','seek','audio_language','subtitle_language','downloads_state','pause_download','resume_download','remove_download','set_voice','set_history','new_chat']},tmdbId:{type:'INTEGER',description:'Established card id. Include kind and year from the same identity. title_state reads library flags; undo restores the last conversation library change.'}}}};
   return tool;
  });
  return { model: 'models/'+TALK_MODEL,
-  generationConfig: { responseModalities: ['AUDIO'], maxOutputTokens: 2048,
+  generationConfig: { responseModalities: ['AUDIO'], maxOutputTokens: (context.companionVersion||0)>=8?8192:2048,
     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: context.voice || TALK_VOICE } } } },
   systemInstruction: { parts: [{ text: liveInstructions(context) }] },
   // Legacy installed clients cannot answer the new local topic/history tools.
-  tools: [{functionDeclarations:[...tools,...((context.companionVersion||0)>=6?[{
+  tools: [{functionDeclarations:[...tools,...((context.companionVersion||0)>=8?agentTools:[]),...((context.companionVersion||0)>=6?[{
    name:'present_recommendations',behavior:'NON_BLOCKING',description:'Commit the recommendation speech and poster cards TOGETHER. REQUIRED after recommendations returns its pool. Choose requestedCount returned movie:id/tv:id keys (all if fewer), in your preferred order. Give each a distinct 4-7 word spoiler-free reason in the established language, without naming other films. Read the returned approved speechText exactly, without introduction, additions, substitutions or a closing question. Do not call this for ordinary card display or follow-ups.',
    parameters:{type:'OBJECT',properties:{picks:{type:'ARRAY',minItems:1,maxItems:3,items:{type:'OBJECT',properties:{key:{type:'STRING'},reason:{type:'STRING'}},required:['key','reason']}}},required:['picks']}
   }]:[])]}], inputAudioTranscription: {}, outputAudioTranscription: {},
-  realtimeInputConfig: { automaticActivityDetection: { disabled: false, startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+  realtimeInputConfig: { automaticActivityDetection: { disabled: false, startOfSpeechSensitivity: (context.companionVersion||0)>=8?'START_SENSITIVITY_LOW':'START_SENSITIVITY_HIGH',
     endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', prefixPaddingMs: 180, silenceDurationMs: 650 },
     activityHandling: 'START_OF_ACTIVITY_INTERRUPTS', turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY' },
   contextWindowCompression: { triggerTokens: (context.companionVersion||0)>=5?'16384':'8192', slidingWindow: { targetTokens: (context.companionVersion||0)>=5?'8192':'4096' } },

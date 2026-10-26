@@ -837,6 +837,13 @@ internal fun NativePlayerScreen(
         MobilePlayerMoreSheet(
             synchronizedPlayback = partyState.active,
             onWatchTogether = onWatchTogether,
+            onTalk = {
+                player?.pause()
+                val current=org.json.JSONObject().put("id",playbackSelection.media.id).put("type",playbackSelection.media.type.routeName)
+                    .put("season",playbackSelection.seasonNumber?:1).put("episode",playbackSelection.episodeNumber?:1)
+                    .put("position",(player?.currentPosition?:0L)/1000.0).put("completed",false)
+                partyContext.startActivity(android.content.Intent(partyContext,com.aliflix.app.talk.TalkVoiceActivity::class.java).putExtra("playerContext",current.toString()))
+            },
             germanEdition = germanEdition,
             onGermanEdition = onGermanEdition,
             visible = moreVisible,

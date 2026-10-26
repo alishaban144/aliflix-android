@@ -1401,6 +1401,7 @@ fun AliflixApp(
                         aiEnabled = aiRecommendationsEnabled || assistantAction?.optString("action")=="similar" || assistantAction?.optString("screen")=="ask",
                         homeContent = home.content,
                         recent = recent,
+                        personalizedPicks = pickedForYou,
                         focusRequestId = discoverFocusRequestId.takeIf {
                             it > consumedDiscoverFocusRequestId
                         },

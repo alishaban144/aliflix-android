@@ -78,4 +78,25 @@ class TalkNativeActionsTest {
   assertEquals(70523,JSONObject(intent.getStringExtra("title")!!).getInt("id"))
   assertEquals(2,JSONObject(intent.getStringExtra("assistantAction")!!).getInt("episode"))
  }
+ @Test fun batchPreflightRejectsEveryWriteWhenOneCommandIsInvalid()=runBlocking {
+  val actions=action();val app=(RuntimeEnvironment.getApplication() as AliflixApplication)
+  val before=app.libraryStore.isInMyList(card.media())
+  val commands=org.json.JSONArray().put(JSONObject().put("action",if(before)"unsave" else "save").put("title","Dark"))
+   .put(JSONObject().put("action","invented").put("title","Dark"))
+  assertTrue(runCatching{actions.execute(JSONObject().put("action","batch_library").put("commands",commands))}.isFailure)
+  assertEquals(before,app.libraryStore.isInMyList(card.media()))
+ }
+ @Test fun batchUndoRestoresEveryActualFlagAndPreservesInterveningManualEdits()=runBlocking {
+  val actions=action();val app=(RuntimeEnvironment.getApplication() as AliflixApplication)
+  val saved=app.libraryStore.isInMyList(card.media());val liked=app.libraryStore.isLiked(card.media())
+  val commands=org.json.JSONArray().put(JSONObject().put("action",if(saved)"unsave" else "save").put("title","Dark"))
+   .put(JSONObject().put("action",if(liked)"unfavorite" else "favorite").put("title","Dark"))
+  assertEquals(2,actions.execute(JSONObject().put("action","batch_library").put("commands",commands)).value.getInt("changedCount"))
+  assertEquals(2,actions.execute(JSONObject().put("action","undo")).value.getInt("undoneCount"))
+  assertEquals(saved,app.libraryStore.isInMyList(card.media()));assertEquals(liked,app.libraryStore.isLiked(card.media()))
+  actions.execute(JSONObject().put("action","batch_library").put("commands",commands))
+  app.libraryStore.toggleMyList(card.media())
+  assertEquals("changed_since_action",actions.execute(JSONObject().put("action","undo")).value.getString("status"))
+  assertEquals(!liked,app.libraryStore.isLiked(card.media()))
+ }
 }

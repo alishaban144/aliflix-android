@@ -25,6 +25,23 @@ class TalkConversationIntentTest {
         assertEquals(TalkIntent.CAPABILITIES,talkConversationIntent("What are your technical limitations?"))
         assertEquals(TalkIntent.CONVERSATION,talkConversationIntent("If I say stop, what happens?"))
     }
+    @Test fun excludedTitleAlternativesNeverBecomeAChoiceBetweenThoseTitles() {
+        for(prompt in listOf(
+            "Find two deadpan comedies about pointless institutions. Do not choose Brazil or Office Space.",
+            "Recommend a quiet thriller, excluding Dune or Arrival.",
+            "Find films about memory without choosing Memento or Total Recall.",
+            "Recommend two films, avoid Brazil or Office Space, but keep the institutional absurdity."
+        )) {
+            assertNotEquals(prompt,TalkIntent.DECISION,talkConversationIntent(prompt,2))
+            assertFalse(prompt,talkToolNeedsDiscoveryCorrection("recommendations",prompt,2))
+        }
+        assertEquals(TalkIntent.DECISION,talkConversationIntent("Choose Arrival or Moon. Do not choose Dune."))
+    }
+    @Test fun bridgeDescribesTheNewRequestRatherThanAnExcludedPreviousGenre() {
+        assertTrue(talkResearchBridge("Two science-fiction films, no space battles. Do not reuse either comedy.","en").contains("science fiction"))
+        assertFalse(talkResearchBridge("A quiet drama, not comedy or science fiction.","en").contains("science fiction"))
+        assertTrue(talkResearchBridge("Two deadpan comedies. Do not choose Brazil or Office Space.","en").contains("comedy"))
+    }
     @Test fun completedContentNeverRetainsWritingJustBecauseAuxiliaryWorkIsPending() {
         assertTrue(talkShowsResponseProgress(true,false))
         assertFalse(talkShowsResponseProgress(true,true))

@@ -28,6 +28,8 @@ internal suspend fun talkPlayerAction(context:Context,args:JSONObject):JSONObjec
         try {
             if(controller.currentMediaItem==null)return@withTimeout JSONObject().put("status","no_active_playback").put("instruction","No title is playing. Ask which title to play, or open its native details.")
             val action=args.getString("action")
+            val contentKey=controller.currentMediaItem?.mediaId?.substringBefore(":via:")
+            if(args.has("expectedContentKey")&&args.optString("expectedContentKey")!=contentKey)return@withTimeout JSONObject().put("status","playback_changed")
             when(action){
                 "pause","resume"->{require(controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE));if(action=="pause")controller.pause()else controller.play();delay(120)}
                 "seek"->{require(controller.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM));val seconds=args.getDouble("numberValue");require(seconds.isFinite()&&seconds>=0);controller.seekTo((seconds*1000).toLong().coerceAtMost(controller.duration.takeIf{it>0}?:Long.MAX_VALUE));delay(120)}
@@ -44,6 +46,7 @@ internal suspend fun talkPlayerAction(context:Context,args:JSONObject):JSONObjec
             }
             val tracks=controller.currentTracks.groups.flatMap{group->(0 until group.length).mapNotNull{index->group.getTrackFormat(index).language?.let{language->JSONObject().put("kind",if(group.type==C.TRACK_TYPE_AUDIO)"audio" else if(group.type==C.TRACK_TYPE_TEXT)"subtitle" else "video").put("language",language).put("selected",group.isTrackSelected(index))}}}
             JSONObject().put("status",if(action=="player_state")"current" else "command_sent").put("action",action)
+                .put("contentKey",contentKey)
                 .put("playing",controller.isPlaying).put("playWhenReady",controller.playWhenReady).put("positionSeconds",controller.currentPosition/1000.0)
                 .put("durationSeconds",controller.duration.takeIf{it>0}?.div(1000.0)).put("tracks",JSONArray(tracks))
                 .put("instruction","Describe the actual returned player state. Language selection is a preference among the available source tracks; never claim that a missing track exists.")
