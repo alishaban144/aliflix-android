@@ -22,6 +22,12 @@ class TalkNativeActionsTest {
   return TalkNativeActions(RuntimeEnvironment.getApplication(),TalkCatalogue{cards}){cards=cards.show(it)}
  }
  private fun row(id:Int,title:String,type:String,year:String,original:String=title)=V3CatalogMedia.fromJson(JSONObject().put("tmdbId",id).put("title",title).put("originalTitle",original).put("mediaType",type).put("releaseDate","$year-01-01"))
+ @Test fun spokenUnaccentedTitlesResolveTheirActualAccentedCatalogueIdentity() {
+  val film=row(1600,"The Double Life of V\u00e9ronique","movie","1991","La Double Vie de V\u00e9ronique")
+  assertEquals(listOf(1600),talkCatalogueMatches(listOf(film),"The Double Life of Veronique","movie",1991).map{it.id})
+  assertEquals(listOf(1600),talkCatalogueMatches(listOf(film),"La Double Vie de Veronique","movie",1991).map{it.id})
+  assertTrue(talkCatalogueMatches(listOf(film),"Veronica","movie",1991).isEmpty())
+ }
  @Test fun mistakenYearsAndOriginalTitlesStillDisplayRealMatchingEditions() {
   val rows=listOf(row(34415,"The Killing","tv","2011"),row(32368,"The Killing","tv","2007","Forbrydelsen"),row(247,"The Killing","movie","1956"))
   assertEquals(listOf(34415,32368),talkCatalogueMatches(rows,"The Killing (2017)","tv",2017).map{it.id})

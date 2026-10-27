@@ -256,7 +256,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
     private var readyWatchdog: Job? = null
     private val answerDeadline:TalkResponseDeadline=TalkResponseDeadline(scope) {
         if(permitted) {
-            if(speaking||generationOpen||remoteSpeechActive)answerDeadline.awaiting(3000)
+            if(talkResearchNoteNeedsRecovery(researchNote,userTurn.get(),SystemClock.elapsedRealtime(),speaking)){
+                val stale=epoch;researchNote=null;recommendationDelivery.clear();continueAfterReconnect=true
+                scope.launch(start=CoroutineStart.UNDISPATCHED){disconnected(stale,false)}
+            }
+            else if(speaking||generationOpen||remoteSpeechActive)answerDeadline.awaiting(3000)
             else if(tools.values.any{it.isActive})answerDeadline.awaiting(8000)
             else if(startNativeRecommendations())Unit
             else if(awaitingToolAnswer&&pendingToolReply!=null&&toolAnswerNudges++<1) {
@@ -759,9 +763,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             return
         }
         message.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls->
-            val names=(0 until calls.length()).map{calls.getJSONObject(it).optString("name")}
-            for(i in 0 until calls.length()) {
-                val original=calls.getJSONObject(i);val wireName=original.getString("name")
+            val ordered=(0 until calls.length()).map{calls.getJSONObject(it)}.sortedBy{if(it.optString("name")=="research_note")1 else 0}
+            val names=ordered.map{it.optString("name")}
+            for((i,original) in ordered.withIndex()) {
+                val wireName=original.getString("name")
                 val call=talkCanonicalLookup(original,currentQuestion(original.optJSONObject("args")?.optString("query").orEmpty()),state.value.cards.group.isNotEmpty());val id=call.getString("id")
                 val toolKey="$providerContext:$id"
                 if(tools[toolKey]?.isActive==true)continue
@@ -796,9 +801,9 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 }
                 if(call.optString("name")=="research_note") {
                     val thought=call.optJSONObject("args")?.optString("thought").orEmpty().trim()
-                    val accepted=!state.value.textMode&&recommendationLookup&&recommendationPool.isEmpty()&&researchNoteUsedTurn!=userTurn.get()&&talkResearchNoteAllowed(thought)
+                    val accepted=talkResearchNoteEligible(state.value.textMode,tools.values.any{it.isActive},speaking,researchNoteUsedTurn,userTurn.get())&&talkResearchNoteAllowed(thought)
                     if(BuildConfig.DEBUG)debugToolCalls.merge(if(accepted)"research_note_accepted" else "research_note_rejected",1){a,b->a+b}
-                    if(accepted){researchNoteUsedTurn=userTurn.get();researchNote=TalkResearchNote(userTurn.get(),thought,SystemClock.elapsedRealtime()+10000);recommendationDelivery.clear();outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L}
+                    if(accepted){researchNoteUsedTurn=userTurn.get();researchNote=TalkResearchNote(userTurn.get(),thought,SystemClock.elapsedRealtime()+10000);recommendationDelivery.clear();outputText="";assistantLine=-1;turnHasAudio=false;responseTurn=-1L;answerDeadline.awaiting(10000)}
                     val reply=JSONObject().put("accepted",accepted)
                     if(accepted)reply.put("speechText",thought).put("instruction","Read exactly speechText once as a useful conversational observation. No additions, candidate titles, search announcements or closing question. The existing lookup will return separately.")
                     emit(JSONObject().put("toolResponse",JSONObject().put("functionResponses",JSONArray().put(talkFunctionResponse(id,wireName,reply,if(accepted)"WHEN_IDLE" else "SILENT")))))
@@ -997,7 +1002,6 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                             JSONObject().put("unavailable",true).put("evidence",JSONArray()).put("instruction","This particular lookup is temporarily unavailable. Keep the original request and all its constraints. Do not invent results, repeat searches, suggest unrelated genres, or imply that qualifying titles do not exist. Give a brief specific failure reply; earlier collections remain available.")
                         }
                     while((generationOpen||speaking||(audio?.bytes?.get()?:0)>0||audio?.writing==true||researchNote!=null)&&permitted&&toolTurn==userTurn.get()&&toolSession==backendSession){
-                        if(researchNote?.let{SystemClock.elapsedRealtime()>it.expiresAt}==true){researchNote=null;recommendationDelivery.clear()}
                         delay(25)
                     }
                     // A final result is the only response for this tool ID.
@@ -1040,7 +1044,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     }
                     tools.remove(toolKey)
                     if(toolTurn==userTurn.get()&&tools.isEmpty()) {
-                        if(state.value.answerComplete&&!awaitingToolAnswer){answerDeadline.clear();update{it.copy(sending=false)}}
+                        if(state.value.answerComplete&&!awaitingToolAnswer){answerDeadline.clear();update{it.copy(sending=false,phase=if(speaking)it.phase else if(it.textMode||!muted)"Listening" else "Muted")}}
                         else answerDeadline.awaiting(10000)
                     }
                 }
@@ -1090,11 +1094,11 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 generationOpen=true
                 val newChatSegment=responseTurn!=userTurn.get()
                 responseTurn=userTurn.get()
-                inputTurnActive=false;if(!pendingAnswerNeedsTitle&&!recommendationLookup)answerDeadline.clear()
+                inputTurnActive=false;if(!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null)answerDeadline.clear()
                 outputText=appendTranscript(outputText,text)
                 spokenAttention?.update(outputText,state.value.cards.visible)
                 commitQuestion()
-                if(!pendingAnswerNeedsTitle&&!recommendationLookup)update { v->
+                if(!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null)update { v->
                     if(v.textMode){
                         chatReply.narrate(outputText,newChatSegment,pendingTitles,finalReferences)
                         val line=chatReply.line();val lines=chatReply.upsert(v.lines);assistantLine=lines.indexOfLast{it.role=="assistant"}
@@ -1113,10 +1117,10 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 if(!data.optString("mimeType").startsWith("audio/pcm"))continue
                 val bytes=Base64.decode(data.getString("data"),Base64.NO_WRAP)
                 if(bytes.isNotEmpty())lastOutputAt=SystemClock.elapsedRealtime()
-                if(bytes.isNotEmpty()){turnHasAudio=true;if(!pendingAnswerNeedsTitle&&!recommendationLookup)answerDeadline.clear()}
+                if(bytes.isNotEmpty()){turnHasAudio=true;if(!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null)answerDeadline.clear()}
                 if(bytes.isNotEmpty())responseTurn=userTurn.get()
                 require(bytes.size<=192000&&bytes.size%2==0)
-                if(pendingAnswerNeedsTitle||recommendationLookup){recommendationDelivery.hold(bytes);continue}
+                if(pendingAnswerNeedsTitle||recommendationLookup||researchNote!=null){recommendationDelivery.hold(bytes);continue}
                 if(bytes.isNotEmpty()){if(spokenAttention==null)spokenAttention=TalkSpokenAttention(outputText,state.value.cards.visible);spokenAttention?.receive(bytes.size/2,writtenSamples)}
                 val buffer=audio?:continue
                 val reserved=buffer.bytes.addAndGet(bytes.size)
@@ -1130,8 +1134,8 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
             // deliverable output may settle the recommendation deadline.
             if(content.optBoolean("generationComplete")){
                 spokenAttention?.complete()
-                endOfAudio=true;if(turnHasAudio&&!pendingAnswerNeedsTitle&&!recommendationLookup)answerDeadline.clear()
-                if(!pendingAnswerNeedsTitle&&!recommendationLookup&&(turnHasAudio||outputText.isNotBlank())&&(tools.isEmpty()||awaitingToolAnswer))update{it.copy(answerComplete=true)}
+                endOfAudio=true;if(turnHasAudio&&!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null)answerDeadline.clear()
+                if(!pendingAnswerNeedsTitle&&!recommendationLookup&&researchNote==null&&(turnHasAudio||outputText.isNotBlank())&&(tools.isEmpty()||awaitingToolAnswer))update{it.copy(answerComplete=true)}
 
             }
             if(content.optBoolean("turnComplete")&&inputTurnActive&&!awaitingToolAnswer&&!turnHasAudio&&outputText.isBlank()&&tools.isEmpty()) {
@@ -1187,7 +1191,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                 update{it.copy(words=completedTalkTopic(outputText,it.words,synchronized(knownFilmTopics){knownFilmTopics.toList()}))}
                 if(awaitingToolAnswer) {awaitingToolAnswer=false;pendingToolReply=null}
                 val pending=tools.isNotEmpty()||awaitingToolAnswer
-                inputTurnActive=false;update { it.copy(sending=pending,answerComplete=it.answerComplete||!pending,phase=if(pending)"Thinking" else if(it.textMode)"Listening" else it.phase) }
+                inputTurnActive=false;update { it.copy(sending=pending,answerComplete=it.answerComplete||!pending,phase=if(pending)"Thinking" else if(speaking)it.phase else if(it.textMode||!muted)"Listening" else "Muted") }
                 if(!pending)debugTurnCompleteAt=SystemClock.elapsedRealtime();endOfAudio=true;assistantLine=-1;outputText="";turnHasAudio=false;responseTurn=-1L;finalReferences=emptyList()
                 if(!pending&&state.value.textMode)runNativeNavigation()
                 commitQuestion()
@@ -1493,7 +1497,7 @@ internal class TalkVoiceSession(private val context: Context, private val scope:
                     if(debugFirstAudioAt==0L&&writtenSamples>0&&debugRenderedSamples>0)debugFirstAudioAt=SystemClock.elapsedRealtime()
                     if(speaking&&endOfAudio&&!buffer.writing&&queue.isEmpty&&(track.playbackHeadPosition.toLong() and 0xffffffffL)>=writtenSamples){
                         track.pause();primingFrom=writtenSamples;primingBegan=0;speaking=false
-                        update{it.copy(phase=if(muted)"Muted" else "Listening")}
+                        update{it.copy(phase=if(it.sending||tools.isNotEmpty()||awaitingToolAnswer||recommendationLookup)"Thinking" else if(muted)"Muted" else "Listening")}
                         if(!state.value.sending)scope.launch(Dispatchers.Main.immediate){runNativeNavigation()}
                     }
                 }

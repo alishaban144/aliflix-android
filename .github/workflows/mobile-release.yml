@@ -361,7 +361,7 @@ jobs:
       - name: Build update manifests
         run: |
           set -euo pipefail
-          RELEASE_NOTES="Talk turn-taking and interruption fixes. Natural speech, real voice switching, background downloads with progress and cancellation, calmer orb motion, discussed-title cards, Morph Loading, and corrected discovery filters."
+          RELEASE_NOTES="One Ask conversation for descriptions, similar titles and larger collections. Discover filters, compact cards, a readable context-aware orb, Twin Orbit Thinking, compact sources, contextual lookup speech, preserved research across reconnects, and verified Pixel speech processing."
 
           # Mobile APK and manifest
           MOBILE_APK="app/build/outputs/apk/mobile/release/app-mobile-release.apk"

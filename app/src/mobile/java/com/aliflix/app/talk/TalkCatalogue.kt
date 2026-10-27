@@ -13,7 +13,7 @@ import org.json.JSONObject
 /** Uses the same catalogue search as the app, including original titles and
  * alternate editions. A mistaken year must not make a real title disappear. */
 internal fun talkCatalogueMatches(rows:List<V3CatalogMedia>,title:String,kind:String?,year:Int):List<TalkTitleCard> {
-    fun key(value:String)=value.lowercase(java.util.Locale.ROOT).replace(Regex("^(the|a|an)\\s+"),"").filter{it.isLetterOrDigit()}
+    fun key(value:String)=java.text.Normalizer.normalize(value,java.text.Normalizer.Form.NFKD).lowercase(java.util.Locale.ROOT).replace(Regex("^(the|a|an)\\s+"),"").filter{it.isLetterOrDigit()}
     val exactFull=rows.any{listOfNotNull(it.title,it.originalTitle).any{v->key(v)==key(title)}}
     val name=if(exactFull)title else title.replace(Regex("\\s*\\(?(?:18|19|20)\\d{2}\\)?$"),"").trim()
     val exact=rows.filter{(kind==null||it.mediaType==kind)&&listOfNotNull(it.title,it.originalTitle).any{v->key(v)==key(name)}}
