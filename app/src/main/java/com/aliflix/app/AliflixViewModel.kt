@@ -737,15 +737,29 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         if (!BuildConfig.IS_TV) {
+            viewModelScope.launch {
+                var previous=accountState.value.uid
+                accountState.collect { account ->
+                    if(previous!=account.uid){previous=account.uid;resetAskAliflix()}
+                }
+            }
             // Starts before the launch overlay finishes; Firebase already owns startup retry.
             accountServices.syncRepository.retry()
             viewModelScope.launch(Dispatchers.Default) {
-                var picksOwner: String? = null
-                combine(likes, recent, playbackProgressStore.entries, accountState) { liked, history, progress, account ->
-                    val watched = (progress.values.sortedByDescending { it.updatedAtMillis }.map { it.media } + history)
+                val accounts=com.aliflix.app.recommendation.AskAccountScope(application)
+                var picksOwner: com.aliflix.app.recommendation.AskAccountTicket? = null
+                combine(likes, recent, playbackProgressStore.entries, accountState,accounts.changes()) { _, _, _, _, _ ->
+                    val captured=accounts.current()
+                    // Scope is committed AFTER the library is restored. Read
+                    // current stores here; independently combined emissions can
+                    // otherwise pair a new account with the previous library.
+                    val explicit=if(captured.aligned)library.likes.value else emptyList()
+                    val watched = if(captured.aligned)(playbackProgressStore.entries.value.values.sortedByDescending { it.updatedAtMillis }.map { it.media } + library.recent.value)
                         .distinctBy(Media::key).take(20)
+                        else emptyList()
                     // Opening a detail can enrich Media or reorder history. Neither is a new taste.
-                    Triple(account.uid, liked.distinctBy(Media::key).sortedBy(Media::key), watched.sortedBy(Media::key))
+                    if(captured!=accounts.current())Triple(accounts.current(),emptyList(),emptyList())
+                    else Triple(captured, explicit.distinctBy(Media::key).sortedBy(Media::key), watched.sortedBy(Media::key))
                 }.distinctUntilChanged { before, after ->
                     before.first == after.first && before.second.map(Media::key) == after.second.map(Media::key) &&
                         before.third.map(Media::key) == after.third.map(Media::key)
@@ -792,6 +806,7 @@ class AliflixViewModel(application: Application) : AndroidViewModel(application)
                         delay(30)
                     }
                     hydrated += pool.drop(12)
+                    if(owner!=accounts.current())return@collectLatest
                     val ranked = com.aliflix.app.recommendation.TastePicks.rankMobile(hydrated, explicit, excluded, history)
                     // Keep the current rail's identity/order while refreshing its metadata and tail.
                     val fresh = ranked.associateBy(Media::key)

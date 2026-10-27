@@ -54,7 +54,7 @@ class Talk182JourneyDeviceTest {
     turn("Now compare Primer with The Vast of Night for a tired viewer who has exactly 90 minutes. Pick from those two only; no other suggestions.")
     val tools=voice.debugToolCalls.toMap()
     assertEquals("A closed decision must not become a recommendation search",0,tools["recommendations"]?:0)
-    val stopFixture=File(context.getExternalFilesDir(null),"talk-validation/interrupt182.pcm")
+    val stopFixture=talkValidationFixture("interrupt182.pcm")
     assertTrue("Owned interruption fixture required",stopFixture.exists())
     val interruptedBefore=voice.debugInterruptions;val localBefore=voice.debugLocalBarges
     withContext(Dispatchers.Main){voice.debugInjectText("Give a developed explanation of how cinematic sound shapes a viewer's sense of space. Keep going for several paragraphs.")}

@@ -38,6 +38,12 @@ class TalkOrbMotionDeviceTest {
   }
   try{runBlocking{
    val home=capture("voice")
+   i.runOnMainSync{voice.debugPreviewTitles(listOf(TalkTitleCard(474331,MediaType.MOVIE,"Keep an Eye Out","2018")),false)}
+   val single=capture("one-card")
+   assertTrue("One card must leave the face readable",single.width()>=128*i.targetContext.resources.displayMetrics.density*.95f)
+   i.runOnMainSync{voice.debugPreviewTitles(listOf(TalkTitleCard(474331,MediaType.MOVIE,"Keep an Eye Out","2018"),TalkTitleCard(348672,MediaType.MOVIE,"About Endlessness","2019"),TalkTitleCard(14337,MediaType.MOVIE,"Primer","2004")),false)}
+   val triple=capture("three-cards")
+   assertTrue("Three cards must leave the face readable",triple.width()>=128*i.targetContext.resources.displayMetrics.density*.95f)
    i.runOnMainSync{voice.debugPreviewTitles(listOf(TalkTitleCard(474331,MediaType.MOVIE,"Keep an Eye Out","2018"),TalkTitleCard(348672,MediaType.MOVIE,"About Endlessness","2019")),false)}
    val result=capture("results");assertTrue("Results must reclaim space",result.width()<home.width())
    i.runOnMainSync{voice.debugPreviewOrbContext("Speaking","Keep an Eye Out uses absurd procedural detail.")}

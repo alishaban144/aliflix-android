@@ -63,7 +63,7 @@ internal fun dampOrbLook(current: Offset, target: Offset, deltaSeconds: Float, r
 
 /** Live Orb's capsule eyes and spherical projection, in Aliflix's pearl/lavender palette. */
 @Composable
-internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier = Modifier, conversing: Boolean = false, voiceCompanion: Boolean = false, voiceEnergy:()->Float={0f}) {
+internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier = Modifier, conversing: Boolean = false, voiceCompanion: Boolean = false, voiceEnergy:()->Float={0f},attention:Offset?=null) {
     val motion = rememberMobileMotionEnabled()
     val resumed = rememberMobileResumed()
     var bounds by remember { mutableStateOf(Rect.Zero) }
@@ -73,6 +73,7 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
     var idleLook by remember { mutableStateOf(Offset(0f,.08f)) }
     val speaking by rememberUpdatedState(conversing)
     val speechEnergy by rememberUpdatedState(voiceEnergy)
+    val contentAttention by rememberUpdatedState(attention)
     // Conversation attention is stable. Pointer interaction remains responsive;
     // speech does not choose random gaze destinations.
     LaunchedEffect(voiceCompanion,motion,resumed) {
@@ -97,8 +98,8 @@ internal fun DiscoverLiveOrb(tracker: DiscoverTouchTracker, modifier: Modifier =
             var previous = 0L
             while (true) withInfiniteAnimationFrameNanos { now ->
                 val idle = SystemClock.uptimeMillis() - tracker.lastTouchMillis > 1800L
-                val target = if (idle || tracker.point == null || bounds.width <= 0f) idleLook
-                    else boundedOrbLook(requireNotNull(tracker.point), bounds.center, bounds.width/2f)
+                val point=if(!idle)tracker.point else contentAttention
+                val target = if(point==null||bounds.width<=0f)idleLook else boundedOrbLook(point,bounds.center,bounds.width/2f)
                 if (previous != 0L) look = dampOrbLook(look,target,(now-previous)/1_000_000_000f,idle)
                 previous = now
                 val t = seconds.value % if(voiceCompanion)2.9f else 4.2f

@@ -4,6 +4,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TalkConversationIntentTest {
+    @Test fun clausesAndMovieThemesDoNotHijackTheRequestedTask(){
+        assertEquals(TalkIntent.DECISION,talkConversationIntent("Don't recommend Arrival, choose between Primer and Coherence"))
+        for(prompt in listOf("Recommend comedy or thriller movies", "Can you recommend films about restricted access?", "Compare Primer with Coherence, then recommend three others"))
+            assertFalse(prompt,talkToolNeedsDiscoveryCorrection("recommendations",prompt,2))
+        assertFalse(talkActionRequested("download","Don’t download it."))
+        assertEquals(TalkIntent.CAPABILITIES,talkConversationIntent("Can you access my other apps?"))
+        assertEquals(TalkIntent.DECISION,talkConversationIntent("Recommend Primer or Coherence"))
+        assertEquals(listOf("After Life (1998)","After Yang"),talkExplicitComparisonTitles("Compare After Life (1998) with After Yang, then recommend two other films."))
+        assertTrue(talkExplicitComparisonTitles("Don't compare Primer with Coherence; recommend two other films.").isEmpty())
+    }
+    @Test fun discoveryAndInformationNeverAuthorizeAnUnrequestedWrite(){
+        assertFalse(talkActionRequested("download","Can you recommend an episode for my child?"))
+        assertFalse(talkActionRequested("save","Suggest something with time loops"))
+        assertFalse(talkActionRequested("download","What is a download?"))
+        assertTrue(talkActionRequested("download","Find me episode two and download it in low quality"))
+        assertTrue(talkActionRequested("save","Explain the difference, then save Primer"))
+    }
     @Test fun explicitComparisonFallbackParsesNamesWithoutGuessingSentenceFragments() {
         assertEquals(listOf("Arrival","Ex Machina"),talkExplicitComparisonTitles("Should I watch Arrival or Ex Machina tonight?"))
         assertEquals(listOf("Moon","Source Code"),talkExplicitComparisonTitles("Choose between Moon and Source Code for a fast evening."))

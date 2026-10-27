@@ -43,8 +43,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION_CODE: "273"
-  RELEASE_VERSION_NAME: "3.1.183"
+  RELEASE_VERSION_CODE: "274"
+  RELEASE_VERSION_NAME: "3.1.184"
   EXPECTED_MOBILE_SIGNER_SHA256: "a71ef174c31385c19f260027161ec255ad272ddbd7df1241a27029e8676f3a47"
 
 jobs:
@@ -404,13 +404,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Aliflix ${{ env.RELEASE_VERSION_NAME }}"
           body: |
-            Talk now uses one explicit microphone turn owner, stops locally for confirmed speech, and prevents late transcripts or scheduled tool continuations from cutting off output. Fixed search phrases and cached filler speech are removed. Fresh welcomes and recommendation narration are composed for the conversation; voice changes acknowledge through the newly configured voice.
+            Ask opens one conversation for descriptions, similarity requests and larger collections. Chat supports twelve results by default, up to twenty-four on request, with separate result collections for each reply. Voice keeps its three-card selection. Filters now live in Discover beside All, Movies and Series.
 
-            Exact title/episode downloads prepare inside Talk, verify requested quality and captions, and continue in the native download service with progress and cancellation. The static task starter and voice Stop button are removed. The orb uses calmer context-led motion, film discussions request real cards, capability context reflects current state, and Similar/Describe use the requested native Morph Loading animation. Genres opens collapsed, Japanese/American animation can be combined, and Series status no longer highlights Filters.
+            Compact title cards retain a readable orb with contextual card attention. Twin Orbit Thinking and compact source icons simplify the conversation. Filters scroll within a fixed sheet; sorting appears after results load. Supported refinements preserve verified results and earlier messages. Account ownership, background downloads, restored transfer state and update cancellation receive correctness fixes. Platform echo cancellation and noise suppression are restored and checked on Pixel.
 
-            [Full change list](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-183-changelog.md) · [Research and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/mobile-183-validation.md)
+            [Full change list and validation](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/releases/mobile-3.1.184.md)
 
-            Mobile 3.1.183 / 273. ARM64 APK and legacy compatibility bridge retain the production signer. TV remains 3.1.69 / 159.
+            Mobile 3.1.184 / 274. ARM64 APK and legacy compatibility bridge retain the production signer. TV remains 3.1.69 / 159.
           files: |
             aliflix-mobile.apk
             update-mobile.json

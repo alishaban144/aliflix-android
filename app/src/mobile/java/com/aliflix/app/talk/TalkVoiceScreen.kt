@@ -106,6 +106,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
     var orbAnchor by remember{mutableStateOf(Rect.Zero)}
     var screenOrigin by remember{mutableStateOf(Offset.Zero)}
     var screenSize by remember{mutableStateOf(IntSize.Zero)}
+    val cardBounds=remember{mutableStateMapOf<String,Rect>()}
     fun anchor(modifier:Modifier)=modifier.onGloballyPositioned{orbAnchor=it.boundsInRoot()}
 
     if(agentTasks)TalkAgentSheet(session,{agentTasks=false},::openTitle)
@@ -119,7 +120,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             Row(Modifier.fillMaxWidth().padding(top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("ALIFLIX",color=AliflixAccentSecondary,fontSize=9.sp,letterSpacing=3.sp,fontWeight=FontWeight.Bold)
-                    Text("Talk",color=AliflixContentPrimary,fontSize=25.sp,fontWeight=FontWeight.SemiBold)
+                    Text(if(state.textMode)"Ask Aliflix" else "Talk",color=AliflixContentPrimary,fontSize=25.sp,fontWeight=FontWeight.SemiBold)
                 }
                 AliflixIconButton(onClick={session.setTextMode(!state.textMode);onStart()},modifier=Modifier.testTag("talk-chat-mode").semantics { stateDescription=if(state.textMode)"Text chat selected" else "Voice selected" }) {
                     Icon(if(state.textMode)Icons.Rounded.GraphicEq else Icons.Rounded.EditNote,if(state.textMode)"Voice conversation" else "Chat",tint=AliflixAccentSecondary)
@@ -142,16 +143,15 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             }
             if(state.textMode) {
                 Row(Modifier.fillMaxWidth().padding(bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
-                    if(state.lines.isNotEmpty()||keyboardOpen){Box(anchor(Modifier.size(42.dp)));Spacer(Modifier.width(12.dp))}
+                    if(state.lines.isNotEmpty()||keyboardOpen){Box(anchor(Modifier.size(56.dp)));Spacer(Modifier.width(12.dp))}
                     Column(Modifier.weight(1f)) {
-                        AnimatedContent(if(state.lines.isEmpty())"Your cinema companion" else state.words,transitionSpec={fadeIn(tween(if(motion)220 else 0)) togetherWith fadeOut(tween(if(motion)120 else 0))},label="talk-chat-topic") { topic ->
+                        AnimatedContent(if(state.lines.isEmpty())"" else state.words,transitionSpec={fadeIn(tween(if(motion)220 else 0)) togetherWith fadeOut(tween(if(motion)120 else 0))},label="talk-chat-topic") { topic ->
                             Text(topic,color=AliflixContentPrimary,fontSize=13.sp,fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis)
                         }
-                        Text(talkConnectionLabel(state),color=AliflixContentTertiary,fontSize=11.sp,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite })
+                        if(state.phase in setOf("Connecting","Reconnecting","Opening chat"))Text(state.phase+"…",color=AliflixContentTertiary,fontSize=11.sp,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite })
                     }
                     AliflixIconButton(onClick={session.newChat();draft="";onStart()}) { Icon(Icons.Rounded.AddComment,"New chat",tint=AliflixAccentSecondary) }
                 }
-                TalkTitleCards(state.cards.visible,::openTitle,motion=motion)
                 val list=rememberLazyListState()
                 var following by remember { mutableStateOf(true) }
                 LaunchedEffect(list) { snapshotFlow { list.isScrollInProgress to list.canScrollForward }.collect { (scrolling,more) -> if(scrolling)following=!more } }
@@ -161,7 +161,6 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                 if(state.lines.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center) {
                     Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
                         if(!keyboardOpen)Box(anchor(Modifier.size(116.dp)))
-                        Text("What are you in the mood for?",color=AliflixContentPrimary,fontSize=19.sp,fontWeight=FontWeight.Medium)
 
                     }
                 } else Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -169,34 +168,43 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
                     items(state.lines.size,key={it}) { index ->
                         val line=state.lines[index]
                         Column(Modifier.fillMaxWidth(),horizontalAlignment=if(line.role=="user")Alignment.End else Alignment.Start) {
-                            Surface(color=if(line.role=="user")AliflixAccentSecondary.copy(alpha=.14f) else Color.Transparent,
+                            if(line.text.isNotBlank())Surface(color=if(line.role=="user")AliflixAccentSecondary.copy(alpha=.14f) else Color.Transparent,
                                 shape=RoundedCornerShape(22.dp,22.dp,if(line.role=="user")6.dp else 22.dp,if(line.role=="user")22.dp else 6.dp),
                                 modifier=Modifier.widthIn(max=520.dp)) {
                                 SelectionContainer { Text(line.text,Modifier.padding(horizontal=if(line.role=="user")16.dp else 2.dp,vertical=12.dp),color=AliflixContentPrimary,fontSize=16.sp,lineHeight=25.sp) }
                             }
-                            if(line.titles.map{it.key}!=state.cards.visible.map{it.key})TalkTitleCards(line.titles,::openTitle)
-                            line.sources.distinctBy { it.url }.take(4).forEach { SourceLink(it) }
+                            TalkTitleCards(line.titles,::openTitle,motion=motion,collection=true)
+                            TalkSources(line.sources)
+                            if(index==state.lines.lastIndex&&line.role=="assistant"&&line.titles.isNotEmpty()&&!state.sending) {
+                                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                    if(line.titles.any{it.type==com.aliflix.app.model.MediaType.TV}) {
+                                        SuggestionChip(onClick={session.sendText("Only ended series. Keep the other constraints from this search.")},label={Text("Ended")})
+                                        SuggestionChip(onClick={session.sendText("Only running series. Keep the other constraints from this search.")},label={Text("Running")})
+                                    }
+                                    SuggestionChip(onClick={session.sendText("More different titles with the same constraints. Exclude the ones already shown.")},label={Text("More")})
+                                }
+                            }
                             if(line.stopped)Text("Stopped",color=AliflixContentTertiary,fontSize=11.sp,modifier=Modifier.padding(top=2.dp))
                             if(line.role=="assistant"&&(!state.sending||state.answerComplete||index<state.lines.lastIndex)) {
                                 val clipboard=LocalClipboard.current
                                 val actionScope=rememberCoroutineScope()
                                 Row(verticalAlignment=Alignment.CenterVertically) {
                                     IconButton(onClick={actionScope.launch { clipboard.setClipEntry(ClipEntry(android.content.ClipData.newPlainText("Aliflix reply",line.text))) }}) { Icon(Icons.Rounded.ContentCopy,"Copy reply",tint=AliflixContentTertiary,modifier=Modifier.size(16.dp)) }
-                                    if(index==state.lines.lastIndex)TextButton(onClick=session::retryLastMessage) { Icon(Icons.Rounded.Refresh,null,Modifier.size(16.dp));Spacer(Modifier.width(6.dp));Text("Try again",fontSize=11.sp) }
+
                                 }
                             }
                         }
                     }
                     if(talkShowsResponseProgress(state.sending,state.answerComplete))item(key="response-status") { Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite }.testTag("talk-response-status")) {
-                        Icon(Icons.Rounded.AutoAwesome,null,tint=AliflixAccentSecondary,modifier=Modifier.size(16.dp));Spacer(Modifier.width(10.dp))
-                        Text(if(state.lines.lastOrNull()?.role=="assistant")"Writing…" else "Thinking through your request…",color=AliflixContentTertiary,fontSize=12.sp)
+                        TalkThinking(motion);Spacer(Modifier.width(10.dp))
+                        Text("Thinking..",color=AliflixContentTertiary,fontSize=12.sp)
                     } }
                   }
                   if(!following&&list.canScrollForward)FilledTonalIconButton(onClick={following=true},modifier=Modifier.align(Alignment.BottomCenter)) { Icon(Icons.Rounded.ArrowDownward,"Latest message") }
                 }
                 if(state.phase in listOf("Reconnect","Try again later","Audio unavailable")) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                     Text(state.connectionDetail.ifBlank{if(state.phase=="Try again later")state.phase else "Connection unavailable"},Modifier.weight(1f),color=AliflixContentSecondary,fontSize=12.sp)
-                    TextButton(onClick=session::retryLastMessage) { Text("Retry") }
+
                 }
                 Row(Modifier.fillMaxWidth().padding(top=10.dp,bottom=8.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                     OutlinedTextField(value=draft,onValueChange={draft=it.take(1600)},modifier=Modifier.weight(1f).testTag("talk-composer"),
@@ -211,7 +219,7 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             } else {
                 Box(anchor(Modifier.fillMaxWidth().weight(.56f)),contentAlignment=Alignment.Center) {}
                 Box(Modifier.fillMaxWidth().weight(.32f),contentAlignment=Alignment.Center) { TalkDottedTopic(state.words,motion) }
-                TalkTitleCards(state.cards.visible,::openTitle,Modifier.padding(bottom=8.dp),motion=motion)
+                TalkTitleCards(state.cards.visible,::openTitle,Modifier.padding(bottom=8.dp),motion=motion,focusedKey=state.spokenCardKey,onBounds={key,bounds->cardBounds[key]=bounds})
                 if(idle&&state.phase!="Ready") Text(state.phase,color=AliflixContentSecondary,fontSize=12.sp,modifier=Modifier.align(Alignment.CenterHorizontally).padding(bottom=12.dp))
                 Row(Modifier.fillMaxWidth().padding(bottom=20.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(36.dp,Alignment.CenterHorizontally)) {
                     AliflixIconButton(onClick={if(idle)onStart()else session.toggleMute()},modifier=Modifier.size(64.dp)) {
@@ -226,25 +234,22 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             val compact=state.textMode
             val small=compact&&(state.lines.isNotEmpty()||keyboardOpen)
             val base=if(compact)minOf(orbAnchor.width,orbAnchor.height)else minOf(orbAnchor.width*.86f,orbAnchor.height,with(density){320.dp.toPx()})
-            val names=state.cards.visible.map{listOfNotNull(it.title,it.originalTitle)}
-            val narration=if(state.phase=="Speaking")state.lines.lastOrNull{it.role=="assistant"}?.text.orEmpty()else state.words
-            val mentioned=talkOrbMention(narration,names)
-            var focus by remember(state.cards.visible.map{it.key}){mutableIntStateOf(-1)}
-            LaunchedEffect(mentioned,state.phase){
-                if(state.phase=="Speaking"&&mentioned>=0){kotlinx.coroutines.delay(480);focus=mentioned}
-                else if(state.phase=="Listening")focus=-1
-            }
-            val intent=talkOrbIntent(state.phase,state.cards.visible.size,focus)
-            val diameter=base*(if(compact)1f else intent.scale)
+            val visible=state.cards.visible.take(3)
+            val focus=visible.indexOfFirst{it.key==state.spokenCardKey}
+            val focusedBounds=if(focus>=0)state.spokenCardKey?.let{cardBounds[it]}else null
+            val intent=talkOrbIntent(state.phase,visible.size,focus)
+            val diameter=if(!compact&&state.cards.visible.isNotEmpty()) {
+                minOf(base*intent.scale,with(density){(if(state.phase=="Thinking")156.dp else 176.dp).toPx()}).coerceAtLeast(minOf(base,with(density){128.dp.toPx()}))
+            }else base*(if(compact)1f else intent.scale)
             val roam=if(small)0f else with(density){(if(compact)3f else 11f).dp.toPx()}
             val margin=diameter/2f+roam
-            val desiredX=orbAnchor.left+orbAnchor.width*(if(compact).5f else intent.x)
+            val desiredX=if(!compact&&focusedBounds!=null)orbAnchor.center.x+(focusedBounds.center.x-orbAnchor.center.x)*.72f else orbAnchor.left+orbAnchor.width*(if(compact).5f else intent.x)
             val desiredY=orbAnchor.top+orbAnchor.height*(if(compact).5f else intent.y)
             val x=desiredX.coerceIn(minOf(orbAnchor.center.x,orbAnchor.left+margin),maxOf(orbAnchor.center.x,orbAnchor.right-margin))-screenOrigin.x
             val y=desiredY.coerceIn(minOf(orbAnchor.center.y,orbAnchor.top+margin),maxOf(orbAnchor.center.y,orbAnchor.bottom-margin))-screenOrigin.y
             val panel=agentTasks||recent||privacy||voices
             val goal=if(panel)TalkOrbPose(screenSize.width-with(density){52.dp.toPx()},WindowInsets.systemBars.getTop(density)+with(density){104.dp.toPx()},with(density){42.dp.toPx()})else TalkOrbPose(x,y,diameter)
-            TalkFloatingOrb(goal,if(panel)0f else roam,state.phase,{state.level},motion,tracker,if(compact)"talk-chat-orb" else "talk-orb")
+            TalkFloatingOrb(goal,if(panel)0f else roam,state.phase,{state.level},motion,tracker,if(compact)"talk-chat-orb" else "talk-orb",if(panel||compact)null else focusedBounds?.center)
         }
         if(recent||privacy||voices) ModalBottomSheet(onDismissRequest={recent=false;privacy=false;voices=false},containerColor=AliflixSurfaceDefaults.color(AliflixSurfaceLevel.Elevated)) {
             Column(Modifier.fillMaxWidth().padding(horizontal=22.dp).navigationBarsPadding().padding(bottom=20.dp)) {
@@ -283,25 +288,6 @@ internal fun TalkVoiceScreen(session: TalkVoiceSession, onStart: () -> Unit, onC
             confirmButton={TextButton(onClick={session.clearHistory();deleteHistory=false}){Text("Delete")}},dismissButton={TextButton(onClick={deleteHistory=false}){Text("Keep chats")}})
     }
 }
-internal fun talkConnectionLabel(state:TalkVoiceState):String = when(state.phase) {
-    "Connecting","Reconnecting" -> "Connecting securely…"
-    "Opening chat" -> "Opening saved conversation…"
-    "Reconnect","Try again later","Audio unavailable" -> "Saved locally · Connection needs a retry"
-    "Resume" -> "Paused · Send a message to continue"
-    else -> if(state.keepHistory)"History on · Synced when signed in" else "History off · This conversation only"
-}
-@Composable private fun SourceLink(source: TalkReference) {
-    val context = LocalContext.current
-    TextButton(onClick = {
-        val uri = Uri.parse(source.url)
-        if (uri.scheme == "https" && uri.userInfo==null && uri.port==-1 && uri.host?.let{it.contains('.')&&!it.matches(Regex("[0-9.]+"))&&!it.endsWith(".local")}==true)
-            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
-    }, modifier = Modifier.heightIn(min = 48.dp), contentPadding = PaddingValues(0.dp)) {
-        Column { Text(source.title, color = AliflixAccentSecondary, fontSize = 11.sp)
-            Text(source.license, color = AliflixContentTertiary, fontSize = 10.sp) }
-    }
-}
-
 /** Native adaptation of Edu Calvo's Pixel Flow Field: sample once per word,
  * scatter into a coarse flow lattice, decay touch wakes, settle into readable
  * type. No bitmap reads, per-cell composables or object allocation per frame. */
@@ -400,7 +386,7 @@ private class TalkParticleField(private val width: Int, private val height: Int,
 /** Native adaptation of Unlumen Glow's five-second, linear conic rotation.
  * A feathered radial alpha replaces CSS blur: no rings, clipped layers or resets
  * between listening/speaking. The uninterrupted clock and PCM envelope are separate. */
-@Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()}) {
+@Composable internal fun TalkLiveOrb(phase:String,level:()->Float,motion:Boolean,modifier:Modifier=Modifier,tracker:DiscoverTouchTracker=remember{DiscoverTouchTracker()},attention:Offset?=null) {
     val seconds=rememberMobileAnimationClock(motion)
     val currentLevel by rememberUpdatedState(level)
     var energy by remember{mutableFloatStateOf(0f)}
@@ -446,6 +432,6 @@ private class TalkParticleField(private val width: Int, private val height: Int,
         DiscoverLiveOrb(tracker,Modifier.fillMaxSize(.66f).graphicsLayer{
             scaleX=1f+energy*.012f;scaleY=scaleX
             translationY=if(motion)sin(seconds.value*.95f)*.65.dp.toPx() else 0f
-        },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy})
+        },conversing=phase=="Speaking",voiceCompanion=true,voiceEnergy={energy},attention=attention)
     }
 }

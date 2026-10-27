@@ -14,8 +14,9 @@ class Talk183SpeakerStressDeviceTest {
  @Test fun sustainedSpeakerSpeechCannotBecomeItsOwnMicrophoneActivity(){
   val i=InstrumentationRegistry.getInstrumentation();val activity=launchFreshTalkActivity(localAudio=true);val voice=activity.voice
   val receipt=File(i.targetContext.getExternalFilesDir(null),"talk-183-speaker-stress.json")
+  receipt.delete()
   try{runBlocking{
-   val original=File(i.targetContext.getExternalFilesDir(null),"talk-validation/question-en.pcm").readBytes()
+   val original=talkValidationFixture("question-en.pcm").readBytes()
    val samples=ShortArray(original.size/2){at->((original[at*2].toInt() and 255) or (original[at*2+1].toInt() shl 8)).toShort()}
    val pcm=ByteArray(samples.size*3)
    for(n in 0 until pcm.size/2){val position=n*2.0/3;val left=position.toInt().coerceAtMost(samples.lastIndex);val right=(left+1).coerceAtMost(samples.lastIndex);val value=(samples[left]+(samples[right]-samples[left])*(position-left)).toInt();pcm[n*2]=value.toByte();pcm[n*2+1]=(value shr 8).toByte()}

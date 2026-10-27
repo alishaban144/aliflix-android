@@ -14,7 +14,7 @@ import com.aliflix.app.ui.discover.DiscoverTouchTracker
 
 /** One retained face, irrespective of voice/chat, keyboard and result layouts.
  * A fixed drawing surface keeps shaders and face geometry warm during flight. */
-@Composable internal fun TalkFloatingOrb(target:TalkOrbPose,roam:Float,phase:String,level:()->Float,motion:Boolean,tracker:DiscoverTouchTracker,tag:String){
+@Composable internal fun TalkFloatingOrb(target:TalkOrbPose,roam:Float,phase:String,level:()->Float,motion:Boolean,tracker:DiscoverTouchTracker,tag:String,attention:androidx.compose.ui.geometry.Offset?=null){
  BoxWithConstraints(Modifier.fillMaxSize()){
  val density=LocalDensity.current
  val drawingSize=minOf(320.dp,maxWidth,maxHeight)
@@ -40,6 +40,6 @@ import com.aliflix.app.ui.discover.DiscoverTouchTracker
   val p=pose.value
   translationX=p.x-base/2f;translationY=p.y-base/2f
   scaleX=p.diameter/base;scaleY=scaleX;rotationZ=p.bank
- }.testTag(tag),tracker)
+ }.testTag(tag),tracker,attention)
 }
 }

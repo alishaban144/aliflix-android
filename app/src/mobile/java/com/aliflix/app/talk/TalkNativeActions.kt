@@ -36,7 +36,7 @@ internal class TalkNativeActions(private val context:Context,private val catalog
         if(action=="library_state")return libraryState(args)
         if(action=="batch_library")return batch(args)
         if(action=="undo")return undo()
-        if(action=="set_setting"){clearUndo();return setting(args)}
+        if(action=="set_setting"){val result=setting(args);clearUndo();return result}
         if(action=="open_screen"||action=="search")return navigation(args,null)
         if(action in setOf("downloads_state","pause_download","resume_download","remove_download"))return downloads(args)
         if(action=="resume"){
@@ -150,18 +150,18 @@ internal class TalkNativeActions(private val context:Context,private val catalog
     private fun setting(args:JSONObject):TalkNativeResult {
         val store=app.playerSettingsStore;val preferences=app.playbackProviderRepository
         fun enabled():Boolean{require(args.opt("enabled") is Boolean){"A boolean enabled value is required"};return args.getBoolean("enabled")}
-        fun number():Float{val n=args.getDouble("numberValue");require(n.isFinite()){ "A finite number is required" };return n.toFloat()}
+        fun number(range:ClosedFloatingPointRange<Float> = -Float.MAX_VALUE..Float.MAX_VALUE)=args.talkSettingNumber(range)
         val setting=args.getString("setting")
         when(setting){
             "play_next_episode"->store.updatePlayNextEpisode(enabled())
             "audio_boost"->store.updateBoostAudio(enabled())
             "zoom"->store.updateResizeModeZoom(enabled())
             "auto_subtitles"->preferences.setAutoDisplaySubtitles(enabled())
-            "playback_speed"->{val speed=number();require(speed in listOf(.5f,.75f,1f,1.25f,1.5f,2f)){"Supported speeds: 0.5, 0.75, 1, 1.25, 1.5, 2"};store.updatePlaybackSpeed(speed)}
+            "playback_speed"->{val speed=number(.5f..2f);require(speed in listOf(.5f,.75f,1f,1.25f,1.5f,2f)){"Supported speeds: 0.5, 0.75, 1, 1.25, 1.5, 2"};store.updatePlaybackSpeed(speed)}
             "subtitle_size"->store.updateSubtitleFontSize(number())
             "subtitle_opacity"->store.updateSubtitleBackgroundOpacity(number())
-            "subtitle_delay_seconds"->store.updateSubtitleDelayTenths((number()*10).toInt())
-            "subtitle_vertical_offset"->store.updateSubtitleVerticalOffsetDp(number().toInt())
+            "subtitle_delay_seconds"->store.updateSubtitleDelayTenths(kotlin.math.round(number().coerceIn(-60f,60f)*10).toInt())
+            "subtitle_vertical_offset"->store.updateSubtitleVerticalOffsetDp(kotlin.math.round(number().coerceIn(-200f,200f)).toInt())
             "preferred_quality"->store.updatePreferredVideoQuality(PreferredVideoQuality.valueOf(args.getString("stringValue").uppercase(java.util.Locale.ROOT)))
             "subtitle_language"->preferences.selectPreferredSubtitleLanguage(SubtitleLanguage.entries.first{it.code.equals(args.getString("stringValue"),true)})
             "provider"->{val provider=requireNotNull(PlaybackProvider.fromStoredValue(args.getString("stringValue")));require(provider.supportsGeneralPlayback);preferences.selectGeneralProvider(provider)}
@@ -177,10 +177,12 @@ internal class TalkNativeActions(private val context:Context,private val catalog
         val action=args.getString("action")
         var entries=store.entries.value
         if(action!="downloads_state") {
-            val cards=catalogue.find(args.optString("title"),args.optString("kind").takeIf{it in setOf("movie","tv")},args.optInt("year"))
+            val episode=TalkEpisodeArguments.from(args)
+            val cards=catalogue.find(args.optString("title"),args.optString("kind").takeIf{it in setOf("movie","tv")},args.optInt("year"),args.optInt("tmdbId"))
             if(cards.size!=1)return TalkNativeResult(JSONObject().put("status","choose_title").put("instruction","Ask which downloaded title or exact episode to change."))
             val card=cards.single()
-            entries=entries.filter{it.selection.media.key==card.key&&(args.optInt("season")==0||it.selection.seasonNumber==args.optInt("season"))&&(args.optInt("episode")==0||it.selection.episodeNumber==args.optInt("episode"))}
+            episode.requireKind(card.type)
+            entries=entries.filter{it.selection.media.key==card.key&&episode.matches(it.selection.seasonNumber,it.selection.episodeNumber)}
             if(entries.size!=1)return TalkNativeResult(JSONObject().put("status",if(entries.isEmpty())"not_downloaded" else "choose_episode").put("instruction","This title has no matching download, or more than one episode matches. Ask for the exact episode or open Downloads; do not change unrelated files."))
             when(action){"pause_download"->store.pause(entries.single().id);"resume_download"->store.resume(entries.single());"remove_download"->store.remove(entries.single().id)}
         }

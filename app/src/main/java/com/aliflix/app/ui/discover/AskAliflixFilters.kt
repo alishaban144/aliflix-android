@@ -88,6 +88,8 @@ fun AskAliflixFilters(
     loading: Boolean,
     onSearchCompanies: suspend (String) -> List<ProductionCompanyFilter> = { emptyList() },
     modifier: Modifier = Modifier,
+    headerContent:@Composable ()->Unit = {},
+    submitLabel:String?=null,
 ) {
     var genresOpen by rememberSaveable { mutableStateOf(false) }
     var exclusionsOpen by rememberSaveable { mutableStateOf(false) }
@@ -158,6 +160,7 @@ fun AskAliflixFilters(
             }
         }
 
+        headerContent()
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
@@ -172,7 +175,7 @@ fun AskAliflixFilters(
                     expanded = genresOpen,
                     onToggle = { genresOpen = !genresOpen },
                 ) {
-                    FilterSubheading("TMDB GENRES")
+                    if(com.aliflix.app.BuildConfig.IS_TV)FilterSubheading("TMDB GENRES")
                     FilterChipGrid(
                         values = genreChoices,
                         selected = selectedGenreChoices,
@@ -463,7 +466,7 @@ fun AskAliflixFilters(
         }
 
         AskAliflixStickyCta(
-            label = if (loading) {
+            label = submitLabel ?: if (loading) {
                 "Loading…"
             } else if (!hasFilters) {
                 if (spec.mediaKind == RecommendationMediaKind.MOVIE) "Show popular movies" else "Show popular series"

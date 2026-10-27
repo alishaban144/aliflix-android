@@ -11,12 +11,23 @@ import org.json.JSONObject
 internal data class TalkChat(val id:String, val title:String, val updatedAt:Long, val lines:List<TalkLine> = emptyList())
 internal fun TalkChat.json():JSONObject {
     val json=JSONObject().put("id",id).put("title",title.take(100)).put("updatedAt",updatedAt)
-    .put("lines",JSONArray(lines.takeLast(64).map { line -> JSONObject().put("role",line.role).put("text",line.text.take(6000)).apply { if(line.stopped)put("stopped",true);if(line.titles.isNotEmpty())put("titles",JSONArray(line.titles.take(3).map{it.json()})) }
-        .put("sources",JSONArray(line.sources.take(2).filter { it.url.startsWith("https://") }.map { JSONObject().put("title",it.title.take(160)).put("url",it.url.take(600)).put("license",it.license.take(240)) })) }))
+    .put("lines",JSONArray(lines.takeLast(64).map { line -> JSONObject().put("role",line.role).put("text",line.text.take(6000)).apply { if(line.stopped)put("stopped",true);if(line.titles.isNotEmpty())put("titles",JSONArray(line.titles.take(24).map{it.json()})) }
+        .put("sources",JSONArray(line.sources.take(12).filter { it.url.startsWith("https://") }.map { JSONObject().put("title",it.title.take(160)).put("url",it.url.take(600)).put("license",it.license.take(240)) })) }))
     val rows=json.getJSONArray("lines")
     while(json.toString().toByteArray(Charsets.UTF_8).size>21_000) {
         if(rows.length()>1)rows.remove(0) else {
-            val row=rows.getJSONObject(0);val text=row.getString("text");row.put("text",text.take(text.length/2))
+            val row=rows.getJSONObject(0);val text=row.getString("text")
+            val cards=row.optJSONArray("titles");val sources=row.getJSONArray("sources")
+            when {
+                text.length>1 -> row.put("text",text.take(maxOf(1,text.length/2)))
+                cards!=null&&(0 until cards.length()).any{cards.getJSONObject(it).has("posterPath")||cards.getJSONObject(it).has("originalTitle")} -> {
+                    for(index in 0 until cards.length()){cards.getJSONObject(index).remove("posterPath");cards.getJSONObject(index).remove("originalTitle")}
+                }
+                sources.length()>1 -> sources.remove(sources.length()-1)
+                sources.length()>0 -> sources.remove(0)
+                cards!=null&&cards.length()>1 -> cards.remove(cards.length()-1)
+                else -> break
+            }
         }
     }
     return json
@@ -30,7 +41,7 @@ internal fun parseTalkChat(json:JSONObject):TalkChat {
             val ref=refs.getJSONObject(at)
             TalkReference(ref.getString("title"),ref.getString("url"),ref.optString("license"))
         }
-        TalkLine(line.getString("role"),line.getString("text"),sources,line.optBoolean("stopped"),parseTalkTitles(line.optJSONArray("titles")))
+        TalkLine(line.getString("role"),line.getString("text"),sources,line.optBoolean("stopped"),parseTalkTitles(line.optJSONArray("titles"),24))
     }
     return TalkChat(json.getString("id"),json.getString("title"),json.getLong("updatedAt"),lines)
 }

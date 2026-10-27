@@ -910,6 +910,7 @@ fun AliflixApp(
             "search"->{showRoot(AppTab.SEARCH);viewModel.selectSearchMode(com.aliflix.app.SearchMode.TITLE);viewModel.updateSearch(command.optString("query"));viewModel.submitCatalogueSearch(command.optString("query"))}
             "play"->initialMedia?.let{playSelection(PlaybackSelection(it,seasonNumber=command.optInt("season").takeIf{v->v>0},episodeNumber=command.optInt("episode").takeIf{v->v>0}))}
             "similar"->initialMedia?.let{media->
+                if(!com.aliflix.app.BuildConfig.IS_TV){com.aliflix.app.ui.discover.openAskConversation(activity,media);return@let}
                 showRoot(AppTab.SEARCH)
                 val editor=com.aliflix.app.ui.discover.AskAliflixEditorState(mode=1,mediaType=media.type,selectedAnchor=media,selectedAnchors=listOf(media),spec=com.aliflix.app.recommendation.CatalogDiscoverySpec(mediaKind=if(media.type==MediaType.TV)com.aliflix.app.recommendation.RecommendationMediaKind.SERIES else com.aliflix.app.recommendation.RecommendationMediaKind.MOVIE))
                 viewModel.setAskEditorState(editor);viewModel.submitAskAliflix(com.aliflix.app.ui.discover.AskAliflixRequest.Similar(media.type,media));assistantAskRequest=1

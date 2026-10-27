@@ -4,6 +4,14 @@ from pathlib import Path
 p=argparse.ArgumentParser()
 p.add_argument('baseline');p.add_argument('apk');p.add_argument('--bridge');p.add_argument('--report',default='native-parity.json')
 a=p.parse_args()
+apm=json.loads(Path('app/src/mobile/assets/talk-apm-provenance.json').read_text(encoding='utf-8'))
+apm_hashes={f"lib/{row['abi']}/libaliflix_apm.so":row['sha256'] for row in apm['abis']}
+assert set(apm_hashes)=={f'lib/{abi}/libaliflix_apm.so' for abi in ['arm64-v8a','armeabi-v7a','x86','x86_64']}
+def verify_apm(archive,abis):
+    assert json.loads(archive.read('assets/talk-apm-provenance.json'))==apm, 'APM provenance changed in packaging'
+    for abi in abis:
+        name=f'lib/{abi}/libaliflix_apm.so'
+        assert hashlib.sha256(archive.read(name)).hexdigest()==apm_hashes[name], f'Unverified APM library: {abi}'
 assert Path(a.baseline).stat().st_size == 66266641, 'Unexpected baseline APK size'
 assert hashlib.sha256(Path(a.baseline).read_bytes()).hexdigest() == '9a6a97bc69d9f6f12dd8df13a5d02e1a04e62a3aea3672bb5c925eaf53703873', 'Unexpected baseline APK digest'
 with zipfile.ZipFile(a.baseline) as old, zipfile.ZipFile(a.apk) as new:
@@ -11,7 +19,8 @@ with zipfile.ZipFile(a.baseline) as old, zipfile.ZipFile(a.apk) as new:
     native=[n for n in new.namelist() if n.startswith('lib/') and n.endswith('.so')]
     assert native and {n.split('/')[1] for n in native}=={'arm64-v8a'}, 'Release must contain ARM64 only'
     expected={n for n in old.namelist() if n.startswith('lib/arm64-v8a/') and n.endswith('.so')}
-    assert set(native)==expected, 'ARM64 library set changed'
+    assert set(native)==expected|{'lib/arm64-v8a/libaliflix_apm.so'}, 'Unexpected ARM64 library set change'
+    verify_apm(new,['arm64-v8a'])
     models={n for n in old.namelist() if n.endswith('.onnx')}
     assert models=={n for n in new.namelist() if n.endswith('.onnx')}, 'Neural model set changed'
     hashes={}
@@ -25,7 +34,8 @@ if a.bridge:
     with zipfile.ZipFile(a.baseline) as old, zipfile.ZipFile(a.bridge) as bridge:
         assert bridge.testzip() is None, 'Compatibility bridge ZIP integrity failure'
         names={n for n in old.namelist() if n.startswith('lib/') and n.endswith('.so')}
-        assert names=={n for n in bridge.namelist() if n.startswith('lib/') and n.endswith('.so')}, 'Compatibility bridge lost a device ABI'
+        assert names|set(apm_hashes)=={n for n in bridge.namelist() if n.startswith('lib/') and n.endswith('.so')}, 'Compatibility bridge native set changed unexpectedly'
+        verify_apm(bridge,['arm64-v8a','armeabi-v7a','x86','x86_64'])
         assert {n.split('/')[1] for n in names}=={'arm64-v8a','armeabi-v7a','x86','x86_64'}
         for n in names | models: assert hashlib.sha256(old.read(n)).digest()==hashlib.sha256(bridge.read(n)).digest(), f'Bridge native/model bytes changed: {n}'
         report['compatibilityBridge']={'versionCode':265,'abis':sorted({n.split('/')[1] for n in names}),'nativeAndModelParity':True,'sizeBytes':Path(a.bridge).stat().st_size,'sha256':hashlib.sha256(Path(a.bridge).read_bytes()).hexdigest()}

@@ -86,6 +86,7 @@ class AppUpdateManager(
                 else -> UpdateCheckResult.UpToDate(BuildConfig.VERSION_NAME)
             }
         }.getOrElse { error ->
+            if(error is kotlinx.coroutines.CancellationException)throw error
             UpdateCheckResult.Error(
                 error.message?.takeIf(String::isNotBlank)
                     ?: "The update check failed.",
@@ -158,6 +159,7 @@ class AppUpdateManager(
             partial.inputStream().buffered().use { input ->
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     val count = input.read(buffer)
                     if (count < 0) break
                     digest.update(buffer, 0, count)

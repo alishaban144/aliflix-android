@@ -7,6 +7,10 @@ internal data class TalkCardContext(
     val group: List<TalkTitleCard> = emptyList(),
     val choiceGroups:List<List<TalkTitleCard>> = emptyList(),
 ) {
+    fun preparedComparison(cards:List<TalkTitleCard>,keepPresented:Boolean):TalkCardContext {
+        val prepared=show(cards,replaceGroup=true).compared(cards)
+        return if(keepPresented)prepared.copy(visible=visible,group=group)else prepared
+    }
     /** Reuses catalogue identities already present in this session. No dialogue
      * text, timestamps, user notes or extra provider/destination is recorded. */
     fun compared(cards:List<TalkTitleCard>):TalkCardContext {
@@ -16,11 +20,11 @@ internal data class TalkCardContext(
         val updated=choiceGroups+listOf(cards.take(3))
         return copy(choiceGroups=if(updated.size<=8)updated else listOf(updated.first())+updated.takeLast(7))
     }
-    fun show(cards: List<TalkTitleCard>,replaceGroup:Boolean=false): TalkCardContext {
+    fun show(cards: List<TalkTitleCard>,replaceGroup:Boolean=false,limit:Int=3): TalkCardContext {
         if (cards.isEmpty()) return this
-        return copy(visible = cards.distinctBy { it.key }.take(3),
-            known = (cards + known).distinctBy { it.key }.take(24),
-            group = if(cards.size>1&&(replaceGroup||group.isEmpty()))cards.take(3) else group)
+        return copy(visible = cards.distinctBy { it.key }.take(limit.coerceIn(1,24)),
+            known = (cards + known).distinctBy { it.key }.take(96),
+            group = if(cards.size>1&&(replaceGroup||group.isEmpty()))cards.take(limit.coerceIn(1,24)) else group)
     }
     fun resolve(name:String,kind:String?=null,year:Int=0,id:Int=0):List<TalkTitleCard> {
         val pool=(visible+group+known).distinctBy{it.key}.filter{kind==null||it.type.routeName==kind}
@@ -29,7 +33,7 @@ internal data class TalkCardContext(
         val statedYear=year.takeIf{it>0}?:Regex("\\(((?:18|19|20)\\d{2})\\)$").find(name)?.groupValues?.get(1)?.toIntOrNull()
             ?:if(exactName)0 else Regex("(?:18|19|20)\\d{2}").find(name)?.value?.toIntOrNull()?:0
         val text=name.lowercase(java.util.Locale.ROOT).trim().trim('.','?','!')
-        val ordinal=when(text){"first","first one","the first one","1st"->0;"second","second one","the second one","2nd"->1;"third","third one","the third one","last one","the last one","3rd"->2;else->-1}
+        val ordinal=talkCardOrdinal(text,group.size)
         if(ordinal>=0)return group.getOrNull(ordinal)?.takeIf{kind==null||it.type.routeName==kind}?.let{listOf(it)}.orEmpty()
         if(text in setOf("","it","that","this","the movie","the film","the series","that title","this title","mentioned title","the mentioned title","the mentioned movie","that movie","that film","that series"))
             return visible.filter{kind==null||it.type.routeName==kind}
@@ -86,9 +90,8 @@ internal data class TalkCardContext(
         }}
         val named=matches.filter{(_,range)->matches.none{(_,other)->other!=range&&other.first<=range.first&&other.last>=range.last}}
         if(named.isNotEmpty())return named.sortedBy{it.second.first}.map{it.first.title}.distinct().flatMap{resolve(it,year=explicitYear(question))}.distinctBy{it.key}.take(3)
-        val ordinals=listOf("first|1st","second|2nd","third|3rd|last").flatMapIndexed{index,word->
-            if(Regex("(?i)\\b(?:$word)(?: one| title| movie| film| series| option| choice| recommendation)\\b|\\b(?:$word)[.!?]*$").containsMatchIn(question))listOfNotNull(group.getOrNull(index))else emptyList()
-        }
+        val ordinals=Regex("(?i)\\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|last|[1-9][0-9]?(?:st|nd|rd|th))(?:(?: one| title| movie| film| series| option| choice| recommendation)\\b|[.!?]*$)").findAll(question)
+            .mapNotNull{group.getOrNull(talkCardOrdinal(it.groupValues[1],group.size))}.distinctBy{it.key}.toList()
         if(ordinals.isNotEmpty())return ordinals
         if(explicitYear(question)==0&&Regex("(?i)\\b(?:it|its|this film|that film|this movie|that movie|this series|that series|that one|this one)\\b").containsMatchIn(question))return listOfNotNull(visible.singleOrNull())
         return emptyList()
@@ -104,9 +107,9 @@ private fun cardName(value: String) = java.text.Normalizer.normalize(value,java.
     .replace(Regex("\\s*\\((?:18|19|20)\\d{2}\\)$"),"").replace(Regex("^(the|a|an)\\s+"),"").filter { it.isLetterOrDigit() }
 
 internal fun talkRestoredCards(lines:List<TalkLine>):TalkCardContext = TalkCardContext(
-    known=lines.asReversed().flatMap{it.titles}.distinctBy{it.key}.take(24),
-    group=(lines.lastOrNull{it.titles.size==3}?:lines.lastOrNull{it.titles.size>1})?.titles.orEmpty(),
-).show(lines.lastOrNull{it.titles.isNotEmpty()}?.titles.orEmpty())
+    known=lines.asReversed().flatMap{it.titles}.distinctBy{it.key}.take(96),
+    group=(lines.lastOrNull{it.titles.size>1})?.titles.orEmpty(),
+).show(lines.lastOrNull{it.titles.isNotEmpty()}?.titles.orEmpty(),limit=24)
 
 internal fun talkCanDismissCards(question:String,visible:List<TalkTitleCard>):Boolean {
     val text=question.lowercase(java.util.Locale.ROOT)
@@ -115,4 +118,12 @@ internal fun talkCanDismissCards(question:String,visible:List<TalkTitleCard>):Bo
     if(Regex("\\b(?:change (?:the )?(?:subjects?|topics?)|different (?:subject|topic)|something (?:entirely )?else)\\b").containsMatchIn(text))return true
     if(visible.size==1&&(text.contains(visible.single().title.lowercase(java.util.Locale.ROOT))||Regex("\\b(?:it|its|this film|that film|this movie|that movie|this series|that series)\\b").containsMatchIn(text)))return false
     return true
+}
+
+internal fun talkCardOrdinal(value:String,size:Int):Int {
+    val text=value.lowercase(java.util.Locale.ROOT).removePrefix("the ").replace(Regex(" (?:one|title|movie|film|series|option|choice|recommendation)$"),"")
+    if(text=="last")return size-1
+    val words=listOf("first","second","third","fourth","fifth","sixth","seventh","eighth","ninth","tenth","eleventh","twelfth")
+    val named=words.indexOf(text);if(named>=0)return named
+    return Regex("^([1-9][0-9]?)(?:st|nd|rd|th)$").matchEntire(text)?.groupValues?.get(1)?.toIntOrNull()?.minus(1)?:-1
 }

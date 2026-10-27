@@ -5,8 +5,8 @@ plugins {
 }
 
 val compatibilityBridge = providers.gradleProperty("aliflix.mobileCompatBridge").orNull == "true"
-val mobileVersionCode = 273
-val mobileVersionName = "3.1.183"
+val mobileVersionCode = 274
+val mobileVersionName = "3.1.184"
 
 val tvVersionCode = 159
 val tvVersionName = "3.1.69"

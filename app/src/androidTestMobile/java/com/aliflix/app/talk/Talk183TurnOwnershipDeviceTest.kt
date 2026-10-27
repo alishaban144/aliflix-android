@@ -40,7 +40,7 @@ class Talk183TurnOwnershipDeviceTest {
   val receipt=File(i.targetContext.getExternalFilesDir(null),"talk-183-local-barge.json")
   try{runBlocking{
    withContext(Dispatchers.Main){session.debugStartLocalAudio()}
-   val pcm=File(i.targetContext.getExternalFilesDir(null),"talk-validation/question-en.pcm").readBytes()
+   val pcm=talkValidationFixture("question-en.pcm").readBytes()
    val tone=ByteArray(24000*2*12)
    for(n in 0 until tone.size/2){val v=(sin(2*Math.PI*317*n/24000)*.035*32767).toInt();tone[n*2]=v.toByte();tone[n*2+1]=(v shr 8).toByte()}
    withContext(Dispatchers.Main){session.debugQueueSpeech(tone)}
@@ -59,7 +59,7 @@ class Talk183TurnOwnershipDeviceTest {
   val i=InstrumentationRegistry.getInstrumentation();val activity=launchFreshTalkActivity(localAudio=true);val session=activity.voice
   try{runBlocking{
    withContext(Dispatchers.Main){session.debugStartLocalAudio()}
-   val pcm=File(i.targetContext.getExternalFilesDir(null),"talk-validation/stop-183.pcm").readBytes()
+   val pcm=talkValidationFixture("stop-183.pcm").readBytes()
    val tone=ByteArray(24000*2*10)
    for(n in 0 until tone.size/2){val v=(sin(2*Math.PI*317*n/24000)*.035*32767).toInt();tone[n*2]=v.toByte();tone[n*2+1]=(v shr 8).toByte()}
    withContext(Dispatchers.Main){session.debugQueueSpeech(tone)}

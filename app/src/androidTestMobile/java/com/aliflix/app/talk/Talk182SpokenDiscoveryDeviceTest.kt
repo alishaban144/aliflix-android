@@ -20,7 +20,7 @@ class Talk182SpokenDiscoveryDeviceTest {
    for(name in listOf("comedy","science","beehive")){
     if(name!="comedy")withContext(Dispatchers.Main){voice.newChat()}
     val unsolicited=voice.debugUnsolicitedInterruptions
-    val pcm=File(i.targetContext.getExternalFilesDir(null),"talk-validation/$name-182.pcm").readBytes()
+    val pcm=talkValidationFixture("$name-182.pcm").readBytes()
     val began=SystemClock.elapsedRealtime();val first=voice.state.value.lines.size
     withContext(Dispatchers.Main){voice.debugInjectMicrophonePcm(pcm)}
     // The owned request may deliberately barge into the new startup welcome.
@@ -43,7 +43,7 @@ class Talk182SpokenDiscoveryDeviceTest {
     assertTrue("Real speech must reach transcription",lines.any{it.role=="user"&&it.text.length>15})
     assertTrue("Answer must render without a second utterance: $answer",voice.debugRenderedSamples>0&&voice.debugFirstAudioAt>=began)
     assertTrue("A response must contain substance",answer.length>40)
-    assertEquals("Assistant output must use the assistant stream",android.media.AudioAttributes.USAGE_ASSISTANT,voice.debugAudioSnapshot().getInt("outputUsage"))
+    assertEquals("Full-duplex output must use its communication stream",android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION,voice.debugAudioSnapshot().getInt("outputUsage"))
     assertEquals("The physical speaker cannot interrupt its own response",interruptions,voice.debugInterruptions)
     assertEquals("Tools/recovery cannot interrupt their own generation",unsolicited,voice.debugUnsolicitedInterruptions)
     if(name=="beehive"){

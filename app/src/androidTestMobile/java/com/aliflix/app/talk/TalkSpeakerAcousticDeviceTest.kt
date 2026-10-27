@@ -20,17 +20,21 @@ class TalkSpeakerAcousticDeviceTest {
    delay(700)
    val baseline=voice.debugAcousticLevels.toList().takeLast(8).average()
    voice.debugAcousticLevels.clear()
+   voice.debugAcousticCommunicationLevels.clear()
    val tone=ByteArray(48000*2)
    for(n in 0 until 48000){val envelope=minOf(n/1200.0,(48000-n)/1200.0,1.0).coerceAtLeast(0.0);val v=(sin(n*2*Math.PI*997/24000)*6000*envelope).toInt();tone[n*2]=v.toByte();tone[n*2+1]=(v shr 8).toByte()}
    i.runOnMainSync{voice.debugQueueSpeech(tone)}
    withTimeout(6000){while(voice.debugRenderedSamples<48000)delay(20)}
    delay(200)
    val observed=voice.debugAcousticLevels.toList().sortedDescending().take(10).average()
+   val communication=voice.debugAcousticCommunicationLevels.toList().sortedDescending().take(10).average()
    val audio=voice.debugAudioSnapshot()
-   File(i.targetContext.getExternalFilesDir(null),"talk-182-acoustic.json").writeText(JSONObject().put("baseline997",baseline).put("speaker997",observed).put("audio",audio).toString(2))
-   assertEquals(AudioAttributes.USAGE_ASSISTANT,audio.getInt("outputUsage"))
+   File(i.targetContext.getExternalFilesDir(null),"talk-182-acoustic.json").writeText(JSONObject().put("baseline997",baseline).put("speaker997",observed).put("mode3Speaker997",communication).put("audio",audio).toString(2))
+   assertEquals(AudioAttributes.USAGE_VOICE_COMMUNICATION,audio.getInt("outputUsage"))
+   assertEquals(android.media.MediaRecorder.AudioSource.UNPROCESSED,audio.getInt("recordSource"))
    assertEquals("Built-in speaker required for acoustic validation",2,audio.getInt("route"))
    assertTrue("The microphone must detect the actual speaker probe: baseline=$baseline observed=$observed",observed>maxOf(baseline*5,0.00002))
+   assertTrue("Audible output is required while communication mode is actually active: $communication",communication>maxOf(baseline*5,0.00002))
   }}finally{i.runOnMainSync{voice.suspendSession();activity.finish()}}
  }
 }

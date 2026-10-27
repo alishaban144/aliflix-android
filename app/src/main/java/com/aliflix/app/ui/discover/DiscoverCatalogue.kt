@@ -60,6 +60,8 @@ internal class DiscoverCatalogueStore(
     private val client: RecommendationAiClient,
     private val titleSearch: com.aliflix.app.data.TypoTolerantTitleSearch? = null,
 ) {
+    val appliedFilterState=mutableStateOf<com.aliflix.app.recommendation.CatalogDiscoverySpec?>(null)
+    val filters=DiscoverFilterStore(client)
     suspend fun categories() = client.categories()
     private val requests = Semaphore(3)
     private val sessions = linkedMapOf<String, CatalogueSession>()
