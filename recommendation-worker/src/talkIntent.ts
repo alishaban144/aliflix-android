@@ -7,12 +7,26 @@ export function talkRecommendationCount(question:string,proposed?:number):number
  const number=/\b(one|two|three|[123])\s+(?:[\p{L}-]+\s+){0,4}(?:titles?|movies?|films?|series|shows?|choices?|recommendations?)\b/iu.exec(question)?.[1]?.toLowerCase();
  return number?(({one:1,two:2,three:3} as Record<string,number>)[number]||Number(number)):proposed||3;
 }
+/** Chat is a collection surface; voice retains a small spoken selection. */
+export function talkChatRecommendationCount(question:string):number {
+ const found=/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|[1-9]\d?)\+?\s+(?:[\p{L}-]+\s+){0,4}(?:titles?|movies?|films?|series|shows?|choices?|recommendations?)\b/iu.exec(question)?.[1]?.toLowerCase();
+ const words=['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve'];
+ const count=found?(words.indexOf(found)>0?words.indexOf(found):found==='fifteen'?15:found==='twenty'?20:Number(found)):12;
+ return Math.max(1,Math.min(24,count));
+}
+export function talkSeriesStatus(question:string):'ended'|'returning'|undefined {
+ const segments=question.split('User refinement:');if(segments.length>1){for(const segment of segments.reverse()){const value=talkSeriesStatus(segment);if(value)return value}return undefined}
+ if(/\b(?:not|no|exclude|without)\s+(?:any\s+)?(?:ended|finished|completed)\s+(?:series|shows?)\b/i.test(question))return 'returning';
+ if(/\b(?:ended|finished|completed)\s+(?:series|shows?)\b|\b(?:series|shows?)\s+(?:that\s+)?(?:have\s+)?ended\b/i.test(question))return 'ended';
+ if(/\b(?:running|ongoing|returning)\s+(?:series|shows?)\b/i.test(question))return 'returning';
+ return undefined;
+}
 export function talkRecommendationQuery(question:string|undefined,toolQuery:string,previousQuery?:string):string {
  const current=question?.trim();
  if(!current)return toolQuery;
  // The captured prior request owns inherited constraints. A model expansion
  // must not add an unrequested recent-only era to a relative mood refinement.
- return /\b(?:those|these|them|same ones|more like|more of|that kind|similar ones|less|still|lighter|darker)\b/i.test(current)
+ return /\b(?:those|these|them|same ones|more like|more of|that kind|similar ones|less|still|lighter|darker|only|more recent|newer|ended series|running series|same constraints)\b/i.test(current)
   ? `${previousQuery||toolQuery}\nUser refinement: ${current}`.slice(-2000) : current;
 }
 

@@ -4,7 +4,7 @@ const reference = z.object({ title:z.string().max(160), url:z.url().max(600).ref
 export const TalkChatSchema = z.object({
   id:z.string().uuid(), title:z.string().trim().min(1).max(100),
   updatedAt:z.number().int().nonnegative(),
-  lines:z.array(z.object({role:z.enum(['user','assistant']),text:z.string().min(1).max(6000),sources:z.array(reference).max(2).default([]),stopped:z.boolean().optional(),titles:z.array(titleCard).max(3).optional()}).strict()).min(1).max(64),
+  lines:z.array(z.object({role:z.enum(['user','assistant']),text:z.string().min(1).max(6000),sources:z.array(reference).max(8).default([]),stopped:z.boolean().optional(),titles:z.array(titleCard).max(24).optional()}).strict()).min(1).max(64),
 }).strict();
 export const TalkChatsRequestSchema = z.discriminatedUnion('action',[
   z.object({action:z.literal('list')}).strict(),
