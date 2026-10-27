@@ -7,7 +7,7 @@
 
 Aliflix is a native Android movie and TV discovery app built with Kotlin and Jetpack Compose. It combines a TMDB-backed catalogue, personal library features, native title details, configurable playback providers, and Ask Aliflix: a semantic recommendation experience powered by selectable Groq or Gemini interpretation and authoritative TMDB metadata.
 
-This source tree targets **Aliflix 3.1.60** (`versionCode 150`) for Android 10 and newer.
+Aliflix supports Android 10 and newer. See the [latest mobile release](https://github.com/alishaban144/aliflix-android/releases/latest) for the current APK and release notes; source version values are defined in [`app/build.gradle.kts`](app/build.gradle.kts).
 
 [Download the latest mobile APK](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk) | [View release notes](https://github.com/alishaban144/aliflix-android/releases/latest)
 
@@ -319,8 +319,8 @@ https://github.com/alishaban144/aliflix-android/releases/latest/download/update-
 
 ## Current release
 
-- Version: **3.1.41**
-- Version code: **131**
 - Minimum Android version: **Android 10 / API 29**
-- Release page: [Aliflix 3.1.41](https://github.com/alishaban144/aliflix-android/releases/tag/v3.1.41)
-- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/download/v3.1.41/aliflix-mobile.apk)
+- Release page: [Latest mobile release](https://github.com/alishaban144/aliflix-android/releases/latest)
+- Direct APK: [aliflix-mobile.apk](https://github.com/alishaban144/aliflix-android/releases/latest/download/aliflix-mobile.apk)
+
+Version names, version codes and validation notes are recorded with each release.
