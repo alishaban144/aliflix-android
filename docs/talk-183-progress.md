@@ -96,3 +96,20 @@ User request: [verbatim](talk-183-user-request.md). Previous release: v3.1.182, 
 - Added short spoken Stop after mute/unmute, checking mute itself preserves the real playing answer and the short word stops output locally. Existing owned Stop fixture required at talk-validation/stop-183.pcm.
 - Rechecked current Google Live primary documentation: clientContent can interrupt generation; independently ordered transcripts cannot own local activity; manual activityStart/activityEnd and no audioStreamEnd remain the actual wire contract. Tool replies retain WHEN_IDLE/SILENT, no explicit INTERRUPT. No model/provider migration.
 - Latest strong real download receipt `.validation/talk183-download-native-final.json`: actual Media3 Futurama615S1E1 LOW/ar,720p,16768captioncharacters,135499573transferredbytes,68.42105percent. Test-created transfer cancelled afterward.
+
+## Signed release checkpoint
+
+- Source0a311a165dc6063c761de44a6727ebce499c2405 committed/pushed. Signed draft workflow40432883759 is building; Worker checks/deployment passed. No public183 release yet at this checkpoint.
+- Final AndroidgatePASS5m57:762unit tests,0fail/errors,3skip;lint0errors;mobile/test/TVassembly. Only test fixture/visual clock changes followed, with normalized production source verified unchanged.
+- Final physical unique checks all passed:3turnownership,8wire,1audioindependence,1speakerstress,1orb,10discoveryUI,1real-clockmorph,3liveexperience/spoken journeys. Local interruptions279ms and shortStop410ms;41.425s12clipsspeaker/AEC0activities. Live spoken journey0interruptions0unsolicited; realCharonack/card also0.
+- An additional existing live journey passed114.729s on deployed backend while signingbuild ran: developed3Iron+And withrealcapture0barges;closedPrimer/VastofNight90mincomparison0recommendationsearches;realownedStopduringgeneratedspeech1localbarge1serviceinterruption. Receipt .validation/talk183-live-barge-final.json. This gives29distinct physicalchecks/journeys across the final test packages, with the UI leaf-selector correction documented separately.
+- Final nativeFuturama615S1E1LOW/ar receipt128788503bytes64.912285percent,720p,16768captioncharacters. Exacttestjobcancelled. PhoneHome,voicesessionssuspended,userdataretained.
+- Workerfinalpromptaudit removedold instruction toexplainpersonal tasteconnections. Finaltypecheck/tests272/29files24.23s/dryrunPASS;CIalsopassed/deployedit.
+- Morph two real Activity-clock captures visuallyinspected anddistinct. Composeinfiniteanimationpolicy doesn'tproveruntime, so separatephysicalrenderercheckused.
+
+## Completed publication
+
+- Public v3.1.183 /273 is released from source0a311a165dc6063c761de44a6727ebce499c2405. Workflow40432883759 succeeded, including unit/lint, signing, native parity, readiness, and backend deploymentc1956c84-0b78-45d8-939e-8f6f887f229e.
+- Verified draft signer, ZIPs, ABIs, native/models and manifests; independently fetched both public APKs and both canonical updater URLs after publication. Public bytes equal draft bytes, hashes and sizes match.
+- ARM64 APK26702485bytes SHA1d5e1e6b691e73472fda1ebdc7cffb533989b0db2481ccb7e6e2839d42d027a9. Compatibility bridge67081735bytes SHAd7061d58751277e634a2b091285effb87c159bc783cc2e2f61727bc67ff93fa2. Production signer unchanged. TV release unchanged.
+- Full evidence in docs/mobile-183-release-evidence.md; machine-readable proof attached to the public release. Application source remains the tested release source; this checkpoint only documents completion. Pixel has matching-debug candidate3.1.183 /273 with viewer data retained; no production-signer installation claimed.

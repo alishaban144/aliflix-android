@@ -67,6 +67,7 @@ The final mobile candidate is **3.1.183 / 273**, installed on the Pixel 7a witho
 | Discovery UI | All 10 passed, including collapsed Genres, simultaneous Japanese/American origins, Running/Ended without Filters selection, stable reading and one loader/no For You after submission |
 | Morph renderer | Separate real Activity-frame-clock check passed: the central loading shapes changed between captures, outside Compose's infinite-animation test policy |
 | Live voice / native actions / spoken discovery | All 3 journeys passed in201.724s. Fresh welcome, actual Charon session and acknowledgement, real discussed-title card, constrained background download, comedy/sci-fi, developed Beehive discussion and And continuation |
+| Additional live interruption journey | Passed in114.729s against the deployed backend: developed 3-Iron discussion with real speaker/capture and zero self-barges; And continued it; a closed 90-minute Primer/Vast of Night comparison performed no recommendation search; owned spoken interruption then produced exactly one local barge and one service interruption |
 
 The final spoken journey recorded **0 interruptions and 0 unsolicited provider interruptions**. Its first-audio timings were 11.892s,14.561s and12.547s from the beginning of each owned spoken request; those include the utterance itself and any research. Speech rendered without a second utterance. The final voice-change/card journey also recorded zero interruptions and selected/connected voice both Charon.
 
